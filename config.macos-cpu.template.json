@@ -1,0 +1,25 @@
+{
+  "ptt_key": "F9",
+  "ptt_queue_capacity": 64,
+  "audio_queue_capacity": 256,
+  "maximum_hold_seconds": 30.0,
+  "maximum_utterance_seconds": 30.0,
+  "audio_input_device": null,
+  "whisper_model_directory": null,
+  "asr": {
+    "execution_profile": "cpu",
+    "cpu_compute_type": "int8"
+  },
+  "vad": {
+    "artifact": {"path": null, "size": null, "sha256": null},
+    "threshold": 0.5,
+    "minimum_speech_ms": 80,
+    "padding_ms": 80
+  },
+  "orchestrator_url": "ws://127.0.0.1:8765",
+  "macos": {
+    "asr_backend": "faster_whisper_cpu_smoke",
+    "system_voices": {"el-GR": "", "en-US": ""}
+  },
+  "logging_level": "INFO"
+}

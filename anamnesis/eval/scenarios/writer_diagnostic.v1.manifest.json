@@ -1,0 +1,147 @@
+{
+  "dataset": "anamnesis-writer-diagnostic-v1",
+  "schema_version": 1,
+  "dataset_version": "v1.0.0",
+  "split": "writer_diagnostic",
+  "status": "frozen-diagnostic",
+  "frozen_at": "2026-08-08",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_evidence": false,
+  "preregistered_final_eligible": false,
+  "member_of_development_35": false,
+  "member_of_sealed_set": false,
+  "writer_prompt_status_at_freeze": "not-authored",
+  "review_status": {
+    "automated_integrity": "passed",
+    "gold_provenance_policy": "minimal-causal-evidence-v1",
+    "independent_human_review": "pending"
+  },
+  "origin": {
+    "type": "locally-authored",
+    "longmemeval_items": 0,
+    "triggerbench_items": 0,
+    "note": "Fresh diagnostic records; no external dataset content and no smoke record transformation."
+  },
+  "scenario_count": 10,
+  "event_count": 69,
+  "non_clock_event_count": 45,
+  "expected_action_count": 8,
+  "forbidden_action_count": 22,
+  "no_action_scenario_count": 2,
+  "obsolete_trap_scenario_count": 3,
+  "family_counts": {
+    "basic_deadline": 1,
+    "cancellation": 1,
+    "conjunctive_trigger": 1,
+    "deadline_update": 1,
+    "entity_grounding": 1,
+    "fact_update": 1,
+    "negative_control": 1,
+    "recurring_intention": 1,
+    "reversible_completion": 1,
+    "threshold_trigger": 1
+  },
+  "file_sha256": "05b0fa7b8e124e170c589cfe385e516a781d59a5ab2c511a5b7d37cd0d5e4a52",
+  "canonical_dataset_sha256": "d1919f4c1b61d3e4d8ae7a0e35c690e89fc7fda3ceadeb4870dbb7f9e0212a70",
+  "record_sha256": {
+    "wd01_unmet_inventory_cutoff": "a0f9a78c7b12d3601acf0c6bc2dd6c3fffd1b9505e201ce919dfbfb3cc652865",
+    "wd02_reversed_kiln_completion": "ec2e9dd3093c32f2498818e504a202d6fc131c28d348a4d193abfddf9ebc5231",
+    "wd03_twice_rescheduled_labels": "52541e0d7812d8532ca98da8c4aed06fbc53d6c85cad6274ad2fd2cf5677814f",
+    "wd04_revised_key_delivery": "7b6254513b74a4d3ac153233a465d468ff4d62690fe7179a3f208ab7709ef984",
+    "wd05_recurring_filter_checks": "64edfd72da472b7f2d2a206ecb089f1a781b09b1c67aa144b919a7f6b3dfbaef",
+    "wd06_conjunctive_cold_room": "da3a436ff0b96b30c326f4e2606ddfaff2537036056d72d5e3ca7fec3a30e88c",
+    "wd07_quoted_badge_example": "860a7f9225f4fca45c90c25d9b61d03562376cc93c161cd3e34b91ac084555bc",
+    "wd08_tank_fill_threshold": "0babbcc6187fc0074a60c966e41ddab0f7b4b07d372330e6e4612deb38cc7fe4",
+    "wd09_cancelled_archive_pickup": "d9360bc1d09f934041d48eda2f8e4068fb2b42be8f4ba51f2669f0c933059905",
+    "wd10_east_orchard_only": "7263fc147d6c511952340fc229d627d4c97f669a606c29989357e43665f80e45"
+  },
+  "oracle_reference": {
+    "path": "eval/oracle/writer_diagnostic_memory_deltas.v1.json",
+    "file_sha256": "93c24d604b32c838d635f9c9ed4fea20f770da254f522db6962b6bc57a232057",
+    "canonical_artifact_sha256": "7f8db3a5c3863887555d7739cda67d37a4c72e606d145f377d9e031f8425d3bd",
+    "annotation_policy": "causal-observable-prefix-v1",
+    "event_record_count": 45,
+    "visible_to_evaluated_writer": false,
+    "human_annotation_measured": false,
+    "offline_replay_ceiling": {
+      "tp": 8,
+      "fp": 0,
+      "fn": 0,
+      "provenance_exact": 8,
+      "obsolete_errors": 0,
+      "invalid_outputs": 0
+    }
+  },
+  "scenario_origins": [
+    {
+      "scenario_id": "wd01_unmet_inventory_cutoff",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd02_reversed_kiln_completion",
+      "family": "reversible_completion",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd03_twice_rescheduled_labels",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd04_revised_key_delivery",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd05_recurring_filter_checks",
+      "family": "recurring_intention",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd06_conjunctive_cold_room",
+      "family": "conjunctive_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd07_quoted_badge_example",
+      "family": "negative_control",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd08_tank_fill_threshold",
+      "family": "threshold_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd09_cancelled_archive_pickup",
+      "family": "cancellation",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd10_east_orchard_only",
+      "family": "entity_grounding",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    }
+  ]
+}

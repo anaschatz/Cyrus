@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "model": "ollama/qwen3:4b-instruct",
+  "manifest_sha256": "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0",
+  "blobs": [
+    {
+      "role": "config",
+      "media_type": "application/vnd.docker.container.image.v1+json",
+      "sha256": "b72accf9724e93698c57cbd3b1af2d3341b3d05ec2089d86d273d97964853cd2",
+      "size_bytes": 487
+    },
+    {
+      "role": "model",
+      "media_type": "application/vnd.ollama.image.model",
+      "sha256": "85e4a5b7b8ef0e48af0e8658f5aaab9c2324c76c1641493f4d1e25fce54b18b9",
+      "size_bytes": 2497280480
+    },
+    {
+      "role": "template",
+      "media_type": "application/vnd.ollama.image.template",
+      "sha256": "eade0a07cac7712787bbce23d12f9306adb4781d873d1df6e16f7840fa37afec",
+      "size_bytes": 1379
+    },
+    {
+      "role": "license",
+      "media_type": "application/vnd.ollama.image.license",
+      "sha256": "d18a5cc71b84bc4af394a31116bd3932b42241de70c77d2b76d69a314ec8aa12",
+      "size_bytes": 11338
+    },
+    {
+      "role": "params",
+      "media_type": "application/vnd.ollama.image.params",
+      "sha256": "0914c7781e001948488d937994217538375b4fd8c1466c5e7a625221abd3ea7a",
+      "size_bytes": 119
+    }
+  ]
+}

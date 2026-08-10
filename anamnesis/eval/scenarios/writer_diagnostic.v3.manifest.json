@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "dataset_name": "writer_diagnostic",
+  "dataset_version": "v3",
+  "status": "frozen-diagnostic",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_evidence": false,
+  "preregistered_final_eligible": false,
+  "member_of_development_35": false,
+  "member_of_sealed_set": false,
+  "writer_prompt_status_at_freeze": "not-authored",
+  "path": "eval/scenarios/writer_diagnostic.v3.jsonl",
+  "file_sha256": "34e2e8751bf32a3a2e29ac75d727f2b5cf73aaba13ccc9ba1d9fdf00bf7eaf4f",
+  "canonical_dataset_sha256": "37a62b643ed920bf115aa0ea2495f00fc12bc349fabc4664ad430c4e9eb71115",
+  "record_sha256": {
+    "wd3_01_planetarium_deadline": "a5be025a91670f1509d12e718d9f4ef5b12f3f1e23799050cd37fcce520db3da",
+    "wd3_02_kiln_cancellation": "06048a205259a66360a46be64f58252543fcc3d2f675c71a0077ec9946b81df6",
+    "wd3_03_transit_conjunction": "a6262b3211e084ba2870242852f83a908f780c7462e698a65ff8459f360c74ad",
+    "wd3_04_survey_reschedule": "d7f6958a3626973806794d4bcafcb1bb533aea241b1eb7e677f36783954bf3d4",
+    "wd3_05_incubator_grounding": "f9e75be4f792b2cd5e0e95b153b19d7f0cda7e47dac0ec2211480e0671adf6d6",
+    "wd3_06_archive_desk_update": "920a96ae3ca6688f13e771f7a70e96234242eafc2949f11b4e62965ae5fc1325",
+    "wd3_07_shell_brainstorm": "0d18ff5b9d572be8ed19f1739f722292710948f32192dd299161fbf1d915006d",
+    "wd3_08_reef_recurrence": "965a628d6115dadb7752a8b6b2d5e0b3af6ad526ce3f1ee4f08f7223dfea9db9",
+    "wd3_09_letter_reversal": "d82339c9f3d2ed79636eb690c06ab0167bae52051c6dc04e65c63e114ba02445",
+    "wd3_10_battery_threshold": "a3e2fab496d3430875bb3f12c25cc5bb0035031dd540e47a55032324abff370d"
+  },
+  "scenario_count": 10,
+  "event_count": 69,
+  "compiler_event_count": 46,
+  "expected_action_count": 8,
+  "forbidden_action_count": 18,
+  "no_action_scenario_count": 2,
+  "obsolete_trap_scenario_count": 3,
+  "family_counts": {
+    "basic_deadline": 1,
+    "cancellation": 1,
+    "conjunctive_trigger": 1,
+    "deadline_update": 1,
+    "entity_grounding": 1,
+    "fact_update": 1,
+    "negative_control": 1,
+    "recurring_intention": 1,
+    "reversible_completion": 1,
+    "threshold_trigger": 1
+  },
+  "origin": {
+    "type": "locally-authored",
+    "longmemeval_items": 0,
+    "triggerbench_items": 0,
+    "external_dataset_items": 0
+  },
+  "review_status": {
+    "automated_integrity": "passed",
+    "gold_provenance_policy": "minimal-causal-evidence-v1",
+    "independent_human_review": "pending"
+  },
+  "anti_overlap_attestation": {
+    "comparison_sets": [
+      "eval/scenarios/smoke.jsonl",
+      "eval/scenarios/dev.jsonl",
+      "eval/scenarios/sealed.jsonl",
+      "eval/scenarios/all.jsonl",
+      "eval/scenarios/writer_diagnostic.v1.jsonl"
+    ],
+    "scenario_ids_disjoint": true,
+    "event_ids_disjoint": true,
+    "canonical_record_hashes_disjoint": true,
+    "exact_titles_descriptions_event_texts_disjoint": true,
+    "automated_test": "tests/test_writer_diagnostic_v3.py",
+    "manual_source_content_reviewed_for_authorship": false,
+    "scope": "pre-v2 datasets; v2 excluded because v3 is an audited correction release",
+    "derived_predecessor": "eval/scenarios/writer_diagnostic.v2.jsonl",
+    "derived_predecessor_exact_overlap_expected": true
+  },
+  "scenario_origins": [
+    {
+      "scenario_id": "wd3_01_planetarium_deadline",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd3_02_kiln_cancellation",
+      "family": "cancellation",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd3_03_transit_conjunction",
+      "family": "conjunctive_trigger",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd3_04_survey_reschedule",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd3_05_incubator_grounding",
+      "family": "entity_grounding",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd3_06_archive_desk_update",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd3_07_shell_brainstorm",
+      "family": "negative_control",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd3_08_reef_recurrence",
+      "family": "recurring_intention",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd3_09_letter_reversal",
+      "family": "reversible_completion",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "wd3_10_battery_threshold",
+      "family": "threshold_trigger",
+      "origin": "locally-authored",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    }
+  ],
+  "oracle_reference": {
+    "path": "eval/oracle/writer_diagnostic_memory_deltas.v3.json",
+    "file_sha256": "7adb64eda15daf5351260933fbd0625fbc13c6899361735a9bf0ce13c063f857",
+    "canonical_artifact_sha256": "9e46d95b308cdd5cd6f995f8521c7600ef4a041a0ad9913e6e8eb8ce808c01f3",
+    "annotation_policy": "causal-observable-prefix-v1",
+    "event_record_count": 46,
+    "visible_to_evaluated_writer": false,
+    "human_annotation_measured": false,
+    "offline_replay_ceiling": {
+      "tp": 8,
+      "fp": 0,
+      "fn": 0,
+      "provenance_exact": 8,
+      "obsolete_errors": 0,
+      "invalid_outputs": 0
+    }
+  },
+  "freeze_rule": "Any content correction creates a new dataset version with new hashes; no W2 result may edit v3.",
+  "lineage": {
+    "derived_from": "eval/scenarios/writer_diagnostic.v2.jsonl",
+    "derived_from_git_commit": "0a8b6714dea57eb9a0c9dded8535569c380be9b1",
+    "derived_from_file_sha256": "76e4caaac216c61f66df1af6457b2e138c034dc5db87a3a6e5bd40336d87c5ab",
+    "derived_from_manifest_sha256": "a3ec4c7e8c911c6d10421b1efc2e11e33b5ca0edd0429529981c01023029adbf",
+    "derived_from_oracle_sha256": "49a7ad07bc7e441b28d7bfeed6d76cbe2d870d1b60b38a855c9c270ff385eec3",
+    "predecessor_disposition": "rejected-before-prompt",
+    "independent_audit_findings": [
+      "wd2_01 optional project payload casing did not exactly match observable source casing",
+      "wd2_05 optional item payload casing did not exactly match observable source casing",
+      "wd2_09 recipient payload was not explicitly supported by the creating observable event"
+    ],
+    "w2_prompt_existed_at_rejection": false,
+    "w2_model_calls_before_rejection": 0,
+    "id_namespace_change": "wd2_ to wd3_",
+    "allowed_corrections": [
+      "Preserve exact source casing Orion Dome in wd3_01 project payload",
+      "Preserve exact source casing Cedar incubator in wd3_05 item payload",
+      "Add explicit to the theater sponsor wording to wd3_09 creating event"
+    ],
+    "other_causal_or_gold_changes": 0
+  },
+  "w2_candidate_matching_protocol": {
+    "version": "w2.candidate-key.v1",
+    "gate_key_fields": [
+      "checkpoint",
+      "action_key",
+      "due_at",
+      "kind",
+      "canonical_payload",
+      "sorted_evidence"
+    ],
+    "excluded_from_gate": [
+      "summary",
+      "intent_id",
+      "occurrence_id"
+    ],
+    "summary_role": "noncanonical UX text",
+    "hidden_exact_summary_gate": false,
+    "legacy_exact_key_diagnostic_only": true,
+    "legacy_exact_key_fields": [
+      "checkpoint",
+      "action_key",
+      "due_at",
+      "kind",
+      "canonical_payload",
+      "summary",
+      "sorted_evidence"
+    ]
+  }
+}

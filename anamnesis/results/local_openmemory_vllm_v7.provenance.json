@@ -1,0 +1,30 @@
+{
+  "hypothesis_test_eligible": false,
+  "inputs": {
+    "fixture": {
+      "path": "eval/openmemory/real_memory_canonicalizer.v1.json",
+      "sha256": "5c962ef36df0a6a4043f5f5b080be3f54994a6d88e189173fdb0cdf6c91578ff"
+    },
+    "pin": {
+      "path": "eval/openmemory/real_memory_canonicalizer.v1.pin.json",
+      "sha256": "7f97ebc4145cb22e85e84d374dd81827d59bf4dc63d4f25e071831421357c805"
+    },
+    "run": {
+      "path": "results/runs/local/openmemory_vllm_v7/run.json",
+      "sha256": "3c8fe015a8f685116bfce33a4e41e24496c898f68335e27b26b814506c7a3924"
+    }
+  },
+  "outputs": {
+    "csv": {
+      "path": "results/local_openmemory_vllm_v7.csv",
+      "sha256": "1fa0164cee814f8a7965692f0b8b9f1e38f128a347597b703fa70ad355299c3a"
+    },
+    "markdown": {
+      "path": "results/local_openmemory_vllm_v7.md",
+      "sha256": "fcefe5351d5177efda52dca2ff11e9b3e0cb4305b30db474d444313949077a97"
+    }
+  },
+  "schema_version": 1,
+  "source_commit": "088fb52cd37c0308b58519bc286e36bd140c01ba",
+  "title": "OpenMemory canonicalizer v7 prospective diagnostic \u2014 not a hypothesis test"
+}

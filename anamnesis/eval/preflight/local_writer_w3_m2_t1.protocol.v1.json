@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "protocol_id": "local_writer_w3_m2_t1.protocol.v1",
+  "purpose": "transport_only_thinking_disabled_ablation",
+  "hypothesis_test_eligible": false,
+  "parent_failure": {
+    "cell": "W3-M2",
+    "source_commit": "a3f4338a5f463e8481659304246985d014d43a8a",
+    "log_path": "results/runs/local/writer_w3_m2/preflight/2026-08-08T12-53-52-00-00_local-model-preflight-w3-m2_kqnpPHxNsrY7BvVa92VNMR.eval",
+    "log_sha256": "286109f094c4a6fed52331e6b33f640922b675f71cd3ef238ce62699ad09264a",
+    "failure": "all eight compiler calls exhausted the output budget in reasoning and returned empty final content"
+  },
+  "intervention": {
+    "changed": "openai_compatible_transport",
+    "field": "reasoning_effort",
+    "from": "omitted",
+    "to": "none",
+    "request_encoding": {
+      "generate_config_extra_body": {
+        "reasoning_effort": "none"
+      },
+      "required_raw_top_level": {
+        "reasoning_effort": "none"
+      }
+    }
+  },
+  "frozen_inputs": {
+    "model": "ollama/qwen3.5:9b-q4_K_M",
+    "model_manifest_sha256": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "compiler_prompt_cell": "W3",
+    "compiler_prompt_sha256": "412a63d6b42ea6b5e294401cabbcbacf5a6b7facddbd8fe04ca7b91914c141e5",
+    "compiler_schema_sha256": "8871ff344eb3a2e88a53b964ef2f24f089a72507c69073ec323cf26a428c3030",
+    "decision_prompt_sha256": "871fe15e3160e66abe7480cbde15dfb943dec2d0ff89bb01a03849ad35defd8d",
+    "decision_schema_sha256": "1b7c38d3f4bf150523ecc1e468ad3fb1f94753611f190d70f93abbf5ec582426",
+    "fixture_path": "eval/preflight/local_writer_w3.v1.json",
+    "fixture_sha256": "5628c3c1d7f8e1a5da43d6e567d55ac8e4fbabd8b9c4054325de6f4def1da30c",
+    "parent_w3_protocol_path": "eval/preflight/local_writer_w3.protocol.v1.json",
+    "parent_w3_protocol_sha256": "7f63c156a8af74ced2d5e5530b3e8083da95c7f46e14e1afafaaf864b3ce1915",
+    "parent_model_protocol_path": "eval/preflight/local_writer_w3_m2.protocol.v1.json",
+    "parent_model_protocol_sha256": "1b563651b0b95a9a258082c1016dbc997b4da53b3573b24be54dcac30cb82d0e",
+    "context_length": 4096,
+    "output_tokens": 4096,
+    "seed": 101,
+    "temperature": 0.0,
+    "cache": false,
+    "max_retries": 0,
+    "structured_output_repair_calls": 0
+  },
+  "stopping_rule": {
+    "attempts": 1,
+    "calls": 9,
+    "ordered_cases": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "D1"],
+    "pass_requires_all_semantic_checks": true,
+    "on_fail": "publish_and_stop_without_scenario_calls",
+    "on_pass": "publish_preflight_only_and_design_a_fresh_scenario_protocol"
+  }
+}

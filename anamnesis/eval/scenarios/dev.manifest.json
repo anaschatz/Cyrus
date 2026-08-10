@@ -1,0 +1,319 @@
+{
+  "dataset": "anamnesis-development-v0",
+  "schema_version": 1,
+  "dataset_version": "v0.1.2",
+  "split": "dev",
+  "status": "frozen-candidate-pending-independent-review",
+  "frozen_at": "2026-08-07",
+  "review_status": {
+    "automated_integrity": "passed",
+    "gold_provenance_policy": "minimal-causal-evidence-v1",
+    "independent_human_review": "pending"
+  },
+  "origin": {
+    "type": "locally-authored",
+    "longmemeval_items": 0,
+    "triggerbench_items": 0,
+    "note": "No external dataset content is included; upstream license and revision evidence was not locally pinned."
+  },
+  "scenario_count": 35,
+  "event_count": 219,
+  "expected_action_count": 24,
+  "forbidden_action_count": 58,
+  "no_action_scenario_count": 15,
+  "obsolete_trap_scenario_count": 12,
+  "family_counts": {
+    "basic_deadline": 6,
+    "completion_cancellation": 4,
+    "conditional_trigger": 6,
+    "deadline_update": 5,
+    "fact_update": 5,
+    "negative_control": 5,
+    "recurring_intention": 4
+  },
+  "canonical_dataset_sha256": "790a09e0377cac3589eec2f70d0d034c67eaa82c7c860262ea7059ac0dbf1ce8",
+  "record_sha256": {
+    "s01_unmet_deadline": "4aff1d5b22a198785dadcf26228947d1128b6402330bb5e0097d91940565a414",
+    "s02_completion_suppresses_reminder": "55e52efdd32a84e44babae280f41fbfa29e93fc64dbf236951c086cce30db3df",
+    "s03_deadline_rescheduled": "f5e54af7f92323aa1731d10043a206705b96813dfa93150d4725c0ae0f46d571",
+    "s04_updated_action_parameter": "9e73b165e30da3af6102a7c8a013052f38802b0e8b54f23636d3d25c373db7b8",
+    "s05_recurring_conditional": "49c2aa86841420801a357311c752271de2dff989cf0052714f5125097d9e8ad2",
+    "s06_conjunctive_trigger": "579755c6b9b61b9be845f08b762b2cb457b97bcfaf9d1d582ebea3c95395f082",
+    "s07_negative_brainstorming": "b50f815512d058bd8e23e6db6703f8023fcbfdb89283c80eff5dd9529f7ee9ae",
+    "s08_threshold_trigger": "eaec1669fd7df64f59c8360583a64ef66e6cbfe3aeb492e22aff7bc05ab9a9cc",
+    "s09_explicit_cancellation": "2d52654ee28a73ee4c551378b9388eba58c8107130d6b1cf9e21545ee69f63a0",
+    "s10_similar_entities": "9ab1c2c3ab78524e7df70fde2688042f01539036af3eb3f52db16a34016882fa",
+    "s11_return_library_book": "5a7101994905ca015baca246984ea4a3bf7cc3bc759abf2fee168ac7e3d3b3b5",
+    "s12_paid_electricity_bill": "f0e2cf848cee83f5d40f2cad2d44ef3956f47dac4755db7c4c9b3b9e7d70b4c2",
+    "s13_pack_running_shoes": "a126239dab6a27a7f9a6fe223943aa7e3706efc2dcb9c19fc36c1397c8d633fd",
+    "s14_signed_lease_already": "4e67bb9284a247fe8bd6d33629d73209a2f4c30e6c2032e73859fa4ca7ea35bd",
+    "s15_grant_deadline_extended": "6e3c5fc58608e14931152e67777cc4d7787fc23918fe25f4f8c164192b0d4070",
+    "s16_passport_reminder_shortened": "5f3b95bb2d62ff314ec3334263162b5466c6528aac01956d4da1e978373239fd",
+    "s17_workshop_reminder_revised_twice": "0b25db09dcc90cb64280572648393d12788deb03a4c28a598ed2dd5e708efbe0",
+    "s18_invoice_date_moved_then_paid": "c3995cf01fa2c90856802d162a0bdffcbb2cb7f5b0807a64665fd9f4000e6868",
+    "s19_corrected_catering_address": "7ccf7eda45107117ad082dd7afe4b2dcf300692ad67a2a1fcf581bd8bd57b291",
+    "s20_changed_report_recipient": "f1c4f7ec7d19c612cbc0491f419f8734bf45e63be61280d059e0d3a192425922",
+    "s21_revised_print_quantity": "18a474044c5fe75f3a26e0ff44b83b90151afe78840c78444c4118c0d17a459b",
+    "s22_substituted_equipment_item": "314971f1cba3d8fa7fc34f0a7b3608566c37c0323864f4060708ab4ed46949be",
+    "s23_temperature_threshold": "cf53365b39600260c1368ac36eaff9d26af3ad1ef5268b955ab7e6fbd9a26b1f",
+    "s24_two_approval_conjunction": "5e1df18614df6a35be931e618d364fa382b6744714ab3e5b0a79c5b298015045",
+    "s25_exact_shipment_arrival": "6c30a69fe5105e9689f235741c07c133e8bac6370b363d8ccd563868e892d40b",
+    "s26_metric_never_qualifies": "a642ffc6297c82d5e5b45a876931abf2ebdb23da141a23d3f01b08976968099e",
+    "s27_reminder_cancelled_at_boundary": "d9f25b3c1819feb61465b99a04c054bceafc509bff4ba1a8b1e34cf67b98ed51",
+    "s28_completion_reaffirmed": "abf2ee086db9594b11e52472eac8230ceb13cee2ea9b1fe5503c08ff5562b841",
+    "s29_alternating_plant_watering": "a622edc5c9a8740ce0c391507e7c5dc155757d9dd6cc6b33071a3943eceef1f0",
+    "s30_daily_log_already_done": "f13313444d87a9b985c503cc3a6a48b3c5549605f4a25bee36630655caf34002",
+    "s31_morning_medication_checklist": "622bbd406fc1340d7d8d6102cffefa2d0c963e9cb29a520ada2fed4defdfe001",
+    "s32_reminder_explicitly_declined": "e129593b95f72ea35a4573788f4af79213174f786cd78b636b8c61cd9d026455",
+    "s33_quoted_request_is_not_active": "e92a291c44c4fd81f23f5222d8d3334dadbfd53e0b5e3b0a6f540c30e77c6306",
+    "s34_hypothetical_alert_discussion": "def9554e3bb40a2c4de85a09d9d4cf07ccbb3b06a8a3c8d8760e21ec97bd1775",
+    "s35_past_reminder_mention": "997489e6bfecc30b4d235c2d2e52535350743a676f58fedcd6debda3a73181c0"
+  },
+  "scenario_origins": [
+    {
+      "scenario_id": "s01_unmet_deadline",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s02_completion_suppresses_reminder",
+      "family": "completion_cancellation",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s03_deadline_rescheduled",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s04_updated_action_parameter",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s05_recurring_conditional",
+      "family": "recurring_intention",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s06_conjunctive_trigger",
+      "family": "conditional_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s07_negative_brainstorming",
+      "family": "negative_control",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s08_threshold_trigger",
+      "family": "conditional_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s09_explicit_cancellation",
+      "family": "completion_cancellation",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s10_similar_entities",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s11_return_library_book",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s12_paid_electricity_bill",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s13_pack_running_shoes",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s14_signed_lease_already",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s15_grant_deadline_extended",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s16_passport_reminder_shortened",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s17_workshop_reminder_revised_twice",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s18_invoice_date_moved_then_paid",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s19_corrected_catering_address",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s20_changed_report_recipient",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s21_revised_print_quantity",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s22_substituted_equipment_item",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s23_temperature_threshold",
+      "family": "conditional_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s24_two_approval_conjunction",
+      "family": "conditional_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s25_exact_shipment_arrival",
+      "family": "conditional_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s26_metric_never_qualifies",
+      "family": "conditional_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s27_reminder_cancelled_at_boundary",
+      "family": "completion_cancellation",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s28_completion_reaffirmed",
+      "family": "completion_cancellation",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s29_alternating_plant_watering",
+      "family": "recurring_intention",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s30_daily_log_already_done",
+      "family": "recurring_intention",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s31_morning_medication_checklist",
+      "family": "recurring_intention",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s32_reminder_explicitly_declined",
+      "family": "negative_control",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s33_quoted_request_is_not_active",
+      "family": "negative_control",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s34_hypothetical_alert_discussion",
+      "family": "negative_control",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s35_past_reminder_mention",
+      "family": "negative_control",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    }
+  ]
+}

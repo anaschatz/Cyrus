@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "protocol_id": "local_writer_w3.protocol.v1",
+  "phase": "writer_diagnostic_w3",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_test_eligible": false,
+  "intervention": {
+    "label": "bundled-repair",
+    "causal_interpretation": "multi_factor_not_single_ablation",
+    "prompt_only": true,
+    "base_prompt_version": "local.v0.3",
+    "prompt_version": "local.v0.4",
+    "wire_schema_changed": false,
+    "decision_contract_changed": false,
+    "reducer_changed": false
+  },
+  "pre_prompt_dataset_freeze": {
+    "dataset_version": "v4",
+    "git_commit": "d8b9972bd2dd69f4336d784a5d8f9442aa808119",
+    "frozen_before_w3_prompt": true,
+    "prompt_authors_blind_to_scenario_contents": true,
+    "prompt_authors_blind_to_oracle_contents": true
+  },
+  "model": {
+    "snapshot": "ollama/qwen3:4b-instruct",
+    "seed": 101,
+    "temperature": 0.0,
+    "provider_api_cost_usd": 0.0,
+    "same_model_for_compiler_and_decision": true
+  },
+  "contracts": {
+    "compiler": {
+      "prompt_version": "local.v0.4",
+      "addendum_sha256": "84897bc8493dc4c89272aacd9ec6aaf869de92e63b1e225b954d97af84877793",
+      "prompt_sha256": "412a63d6b42ea6b5e294401cabbcbacf5a6b7facddbd8fe04ca7b91914c141e5",
+      "local_wire_contract_sha256": "b90298df967f81c91cd6aed6289190768b1f4fe28af4743fb118920d11f8ec51",
+      "local_wire_model_schema_sha256": "f0e0ab9c3aef10f9b99ca5055d1ee1f2e6d7f091be666ee95035040e564302ec",
+      "inspect_response_schema_sha256": "8871ff344eb3a2e88a53b964ef2f24f089a72507c69073ec323cf26a428c3030",
+      "inspect_response_schema_unchanged_from_w2": true
+    },
+    "decision": {
+      "prompt_version": "ollama.decision.v0.2",
+      "prompt_sha256": "871fe15e3160e66abe7480cbde15dfb943dec2d0ff89bb01a03849ad35defd8d",
+      "schema_sha256": "1b7c38d3f4bf150523ecc1e468ad3fb1f94753611f190d70f93abbf5ec582426",
+      "unchanged_from_w2": true
+    },
+    "frozen_predecessors": {
+      "w1_local_wire_contract_sha256": "1ac94e36a5db89ef03798b091424494b9cf50f52ac8e7aaa70e8cfcfc3b0ebd8",
+      "w2_local_wire_contract_sha256": "cb46570bfb1a101bff51008315ba121e07cea38a93de38fe6c79693d746f72c9"
+    }
+  },
+  "preflight": {
+    "case_material_status": "unwritten_at_protocol_freeze",
+    "case_material_must_be_authored_after_prompt_commit": true,
+    "case_material_must_be_frozen_before_any_model_call": true,
+    "case_material_must_be_neutral_and_v4_disjoint": true,
+    "compiler_calls": 8,
+    "decision_calls": 1,
+    "model_calls": 9,
+    "ordered_categories": [
+      {
+        "id": "C1",
+        "role": "compiler",
+        "category": "normalization_fact",
+        "acceptance_projection": [
+          "exactly_one_set_fact",
+          "exact_normalized_entity_and_attribute",
+          "exact_typed_value",
+          "explicit_nonempty_unit_or_null_when_absent",
+          "no_other_mutations",
+          "strict_wire_to_domain_conversion"
+        ]
+      },
+      {
+        "id": "C2",
+        "role": "compiler",
+        "category": "bare_weekday_at",
+        "acceptance_projection": [
+          "exactly_one_create_intent",
+          "at_trigger",
+          "exact_first_strictly_future_local_weekday_datetime",
+          "empty_required_conditions_and_blockers",
+          "exact_domain_payload",
+          "no_other_mutations"
+        ]
+      },
+      {
+        "id": "C3",
+        "role": "compiler",
+        "category": "condition_transition_and",
+        "acceptance_projection": [
+          "exactly_one_create_intent",
+          "condition_transition_trigger",
+          "exact_active_window",
+          "all_explicit_and_conjuncts_in_required_conditions",
+          "exact_normalized_condition_keys_values_and_units",
+          "no_synthetic_negative_conditions",
+          "no_other_mutations"
+        ]
+      },
+      {
+        "id": "C4",
+        "role": "compiler",
+        "category": "recurrence_iana_range",
+        "acceptance_projection": [
+          "exactly_one_create_intent",
+          "recurring_trigger",
+          "exact_local_time_weekdays_start_date_end_date_and_iana_timezone",
+          "exact_domain_payload",
+          "no_other_mutations"
+        ]
+      },
+      {
+        "id": "C5",
+        "role": "compiler",
+        "category": "stable_id_trigger_update",
+        "acceptance_projection": [
+          "exactly_one_update_intent",
+          "intent_id_copied_exactly_from_unique_active_intent",
+          "full_changed_trigger",
+          "all_unchanged_top_level_fields_omitted_or_null",
+          "no_create_cancel_fact_or_other_update"
+        ]
+      },
+      {
+        "id": "C6",
+        "role": "compiler",
+        "category": "full_action_template_update",
+        "acceptance_projection": [
+          "exactly_one_update_intent",
+          "intent_id_copied_exactly_from_unique_active_intent",
+          "full_current_action_template",
+          "all_unchanged_source_backed_payload_leaves_preserved",
+          "only_event_licensed_leaves_changed",
+          "all_other_top_level_fields_omitted_or_null"
+        ]
+      },
+      {
+        "id": "C7",
+        "role": "compiler",
+        "category": "complete_sparse_payload_including_zero",
+        "acceptance_projection": [
+          "exactly_one_create_intent",
+          "exact_complete_domain_payload",
+          "all_explicit_action_arguments_in_matching_slots",
+          "explicit_numeric_zero_preserved",
+          "no_unsourced_nonnull_optional_slots",
+          "no_filler_values",
+          "no_other_mutations"
+        ]
+      },
+      {
+        "id": "C8",
+        "role": "compiler",
+        "category": "ambiguous_empty",
+        "acceptance_projection": [
+          "all_four_mutation_arrays_empty",
+          "empty_domain_memory_delta",
+          "no_guessed_intent_target"
+        ]
+      },
+      {
+        "id": "D1",
+        "role": "decision",
+        "category": "no_action",
+        "acceptance_projection": [
+          "wire_mode_no_action",
+          "empty_wire_actions",
+          "empty_domain_actions"
+        ]
+      }
+    ],
+    "pass_requirements": {
+      "exact_case_order": true,
+      "parse_or_domain_invalid": 0,
+      "semantic_invalid": 0,
+      "usage_complete_for_every_call": true,
+      "cost_complete_for_every_call": true,
+      "provider_api_cost_usd": 0.0,
+      "local_model_identity_and_residency_required": true
+    }
+  },
+  "execution": {
+    "standalone_preflight_attempts": 1,
+    "measured_task_attempts": 1,
+    "measured_task_setup_replays_same_preflight_once": true,
+    "response_cache": false,
+    "max_retries": 0,
+    "structured_output_repair_calls": 0,
+    "concurrency": 1,
+    "raw_model_calls_logged": true,
+    "setup_usage_excluded_from_scenario_headline": true
+  },
+  "scenario_gate": {
+    "compiler_calls": 39,
+    "parse_or_domain_invalid": 0,
+    "semantic_or_store_invalid": 0,
+    "accepted_deltas": 39,
+    "due_candidate_false_positives": 0,
+    "due_candidate_false_negatives": 0,
+    "measured_and_reference_candidate_multisets_must_match": true,
+    "decision_actions_excluded_from_writer_gate": true
+  },
+  "stopping_rule": {
+    "failed_preflight_stops_before_scenarios": true,
+    "valid_failed_scenario_gate_is_final_w3_result": true,
+    "no_output_repair": true,
+    "no_prompt_or_acceptance_change_after_model_call": true,
+    "no_second_w3_run_on_v4": true,
+    "no_w4_on_v4": true,
+    "next_prompt_revision_requires_fresh_dataset": true
+  }
+}

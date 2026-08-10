@@ -1,0 +1,59 @@
+{
+  "accounting_scope": {
+    "human_annotation_effort_measured": false,
+    "oracle_compiler_input_tokens": 0,
+    "oracle_compiler_output_tokens": 0,
+    "oracle_compiler_provider_api_cost_usd": 0.0,
+    "oracle_token_scope": "decision_only_lower_bound",
+    "scenario_compiler_model_events": 0,
+    "setup_model_events": 2,
+    "setup_usage_in_headline": false
+  },
+  "artifact": "anamnesis_local_oracle_ceiling_result_provenance",
+  "compiler_mode": "oracle",
+  "frozen_manifest": {
+    "path": "results/runs/local/oracle/experiment.oracle.json",
+    "sha256": "261a3a1e09304ae803a3b2e989d4ff5d235edda840df5a654dc56e0fbaa26ee6"
+  },
+  "gold_assisted": true,
+  "human_annotation_effort_measured": false,
+  "human_annotation_measured": false,
+  "hypothesis_test_eligible": false,
+  "input_eval_log": {
+    "path": "results/runs/local/oracle/smoke/2026-08-07T18-55-38-00-00_local-anamnesis-oracle-compiler_2BKhHidcPwTgLaYKv3d2zY.eval",
+    "sha256": "a98849a5ec60b6a4465a93e86fd56a3bcb38e0aff401bdcb95d4bb49f5c22efb"
+  },
+  "model_preflight": {
+    "path": "results/runs/local/oracle/preflight/2026-08-07T18-53-01-00-00_local-model-preflight_jWxhnkzHCsUyC8gziNiHXf.eval",
+    "sha256": "cf344b6e72cb06ee71b913680fd980c8e8c72aa6f2b13c7c00c58c21458f5d6b"
+  },
+  "oracle_annotations": {
+    "annotation_policy": "causal-observable-prefix-v1",
+    "canonical_semantics_sha256": "803e511c2a88ac8fe48d87265fa90fef344fc8ed215fd9c76ba0d1a59d873c13",
+    "path": "eval/oracle/smoke_memory_deltas.v1.json",
+    "sha256": "25e4a601e7a36212854647a8e3d3cdd6ee07eb8de239b489396832397ccae537"
+  },
+  "oracle_token_scope": "decision_only_lower_bound",
+  "outputs": {
+    "csv": {
+      "path": "results/local_oracle_smoke.csv",
+      "sha256": "ad9bfaefc39f2b7a306de6603eafbc88f8305bcd504f2333a271be663e1bc96f"
+    },
+    "markdown": {
+      "path": "results/local_oracle_smoke.md",
+      "sha256": "7530c1df1f1d655df69ecf67cca08a6cdbdb7f300ff929eec67f360915c070d5"
+    }
+  },
+  "pricing_config": {
+    "path": "eval/local_model_costs.json",
+    "sha256": "c185e2fad06d6bd2abaaf0be81a1720fc245555fa2a477c1b1bea558b28c2f74"
+  },
+  "scenario_dataset": {
+    "canonical_sha256": "068903716bbe5774eb320427089cbed5c9f48e1b01ce1152e335a3e444c663ff",
+    "path": "eval/scenarios/smoke.jsonl",
+    "sha256": "e8f64c0f47896137932e748dc9934a9c4639afc84f6674a553e423b4a9f17c47"
+  },
+  "schema_version": 1,
+  "source_git_commit": "9fb40a1912573618572142905cb4f2e27a0fcd7f",
+  "title": "Local oracle-compiler ceiling \u2014 diagnostic only"
+}

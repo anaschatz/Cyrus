@@ -1,0 +1,161 @@
+{
+  "dataset": "anamnesis-sealed-v0",
+  "schema_version": 1,
+  "dataset_version": "v0.1.2",
+  "split": "sealed",
+  "status": "frozen-candidate-pending-independent-review",
+  "preregistered_final_eligible": false,
+  "ineligibility_reason": "This candidate was inspected during schema and compiler development and is not a valid preregistered holdout.",
+  "frozen_at": "2026-08-07",
+  "review_status": {
+    "automated_integrity": "passed",
+    "gold_provenance_policy": "minimal-causal-evidence-v1",
+    "independent_human_review": "pending"
+  },
+  "origin": {
+    "type": "locally-authored",
+    "longmemeval_items": 0,
+    "triggerbench_items": 0,
+    "note": "No external dataset content is included; upstream license and revision evidence was not locally pinned."
+  },
+  "scenario_count": 15,
+  "event_count": 77,
+  "expected_action_count": 8,
+  "forbidden_action_count": 23,
+  "no_action_scenario_count": 7,
+  "obsolete_trap_scenario_count": 8,
+  "family_counts": {
+    "basic_deadline": 2,
+    "completion_cancellation": 2,
+    "conditional_trigger": 2,
+    "deadline_update": 3,
+    "fact_update": 3,
+    "negative_control": 1,
+    "recurring_intention": 2
+  },
+  "canonical_dataset_sha256": "d9241ce5fdf453bf4fbd4bb6036d37a7747fd568c1a8106129c858cc8ac843fc",
+  "record_sha256": {
+    "s36_deliver_costume_deposit": "b5ea207e4ebeaa882739dd0bcfa3320aebb67fc4209eabc5d739b5451a458f30",
+    "s37_uploaded_tax_certificate": "33a5b54e0d960047c8fcd6ef7745c0b05107ea1b889895c5df395f03e756949e",
+    "s38_interview_reminder_delayed": "6dc203a52aaa57dfa430b39b910ec5f5fd6e8042e52318b42eea37992b10da3d",
+    "s39_pickup_time_revised_twice": "7705206fa0d37e2afb7447acd86900c1acf1ee84b135d55bb0ccf8aab343570c",
+    "s40_renewal_extended_then_completed": "f38423a7aa370a6e22ebea5921177ed22542d3992e875aa363a8927690d95cb7",
+    "s41_venue_room_correction": "74998b3a455fe48e18f306a1a1a9e703fe43454586f5833bc51dd90f53c51b03",
+    "s42_supplier_contact_changed": "5f4818222bc7de0f62382198663f56afb38a73e049c63b2d5c09428421f13e4a",
+    "s43_updated_sample_count": "139521ac7c91e7c345ccaf2ce50602da9cc677aa80ece575c05143e3a551ce18",
+    "s44_two_sensor_conditions": "85d4d2c672c49de12db62d032ccd8b2bf380a3f5135800897a86cf2d7f3e19ff",
+    "s45_package_status_never_delivered": "3ff5b23ff0799e6409310fd59ff5666d3aa396cf16c582a361240958705bd32e",
+    "s46_cancelled_courier_reminder": "e999ac112d4c13fe167c05a1881a5f1d9cfebaf9eeebaac5fbca7ef1f848a898",
+    "s47_completed_at_deadline": "c916243d8c016e4bba92b511dbf23b6b3089dad20d86d00b4716e1cb7d0e3348",
+    "s48_recurring_freezer_check": "3b28261b28d9f3bfd57eca6e6ac7869d7ba0335bbdc1a2ce94fb996735f90666",
+    "s49_recurring_checks_cancelled": "f69dca41b13b6c4df9934c6944ebb4118559e7e040e0fbb61d8b2b9e9a366ca6",
+    "s50_example_reminder_in_training_notes": "6420c7552ed8c6fae7f3b4344e73d1d7728fa6df4495933e8a07c5468e3d20b7"
+  },
+  "scenario_origins": [
+    {
+      "scenario_id": "s36_deliver_costume_deposit",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s37_uploaded_tax_certificate",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s38_interview_reminder_delayed",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s39_pickup_time_revised_twice",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s40_renewal_extended_then_completed",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s41_venue_room_correction",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s42_supplier_contact_changed",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s43_updated_sample_count",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s44_two_sensor_conditions",
+      "family": "conditional_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s45_package_status_never_delivered",
+      "family": "conditional_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s46_cancelled_courier_reminder",
+      "family": "completion_cancellation",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s47_completed_at_deadline",
+      "family": "completion_cancellation",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s48_recurring_freezer_check",
+      "family": "recurring_intention",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s49_recurring_checks_cancelled",
+      "family": "recurring_intention",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    },
+    {
+      "scenario_id": "s50_example_reminder_in_training_notes",
+      "family": "negative_control",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-review-pending"
+    }
+  ]
+}

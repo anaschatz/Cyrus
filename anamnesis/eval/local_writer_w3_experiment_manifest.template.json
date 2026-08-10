@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "track": "local_zero_api_cost",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_test_eligible": false,
+  "status": "draft",
+  "phase": "writer_diagnostic_w3",
+  "compiler_mode": "llm",
+  "dataset": {
+    "path": "eval/scenarios/writer_diagnostic.v4.jsonl",
+    "sha256": "6b2530cb9f3426c792500f07e854d7f31ad84081ac77104cb8032737234ff91c"
+  },
+  "scenario_count": 10,
+  "sealed_opened": false,
+  "systems": ["anamnesis"],
+  "model": {
+    "snapshot": "ollama/qwen3:4b-instruct",
+    "artifact": {
+      "path": "eval/ollama_qwen3_4b_instruct.pin.json",
+      "sha256": "dcf839abc1800ce80646f05b983a7feab825a5f0d1e7d75823f76b95e2f69e11"
+    },
+    "schema_constrained_output": true,
+    "live_preflight_required": true,
+    "same_model_for_compiler_and_decision": true,
+    "provider": {
+      "provider": "ollama",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "cloud_disabled_environment": "OLLAMA_NO_CLOUD=1",
+      "server_bind_environment": "OLLAMA_HOST=127.0.0.1:11434",
+      "api_key_required": false
+    },
+    "pricing": {
+      "path": "eval/local_model_costs.json",
+      "sha256": "c185e2fad06d6bd2abaaf0be81a1720fc245555fa2a477c1b1bea558b28c2f74"
+    },
+    "preflight": {
+      "path": "results/runs/local/writer_diagnostic_w3/model_preflight.eval",
+      "sha256": null
+    }
+  },
+  "hardware": {
+    "architecture": "arm64",
+    "chip": "Apple M3",
+    "memory_bytes": 17179869184
+  },
+  "runtime": {
+    "ollama_version": "0.31.1",
+    "inference_backend": "Metal",
+    "context_window_tokens": 4096,
+    "context_length_environment": "OLLAMA_CONTEXT_LENGTH=4096",
+    "num_parallel_environment": "OLLAMA_NUM_PARALLEL=1",
+    "max_loaded_models_environment": "OLLAMA_MAX_LOADED_MODELS=1",
+    "process_attestation_endpoint": "http://127.0.0.1:11434/api/ps",
+    "process_attestation_required": true,
+    "local_only": true,
+    "setup_latency_reported_separately": true
+  },
+  "cost_policy": {
+    "headline_metric": "provider_api_cost_usd",
+    "provider_api_price_usd": 0.0,
+    "electricity_measured": false,
+    "hardware_amortization_measured": false
+  },
+  "embedding": {
+    "model": "BAAI/bge-small-en-v1.5",
+    "repository": "qdrant/bge-small-en-v1.5-onnx-q",
+    "revision": "52398278842ec682c6f32300af41344b1c0b0bb2",
+    "artifact_sha256": "d435d05b3411502ad9a280cc9ac0157f7bcd9f176df2fdc8971f788a121a02d7",
+    "top_k": 5
+  },
+  "execution": {
+    "temperature": 0.0,
+    "seeds": [101],
+    "repetitions": 1,
+    "response_cache": false,
+    "max_samples": 1,
+    "concurrency": 1,
+    "max_retries": 0,
+    "structured_output_repair_calls": 0,
+    "log_model_api": true,
+    "warmup_policy": "frozen_w3_semantic_gate_c1_to_c8_d1",
+    "warmup_latency_in_headline": false
+  },
+  "git_commit": null,
+  "dependency_lock": {
+    "path": "uv.lock",
+    "sha256": "f7207290df1b0da3519ea50f04cb88a15f1cf9bf950b0d1e990424113f9b5376"
+  },
+  "research_contract": {
+    "path": "RESEARCH.md",
+    "sha256": "42356cb5b1781f9702e0f5ff7634d288a960f9706c4d9186fc726988bb32c6af"
+  },
+  "architecture_contract": {
+    "path": "ARCHITECTURE.md",
+    "sha256": "85b3b9704556a7f0459c19e8b70f50302d60c43b11b0980687d471447b4d4797"
+  },
+  "writer_reference": {
+    "path": "eval/oracle/writer_diagnostic_memory_deltas.v4.json",
+    "sha256": "72308bb34bda758cc72dc651e3f0fd2fd2bd1bff820479e2cf0774ee8d66cf5c"
+  },
+  "preflight_fixture": {
+    "path": "eval/preflight/local_writer_w3.v1.json",
+    "sha256": "5628c3c1d7f8e1a5da43d6e567d55ac8e4fbabd8b9c4054325de6f4def1da30c"
+  },
+  "preflight_protocol": {
+    "path": "eval/preflight/local_writer_w3.protocol.v1.json",
+    "sha256": "7f63c156a8af74ced2d5e5530b3e8083da95c7f46e14e1afafaaf864b3ce1915"
+  },
+  "decision_prompt_sha256": null,
+  "decision_schema_sha256": null,
+  "memory_compiler_prompt_sha256": null,
+  "memory_compiler_schema_sha256": null,
+  "system_config_sha256": {}
+}

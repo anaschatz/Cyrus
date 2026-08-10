@@ -1,0 +1,85 @@
+{
+    "schema_version": 1,
+    "purpose": "openmemory_recall_decision_diagnostic_transport_failure",
+    "hypothesis_test_eligible": false,
+    "source_commit": "d1732af873193ca9f59d3fcd339abc4a590e9adf",
+    "run_status": "cancelled_after_first_max_tokens_failure",
+    "diagnostic_metrics_defined": false,
+    "rerun_same_v1_cases_allowed": false,
+    "model": {
+        "name": "ollama/qwen3.5:9b-q4_K_M",
+        "artifact_pin_path": "eval/ollama_qwen3_5_9b_q4_k_m.pin.json",
+        "artifact_pin_sha256": "1eb1883308ccaf2631384b8a6c1e19048d826d7f766b879de540e9a7f878ab13"
+    },
+    "runtime": {
+        "ollama_version": "0.31.1",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "no_cloud": true,
+        "context_length": 4096,
+        "num_parallel": 1,
+        "max_loaded_models": 1,
+        "compute": "Metal",
+        "hardware": "Apple M3"
+    },
+    "generation": {
+        "seed": 101,
+        "temperature": 0.0,
+        "cache": false,
+        "max_retries": 0,
+        "max_connections": 1
+    },
+    "artifacts": {
+        "diagnostic": {
+            "path": "eval/openmemory/decision_diagnostic.v1.json",
+            "sha256": "a1541939dc977ddf233395318ac8470ca17d0bb39ef3284fbd65411edf89e36a"
+        },
+        "execution_protocol": {
+            "path": "eval/OPENMEMORY_EXECUTION.md",
+            "sha256": "6642a32b05df5eaf0c5e53eb2fd5fc208b337cc2b8e4bedb959cbd2d77aacced"
+        },
+        "task_source": {
+            "path": "eval/anamnesis_openmemory_eval.py",
+            "sha256": "264f370f7739f4ba829eb76dcceaa2434bc594ac2d14d21a3767466bd7493710"
+        },
+        "runtime_source": {
+            "path": "src/anamnesis/local_runtime.py",
+            "sha256": "cecaf3b7f62b102c047bcdd08d6a247b72e511cfd2c111677b2737567ad90978"
+        },
+        "diagnostic_source": {
+            "path": "src/anamnesis/openmemory_diagnostic.py",
+            "sha256": "66c5101878126a1924ca494212484218a940b8390839dcb9296ecf1e420ff8e0"
+        },
+        "pricing": {
+            "path": "eval/local_model_costs_w3_m2.json",
+            "sha256": "74f7321226f6fc71d9c8c88551653d8507d1a22a22ea4127226c91a5ce06267c"
+        },
+    "raw_eval_log": {
+      "local_path": "results/runs/local/openmemory_diagnostic_v1/2026-08-08T20-34-39-00-00_local-openmemory-decision-diagnostic_FqzUPJ549WUDsSH3AyURUE.eval",
+      "sha256": "128586c6777c4681a72299098e2b886e26333d5efed6bb6a6441cd2a8f869ca8",
+      "published": false,
+      "reason": "contains full prompts and local absolute filesystem metadata"
+    },
+    "sanitized_log_summary": {
+      "path": "results/local_openmemory_diagnostic_failure_log_summary.json",
+      "sha256": "fb8b6a399a13183f7f3062417778fa41bb95d6b176aff4db4a0bf856d00bf4c3",
+      "published": true
+        },
+        "failure_report": {
+            "path": "results/local_openmemory_diagnostic_preflight_failure.md",
+      "sha256": "ffbf3d81214e314ff3ee22ae16f84d975c9d1f7a163d9dc48d2e28a3b38466e5"
+        }
+    },
+    "observed": {
+        "inspect_status": "cancelled",
+        "sample_count": 1,
+        "completed_pair_count": 0,
+        "model_event_count": 2,
+        "completed_model_call_count": 1,
+        "first_call_stop_reason": "max_tokens",
+        "first_call_input_tokens": 707,
+        "first_call_output_tokens": 3389,
+        "first_call_completion_bytes": 0,
+        "second_call_retained_usage": false,
+        "provider_api_cost_usd": 0.0
+    }
+}

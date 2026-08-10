@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "purpose": "openmemory_recall_decision_diagnostic_v2",
+  "title": "Local OpenMemory recall diagnostic v2 — valid gate failure",
+  "hypothesis_test_eligible": false,
+  "source_commit": "7235ba782f0e77e71dd90e73e09373afef1a16c9",
+  "dataset_freeze_commit": "4fda3935d00548a8e50e35abb286c6dfe6256cac",
+  "run_status": "success",
+  "metric_status": "valid_gate_failure",
+  "rerun_same_v2_cases_allowed": false,
+  "model": {
+    "name": "ollama/qwen3.5:9b-q4_K_M",
+    "artifact_pin_path": "eval/ollama_qwen3_5_9b_q4_k_m.pin.json",
+    "artifact_pin_sha256": "1eb1883308ccaf2631384b8a6c1e19048d826d7f766b879de540e9a7f878ab13"
+  },
+  "runtime": {
+    "ollama_version": "0.31.1",
+    "base_url": "http://127.0.0.1:11434/v1",
+    "no_cloud": true,
+    "context_length": 4096,
+    "num_parallel": 1,
+    "max_loaded_models": 1,
+    "compute": "Metal",
+    "hardware": "Apple M3"
+  },
+  "generation": {
+    "seed": 101,
+    "temperature": 0.0,
+    "cache": false,
+    "max_retries": 0,
+    "max_connections": 1,
+    "reasoning_effort": "none"
+  },
+  "artifacts": {
+    "diagnostic": {
+      "path": "eval/openmemory/decision_diagnostic.v2.json",
+      "raw_sha256": "18d69eec94c35c2b750d2ad75f03db8056881405aaeb7a2838fb36d26593de20",
+      "canonical_sha256": "7ce91e19d9ca13e6244ea5917c7a3a4a8e499af458b534f90127abedd2bcea61"
+    },
+    "execution_protocol": {
+      "path": "eval/OPENMEMORY_EXECUTION_V2.md",
+      "sha256": "fc53666b81aadfd10c0f0b9335e2f87165d3aa1fb41723e046b2e1e526a75175"
+    },
+    "task_source": {
+      "path": "eval/anamnesis_openmemory_eval_v2.py",
+      "sha256": "0acdb371b107994b5e0007ab018b0d85a7de8d205215062fc09df79495c1f5d1"
+    },
+    "runtime_source": {
+      "path": "src/anamnesis/local_runtime.py",
+      "sha256": "cecaf3b7f62b102c047bcdd08d6a247b72e511cfd2c111677b2737567ad90978"
+    },
+    "diagnostic_source": {
+      "path": "src/anamnesis/openmemory_diagnostic.py",
+      "sha256": "0ff38958256e82861ba7216498d7162eb359b5efc5ff6bbcd317e5737233805e"
+    },
+    "dependency_lock": {
+      "path": "uv.lock",
+      "sha256": "f7207290df1b0da3519ea50f04cb88a15f1cf9bf950b0d1e990424113f9b5376"
+    },
+    "research_contract": {
+      "path": "RESEARCH.md",
+      "sha256": "42356cb5b1781f9702e0f5ff7634d288a960f9706c4d9186fc726988bb32c6af"
+    },
+    "architecture_contract": {
+      "path": "ARCHITECTURE.md",
+      "sha256": "85b3b9704556a7f0459c19e8b70f50302d60c43b11b0980687d471447b4d4797"
+    },
+    "pricing": {
+      "path": "eval/local_model_costs_w3_m2.json",
+      "sha256": "74f7321226f6fc71d9c8c88551653d8507d1a22a22ea4127226c91a5ce06267c"
+    },
+    "raw_eval_log": {
+      "local_path": "results/runs/local/openmemory_diagnostic_v2/2026-08-09T13-24-46-00-00_local-openmemory-decision-diagnostic-v2_DgpBccMezJMCsd3eJk2hjA.eval",
+      "sha256": "d10aae5a867e296f387cefa1e0e2012f30df0d089896184fa9c4f2e79cd6f5f1",
+      "published": false,
+      "reason": "contains full prompts and local absolute filesystem metadata"
+    },
+    "report": {
+      "path": "results/local_openmemory_diagnostic_v2.md",
+      "sha256": "dcac2e7ef711ac47a5ecba37a3a4317659d80feecb5c1572f285590f103a151b"
+    }
+  },
+  "observed": {
+    "inspect_status": "success",
+    "sample_score": "fail",
+    "sample_count": 1,
+    "model_event_count": 16,
+    "completed_model_call_count": 16,
+    "all_stop_reason": "stop",
+    "all_parse_valid": true,
+    "all_raw_requests_exact_transport": true,
+    "all_usage_complete": true,
+    "provider_api_cost_usd": 0.0,
+    "input_tokens": 11951,
+    "output_tokens": 372,
+    "case_count": 8,
+    "baseline_correct": 4,
+    "recall_correct": 4,
+    "helpful_gain": 0,
+    "safety_regressions": 0,
+    "no_hit_regressions": 0,
+    "recall_false_actions": 0,
+    "recall_evidence_contaminations": 0,
+    "gate_passed": false
+  },
+  "scope": {
+    "openmemory_online_writes": false,
+    "retrieval_snapshot_frozen": true,
+    "retrieval_usage_complete": false,
+    "provider_api_cost_complete": true,
+    "electricity_measured": false,
+    "hardware_cost_measured": false
+  }
+}

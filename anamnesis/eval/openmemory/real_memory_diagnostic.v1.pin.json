@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "purpose": "openmemory_vllm_real_indexed_memory_v1",
+  "hypothesis_test_eligible": false,
+  "fixture_raw_sha256": "1c228dc6466a0442902a53fdc6a9720be85fca984e07d674f8bfa514ea0cd42e",
+  "fixture_canonical_sha256": "49d731b15760d05d0960bbc792cb075d150693e73f5f908757c532c40fc19062",
+  "base_runtime_pin_sha256": "9fed6f50f56f4b926d56b3b169692b6b227dc4594f1c204022b5baf120b9fb31",
+  "base_url": "http://127.0.0.1:18002/v1",
+  "served_model": "anamnesis-openmemory-v6",
+  "server_config_sha256": "1a07138c947c576c5931bc262911aefb2ccf8a191668d440403739cf9a1f3af7",
+  "decision_contract_sha256": "133b34adb292381f72b08e09a783f5b4103613e60c001c66968545da8ddc1999",
+  "response_schema_sha256": "aa1bae78fa12e24d85028e3c0f505ddbe6901ece67baf2a4bc60554dcb259c1b",
+  "embedding_revision": "52398278842ec682c6f32300af41344b1c0b0bb2",
+  "embedding_artifact_sha256": "d435d05b3411502ad9a280cc9ac0157f7bcd9f176df2fdc8971f788a121a02d7",
+  "case_count": 8,
+  "top_k": 1,
+  "expected_model_calls": 16,
+  "seed": 101,
+  "temperature": 0.0,
+  "max_tokens": 256,
+  "retries_repairs_cache": 0,
+  "stopping_rule": "one_paired_baseline_then_recall_run"
+}

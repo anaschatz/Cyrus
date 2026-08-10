@@ -1,0 +1,2 @@
+status,passed,case_count,baseline_correct,recall_correct,helpful_gain,safety_regressions,no_hit_regressions,recall_false_actions,recall_evidence_contaminations,structured_invalid_calls,setup_input_tokens,setup_output_tokens,headline_input_tokens,headline_output_tokens,provider_api_cost_usd
+complete,false,8,4,4,0,0,0,0,0,7,458,19,7430,1943,0.0

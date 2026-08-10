@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "source_log_sha256": "128586c6777c4681a72299098e2b886e26333d5efed6bb6a6441cd2a8f869ca8",
+  "inspect_status": "cancelled",
+  "sample_count": 1,
+  "model": "ollama/qwen3.5:9b-q4_K_M",
+  "events": [
+    {
+      "index": 0,
+      "stop_reason": "max_tokens",
+      "input_tokens": 707,
+      "output_tokens": 3389,
+      "total_tokens": 4096,
+      "completion_bytes": 0,
+      "total_cost_usd": 0.0
+    },
+    {
+      "index": 1,
+      "stop_reason": "stop",
+      "usage_retained": false,
+      "completion_bytes": 0
+    }
+  ]
+}

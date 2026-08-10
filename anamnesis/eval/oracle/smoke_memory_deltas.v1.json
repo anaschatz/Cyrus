@@ -1,0 +1,850 @@
+{
+  "schema_version": 1,
+  "purpose": "oracle_compiler_ceiling",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_test_eligible": false,
+  "annotation_policy": "causal-observable-prefix-v1",
+  "canonical_dataset_sha256": "068903716bbe5774eb320427089cbed5c9f48e1b01ce1152e335a3e444c663ff",
+  "scenarios": [
+    {
+      "scenario_id": "s01_unmet_deadline",
+      "events": [
+        {
+          "event_id": "s01-e01",
+          "observable_event_sha256": "74243ed4f7815503358073810bd95c298bdc8deb35238a0076b139449eee9943",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "statistics_assignment_reminder",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-03-06T17:00:00+02:00"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "statistics_assignment",
+                      "attribute": "sent"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "send statistics assignment"
+                  },
+                  "summary": "Send the statistics assignment"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s01-e02",
+          "observable_event_sha256": "6b214668f0ba72153f7a33479fd31afdbec512d5227f205d8cc048d2c8c25805",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s01-e03",
+          "observable_event_sha256": "688e2f8e0ecf67b316806c16b4e48c6aa92e00d2f122052b6616c7d8115d1913",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s01-e04",
+          "observable_event_sha256": "bfec2e33461e23c4a9aee1249866b132ccf4ca9ce71d5220d5ac155fcd4abc87",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s01-e05",
+          "observable_event_sha256": "5c8d2463f1dfaa0eeee554d426f6804914cd96dd266aac2952c8df945be411d9",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "statistics_assignment",
+                  "attribute": "sent"
+                },
+                "value": false,
+                "unit": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "s02_completion_suppresses_reminder",
+      "events": [
+        {
+          "event_id": "s02-e01",
+          "observable_event_sha256": "291819998cffe55bb7732c531b15b4e66a84852ab5e1bcc8af872772bf5092be",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "travel_expense_report_reminder",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-03-06T09:00:00+02:00"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "travel_expense_report",
+                      "attribute": "submitted"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "submit travel expense report"
+                  },
+                  "summary": "Submit the travel expense report"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s02-e02",
+          "observable_event_sha256": "67a9a3b9fbd80631efbc1cdffc81757b9c8f9f378a90f871e6d210b8f2e4f469",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s02-e03",
+          "observable_event_sha256": "a6d866717bfe23facfe7329c5da28bc5b70752a4fc3cc9a70be614f5104cf86d",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "travel_expense_report",
+                  "attribute": "submitted"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s02-e04",
+          "observable_event_sha256": "42f0a769b22bd9c998a26a3c3c59f8297c6e8e7c79477d6d88286b6514057f39",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "s03_deadline_rescheduled",
+      "events": [
+        {
+          "event_id": "s03-e01",
+          "observable_event_sha256": "786015c7d0043bcb24fb50ec5940fcc167c6e93b9497bbf69beeb9912ee87fa8",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "conference_abstract_reminder",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-03-06T10:00:00+02:00"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "conference_abstract",
+                      "attribute": "submitted"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "submit conference abstract"
+                  },
+                  "summary": "Submit the conference abstract"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s03-e02",
+          "observable_event_sha256": "0f0acf98a5a630a7de80404fa5f5c525b08e2b21ed4a257dc464407b0383a0ae",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "conference_abstract",
+                  "attribute": "submitted"
+                },
+                "value": false,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s03-e03",
+          "observable_event_sha256": "75f301a1ad4b7b664acda36ff6bfd986e4b53afe4fd05a7be701df2269a29223",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "conference_abstract_reminder",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-03-08T18:00:00+02:00"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s03-e05",
+          "observable_event_sha256": "ea7e03516f06181cf2dcede422235e88ea84bef3d208e96b20fa7bd78c5bdf5e",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "s04_updated_action_parameter",
+      "events": [
+        {
+          "event_id": "s04-e01",
+          "observable_event_sha256": "7e1668487a91de40273f2436822e74c2350aec205ebf08f46bc917ebebac9024",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "visa_passport_reminder",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-03-07T10:00:00+02:00"
+                },
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "take passport",
+                    "address": "12 King Street"
+                  },
+                  "summary": "Take passport to the visa appointment"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s04-e02",
+          "observable_event_sha256": "2c6c9451cd4e10a5c6fd6422277d7b91bd3f18dadd9b05f366bc4f6b6606985f",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s04-e03",
+          "observable_event_sha256": "65ab95f74163d11aa00f3cd38fb53d8ec4ed16093ba00410a259982c64cffde2",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "visa_passport_reminder",
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "take passport",
+                    "address": "44 Queen Street"
+                  },
+                  "summary": "Take passport to the visa appointment"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s04-e04",
+          "observable_event_sha256": "9cb3ff792d5b9114ab057d11987d15aedc05faeab78ddca08947599d012a8c15",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "s05_recurring_conditional",
+      "events": [
+        {
+          "event_id": "s05-e01",
+          "observable_event_sha256": "629f0ac56adff7d63361f102c6b6b02b53e5f21996cd7575de8cce482ceadf7a",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "weekday_lab_notes_reminder",
+                "trigger": {
+                  "type": "recurring",
+                  "local_time": "18:00:00",
+                  "weekdays": [
+                    "monday",
+                    "tuesday",
+                    "wednesday",
+                    "thursday",
+                    "friday"
+                  ],
+                  "start_date": "2026-03-02",
+                  "end_date": "2026-03-06",
+                  "timezone": "Europe/Athens"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "lab_notes.{date}",
+                      "attribute": "uploaded"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "upload lab notes",
+                    "date": "{date}"
+                  },
+                  "summary": "Upload lab notes for {date}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s05-e02",
+          "observable_event_sha256": "6c88df3c21e3d84bd784dc29298657feaa0c9e41f1754408d885d2b291372d03",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "lab_notes.2026-03-02",
+                  "attribute": "uploaded"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s05-e04",
+          "observable_event_sha256": "5ef11fc2bfaeaf9ed59a28b7a5fa078705e1524a2da5059a8b4473a00be83e3e",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s05-e06",
+          "observable_event_sha256": "e55224d2f9189d9229183a9927938e8eeb870fc31d82fa9881e3a45beb18bd4d",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "lab_notes.2026-03-03",
+                  "attribute": "uploaded"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s05-e07",
+          "observable_event_sha256": "64fe820f586f3a9c99c6e1eeb976e0ec82734fc5d9c12b4da6437f2a4ac51548",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "lab_notes.2026-03-04",
+                  "attribute": "uploaded"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s05-e09",
+          "observable_event_sha256": "5b225b055d20ecd18394f1d180fd4c8de82bf2c3d41f53589fa98db6749b5d52",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "lab_notes.2026-03-05",
+                  "attribute": "uploaded"
+                },
+                "value": false,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s05-e11",
+          "observable_event_sha256": "51294e7cfdd5c86fb9954cce820bcd48b07c2784f1a2486ca92b9f6bf63978bd",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "lab_notes.2026-03-06",
+                  "attribute": "uploaded"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "s06_conjunctive_trigger",
+      "events": [
+        {
+          "event_id": "s06-e01",
+          "observable_event_sha256": "d0dadf55dba5e33e8e0716304cdabe9979a1995a0d0f9babdad52cb1e19db193",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "build_2_4_release_reminder",
+                "trigger": {
+                  "type": "condition_transition",
+                  "active_from": "2026-03-02T10:30:00+02:00",
+                  "active_until": "2026-03-09T10:30:00+02:00"
+                },
+                "required_conditions": [
+                  {
+                    "key": {
+                      "entity": "build_2_4",
+                      "attribute": "ci_status"
+                    },
+                    "operator": "eq",
+                    "value": "passed",
+                    "unit": null
+                  },
+                  {
+                    "key": {
+                      "entity": "issue_418",
+                      "attribute": "status"
+                    },
+                    "operator": "eq",
+                    "value": "closed",
+                    "unit": null
+                  }
+                ],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "tag release",
+                    "build": "2.4"
+                  },
+                  "summary": "Tag release for build 2.4"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s06-e02",
+          "observable_event_sha256": "6ea13062ff81b8f24de1f964329f1cffbf818f934e29ed74252c4add8fe41413",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s06-e03",
+          "observable_event_sha256": "95d89759b7d9f38783a28cc86467d2659f93465002b26931ee15549f94bb82c6",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "issue_418",
+                  "attribute": "status"
+                },
+                "value": "closed",
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s06-e04",
+          "observable_event_sha256": "3d33b00d47c35180414324bc13b00d13f89be282a01202b8b9b111d646670020",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "build_2_4",
+                  "attribute": "ci_status"
+                },
+                "value": "failed",
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s06-e05",
+          "observable_event_sha256": "96a8c682123ad30678ea13c15f454bdbd1eb4fb1e9310fa8b3bc09ba6eb2973c",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s06-e06",
+          "observable_event_sha256": "6b8a87f3ed1ebb9acb523daa89a8b6f857150c92f8f79bb35b9855b8933d7f27",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "build_2_4",
+                  "attribute": "ci_status"
+                },
+                "value": "passed",
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s06-e07",
+          "observable_event_sha256": "68d46959f933daa84e2e82f9562eeef24edc64cd3b41977c93485d9d9225bb6e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "build_2_4",
+                  "attribute": "ci_status"
+                },
+                "value": "passed",
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s06-e08",
+          "observable_event_sha256": "807320b273d1f8109dc14be4d5a3bd4e702a3baa81def54aad22f923e98b2cde",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "s07_negative_brainstorming",
+      "events": [
+        {
+          "event_id": "s07-e01",
+          "observable_event_sha256": "8cd65c833dc53fea4af21f5a21284bc7cd79dca787d5cb047881322716273fcb",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s07-e02",
+          "observable_event_sha256": "40d253a835d40c7b4577772ce5464f1dfae0f4f6bda705ae2b742e683aa3d76f",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s07-e03",
+          "observable_event_sha256": "08007b08d11f667fa36c74b60d7ac9ccfc6c89b7cd2299c73d027d8b90352923",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s07-e04",
+          "observable_event_sha256": "2198be2f2ff44babbc225b77f2c424e5d9d152611e2ed14bbbec18b33be9eebc",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s07-e05",
+          "observable_event_sha256": "168189fa243bf9b023f2cd8147b5c045ee1859668f6747aa660d7ffc908ba5e9",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "s08_threshold_trigger",
+      "events": [
+        {
+          "event_id": "s08-e01",
+          "observable_event_sha256": "1853a5dae21770697451d118d99ad9fd2566eb283cbd9b2da331f0f22374d382",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "aegean_482_delay_reminder",
+                "trigger": {
+                  "type": "condition_transition",
+                  "active_from": "2026-03-06T00:00:00+02:00",
+                  "active_until": "2026-03-06T23:59:59+02:00"
+                },
+                "required_conditions": [
+                  {
+                    "key": {
+                      "entity": "aegean_482",
+                      "attribute": "arrival_delay_minutes"
+                    },
+                    "operator": "gte",
+                    "value": 30,
+                    "unit": "minutes"
+                  }
+                ],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "notify hotel",
+                    "flight": "Aegean 482"
+                  },
+                  "summary": "Notify the hotel about Aegean 482"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s08-e02",
+          "observable_event_sha256": "bec2d6a10a98340fc678005fac712e514f3816344e73a05256ef2c6eb287cb2a",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s08-e03",
+          "observable_event_sha256": "6f1d7d82e004bd574b8c8cbc38d0ba473d24f685e453cba091a851c136ce002e",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s08-e04",
+          "observable_event_sha256": "b161f9d6c0b37864f6eda963e39069ada8d90bfcc20a7842c57636e5aadfdd55",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "aegean_482",
+                  "attribute": "arrival_delay_minutes"
+                },
+                "value": 20,
+                "unit": "minutes"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s08-e05",
+          "observable_event_sha256": "c5c18f15bcfbade2a5758f37e3cf6d113746e48fa87bf914f1c9f24aeeb7227a",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "aegean_482",
+                  "attribute": "arrival_delay_minutes"
+                },
+                "value": 35,
+                "unit": "minutes"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s08-e06",
+          "observable_event_sha256": "1c7c3b4d4783c6dc088864186096989099b3c43478ebe8a1b8606c532668c543",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "aegean_482",
+                  "attribute": "arrival_delay_minutes"
+                },
+                "value": 50,
+                "unit": "minutes"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s08-e07",
+          "observable_event_sha256": "138515a8c17c56c674f1e221f08e0d1962893547878ef6f928619da4dd17afbd",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "s09_explicit_cancellation",
+      "events": [
+        {
+          "event_id": "s09-e01",
+          "observable_event_sha256": "85bbb675b2aa43d2cba93fec670b45365e1a0e6919c38cd73cdd2975dd23c0c4",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "example_org_renewal_reminder",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-03-05T09:00:00+02:00"
+                },
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "renew example.org"
+                  },
+                  "summary": "Renew example.org"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s09-e02",
+          "observable_event_sha256": "e8a18b109eb65c0b8920eddf7c6d4bae9c085dd2cb457768b0805557dc5aae37",
+          "delta": {
+            "mutations": [
+              {
+                "op": "cancel_intent",
+                "intent_id": "example_org_renewal_reminder"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s09-e03",
+          "observable_event_sha256": "b68f4e170e8d6f92ec3014abd7f9667d98654861ff961a96acf664b283ec1315",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s09-e06",
+          "observable_event_sha256": "224428e2f34a4c4f83e5449017e2a239d0087b227aa95966489709ccb050bd60",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "s10_similar_entities",
+      "events": [
+        {
+          "event_id": "s10-e01",
+          "observable_event_sha256": "c7096e679a118dcaddb9229571e9b40f131932b9b3007737b7dd8b84424fc7c4",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "atlas_budget_reminder",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-03-06T16:00:00+02:00"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "atlas_budget",
+                      "attribute": "submitted"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "submit budget",
+                    "project": "Atlas"
+                  },
+                  "summary": "Submit the Atlas budget"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s10-e02",
+          "observable_event_sha256": "790ffa2cab984715f866671ffe40366c1847a785d2894b4cca62f8f6527c3a7c",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "s10-e03",
+          "observable_event_sha256": "44cea0ad147f8c77e5fa2767321785f9326e7262c25e51334b49cdbf7d812e18",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "apollo_budget",
+                  "attribute": "submitted"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s10-e04",
+          "observable_event_sha256": "8f2f84ad7c085588282071587dcb196fc6dfe6874c68326ff02c60b5d0435ccc",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "atlas_budget",
+                  "attribute": "submitted"
+                },
+                "value": false,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "s10-e08",
+          "observable_event_sha256": "55292fb87b9144e80fe33c6cc39e42a6e6b34109bcf9dc016383867dbc850ee7",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "atlas_budget",
+                  "attribute": "submitted"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

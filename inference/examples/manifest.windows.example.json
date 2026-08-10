@@ -1,0 +1,50 @@
+{
+  "manifest_schema_version": 1,
+  "alias": "jarvis-local",
+  "platform": "windows-x86_64",
+  "backend": {
+    "type": "llama-server",
+    "llama_cpp_commit": "REPLACE_WITH_EXACT_40_LOWERCASE_HEX_COMMIT",
+    "build_id": "REPLACE_WITH_EXACT_BUILD_IDENTIFIER",
+    "executable": {
+      "path": "runtime/llama-server.exe",
+      "size_bytes": -1,
+      "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+    },
+    "dlls": [
+      {
+        "path": "runtime/REPLACE_WITH_BUNDLED_LIBRARY.dll",
+        "size_bytes": -1,
+        "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+      }
+    ],
+    "parameters": {
+      "context_window": 32768,
+      "gpu_layers": 0,
+      "batch_size": 2048,
+      "ubatch_size": 512,
+      "threads": 8,
+      "flash_attention": true
+    }
+  },
+  "model": {
+    "format": "gguf",
+    "context_window": 32768,
+    "artifacts": [
+      {
+        "path": "models/REPLACE_WITH_MODEL.gguf",
+        "size_bytes": -1,
+        "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+      }
+    ]
+  },
+  "python": {},
+  "capabilities": {
+    "text": true,
+    "stream": true,
+    "tools": false,
+    "json_object": false,
+    "json_schema": false
+  },
+  "qualification_report": "qualification-report.json"
+}

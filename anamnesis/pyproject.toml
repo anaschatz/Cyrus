@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "anamnesis-memory-eval"
+version = "0.1.0"
+description = "A reproducible evaluation harness for temporal and prospective agent memory."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "fastembed>=0.7,<0.8",
+  "inspect-ai>=0.3.150,<0.4",
+  "numpy>=2.0,<3",
+  "openai>=2.45,<3",
+  "pydantic>=2.10,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hatchling==1.27.0",
+  "pytest>=8.3,<9",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+anamnesis-validate = "anamnesis.cli:validate_main"
+anamnesis-report = "anamnesis.cli:report_main"
+anamnesis-local-report = "anamnesis.local_report:local_report_main"
+anamnesis-oracle-report = "anamnesis.oracle_report:oracle_report_main"
+anamnesis-writer-report = "anamnesis.writer_report:writer_report_main"
+anamnesis-manifest = "anamnesis.manifest_cli:manifest_main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anamnesis"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

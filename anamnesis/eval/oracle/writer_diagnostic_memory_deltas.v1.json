@@ -1,0 +1,835 @@
+{
+  "schema_version": 1,
+  "purpose": "oracle_compiler_ceiling",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_test_eligible": false,
+  "annotation_policy": "causal-observable-prefix-v1",
+  "canonical_dataset_sha256": "d1919f4c1b61d3e4d8ae7a0e35c690e89fc7fda3ceadeb4870dbb7f9e0212a70",
+  "scenarios": [
+    {
+      "scenario_id": "wd01_unmet_inventory_cutoff",
+      "events": [
+        {
+          "event_id": "wd01-e01",
+          "observable_event_sha256": "c45fa7a432a866aded5a1bac0b5378dda976cd6d5a36049dcec861a21b4e9997",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "museum_inventory_email",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-09-16T14:15:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "museum_inventory_sheet",
+                      "attribute": "emailed"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "email museum inventory sheet"
+                  },
+                  "summary": "Email the museum inventory sheet"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd01-e02",
+          "observable_event_sha256": "574e3b8f566f4179d1a16cc904dfc4ad99f6416808cd1aba362a526ae0c08fd6",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd01-e03",
+          "observable_event_sha256": "215eed4045d2728ea71f2c759c2243cc8be3a5f9ecdb2724fa9e63bec22178ba",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "museum_inventory_sheet",
+                  "attribute": "emailed"
+                },
+                "value": false,
+                "unit": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd02_reversed_kiln_completion",
+      "events": [
+        {
+          "event_id": "wd02-e01",
+          "observable_event_sha256": "c184ca6ac83c10d0565466a3521ea8de0cbab3f1c3437ef9626b15474713b5eb",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "ceramics_kiln_booking",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-09-19T11:00:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "ceramics_kiln",
+                      "attribute": "booked"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "book ceramics kiln"
+                  },
+                  "summary": "Book the ceramics kiln"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd02-e02",
+          "observable_event_sha256": "e1501a44dc32f94229569f55df173763f4046cde2f68aaafc092b9a44fe90232",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "ceramics_kiln",
+                  "attribute": "booked"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd02-e03",
+          "observable_event_sha256": "f16a5e8d7811210c597a5481ed6524001b3fd0e181d8b6200896f6800e395899",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "ceramics_kiln",
+                  "attribute": "booked"
+                },
+                "value": false,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd02-e04",
+          "observable_event_sha256": "ebbc45251d90d647038328e5fb6f6731fd663443f23508f7db652fdbc198a6f8",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd03_twice_rescheduled_labels",
+      "events": [
+        {
+          "event_id": "wd03-e01",
+          "observable_event_sha256": "5a2e5e0c01c9f8b6d8f3b7d96dcf758b2336047f5a0e9903d593bc064d58cff0",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "parcel_label_printing",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-09-17T08:30:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "parcel_labels",
+                      "attribute": "printed"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "print parcel labels"
+                  },
+                  "summary": "Print the parcel labels"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd03-e02",
+          "observable_event_sha256": "b7526343d3aac70d615107f0d1b4353feceef0c70a3db9c92782beb2d5316d12",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "parcel_label_printing",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-09-18T16:20:00+03:00"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd03-e03",
+          "observable_event_sha256": "972cf396cc18bc22fd5d6f0b54f6cb3460821fac66f8725a03408d23b6f5032e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "parcel_label_printing",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-09-20T09:10:00+03:00"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd04_revised_key_delivery",
+      "events": [
+        {
+          "event_id": "wd04-e01",
+          "observable_event_sha256": "6d6daa1d5fd0544691f7e3606bdaa127146db94cc3610ffbe54148c933243574",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "rehearsal_key_delivery",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-09-18T15:40:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "deliver rehearsal keys",
+                    "recipient": "Dana",
+                    "room": "Studio Cedar"
+                  },
+                  "summary": "Deliver the rehearsal keys to Dana in Studio Cedar"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd04-e02",
+          "observable_event_sha256": "bded454e1ed65e144c9e3670894800ba1a9139138209d77886aae17d50fbaff3",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd04-e03",
+          "observable_event_sha256": "333cf1344b3578d94b9c29bcfb54b713630ec68df4261e186c0f647dc54a0eb7",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "rehearsal_key_delivery",
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "deliver rehearsal keys",
+                    "recipient": "Noor",
+                    "room": "Studio Cedar"
+                  },
+                  "summary": "Deliver the rehearsal keys to Noor in Studio Cedar"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd04-e04",
+          "observable_event_sha256": "f4711d51e33d0921d90486c36525661e45aba321d777b81d7b8e6f47146a115b",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "rehearsal_key_delivery",
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "deliver rehearsal keys",
+                    "recipient": "Noor",
+                    "room": "Studio Birch"
+                  },
+                  "summary": "Deliver the rehearsal keys to Noor in Studio Birch"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd04-e07",
+          "observable_event_sha256": "2fad40e8a3e478c45667e1fc897787ded0a3e4e00ed248c55df116b6b6e72e3f",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd05_recurring_filter_checks",
+      "events": [
+        {
+          "event_id": "wd05-e01",
+          "observable_event_sha256": "805a1e2bc67763404fba2b9f51182d3f4eefa7a8652e2e9a3ad2155845043730",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "aquarium_filter_inspection",
+                "trigger": {
+                  "type": "recurring",
+                  "local_time": "19:10:00",
+                  "weekdays": ["monday", "wednesday", "friday"],
+                  "start_date": "2026-09-14",
+                  "end_date": "2026-09-18",
+                  "timezone": "Europe/Athens"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "aquarium_filter.{date}",
+                      "attribute": "inspected"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "inspect aquarium filter",
+                    "date": "{date}"
+                  },
+                  "summary": "Inspect the aquarium filter for {date}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd05-e02",
+          "observable_event_sha256": "f69afb028d979a76ed8bf8d929dd17b373b455aaeecbcd4e050609021bbb98d9",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "aquarium_filter.2026-09-14",
+                  "attribute": "inspected"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd05-e04",
+          "observable_event_sha256": "883d105ad6998a7e64ca4a8021099c6bb0bac6564c7701d079793ae823ecf4eb",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd05-e06",
+          "observable_event_sha256": "60ae84235e5692d31e4971c73623f1385a22bfd51a3098cd564893e3c9ce1f6c",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd05-e07",
+          "observable_event_sha256": "3d702f8fe212d078bf23bf9950e1752f821dd9cb29a4d1969554a149eee753ad",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "aquarium_filter.2026-09-18",
+                  "attribute": "inspected"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd06_conjunctive_cold_room",
+      "events": [
+        {
+          "event_id": "wd06-e01",
+          "observable_event_sha256": "3ba9a651db31c34c69a6880011260424087da69be70042e6c4908ee49b62d71e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "cold_room_sample_transfer",
+                "trigger": {
+                  "type": "condition_transition",
+                  "active_from": "2026-09-14T08:40:00+03:00",
+                  "active_until": "2026-09-20T21:00:00+03:00"
+                },
+                "required_conditions": [
+                  {
+                    "key": {
+                      "entity": "sensor_cr7",
+                      "attribute": "temperature_c"
+                    },
+                    "operator": "lte",
+                    "value": 4,
+                    "unit": "celsius"
+                  },
+                  {
+                    "key": {
+                      "entity": "seal_check_sc9",
+                      "attribute": "passed"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "start sample transfer",
+                    "room": "CR-7"
+                  },
+                  "summary": "Start the sample transfer from CR-7"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd06-e02",
+          "observable_event_sha256": "8f5dcd9ad373d7e01547e967133f9810b6630976a8af784fcb6e0dbec6e29269",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "seal_check_sc8",
+                  "attribute": "passed"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd06-e03",
+          "observable_event_sha256": "75aef0eb3508dfef5b508b61f1da772a1352f3947a559f8e43234f0e86a4af74",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "sensor_cr7",
+                  "attribute": "temperature_c"
+                },
+                "value": 6,
+                "unit": "celsius"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd06-e04",
+          "observable_event_sha256": "472bb33fa8721525436523b771f9b1f17b3fd5164ac7eda132f99b296001dbe3",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "seal_check_sc9",
+                  "attribute": "passed"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd06-e05",
+          "observable_event_sha256": "cde280abfd70fd6ec7446ae34480be640fa1e11c10faa9820919d939f86eaa8f",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "sensor_cr8",
+                  "attribute": "temperature_c"
+                },
+                "value": 3,
+                "unit": "celsius"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd06-e06",
+          "observable_event_sha256": "8606d1edb10bc0c65c68043cff522f3ac790e449b4bac955a782e6398b9dd7e3",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "sensor_cr7",
+                  "attribute": "temperature_c"
+                },
+                "value": 3,
+                "unit": "celsius"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd06-e07",
+          "observable_event_sha256": "01a70b8f187c13f2239590ccfa91aa3cbcabf14c53c97f7b200fc7364346a175",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "sensor_cr7",
+                  "attribute": "temperature_c"
+                },
+                "value": 2,
+                "unit": "celsius"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd07_quoted_badge_example",
+      "events": [
+        {
+          "event_id": "wd07-e01",
+          "observable_event_sha256": "12c35b607a11a09e8b2235b0b0a8482db2613c7d455864cecddcb742b412e991",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd07-e02",
+          "observable_event_sha256": "762cc1094cea7171ed2ceb3f36909da6bf1b682dd1bcfee2b38ddfdca6c52094",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd07-e03",
+          "observable_event_sha256": "6c41fd83d534ecb1b3ab612910ffb122e76af23d65b7068ef67a6559c1bf8be0",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd08_tank_fill_threshold",
+      "events": [
+        {
+          "event_id": "wd08-e01",
+          "observable_event_sha256": "ae0270c91070c89982cccfe1837283f5c416161b02ed8f8c2e6a9fe1effdbacf",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "tank_n17_overflow_check",
+                "trigger": {
+                  "type": "condition_transition",
+                  "active_from": "2026-09-14T13:15:00+03:00",
+                  "active_until": "2026-09-20T21:00:00+03:00"
+                },
+                "required_conditions": [
+                  {
+                    "key": {
+                      "entity": "storage_tank_n17",
+                      "attribute": "fill_percent"
+                    },
+                    "operator": "gte",
+                    "value": 82,
+                    "unit": "percent"
+                  }
+                ],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "inspect overflow valve",
+                    "tank": "N-17"
+                  },
+                  "summary": "Inspect the overflow valve on tank N-17"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd08-e02",
+          "observable_event_sha256": "62d96f4eaaf459cc6344409eef0ac1a23bfd3794ad5e94365b9d50719bbbafa6",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "storage_tank_n71",
+                  "attribute": "fill_percent"
+                },
+                "value": 91,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd08-e03",
+          "observable_event_sha256": "800c840dfcdc8714a90d8e96b2e6429712fffccda5aad9c6dc3c235a27048228",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "storage_tank_n17",
+                  "attribute": "fill_percent"
+                },
+                "value": 76,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd08-e04",
+          "observable_event_sha256": "fb2a31bd8ae331b813ce5b682603ba853ccfe02f9b8f72c4e2738168e6afa68e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "storage_tank_n17",
+                  "attribute": "fill_percent"
+                },
+                "value": 84,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd08-e05",
+          "observable_event_sha256": "1650c0750931afae5b1c266e731472641e476fe9791e7a8bfec723e4143bf07e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "storage_tank_n17",
+                  "attribute": "fill_percent"
+                },
+                "value": 88,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd08-e06",
+          "observable_event_sha256": "74f008a6269509841d4c6d2ab284766511ccf746bd40519bbae43f9e2dbc5ec0",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd09_cancelled_archive_pickup",
+      "events": [
+        {
+          "event_id": "wd09-e01",
+          "observable_event_sha256": "43b44b95d3e686f32d9bba0b8f7f031bb96b5934610231d4f8110055094df2ed",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "archive_box_k12_pickup",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-09-19T13:25:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "collect blue archive box",
+                    "item": "blue archive box",
+                    "room": "Locker K-12"
+                  },
+                  "summary": "Collect the blue archive box from Locker K-12"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd09-e02",
+          "observable_event_sha256": "af4cf2d93c9e29c102450456340f36c006cd4fe46fc5111ccae751d6b72c908b",
+          "delta": {
+            "mutations": [
+              {
+                "op": "cancel_intent",
+                "intent_id": "archive_box_k12_pickup"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd09-e03",
+          "observable_event_sha256": "17fc8489420ce13871e332e6f909ed3274d663eeb9be5b4b57e7673f80b4ecd2",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd09-e06",
+          "observable_event_sha256": "6e625b83e2da4b87f343d6ccdfd5aa7197cb57568887ceaecc9f6701874adaf3",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd10_east_orchard_only",
+      "events": [
+        {
+          "event_id": "wd10-e01",
+          "observable_event_sha256": "5e1707fbb02d455757a1af4c3c70521470cb5b652352e3eccd7dc12861407c90",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "orchard_east_irrigation_report",
+                "trigger": {
+                  "type": "at",
+                  "at": "2026-09-17T17:35:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "orchard_east_irrigation_report",
+                      "attribute": "filed"
+                    },
+                    "operator": "eq",
+                    "value": true,
+                    "unit": null
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "file irrigation report",
+                    "project": "Orchard East"
+                  },
+                  "summary": "File the Orchard East irrigation report"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd10-e02",
+          "observable_event_sha256": "62f9524eccbf6c31e5047a954dcf680f3141f3165d9b6cb67580f28caca4a017",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd10-e03",
+          "observable_event_sha256": "58df9dfc7d40b66fe46544fdd0e364f1436164a3c75fe9ec08a45864fedd351e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "orchard_west_irrigation_report",
+                  "attribute": "filed"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd10-e04",
+          "observable_event_sha256": "9fa96413fb64ced4640de9df74c2536a42533f8de4a07f4689924af0082e1327",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "orchard_east_irrigation_report",
+                  "attribute": "filed"
+                },
+                "value": false,
+                "unit": null
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd10-e08",
+          "observable_event_sha256": "dfb608200c7bcbfd29fad74294577cec9a33094c25b87f0ba76b4d38dcde72f7",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "orchard_east_irrigation_report",
+                  "attribute": "filed"
+                },
+                "value": true,
+                "unit": null
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

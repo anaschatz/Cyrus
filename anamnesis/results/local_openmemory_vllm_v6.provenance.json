@@ -1,0 +1,30 @@
+{
+  "hypothesis_test_eligible": false,
+  "inputs": {
+    "fixture": {
+      "path": "eval/openmemory/real_memory_diagnostic.v1.json",
+      "sha256": "1c228dc6466a0442902a53fdc6a9720be85fca984e07d674f8bfa514ea0cd42e"
+    },
+    "pin": {
+      "path": "eval/openmemory/real_memory_diagnostic.v1.pin.json",
+      "sha256": "7d30b31f3f77481db11e1da50f8f3a8e1dbf9772219ddaa19eb011bf2052eb6a"
+    },
+    "run": {
+      "path": "results/runs/local/openmemory_vllm_v6/run.json",
+      "sha256": "71ec2ef0d3d01dfa75d251a8539f34d02f6029111f2d22abc2eaa51080b8bb26"
+    }
+  },
+  "outputs": {
+    "csv": {
+      "path": "results/local_openmemory_vllm_v6.csv",
+      "sha256": "d030a2154fd2bddb362e3581bc52a44c48553a165645c39c13e0c23480a8cfb3"
+    },
+    "markdown": {
+      "path": "results/local_openmemory_vllm_v6.md",
+      "sha256": "d9b48095bcf5bc3ab9a4743ded96ef1efe61d05372184c7a7a73aa5bb9e856e5"
+    }
+  },
+  "schema_version": 1,
+  "source_commit": "2fd98cc2acba5b2160c440a26ef0a9bf76cf5202",
+  "title": "OpenMemory-compatible real indexed-memory diagnostic \u2014 not a hypothesis test"
+}

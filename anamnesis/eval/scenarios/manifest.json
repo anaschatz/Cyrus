@@ -1,0 +1,14 @@
+{
+  "dataset": "anamnesis-smoke-v0",
+  "schema_version": 1,
+  "status": "development-smoke-only",
+  "created_at": "2026-08-07",
+  "source": "locally-authored",
+  "review_status": "automated-integrity-passed; independent-review-pending",
+  "scenario_count": 10,
+  "event_count": 78,
+  "expected_action_count": 8,
+  "forbidden_action_count": 19,
+  "canonical_dataset_sha256": "068903716bbe5774eb320427089cbed5c9f48e1b01ce1152e335a3e444c663ff",
+  "hypothesis_evidence": false
+}

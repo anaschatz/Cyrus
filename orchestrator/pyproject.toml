@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-orchestrator"
+version = "1.0.0"
+description = "Durable local-first JARVIS orchestration core"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "pydantic-ai-slim[openai]==2.27.0",
+  "websockets>=15,<16",
+]
+
+[project.scripts]
+jarvis-orchestrator = "jarvis_orchestrator.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

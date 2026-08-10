@@ -1,0 +1,20 @@
+.venv/
+.env
+.env.*
+!.env.example
+.DS_Store
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+logs/
+results/runs/
+
+# Frozen run manifests contain the clean source commit they execute. Keeping
+# these local artifacts out of that same commit avoids a self-referential Git
+# hash; archive and publish their exact frozen bytes with the .eval logs instead.
+eval/experiment.baseline.json
+eval/experiment.final.json

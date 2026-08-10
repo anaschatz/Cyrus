@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "artifact": "anamnesis_local_w1_preflight_failure_provenance",
+  "title": "Local W1 writer preflight failure — no scenario run",
+  "hypothesis_test_eligible": false,
+  "candidate_status": "rejected_at_preflight",
+  "source_git_commit": "8d99f68ea185614f2f5da1b16a011be91961a5c7",
+  "source_commits": {
+    "blind_dataset_freeze": "df2d5579528efe4f328550170f4edc1034e334da",
+    "blind_w1_prompt_freeze": "65ab0657a90d958229ecda0a89932aef24f82fb8",
+    "strict_writer_runtime": "8d99f68ea185614f2f5da1b16a011be91961a5c7"
+  },
+  "model": {
+    "name": "ollama/qwen3:4b-instruct",
+    "digest": "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0",
+    "pin_path": "eval/ollama_qwen3_4b_instruct.pin.json",
+    "pin_sha256": "dcf839abc1800ce80646f05b983a7feab825a5f0d1e7d75823f76b95e2f69e11",
+    "provider_api_cost_usd": 0.0
+  },
+  "contracts": {
+    "compiler_prompt_sha256": "4a1f6ece3a1a72e98b54f91433039b6d41ff78e766969852a5498916909d1f60",
+    "compiler_schema_sha256": "8871ff344eb3a2e88a53b964ef2f24f089a72507c69073ec323cf26a428c3030",
+    "decision_prompt_sha256": "871fe15e3160e66abe7480cbde15dfb943dec2d0ff89bb01a03849ad35defd8d",
+    "decision_schema_sha256": "1b7c38d3f4bf150523ecc1e468ad3fb1f94753611f190d70f93abbf5ec582426"
+  },
+  "execution": {
+    "seed": 101,
+    "temperature": 0,
+    "ollama_version": "0.31.1",
+    "context_length": 4096,
+    "quantization": "Q4_K_M",
+    "route": "http://127.0.0.1:11434"
+  },
+  "preflight": {
+    "path": "results/runs/local/writer_diagnostic/preflight/2026-08-07T22-18-25-00-00_local-model-preflight_HXz7rGqJHvw53spggddpjS.eval",
+    "sha256": "1626afdc93170383390bb4627e61ffa4ced2ea5e8df065c674cd4364781623ce",
+    "inspect_status": "success",
+    "semantic_passed": false,
+    "compiler_parse_error": true,
+    "compiler_semantic_valid": false,
+    "decision_parse_error": false,
+    "decision_semantic_valid": true,
+    "compiler_input_tokens": 981,
+    "compiler_output_tokens": 216,
+    "compiler_latency_ms": 11632.14,
+    "decision_input_tokens": 679,
+    "decision_output_tokens": 12,
+    "decision_latency_ms": 2623.882,
+    "residency_probe_latency_ms": 3.239
+  },
+  "pricing": {
+    "path": "eval/local_model_costs.json",
+    "sha256": "c185e2fad06d6bd2abaaf0be81a1720fc245555fa2a477c1b1bea558b28c2f74"
+  },
+  "frozen_writer_inputs": {
+    "dataset_path": "eval/scenarios/writer_diagnostic.v1.jsonl",
+    "dataset_raw_sha256": "05b0fa7b8e124e170c589cfe385e516a781d59a5ab2c511a5b7d37cd0d5e4a52",
+    "reference_path": "eval/oracle/writer_diagnostic_memory_deltas.v1.json",
+    "reference_raw_sha256": "93c24d604b32c838d635f9c9ed4fea20f770da254f522db6962b6bc57a232057",
+    "used_for_model_evaluation": false
+  },
+  "outcome": {
+    "writer_scenarios_evaluated": 0,
+    "writer_scenario_compiler_calls": 0,
+    "writer_result_manifest_frozen": false,
+    "output_repair_attempted": false,
+    "retry_attempted": false
+  },
+  "report": {
+    "path": "results/local_writer_w1_preflight_failure.md",
+    "sha256": "624c6f69a034d1968b6c6c389685ec5f1e5e264ed0d770894e4894307ef197e8"
+  },
+  "raw_log_distribution": "The ignored .eval bytes must be archived separately for independent reconstruction."
+}

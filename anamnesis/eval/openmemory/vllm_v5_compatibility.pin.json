@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "purpose": "openmemory_vllm_v5_schema_alignment_compatibility",
+  "hypothesis_test_eligible": false,
+  "parent_source_commit": "b7c88aec9e4587fe3e0858985e5653bb6ac50a08",
+  "base_runtime_pin_path": "eval/openmemory/vllm_v4_runtime.pin.json",
+  "base_runtime_pin_sha256": "9fed6f50f56f4b926d56b3b169692b6b227dc4594f1c204022b5baf120b9fb31",
+  "fixture_path": "eval/openmemory/vllm_v5_compatibility.json",
+  "fixture_raw_sha256": "fe3bdd57dfc51bbd374d81ded6ff6cbd4ba535e08595be39f5ad857bf1e923a0",
+  "fixture_canonical_sha256": "529b58d4d40c9f268cd1ab2017990020e9d128dac0552e644858e21f8a56c72a",
+  "base_url": "http://127.0.0.1:18001/v1",
+  "served_model": "anamnesis-openmemory-v5",
+  "server_config_sha256": "a1f63dde9a0d1deca80b3914eb9bf7efe788d86d0865574ea7e11892085145e1",
+  "decision_contract_sha256": "133b34adb292381f72b08e09a783f5b4103613e60c001c66968545da8ddc1999",
+  "response_schema_sha256": "aa1bae78fa12e24d85028e3c0f505ddbe6901ece67baf2a4bc60554dcb259c1b",
+  "case_count": 2,
+  "expected_model_calls": 2,
+  "seed": 101,
+  "temperature": 0.0,
+  "max_tokens": 256,
+  "retry_or_repair_calls": 0,
+  "stopping_rule": "one_ordered_emit_then_no_action_compatibility_run"
+}

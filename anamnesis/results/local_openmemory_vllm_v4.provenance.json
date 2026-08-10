@@ -1,0 +1,35 @@
+{
+  "hypothesis_test_eligible": false,
+  "inputs": {
+    "dataset": {
+      "path": "eval/openmemory/decision_diagnostic.v4.json",
+      "sha256": "9f4fb7bdf000858c769b0702acb5585e0ef8e67eb7709bcfa2c8d83c5fbdd0d9"
+    },
+    "preflight": {
+      "path": "eval/openmemory/vllm_v4_preflight.json",
+      "sha256": "1172ca39801ff19ad06ff066c4efa431e7b0dd5f4bf0c205650f5a44cad5409c"
+    },
+    "run": {
+      "path": "results/runs/local/openmemory_vllm_v4/run.json",
+      "sha256": "569457fe79b1a1e7768d1dcf8eebc5f9b9981bb606c3175f3c5b9425aeb52d53"
+    },
+    "runtime_pin": {
+      "path": "eval/openmemory/vllm_v4_runtime.pin.json",
+      "sha256": "9fed6f50f56f4b926d56b3b169692b6b227dc4594f1c204022b5baf120b9fb31"
+    }
+  },
+  "measurement_source_commit": "e708d15947370ce70f92d88a00c8881233e2e9c1",
+  "outputs": {
+    "csv": {
+      "path": "results/local_openmemory_vllm_v4.csv",
+      "sha256": "591d1f0685d668365eb431a50a2bae9b75112e0f04d03c2cbf9ed03f1efe3e78"
+    },
+    "markdown": {
+      "path": "results/local_openmemory_vllm_v4.md",
+      "sha256": "2b655239527441c5be090f848da1c15829709fe8827baaad96ad0d5dba9d68d4"
+    }
+  },
+  "reporter_commit": "30d3483b78ba16198f91fba17d2fc6512c639e22",
+  "schema_version": 1,
+  "title": "OpenMemory + vLLM v4 local diagnostic \u2014 not a hypothesis test"
+}

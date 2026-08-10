@@ -1,0 +1,43 @@
+{
+  "artifact": "anamnesis_local_smoke_result_provenance",
+  "frozen_manifest": {
+    "path": "results/runs/local/final/experiment.smoke.json",
+    "sha256": "ace427963661f91131cc705e21debf200b194b34e5472e286583cce90e316edc"
+  },
+  "hypothesis_test_eligible": false,
+  "input_eval_logs": [
+    {
+      "path": "results/runs/local/final/smoke/2026-08-07T16-12-47-00-00_local-no-memory_Sk5bsTHdocfL5ftfdrMMBP.eval",
+      "sha256": "aa50041b7bc0541c5ab1fd9707c60eb9ddc41f5ea6eb2c63209ddace1f9ad9e3"
+    },
+    {
+      "path": "results/runs/local/final/smoke/2026-08-07T16-16-18-00-00_local-full-context_X2nDujLQNgWezsJTQaH77Y.eval",
+      "sha256": "0fe58fd9dcf6cef91adde2a16a3613a7eafd2e56646257f379aa20671f8c1739"
+    },
+    {
+      "path": "results/runs/local/final/smoke/2026-08-07T16-27-12-00-00_local-vector-rag_9dvBAftSYsNXTXdtfQLi9F.eval",
+      "sha256": "05ae50c11cdf57e77cf0df9d708687de48cf01e2120d28c1ef17d001ec6d7de6"
+    },
+    {
+      "path": "results/runs/local/final/smoke/2026-08-07T16-44-03-00-00_local-anamnesis_ENkSAmzBPWf6ZK32W529gM.eval",
+      "sha256": "8f20a2bc2ecc1eac80904511eb2c8db0a4e30135e6226679dcb5c27c65ecdd83"
+    }
+  ],
+  "outputs": {
+    "csv": {
+      "path": "results/local_smoke.csv",
+      "sha256": "0962833b05c5909c1cb102d773cc933fbb01b78c95d43ff59ad0f1bb7266669d"
+    },
+    "markdown": {
+      "path": "results/local_smoke.md",
+      "sha256": "b0f12ae0f6dbb0ccaceebfc8175de23b4f02b65474bf9e50e747450c0c5b44e8"
+    }
+  },
+  "scenario_dataset": {
+    "path": "eval/scenarios/smoke.jsonl",
+    "sha256": "e8f64c0f47896137932e748dc9934a9c4639afc84f6674a553e423b4a9f17c47"
+  },
+  "schema_version": 1,
+  "source_git_commit": "045a50880e4000d970a87a7209b732be9c7d7281",
+  "title": "Local smoke diagnostic \u2014 not a hypothesis test"
+}

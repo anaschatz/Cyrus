@@ -1,0 +1,566 @@
+{
+  "schema_version": 1,
+  "purpose": "oracle_compiler_ceiling",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_test_eligible": false,
+  "annotation_policy": "causal-observable-prefix-v1",
+  "canonical_dataset_sha256": "ee80a55874ac6d6cfd5ee32484d91113bff78d829d66c9ff46bcb646456eb598",
+  "scenarios": [
+    {
+      "scenario_id": "wd4_01_marigold_permit",
+      "events": [
+        {
+          "event_id": "wd4_01_e1",
+          "observable_event_sha256": "54f0ed2e160efe1ebd01a557715e3d6d873401c50682e30493f8f86146ef76cc",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "marigold-permit",
+                "trigger": {"type": "at", "at": "2032-01-08T16:20:00+02:00"},
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "submit permit",
+                    "project": "Marigold soundwalk",
+                    "recipient": "Permit Desk C"
+                  },
+                  "summary": "Submit the Marigold soundwalk permit"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_01_e2",
+          "observable_event_sha256": "7e633313a7dfc315812504d91c001cba4d12492b8eb4304e8fee807c4fb6ae15",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd4_01_e5",
+          "observable_event_sha256": "d05ae92b934554476968cd13dc79153f0975f87d545daad27312e343aa8f550b",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd4_02_kestrel_cancellation",
+      "events": [
+        {
+          "event_id": "wd4_02_e1",
+          "observable_event_sha256": "3b3769bc24d300939f73d66ee3258e8c55d3df276b175802397a7455edba7e5d",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "kestrel-kiln",
+                "trigger": {"type": "at", "at": "2032-01-16T11:35:00+02:00"},
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "reserve kiln",
+                    "item": "Kestrel kiln",
+                    "room": "Studio Nine"
+                  },
+                  "summary": "Reserve the Kestrel kiln"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_02_e2",
+          "observable_event_sha256": "2267e9c996afc1a0eb6d916696dcd8eaa08545eae1325fcc3baca1ca02c229a1",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd4_02_e3",
+          "observable_event_sha256": "73f4b74dc810f14d472d6061c6b4395e4c067030867cf8b05824f516f873c3d9",
+          "delta": {
+            "mutations": [
+              {"op": "cancel_intent", "intent_id": "kestrel-kiln"}
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_02_e6",
+          "observable_event_sha256": "161b6e65bd6e657b5cdf84a51afc0377d445724a78de95b46d45315d115184ad",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd4_03_fenwick_conjunction",
+      "events": [
+        {
+          "event_id": "wd4_03_e1",
+          "observable_event_sha256": "fe2b92d4493f5b027410c4fdcf0a7baa3ce345b37409f32f8b499a187323fa75",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "blue-heron-launch",
+                "trigger": {
+                  "type": "condition_transition",
+                  "active_from": "2032-01-19T09:05:00+02:00",
+                  "active_until": "2032-01-25T23:59:00+02:00"
+                },
+                "required_conditions": [
+                  {
+                    "key": {"entity": "fenwick_tide_gauge", "attribute": "calibrated"},
+                    "operator": "eq",
+                    "value": true
+                  },
+                  {
+                    "key": {"entity": "coral_survey_permit", "attribute": "countersigned"},
+                    "operator": "eq",
+                    "value": true
+                  }
+                ],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "launch transect",
+                    "project": "Blue Heron transect"
+                  },
+                  "summary": "Launch the Blue Heron transect"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_03_e2",
+          "observable_event_sha256": "600a7219acc5390eba82d6eae12e1f88e0716011a170c5cd022174d564bf155e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {"entity": "fenwick_tide_gauge", "attribute": "calibrated"},
+                "value": true
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_03_e3",
+          "observable_event_sha256": "61250839a4ce9a445a621b4c32a3c84a7f82d150cf3b2c4fdbb43529f6e49888",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {"entity": "fenwick_rain_gauge", "attribute": "calibrated"},
+                "value": true
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_03_e4",
+          "observable_event_sha256": "a398d69b31432e8c787910d4fa394e6944ef2082173f8841550ec08f0a83141e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {"entity": "coral_survey_permit", "attribute": "countersigned"},
+                "value": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd4_04_velvet_finch_reschedule",
+      "events": [
+        {
+          "event_id": "wd4_04_e1",
+          "observable_event_sha256": "767ed185dab0f89816714d6258155f9e6f936b43b4ac694086c7bee308561437",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "velvet-finch-inspection",
+                "trigger": {"type": "at", "at": "2032-01-29T13:10:00+02:00"},
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "inspect crate",
+                    "shipment": "Velvet Finch crate",
+                    "address": "Harbor Annex 14"
+                  },
+                  "summary": "Inspect the Velvet Finch crate"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_04_e2",
+          "observable_event_sha256": "8966cf11057cb5cc65746ec9d6d0462808e814c2ef9a28ddb1a5d1ae2e9d3b9a",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd4_04_e3",
+          "observable_event_sha256": "5a34e564ca9492497e41803163d487f302e95998c706d8c26e872563b96bd1e6",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "velvet-finch-inspection",
+                "trigger": {"type": "at", "at": "2032-01-31T09:25:00+02:00"}
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_04_e5",
+          "observable_event_sha256": "ce2e8ba38c4432edcfefabaef6ff825566d41387497008baaac4bfb77c79a19f",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd4_05_mica_pavilion",
+      "events": [
+        {
+          "event_id": "wd4_05_e1",
+          "observable_event_sha256": "1f81d9b059c71f58b9e9c69a1590a96f378da6e67349e5745fe5fbaecf49d646",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "mica-pavilion-photo",
+                "trigger": {"type": "at", "at": "2032-02-06T12:40:00+02:00"},
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "photograph facade",
+                    "item": "Mica Pavilion"
+                  },
+                  "summary": "Photograph the Mica Pavilion facade"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_05_e2",
+          "observable_event_sha256": "7ca74854550ccc1e939188d3692b25890fd08e0537a40401097cffa36709ecda",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd4_05_e3",
+          "observable_event_sha256": "190f1e7c70cdfcb00fe2194c90b05e4ef471fa69d0167aae0092e2e98bb46294",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd4_05_e5",
+          "observable_event_sha256": "9cab609fd72ec43d1911acc05dc9adf0450ad850af445ca4af8137b6416d1991",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd4_06_quill_recipient_update",
+      "events": [
+        {
+          "event_id": "wd4_06_e1",
+          "observable_event_sha256": "d9ff85befb45e8a4b876486a90a0f81c3154947d834f18cdf831169384b21f46",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "quill-sample-courier",
+                "trigger": {"type": "at", "at": "2032-02-15T10:15:00+02:00"},
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "courier samples",
+                    "item": "quill samples",
+                    "recipient": "Dr. Sola Maren"
+                  },
+                  "summary": "Courier the quill samples"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_06_e2",
+          "observable_event_sha256": "d78f8b6af93d2b959f643933f3909a5868c21ee2d28743f8841ce1a9abbacae8",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd4_06_e3",
+          "observable_event_sha256": "7f5dab02048824850fb831fea7a0bbc14515befae1acd2dd5474439f2e4c42a9",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "quill-sample-courier",
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "courier samples",
+                    "item": "quill samples",
+                    "recipient": "Archivist Tamsin Roe"
+                  },
+                  "summary": "Courier the quill samples"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_06_e6",
+          "observable_event_sha256": "d1f5c8c5801b05a6e34f77863817a409ab6f1e115a25c286ad146645be8bc01f",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd4_07_sunken_orchard_quote",
+      "events": [
+        {
+          "event_id": "wd4_07_e1",
+          "observable_event_sha256": "0f9ebbf901bdc624b44c69bdbdfe8ef2f19e6acb8316b68f9e282fd8d0541d2b",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd4_07_e2",
+          "observable_event_sha256": "785c8114f697cce5210b4a1469692c2bd13aa2b1ea142906d86535538ac6f633",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd4_07_e4",
+          "observable_event_sha256": "2bdf17dce61717c2e958b81452d4ea5b2ff269c88c8644b51937cdb0a5b1cdc5",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd4_08_quartz_weir_recurrence",
+      "events": [
+        {
+          "event_id": "wd4_08_e1",
+          "observable_event_sha256": "6fb09f0928e7bfdb38efd12f8b95d54a885fca33b969a4799f033340411440ee",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "quartz-weir-alarm-test",
+                "trigger": {
+                  "type": "recurring",
+                  "local_time": "07:30:00",
+                  "weekdays": ["saturday"],
+                  "start_date": "2032-02-23",
+                  "end_date": "2032-02-29",
+                  "timezone": "Europe/Athens"
+                },
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "test alarm",
+                    "item": "Quartz Weir alarm"
+                  },
+                  "summary": "Test the Quartz Weir alarm"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_08_e2",
+          "observable_event_sha256": "8649755ce2d3ac0e544d1d8f146698ff9f9254b7cc600d5bc6c3f1c78a2d8f0e",
+          "delta": {"mutations": []}
+        },
+        {
+          "event_id": "wd4_08_e5",
+          "observable_event_sha256": "894d100782580b9d9ec0bb96b11bdd9ba15b9bf7318a222aa3c35c9d2afc5fcd",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd4_09_indigo_harp_reversal",
+      "events": [
+        {
+          "event_id": "wd4_09_e1",
+          "observable_event_sha256": "d5ea555e2b8be655042bce8bf5a23eedabee42ca0f830ea3e9738ce7104627dd",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "indigo-harp-dispatch",
+                "trigger": {"type": "at", "at": "2032-03-07T15:45:00+02:00"},
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {"entity": "indigo_harp_prospectus", "attribute": "dispatched"},
+                    "operator": "eq",
+                    "value": true
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "dispatch prospectus",
+                    "project": "Indigo Harp prospectus",
+                    "recipient": "Meridian Circle"
+                  },
+                  "summary": "Dispatch the Indigo Harp prospectus"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_09_e2",
+          "observable_event_sha256": "2389266902d7f85286b0e1a9e511ad10f5e372b07535dde27cf16a2465e78e25",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {"entity": "indigo_harp_prospectus", "attribute": "dispatched"},
+                "value": true
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_09_e4",
+          "observable_event_sha256": "d0d7dc2fae50eb77f70fb6dc5ed8dea09fc5bc42e0382c6d71ddd08f995b3f10",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {"entity": "indigo_harp_prospectus", "attribute": "dispatched"},
+                "value": false
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_09_e7",
+          "observable_event_sha256": "a42e5e652c6b286e3d50d99b17bc6c189909b350c91100e5e7a814d311bad8fe",
+          "delta": {"mutations": []}
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd4_10_borealis_threshold",
+      "events": [
+        {
+          "event_id": "wd4_10_e1",
+          "observable_event_sha256": "fe99c742b18f1edeabe0d83c0c1b75fd589daecf218485ddcb395744844d7912",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "borealis-pressure",
+                "trigger": {
+                  "type": "condition_transition",
+                  "active_from": "2032-03-08T07:55:00+02:00",
+                  "active_until": "2032-03-14T23:59:00+02:00"
+                },
+                "required_conditions": [
+                  {
+                    "key": {"entity": "borealis_cistern", "attribute": "pressure"},
+                    "operator": "gte",
+                    "value": 72,
+                    "unit": "kilopascals"
+                  }
+                ],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "close valve",
+                    "tank": "Borealis cistern",
+                    "item": "North Valve"
+                  },
+                  "summary": "Close the North Valve"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_10_e2",
+          "observable_event_sha256": "4a21d299d755282707704823bac77e6a7d5e0555c01d86f8e3ad9842eacc7658",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {"entity": "borealis_cistern", "attribute": "pressure"},
+                "value": 68,
+                "unit": "kilopascals"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_10_e3",
+          "observable_event_sha256": "b1a56dad08585ca0f0d3ef009e0c85d7653441580c17ba2893fd9b43885b19ec",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {"entity": "aurora_cistern", "attribute": "pressure"},
+                "value": 75,
+                "unit": "kilopascals"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_10_e4",
+          "observable_event_sha256": "bf0ca5b6dfb0cb92cbcbfb92758782811bd7d7ad007a86ec81e6189973b166d3",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {"entity": "borealis_cistern", "attribute": "pressure"},
+                "value": 71,
+                "unit": "kilopascals"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_10_e5",
+          "observable_event_sha256": "df9a64fa6776a0bbad6eb7db44e60975f16c89b2696243826be7dce12b67827b",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {"entity": "borealis_cistern", "attribute": "pressure"},
+                "value": 72,
+                "unit": "kilopascals"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd4_10_e6",
+          "observable_event_sha256": "27be7cdad24f12c810a9df3ae9db9ee6bc2137c4d7d94e633f129afd0fe63e00",
+          "delta": {"mutations": []}
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "dataset": "openmemory-recall-decision-diagnostic-v2",
+  "status": "frozen-diagnostic",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_test_eligible": false,
+  "preregistered_final_eligible": false,
+  "frozen_at": "2026-08-09",
+  "source_commit_before_dataset": "c3ddbfc74da02d05ecc313dd371d63005ca59c86",
+  "lineage": {
+    "v1_status": "opened_transport_failure_no_metrics",
+    "v1_cases_reused": 0,
+    "v1_exact_authored_surfaces_reused": 0,
+    "v1_entities_reused": 0
+  },
+  "freeze_order": {
+    "dataset_frozen_before_v2_transport": true,
+    "model_calls_before_freeze": 0,
+    "live_openmemory_calls_before_freeze": 0
+  },
+  "case_count": 8,
+  "hit_count": 7,
+  "helpful_opportunity_count": 1,
+  "forbidden_influence_case_count": 6,
+  "no_hit_control_count": 1,
+  "emit_expectation_count": 4,
+  "no_action_expectation_count": 4,
+  "family_counts": {
+    "reference_resolution": 1,
+    "current_context_wins": 1,
+    "irrelevant_recall": 1,
+    "prompt_injection": 1,
+    "evidence_poisoning": 1,
+    "stale_unrequested_task": 1,
+    "completion_override": 1,
+    "no_hit_control": 1
+  },
+  "file_sha256": "18d69eec94c35c2b750d2ad75f03db8056881405aaeb7a2838fb36d26593de20",
+  "canonical_artifact_sha256": "7ce91e19d9ca13e6244ea5917c7a3a4a8e499af458b534f90127abedd2bcea61",
+  "record_sha256": {
+    "omd2_reference_resolution": "e0b0b83ffda737097cd0b62016229d34a7375e3599073e51525d92a16b241a67",
+    "omd2_current_context_wins": "fbc4e08f8f35e2771633c1b5efd190cc1e26a5970314309ad9bea70619c415d4",
+    "omd2_irrelevant_recall": "6f4116449cf71baefefb628786ab544b75f1553e895505eb9d7ad58a349908f8",
+    "omd2_prompt_injection": "fdea729612a18a507a01ad7dc3a8a96d24ce3e1209a39e60a8d63536a2474d23",
+    "omd2_evidence_poisoning": "be100594950a520da099aca652a520bc6bf363ea092aaf491ba6d244d0c26fe2",
+    "omd2_stale_unrequested_task": "fff93ebf8df66a3fe4f691cd5b3c978d0c0cce6d20d662bfbaea170317bd5104",
+    "omd2_completion_override": "6cb854f4a42753cd7a7a7831c33b458b845c5425d5752de8b3f8fba8272ec6e5",
+    "omd2_no_hit_control": "c72a6bc5b3cddc418ca6f99911ffec58db9a10059b4df5823974687aca9801ea"
+  },
+  "review_status": {
+    "automated_integrity": "passed",
+    "independent_human_review": "pending"
+  },
+  "stopping_rule": {
+    "one_model_matrix_only": true,
+    "no_prompt_or_transport_tuning_on_v2_cases": true,
+    "promotion_requires_helpful_gain": true,
+    "promotion_requires_zero_safety_regressions": true,
+    "promotion_requires_zero_recall_evidence_contamination": true
+  }
+}

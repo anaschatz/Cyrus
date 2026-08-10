@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "purpose": "openmemory_recall_immediate_action_diagnostic_v3",
+  "title": "Local OpenMemory immediate-action diagnostic v3 — valid gate failure",
+  "hypothesis_test_eligible": false,
+  "source_commit": "ca64e5b0c39817287967016e1553732af8ed1c46",
+  "dataset_freeze_commit": "d9752079762a1aa00d6fd2b9feadaae97fdb763c",
+  "run_status": "success",
+  "metric_status": "valid_gate_failure",
+  "rerun_same_v3_cases_allowed": false,
+  "model": {
+    "name": "ollama/qwen3.5:9b-q4_K_M",
+    "artifact_pin_path": "eval/ollama_qwen3_5_9b_q4_k_m.pin.json",
+    "artifact_pin_sha256": "1eb1883308ccaf2631384b8a6c1e19048d826d7f766b879de540e9a7f878ab13"
+  },
+  "runtime": {
+    "ollama_version": "0.31.1",
+    "base_url": "http://127.0.0.1:11434/v1",
+    "no_cloud": true,
+    "context_length": 4096,
+    "num_parallel": 1,
+    "max_loaded_models": 1,
+    "compute": "Metal",
+    "hardware": "Apple M3"
+  },
+  "generation": {
+    "seed": 101,
+    "temperature": 0.0,
+    "cache": false,
+    "max_retries": 0,
+    "max_connections": 1,
+    "reasoning_effort": "none"
+  },
+  "artifacts": {
+    "diagnostic": {
+      "path": "eval/openmemory/decision_diagnostic.v3.json",
+      "raw_sha256": "9bc0e73e8b7b2299ea83ff630379447c9acfe83424d588cf612fb99de76f2cd9",
+      "canonical_sha256": "36ed70646b4f9f0fc78605d148599cc75dac8691d47ef8b531f722f2a73fb146"
+    },
+    "execution_protocol": {
+      "path": "eval/OPENMEMORY_EXECUTION_V3.md",
+      "sha256": "6794c501a6854ad394b371e30f5cbcb642f7cb6879f3d0973a9e3ac1a4fdceb4"
+    },
+    "task_source": {
+      "path": "eval/anamnesis_openmemory_eval_v3.py",
+      "sha256": "85ec0516e0be783ac3886eb60d44e499f55d1a336a63332fe50c3b3a02e535d3"
+    },
+    "diagnostic_source": {
+      "path": "src/anamnesis/openmemory_diagnostic.py",
+      "sha256": "3595aca4d92ea2701148e4313b64b31385e39a203559103bd89a1d36634eae54"
+    },
+    "decision_contract": {
+      "sha256": "1505cfc4df8be3812d6e7f0ef53a1245d2ec82e3865b0e709476f9001d21754e"
+    },
+    "dependency_lock": {
+      "path": "uv.lock",
+      "sha256": "f7207290df1b0da3519ea50f04cb88a15f1cf9bf950b0d1e990424113f9b5376"
+    },
+    "research_contract": {
+      "path": "RESEARCH.md",
+      "sha256": "42356cb5b1781f9702e0f5ff7634d288a960f9706c4d9186fc726988bb32c6af"
+    },
+    "architecture_contract": {
+      "path": "ARCHITECTURE.md",
+      "sha256": "85b3b9704556a7f0459c19e8b70f50302d60c43b11b0980687d471447b4d4797"
+    },
+    "pricing": {
+      "path": "eval/local_model_costs_w3_m2.json",
+      "sha256": "74f7321226f6fc71d9c8c88551653d8507d1a22a22ea4127226c91a5ce06267c"
+    },
+    "raw_eval_log": {
+      "local_path": "results/runs/local/openmemory_diagnostic_v3/2026-08-09T13-41-07-00-00_local-openmemory-immediate-action-diagnostic-v3_ZE3MvLj9RYR2qVtFZhLL2Q.eval",
+      "sha256": "ab0a051b26ae0f03b104eaa77bd0c5487478013466889ab5e56caf2c07d4b0c7",
+      "published": false,
+      "reason": "contains full prompts and local absolute filesystem metadata"
+    },
+    "report": {
+      "path": "results/local_openmemory_diagnostic_v3.md",
+      "sha256": "ea92e8e7d9a4d2421c78636cd45f9e024b7a1746bf2f5e04bc128cdf230b329a"
+    }
+  },
+  "observed": {
+    "inspect_status": "success",
+    "sample_score": "fail",
+    "sample_count": 1,
+    "model_event_count": 16,
+    "completed_model_call_count": 16,
+    "all_stop_reason": "stop",
+    "all_raw_requests_exact_transport": true,
+    "all_usage_complete": true,
+    "provider_api_cost_usd": 0.0,
+    "input_tokens": 6928,
+    "output_tokens": 1215,
+    "parse_valid_calls": 4,
+    "parse_invalid_calls": 12,
+    "case_count": 8,
+    "paired_scorer_baseline_correct": 4,
+    "paired_scorer_recall_correct": 4,
+    "parse_valid_baseline_correct": 2,
+    "parse_valid_recall_correct": 2,
+    "helpful_gain": 0,
+    "safety_regressions": 0,
+    "no_hit_regressions": 0,
+    "recall_false_actions": 0,
+    "recall_evidence_contaminations": 0,
+    "gate_passed": false,
+    "scorer_caveat": "paired identity scores use the fail-closed no-action decision after parse failure; task-level raw completeness correctly rejects the cell"
+  },
+  "scope": {
+    "openmemory_online_writes": false,
+    "retrieval_snapshot_frozen": true,
+    "retrieval_usage_complete": false,
+    "provider_api_cost_complete": true,
+    "electricity_measured": false,
+    "hardware_cost_measured": false
+  }
+}

@@ -1,0 +1,474 @@
+"""Frozen-byte, isolation, and oracle-ceiling checks for writer diagnostic v1."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+from collections import Counter
+from datetime import date
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from anamnesis.io import canonical_sha256, dataset_sha256, load_scenarios
+from anamnesis.local_wire import build_local_memory_compiler_prompt
+from anamnesis.memory import CompilerRequest, InMemoryAnamnesis
+from anamnesis.oracle import (
+    ORACLE_ANNOTATION_POLICY,
+    ORACLE_ARTIFACT_PURPOSE,
+    ORACLE_SYSTEM_NAME,
+    OracleCompiler,
+    load_oracle_artifact,
+    oracle_artifact_sha256,
+)
+from anamnesis.schema import (
+    Decision,
+    PredictedAction,
+    ProposedAction,
+    Scenario,
+    ScenarioRun,
+    Usage,
+)
+from anamnesis.scoring import score_scenario
+
+ROOT = Path(__file__).resolve().parents[1]
+SCENARIO_DIR = ROOT / "eval" / "scenarios"
+DATASET_PATH = SCENARIO_DIR / "writer_diagnostic.v1.jsonl"
+MANIFEST_PATH = SCENARIO_DIR / "writer_diagnostic.v1.manifest.json"
+ORACLE_PATH = ROOT / "eval" / "oracle" / "writer_diagnostic_memory_deltas.v1.json"
+EXISTING_PATHS = (
+    SCENARIO_DIR / "smoke.jsonl",
+    SCENARIO_DIR / "dev.jsonl",
+    SCENARIO_DIR / "sealed.jsonl",
+    SCENARIO_DIR / "all.jsonl",
+)
+
+DATASET_FILE_SHA256 = "05b0fa7b8e124e170c589cfe385e516a781d59a5ab2c511a5b7d37cd0d5e4a52"
+DATASET_CANONICAL_SHA256 = (
+    "d1919f4c1b61d3e4d8ae7a0e35c690e89fc7fda3ceadeb4870dbb7f9e0212a70"
+)
+MANIFEST_FILE_SHA256 = (
+    "648bf2eaebeb679f1a3b30d1ee2b19bef805ff18b0d87ba072cc3d0ea12809df"
+)
+ORACLE_FILE_SHA256 = "93c24d604b32c838d635f9c9ed4fea20f770da254f522db6962b6bc57a232057"
+ORACLE_CANONICAL_SHA256 = (
+    "7f8db3a5c3863887555d7739cda67d37a4c72e606d145f377d9e031f8425d3bd"
+)
+ZERO_SHA256 = "0" * 64
+
+EXPECTED_FAMILIES = {
+    "basic_deadline",
+    "cancellation",
+    "conjunctive_trigger",
+    "deadline_update",
+    "entity_grounding",
+    "fact_update",
+    "negative_control",
+    "recurring_intention",
+    "reversible_completion",
+    "threshold_trigger",
+}
+
+SMOKE_ENTITY_MARKERS = {
+    "statistics assignment",
+    "travel expense report",
+    "conference abstract",
+    "king street",
+    "queen street",
+    "lab notes",
+    "build 2.4",
+    "issue #418",
+    "hydra",
+    "ferry",
+    "aegean",
+    "olympic air",
+    "flight 482",
+    "example.org",
+    "example.net",
+    "atlas",
+    "apollo",
+    "passport",
+    "visa appointment",
+    "tax-office",
+}
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _load() -> tuple[list[Scenario], dict[str, object]]:
+    scenarios = load_scenarios(DATASET_PATH)
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    return scenarios, manifest
+
+
+def test_writer_diagnostic_exact_bytes_and_manifest_are_frozen() -> None:
+    scenarios, manifest = _load()
+    oracle = load_oracle_artifact(ORACLE_PATH, scenarios)
+
+    assert _sha256(DATASET_PATH) == DATASET_FILE_SHA256
+    assert _sha256(MANIFEST_PATH) == MANIFEST_FILE_SHA256
+    assert _sha256(ORACLE_PATH) == ORACLE_FILE_SHA256
+    assert b"\r\n" not in DATASET_PATH.read_bytes()
+    assert b"\r\n" not in MANIFEST_PATH.read_bytes()
+    assert b"\r\n" not in ORACLE_PATH.read_bytes()
+
+    assert dataset_sha256(scenarios) == DATASET_CANONICAL_SHA256
+    assert oracle_artifact_sha256(oracle) == ORACLE_CANONICAL_SHA256
+    assert manifest["file_sha256"] == DATASET_FILE_SHA256
+    assert manifest["canonical_dataset_sha256"] == DATASET_CANONICAL_SHA256
+    assert manifest["record_sha256"] == {
+        scenario.id: canonical_sha256(scenario) for scenario in scenarios
+    }
+    assert manifest["oracle_reference"] == {
+        "path": "eval/oracle/writer_diagnostic_memory_deltas.v1.json",
+        "file_sha256": ORACLE_FILE_SHA256,
+        "canonical_artifact_sha256": ORACLE_CANONICAL_SHA256,
+        "annotation_policy": ORACLE_ANNOTATION_POLICY,
+        "event_record_count": 45,
+        "visible_to_evaluated_writer": False,
+        "human_annotation_measured": False,
+        "offline_replay_ceiling": {
+            "tp": 8,
+            "fp": 0,
+            "fn": 0,
+            "provenance_exact": 8,
+            "obsolete_errors": 0,
+            "invalid_outputs": 0,
+        },
+    }
+
+
+def test_writer_diagnostic_scope_counts_families_and_origin_are_exact() -> None:
+    scenarios, manifest = _load()
+    origins = manifest["scenario_origins"]
+    assert isinstance(origins, list)
+    family_counts = Counter(item["family"] for item in origins)
+
+    assert len(scenarios) == 10
+    assert sum(len(scenario.events) for scenario in scenarios) == 69
+    assert (
+        sum(
+            event.kind != "clock_tick"
+            for scenario in scenarios
+            for event in scenario.events
+        )
+        == 45
+    )
+    assert sum(len(scenario.expected_actions) for scenario in scenarios) == 8
+    assert sum(len(scenario.forbidden_actions) for scenario in scenarios) == 22
+    assert sum(not scenario.expected_actions for scenario in scenarios) == 2
+    assert (
+        sum(
+            any(action.reason == "obsolete" for action in scenario.forbidden_actions)
+            for scenario in scenarios
+        )
+        == 3
+    )
+    assert set(family_counts) == EXPECTED_FAMILIES
+    assert set(family_counts.values()) == {1}
+
+    assert manifest["status"] == "frozen-diagnostic"
+    assert manifest["claim_scope"] == "diagnostic_development_only"
+    assert manifest["hypothesis_evidence"] is False
+    assert manifest["preregistered_final_eligible"] is False
+    assert manifest["member_of_development_35"] is False
+    assert manifest["member_of_sealed_set"] is False
+    assert manifest["writer_prompt_status_at_freeze"] == "not-authored"
+    assert manifest["review_status"] == {
+        "automated_integrity": "passed",
+        "gold_provenance_policy": "minimal-causal-evidence-v1",
+        "independent_human_review": "pending",
+    }
+    assert manifest["origin"]["type"] == "locally-authored"
+    assert manifest["origin"]["longmemeval_items"] == 0
+    assert manifest["origin"]["triggerbench_items"] == 0
+    assert all(
+        item["origin"] == "locally-authored"
+        and item["review_status"]
+        == "automated-integrity-passed; independent-review-pending"
+        for item in origins
+    )
+
+
+def test_writer_diagnostic_is_disjoint_from_existing_splits_and_smoke_surfaces() -> (
+    None
+):
+    scenarios, _ = _load()
+    existing = [
+        scenario for path in EXISTING_PATHS for scenario in load_scenarios(path)
+    ]
+    new_ids = {scenario.id for scenario in scenarios}
+    new_event_ids = {event.id for scenario in scenarios for event in scenario.events}
+    existing_ids = {scenario.id for scenario in existing}
+    existing_event_ids = {
+        event.id for scenario in existing for event in scenario.events
+    }
+
+    assert new_ids.isdisjoint(existing_ids)
+    assert new_event_ids.isdisjoint(existing_event_ids)
+
+    smoke = load_scenarios(SCENARIO_DIR / "smoke.jsonl")
+    smoke_surfaces = {
+        value
+        for scenario in smoke
+        for value in (
+            scenario.title,
+            scenario.description,
+            *(event.text for event in scenario.events),
+        )
+    }
+    new_surfaces = {
+        value
+        for scenario in scenarios
+        for value in (
+            scenario.title,
+            scenario.description,
+            *(event.text for event in scenario.events),
+        )
+    }
+    assert new_surfaces.isdisjoint(smoke_surfaces)
+
+    new_corpus = "\n".join(sorted(new_surfaces)).casefold()
+    assert all(marker not in new_corpus for marker in SMOKE_ENTITY_MARKERS)
+
+
+def test_writer_diagnostic_timelines_gold_and_provenance_are_well_formed() -> None:
+    scenarios, _ = _load()
+
+    for scenario in scenarios:
+        local_zone = ZoneInfo(scenario.timezone)
+        start = scenario.start_at.astimezone(local_zone)
+        end = scenario.end_at.astimezone(local_zone)
+        events_by_id = {event.id: event for event in scenario.events}
+
+        assert scenario.timezone == "Europe/Athens"
+        assert start.weekday() == 0
+        assert end.weekday() == 6
+        assert (end.date() - start.date()).days + 1 == 7
+        assert all(event.kind != "assistant_decision" for event in scenario.events)
+
+        observed: set[str] = set()
+        for event in scenario.events:
+            assert set(event.supersedes) <= observed
+            observed.add(event.id)
+
+        for action in scenario.expected_actions:
+            checkpoint_ids = {
+                event.id
+                for event in scenario.events
+                if action.window_start <= event.at <= action.window_end
+            }
+            assert action.window_start == action.window_end
+            assert len(checkpoint_ids) == 1
+            assert action.action_key in events_by_id
+            assert events_by_id[action.action_key].kind == "user_message"
+            assert len(action.acceptable_evidence_sets) == len(
+                {tuple(evidence) for evidence in action.acceptable_evidence_sets}
+            )
+            for evidence in action.acceptable_evidence_sets:
+                assert action.action_key in evidence
+                assert checkpoint_ids.intersection(evidence)
+                assert set(evidence) <= events_by_id.keys()
+                assert all(
+                    events_by_id[event_id].at <= action.window_end
+                    for event_id in evidence
+                )
+                assert not any(
+                    set(other) < set(evidence)
+                    for other in action.acceptable_evidence_sets
+                )
+            if occurrence_date := action.payload.get("date"):
+                assert date.fromisoformat(str(occurrence_date)).isoformat() == (
+                    occurrence_date
+                )
+                assert occurrence_date == action.window_start.date().isoformat()
+
+        for action in scenario.forbidden_actions:
+            assert action.action_key in events_by_id
+            assert events_by_id[action.action_key].kind == "user_message"
+            assert set(action.related_event_ids) <= events_by_id.keys()
+            assert all(
+                events_by_id[event_id].at <= action.window_end
+                for event_id in action.related_event_ids
+            )
+            assert any(
+                action.window_start <= event.at <= action.window_end
+                for event in scenario.events
+            )
+
+
+def test_writer_compiler_boundary_sees_only_current_sanitized_event() -> None:
+    scenarios, _ = _load()
+    hidden_names = {
+        "acceptable_evidence_sets",
+        "expected_actions",
+        "forbidden_actions",
+        "related_event_ids",
+        "supersedes",
+        "tags",
+        "writer_diagnostic_memory_deltas",
+    }
+
+    for scenario in scenarios:
+        runtime = scenario.to_runtime()
+        assert [event.id for event in runtime.events] == [
+            event.id for event in scenario.events
+        ]
+        for index, event in enumerate(runtime.events):
+            assert set(type(event).model_fields) == {"id", "at", "kind", "text"}
+            if event.kind == "clock_tick":
+                continue
+            prompt = build_local_memory_compiler_prompt(
+                event=event,
+                active_state='{"facts":[],"intents":[]}',
+            )
+            assert event.id in prompt
+            assert event.text in prompt
+            assert scenario.title not in prompt
+            assert scenario.description not in prompt
+            assert all(name not in prompt for name in hidden_names)
+            for future in runtime.events[index + 1 :]:
+                assert f"[{future.id}]" not in prompt
+                assert future.text not in prompt
+
+
+def test_writer_oracle_covers_only_sanitized_non_clock_events() -> None:
+    scenarios, manifest = _load()
+    artifact = load_oracle_artifact(ORACLE_PATH, scenarios)
+    raw = json.loads(ORACLE_PATH.read_text(encoding="utf-8"))
+
+    assert artifact.purpose == ORACLE_ARTIFACT_PURPOSE
+    assert artifact.claim_scope == "diagnostic_development_only"
+    assert artifact.hypothesis_test_eligible is False
+    assert artifact.annotation_policy == ORACLE_ANNOTATION_POLICY
+    assert artifact.canonical_dataset_sha256 == DATASET_CANONICAL_SHA256
+    assert [record.scenario_id for record in artifact.scenarios] == [
+        scenario.id for scenario in scenarios
+    ]
+    assert sum(len(record.events) for record in artifact.scenarios) == 45
+    assert manifest["oracle_reference"]["event_record_count"] == 45
+
+    for scenario in scenarios:
+        records = artifact.records_for(scenario.to_runtime())
+        expected = [
+            event
+            for event in scenario.to_runtime().events
+            if event.kind != "clock_tick"
+        ]
+        assert [record.event_id for record in records] == [
+            event.id for event in expected
+        ]
+        assert [record.observable_event_sha256 for record in records] == [
+            canonical_sha256(event) for event in expected
+        ]
+
+    hidden_names = {
+        "acceptable_evidence_sets",
+        "expected_actions",
+        "forbidden_actions",
+        "related_event_ids",
+        "supersedes",
+        "tags",
+        "future_events",
+    }
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            assert hidden_names.isdisjoint(value)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(raw)
+
+
+def test_writer_oracle_real_store_replay_reaches_exact_ceiling() -> None:
+    scenarios, manifest = _load()
+    artifact = load_oracle_artifact(ORACLE_PATH, scenarios)
+
+    async def replay_one(scenario: Scenario) -> ScenarioRun:
+        runtime = scenario.to_runtime()
+        compiler = OracleCompiler(artifact, runtime)
+        memory = InMemoryAnamnesis()
+        predictions: list[PredictedAction] = []
+
+        for event in runtime.events:
+            delta = None
+            if event.kind != "clock_tick":
+                call = await compiler.compile(
+                    CompilerRequest(event=event, active_state=memory.compiler_state())
+                )
+                assert call.usage == Usage(cost_usd=0.0)
+                assert call.usage_complete and call.cost_complete
+                assert not call.parse_error
+                delta = call.delta
+            applied = memory.ingest(event, delta)
+            assert applied.accepted, (scenario.id, event.id, applied.error)
+            selection = memory.select(event)
+            actions: list[ProposedAction] = []
+            for candidate in selection.due_candidates:
+                evidence = list(candidate.evidence_event_ids)
+                if event.id not in evidence:
+                    evidence.append(event.id)
+                action = ProposedAction(
+                    kind=candidate.action_template.kind,
+                    action_key=candidate.action_key,
+                    payload=dict(candidate.action_template.payload),
+                    summary=candidate.action_template.summary,
+                    evidence_event_ids=evidence,
+                )
+                actions.append(action)
+                predictions.append(
+                    PredictedAction(
+                        **action.model_dump(),
+                        emitted_at=event.at,
+                        decision_event_id=event.id,
+                    )
+                )
+            memory.commit(event, Decision(actions=actions))
+        compiler.assert_complete()
+        zero_usage = Usage(cost_usd=0.0)
+        return ScenarioRun(
+            scenario_id=scenario.id,
+            system=ORACLE_SYSTEM_NAME,
+            repetition=1,
+            model="deterministic/writer-diagnostic-oracle",
+            prompt_version="offline.writer-oracle.v1",
+            scenario_sha256=canonical_sha256(scenario),
+            prompt_sha256=ZERO_SHA256,
+            system_config_sha256="1" * 64,
+            predictions=predictions,
+            usage=zero_usage,
+            decision_usage=zero_usage,
+            compiler_usage=zero_usage,
+            usage_complete=True,
+            cost_complete=True,
+        )
+
+    runs = [asyncio.run(replay_one(scenario)) for scenario in scenarios]
+    scores = [
+        score_scenario(scenario, run)
+        for scenario, run in zip(scenarios, runs, strict=True)
+    ]
+    actual = {
+        "tp": sum(score.tp for score in scores),
+        "fp": sum(score.fp for score in scores),
+        "fn": sum(score.fn for score in scores),
+        "provenance_exact": sum(score.provenance_exact for score in scores),
+        "obsolete_errors": sum(score.obsolete_errors for score in scores),
+        "invalid_outputs": sum(score.invalid_outputs for score in scores),
+    }
+
+    assert actual == manifest["oracle_reference"]["offline_replay_ceiling"]
+    assert actual == {
+        "tp": 8,
+        "fp": 0,
+        "fn": 0,
+        "provenance_exact": 8,
+        "obsolete_errors": 0,
+        "invalid_outputs": 0,
+    }

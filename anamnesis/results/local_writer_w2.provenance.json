@@ -1,0 +1,118 @@
+{
+  "artifact": "anamnesis_local_w2_writer_result_provenance",
+  "candidate_matching": {
+    "comparison": "multiset",
+    "excluded": [
+      "summary",
+      "intent_id",
+      "occurrence_id"
+    ],
+    "key_fields": [
+      "checkpoint",
+      "action_key",
+      "due_at",
+      "kind",
+      "canonical_payload",
+      "sorted_evidence"
+    ]
+  },
+  "frozen_manifest": {
+    "path": "results/runs/local/writer_diagnostic_w2/experiment.writer_w2.json",
+    "sha256": "bfa88cbefe30a804acd065bf111421fd7b75a826465ce6a0941fcb1b0673ab1c"
+  },
+  "hypothesis_test_eligible": false,
+  "input_eval_log": {
+    "path": "results/runs/local/writer_diagnostic_w2/runs/2026-08-08T00-07-54-00-00_local-anamnesis-writer-diagnostic-w2_2d72ntWrwm3iE5mpcfG5u3.eval",
+    "sha256": "8eed916faea2f2340a190d33c5b83fd2028385ae3b4c2d45efd4e437c942f765"
+  },
+  "model_preflight": {
+    "headline_usage_excludes_setup": true,
+    "path": "results/runs/local/writer_diagnostic_w2/preflight/2026-08-08T00-04-36-00-00_local-model-preflight-w2_foFR2DUb7NZEnKXC8uDwJB.eval",
+    "setup_calls_in_measured_log": [
+      "C1",
+      "C2",
+      "C3",
+      "D1"
+    ],
+    "sha256": "7dcfa8064b224a05a5fb6a4af665a21890ea256cb3bbcc69017284623282315e"
+  },
+  "outputs": {
+    "csv": {
+      "path": "results/local_writer_w2.csv",
+      "sha256": "d180c352d5be0b9e33baca3b5d182627efefe178136d111adff5b3e8d0d7411a"
+    },
+    "markdown": {
+      "path": "results/local_writer_w2.md",
+      "sha256": "7a3de69a2fa095e009833aa44a0e61b4e97698d6dc7a88ed143e5b7de0f3cbf4"
+    }
+  },
+  "pinned_inputs": {
+    "architecture_contract": {
+      "path": "ARCHITECTURE.md",
+      "sha256": "85b3b9704556a7f0459c19e8b70f50302d60c43b11b0980687d471447b4d4797"
+    },
+    "dependency_lock": {
+      "path": "uv.lock",
+      "sha256": "f7207290df1b0da3519ea50f04cb88a15f1cf9bf950b0d1e990424113f9b5376"
+    },
+    "model_artifact": {
+      "path": "eval/ollama_qwen3_4b_instruct.pin.json",
+      "sha256": "dcf839abc1800ce80646f05b983a7feab825a5f0d1e7d75823f76b95e2f69e11"
+    },
+    "pricing_config": {
+      "path": "eval/local_model_costs.json",
+      "sha256": "c185e2fad06d6bd2abaaf0be81a1720fc245555fa2a477c1b1bea558b28c2f74"
+    },
+    "research_contract": {
+      "path": "RESEARCH.md",
+      "sha256": "42356cb5b1781f9702e0f5ff7634d288a960f9706c4d9186fc726988bb32c6af"
+    }
+  },
+  "preflight_fixture": {
+    "path": "eval/preflight/local_writer_w2.v1.json",
+    "raw_fixture_visible_to_scenario_writer": false,
+    "sha256": "3b82128bab1d801d073118488aa4f0a0a662603b98325f5c9d7dad497f026057"
+  },
+  "protocol_contracts": {
+    "compiler_prompt_sha256": "024641f8d0ec16168eb9b7d8dbee67f92b7049fe6d35b604495aba273319d9dd",
+    "compiler_prompt_version": "local.v0.3",
+    "compiler_schema_sha256": "8871ff344eb3a2e88a53b964ef2f24f089a72507c69073ec323cf26a428c3030",
+    "decision_prompt_sha256": "871fe15e3160e66abe7480cbde15dfb943dec2d0ff89bb01a03849ad35defd8d",
+    "decision_prompt_version": "ollama.decision.v0.2",
+    "decision_schema_sha256": "1b7c38d3f4bf150523ecc1e468ad3fb1f94753611f190d70f93abbf5ec582426",
+    "system_config_sha256": {
+      "anamnesis": "4bfd6698a9ac1df7e89c35c2cdb1b4240be76e821f002c3dff08b4b92ad9ee74"
+    }
+  },
+  "scenario_dataset": {
+    "canonical_sha256": "37a62b643ed920bf115aa0ea2495f00fc12bc349fabc4664ad430c4e9eb71115",
+    "checkpoint_count": 69,
+    "compiler_event_count": 46,
+    "path": "eval/scenarios/writer_diagnostic.v3.jsonl",
+    "scenario_count": 10,
+    "sha256": "34e2e8751bf32a3a2e29ac75d727f2b5cf73aaba13ccc9ba1d9fdf00bf7eaf4f"
+  },
+  "schema_version": 1,
+  "source": {
+    "dispatcher": {
+      "path": "src/anamnesis/writer_report.py",
+      "sha256": "d54a988e96bddd526595f7e91e13aa04605efd87ee1debc8580f75f4848438fc"
+    },
+    "reporter": {
+      "path": "src/anamnesis/writer_report_w2.py",
+      "sha256": "4916ffa9966597685f4394c181493427aa113ea050ca08aeec4bb7f898ab4c50"
+    },
+    "task": {
+      "path": "eval/anamnesis_local_eval.py",
+      "sha256": "ae6b0611f7a758b2d49e10e11106eb295f60345d2a764837310e189b8e1f637f"
+    }
+  },
+  "source_git_commit": "9388f58cc1366f09c6134086fb36759272b50dbd",
+  "title": "Local writer W2 diagnostic \u2014 not a hypothesis test",
+  "writer_reference": {
+    "canonical_semantics_sha256": "9e46d95b308cdd5cd6f995f8521c7600ef4a041a0ad9913e6e8eb8ce808c01f3",
+    "opened_only_after_run_validation": true,
+    "path": "eval/oracle/writer_diagnostic_memory_deltas.v3.json",
+    "sha256": "7adb64eda15daf5351260933fbd0625fbc13c6899361735a9bf0ce13c063f857"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "phase": "baseline",
+  "dataset": {
+    "path": "eval/scenarios/dev.jsonl",
+    "sha256": null
+  },
+  "scenario_count": 35,
+  "sealed_opened": false,
+  "systems": [
+    "no_memory",
+    "full_context",
+    "vector_rag"
+  ],
+  "model": {
+    "snapshot": null,
+    "strict_structured_output": true,
+    "provider_args": {
+      "responses_api": false
+    },
+    "pricing": {
+      "path": "eval/model_costs.json",
+      "sha256": "45558119c159181ff987c37acf6df0225a16a81ef7030bc001ccdc0ad0d87319"
+    },
+    "preflight": {
+      "path": "results/runs/model_preflight.eval",
+      "sha256": null
+    }
+  },
+  "embedding": {
+    "model": "BAAI/bge-small-en-v1.5",
+    "repository": "qdrant/bge-small-en-v1.5-onnx-q",
+    "revision": "52398278842ec682c6f32300af41344b1c0b0bb2",
+    "artifact_sha256": "d435d05b3411502ad9a280cc9ac0157f7bcd9f176df2fdc8971f788a121a02d7",
+    "top_k": 5
+  },
+  "execution": {
+    "temperature": 0.0,
+    "seeds": [101],
+    "repetitions": 1,
+    "response_cache": false,
+    "max_samples": 1,
+    "concurrency": 1,
+    "max_retries": 0,
+    "log_model_api": true,
+    "warmup": "prewarmed"
+  },
+  "git_commit": null,
+  "dependency_lock": {
+    "path": "uv.lock",
+    "sha256": null
+  },
+  "research_contract": {
+    "path": "RESEARCH.md",
+    "sha256": null
+  },
+  "architecture_contract": {
+    "path": "ARCHITECTURE.md",
+    "sha256": null
+  },
+  "decision_prompt_sha256": null,
+  "memory_compiler_sha256": null,
+  "system_config_sha256": {}
+}

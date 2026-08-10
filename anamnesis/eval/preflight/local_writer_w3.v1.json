@@ -1,0 +1,786 @@
+{
+  "schema_version": 1,
+  "fixture_id": "local_writer_w3.v1",
+  "purpose": "diagnostic",
+  "hypothesis_test_eligible": false,
+  "authorship": {
+    "author_role": "separate_v4_blind_fixture_author",
+    "prompt_commit": "a9fb1602158c4545f6791c296dfc05d8decc7d90",
+    "protocol_id": "local_writer_w3.protocol.v1",
+    "protocol_sha256": "7f63c156a8af74ced2d5e5530b3e8083da95c7f46e14e1afafaaf864b3ce1915",
+    "fixture_authored_after_prompt_commit": true,
+    "case_material_source": "frozen_protocol_only",
+    "v4_scenario_and_oracle_blind": true,
+    "model_boundary": "case_input_only"
+  },
+  "custodian_audit": {
+    "status": "passed",
+    "method": "non_disclosing_hash_and_disjointness_assertions",
+    "dataset_version": "v4",
+    "dataset": {
+      "raw_sha256": "6b2530cb9f3426c792500f07e854d7f31ad84081ac77104cb8032737234ff91c",
+      "canonical_sha256": "ee80a55874ac6d6cfd5ee32484d91113bff78d829d66c9ff46bcb646456eb598"
+    },
+    "oracle": {
+      "raw_sha256": "72308bb34bda758cc72dc651e3f0fd2fd2bd1bff820479e2cf0774ee8d66cf5c",
+      "canonical_sha256": "b877bcd6fe15767d9f1bb42a5840a799d2ef5a4a3691eb6a59ae2f9f7d40813b"
+    },
+    "disjoint_dimensions": [
+      "full_inputs",
+      "ids",
+      "dates",
+      "actions"
+    ],
+    "model_boundary_unchanged": true
+  },
+  "contracts": {
+    "compiler": {
+      "prompt_version": "local.v0.4",
+      "addendum_sha256": "84897bc8493dc4c89272aacd9ec6aaf869de92e63b1e225b954d97af84877793",
+      "prompt_sha256": "412a63d6b42ea6b5e294401cabbcbacf5a6b7facddbd8fe04ca7b91914c141e5",
+      "local_wire_contract_sha256": "b90298df967f81c91cd6aed6289190768b1f4fe28af4743fb118920d11f8ec51",
+      "local_wire_model_schema_sha256": "f0e0ab9c3aef10f9b99ca5055d1ee1f2e6d7f091be666ee95035040e564302ec",
+      "inspect_response_schema_sha256": "8871ff344eb3a2e88a53b964ef2f24f089a72507c69073ec323cf26a428c3030",
+      "inspect_response_schema_unchanged_from_w2": true
+    },
+    "decision": {
+      "prompt_version": "ollama.decision.v0.2",
+      "prompt_sha256": "871fe15e3160e66abe7480cbde15dfb943dec2d0ff89bb01a03849ad35defd8d",
+      "schema_sha256": "1b7c38d3f4bf150523ecc1e468ad3fb1f94753611f190d70f93abbf5ec582426",
+      "unchanged_from_w2": true
+    }
+  },
+  "compiler_cases": [
+    {
+      "id": "C1",
+      "role": "compiler",
+      "category": "normalization_fact",
+      "input": {
+        "event": {
+          "id": "w3-preflight-c1-event",
+          "at": "2034-06-11T07:25:00+09:00",
+          "kind": "observation",
+          "text": "For Sapphire Observatory, Backup Battery Level is 73."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [
+          {
+            "entity": "sapphire_observatory",
+            "attribute": "backup_battery_level",
+            "value": 73,
+            "unit": null
+          }
+        ],
+        "intent_creates": [],
+        "intent_updates": [],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": [
+          {
+            "op": "set_fact",
+            "key": {
+              "entity": "sapphire_observatory",
+              "attribute": "backup_battery_level"
+            },
+            "value": 73,
+            "unit": null
+          }
+        ]
+      },
+      "acceptance_projection": [
+        "exactly_one_set_fact",
+        "exact_normalized_entity_and_attribute",
+        "exact_typed_value",
+        "explicit_nonempty_unit_or_null_when_absent",
+        "no_other_mutations",
+        "strict_wire_to_domain_conversion"
+      ],
+      "acceptance": {
+        "mutation_type": "set_fact",
+        "mutation_count": 1,
+        "key": {
+          "entity": "sapphire_observatory",
+          "attribute": "backup_battery_level"
+        },
+        "value": 73,
+        "unit": null,
+        "no_other_mutations": true
+      }
+    },
+    {
+      "id": "C2",
+      "role": "compiler",
+      "category": "bare_weekday_at",
+      "input": {
+        "event": {
+          "id": "w3-preflight-c2-event",
+          "at": "2034-08-21T16:20:00+10:00",
+          "kind": "user_message",
+          "text": "Remind me Monday at 09:10 to calibrate equipment item Aurora Spectrometer."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [
+          {
+            "intent_id": "calibrate_aurora_spectrometer",
+            "trigger": {
+              "type": "at",
+              "at": "2034-08-28T09:10:00+10:00"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "payload": {
+                "subject": "calibrate equipment",
+                "item": "Aurora Spectrometer"
+              },
+              "summary": "Calibrate the Aurora Spectrometer equipment."
+            }
+          }
+        ],
+        "intent_updates": [],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": [
+          {
+            "op": "create_intent",
+            "intent_id": "calibrate_aurora_spectrometer",
+            "trigger": {
+              "type": "at",
+              "at": "2034-08-28T09:10:00+10:00"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "kind": "reminder",
+              "payload": {
+                "subject": "calibrate equipment",
+                "item": "Aurora Spectrometer"
+              },
+              "summary": "Calibrate the Aurora Spectrometer equipment."
+            }
+          }
+        ]
+      },
+      "acceptance_projection": [
+        "exactly_one_create_intent",
+        "at_trigger",
+        "exact_first_strictly_future_local_weekday_datetime",
+        "empty_required_conditions_and_blockers",
+        "exact_domain_payload",
+        "no_other_mutations"
+      ],
+      "acceptance": {
+        "mutation_type": "create_intent",
+        "mutation_count": 1,
+        "trigger": {
+          "type": "at",
+          "at": "2034-08-28T09:10:00+10:00"
+        },
+        "required_conditions": [],
+        "blockers": [],
+        "action_template": {
+          "kind": "reminder",
+          "payload": {
+            "subject": "calibrate equipment",
+            "item": "Aurora Spectrometer"
+          }
+        },
+        "intent_id": "structural_only",
+        "summary": "structural_only",
+        "no_other_mutations": true
+      }
+    },
+    {
+      "id": "C3",
+      "role": "compiler",
+      "category": "condition_transition_and",
+      "input": {
+        "event": {
+          "id": "w3-preflight-c3-event",
+          "at": "2034-09-05T08:10:00+02:00",
+          "kind": "user_message",
+          "text": "From 2034-09-06 06:00 +02:00 until 2034-09-20 18:00 +02:00, remind me to seal the lunar archive when North Vault Relative Humidity is at most 35 percent and Cobalt Beacon Status equals ready."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [
+          {
+            "intent_id": "seal_lunar_archive",
+            "trigger": {
+              "type": "condition_transition",
+              "active_from": "2034-09-06T06:00:00+02:00",
+              "active_until": "2034-09-20T18:00:00+02:00"
+            },
+            "required_conditions": [
+              {
+                "entity": "north_vault",
+                "attribute": "relative_humidity",
+                "operator": "lte",
+                "value": 35,
+                "unit": "percent"
+              },
+              {
+                "entity": "cobalt_beacon",
+                "attribute": "status",
+                "operator": "eq",
+                "value": "ready",
+                "unit": null
+              }
+            ],
+            "blockers": [],
+            "action_template": {
+              "payload": {
+                "subject": "seal lunar archive"
+              },
+              "summary": "Seal the lunar archive."
+            }
+          }
+        ],
+        "intent_updates": [],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": [
+          {
+            "op": "create_intent",
+            "intent_id": "seal_lunar_archive",
+            "trigger": {
+              "type": "condition_transition",
+              "active_from": "2034-09-06T06:00:00+02:00",
+              "active_until": "2034-09-20T18:00:00+02:00"
+            },
+            "required_conditions": [
+              {
+                "key": {
+                  "entity": "north_vault",
+                  "attribute": "relative_humidity"
+                },
+                "operator": "lte",
+                "value": 35,
+                "unit": "percent"
+              },
+              {
+                "key": {
+                  "entity": "cobalt_beacon",
+                  "attribute": "status"
+                },
+                "operator": "eq",
+                "value": "ready",
+                "unit": null
+              }
+            ],
+            "blockers": [],
+            "action_template": {
+              "kind": "reminder",
+              "payload": {
+                "subject": "seal lunar archive"
+              },
+              "summary": "Seal the lunar archive."
+            }
+          }
+        ]
+      },
+      "acceptance_projection": [
+        "exactly_one_create_intent",
+        "condition_transition_trigger",
+        "exact_active_window",
+        "all_explicit_and_conjuncts_in_required_conditions",
+        "exact_normalized_condition_keys_values_and_units",
+        "no_synthetic_negative_conditions",
+        "no_other_mutations"
+      ],
+      "acceptance": {
+        "mutation_type": "create_intent",
+        "mutation_count": 1,
+        "trigger": {
+          "type": "condition_transition",
+          "active_from": "2034-09-06T06:00:00+02:00",
+          "active_until": "2034-09-20T18:00:00+02:00"
+        },
+        "required_conditions": [
+          {
+            "key": {
+              "entity": "north_vault",
+              "attribute": "relative_humidity"
+            },
+            "operator": "lte",
+            "value": 35,
+            "unit": "percent"
+          },
+          {
+            "key": {
+              "entity": "cobalt_beacon",
+              "attribute": "status"
+            },
+            "operator": "eq",
+            "value": "ready",
+            "unit": null
+          }
+        ],
+        "required_conditions_match": "canonical_multiset",
+        "blockers": [],
+        "action_template": {
+          "kind": "reminder",
+          "payload": {
+            "subject": "seal lunar archive"
+          }
+        },
+        "intent_id": "structural_only",
+        "summary": "structural_only",
+        "no_other_mutations": true
+      }
+    },
+    {
+      "id": "C4",
+      "role": "compiler",
+      "category": "recurrence_iana_range",
+      "input": {
+        "event": {
+          "id": "w3-preflight-c4-event",
+          "at": "2034-10-17T11:45:00-04:00",
+          "kind": "user_message",
+          "text": "Every Tuesday and Saturday at 06:35 from 2034-11-01 through 2034-12-15 in America/Toronto, remind me to inspect equipment item Zephyr Antenna."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [
+          {
+            "intent_id": "inspect_zephyr_antenna",
+            "trigger": {
+              "type": "recurring",
+              "local_time": "06:35:00",
+              "weekdays": [
+                "tuesday",
+                "saturday"
+              ],
+              "start_date": "2034-11-01",
+              "end_date": "2034-12-15",
+              "timezone": "America/Toronto"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "payload": {
+                "subject": "inspect equipment",
+                "item": "Zephyr Antenna"
+              },
+              "summary": "Inspect the Zephyr Antenna equipment."
+            }
+          }
+        ],
+        "intent_updates": [],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": [
+          {
+            "op": "create_intent",
+            "intent_id": "inspect_zephyr_antenna",
+            "trigger": {
+              "type": "recurring",
+              "local_time": "06:35:00",
+              "weekdays": [
+                "tuesday",
+                "saturday"
+              ],
+              "start_date": "2034-11-01",
+              "end_date": "2034-12-15",
+              "timezone": "America/Toronto"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "kind": "reminder",
+              "payload": {
+                "subject": "inspect equipment",
+                "item": "Zephyr Antenna"
+              },
+              "summary": "Inspect the Zephyr Antenna equipment."
+            }
+          }
+        ]
+      },
+      "acceptance_projection": [
+        "exactly_one_create_intent",
+        "recurring_trigger",
+        "exact_local_time_weekdays_start_date_end_date_and_iana_timezone",
+        "exact_domain_payload",
+        "no_other_mutations"
+      ],
+      "acceptance": {
+        "mutation_type": "create_intent",
+        "mutation_count": 1,
+        "trigger": {
+          "type": "recurring",
+          "local_time": "06:35:00",
+          "weekdays": [
+            "tuesday",
+            "saturday"
+          ],
+          "start_date": "2034-11-01",
+          "end_date": "2034-12-15",
+          "timezone": "America/Toronto"
+        },
+        "weekdays_match": "set",
+        "required_conditions": [],
+        "blockers": [],
+        "action_template": {
+          "kind": "reminder",
+          "payload": {
+            "subject": "inspect equipment",
+            "item": "Zephyr Antenna"
+          }
+        },
+        "intent_id": "structural_only",
+        "summary": "structural_only",
+        "no_other_mutations": true
+      }
+    },
+    {
+      "id": "C5",
+      "role": "compiler",
+      "category": "stable_id_trigger_update",
+      "input": {
+        "event": {
+          "id": "w3-preflight-c5-event",
+          "at": "2034-11-09T14:00:00+01:00",
+          "kind": "user_message",
+          "text": "Move the Polaris lens alignment reminder to November 14, 2034 at 16:45."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[{\"action_key\":\"w3-fixture-c5-source\",\"action_template\":{\"kind\":\"reminder\",\"payload\":{\"subject\":\"align polaris lens\"},\"summary\":\"Align the Polaris lens.\"},\"blockers\":[],\"field_provenance\":{\"action_key\":[\"w3-fixture-c5-source\"],\"action_template.kind\":[\"w3-fixture-c5-source\"],\"action_template.payload.subject\":[\"w3-fixture-c5-source\"],\"action_template.summary\":[\"w3-fixture-c5-source\"],\"blockers\":[\"w3-fixture-c5-source\"],\"required_conditions\":[\"w3-fixture-c5-source\"],\"status\":[\"w3-fixture-c5-source\"],\"trigger.at\":[\"w3-fixture-c5-source\"],\"trigger.type\":[\"w3-fixture-c5-source\"]},\"intent_id\":\"align_polaris_lens\",\"previous_revision_id\":null,\"required_conditions\":[],\"revision\":1,\"revision_id\":\"intent:align_polaris_lens:r1\",\"source_event_id\":\"w3-fixture-c5-source\",\"status\":\"active\",\"trigger\":{\"at\":\"2034-11-12T10:00:00+01:00\",\"type\":\"at\"},\"valid_from\":\"2034-11-01T09:00:00+01:00\",\"valid_to\":null}]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [],
+        "intent_updates": [
+          {
+            "intent_id": "align_polaris_lens",
+            "trigger": {
+              "type": "at",
+              "at": "2034-11-14T16:45:00+01:00"
+            }
+          }
+        ],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": [
+          {
+            "op": "update_intent",
+            "intent_id": "align_polaris_lens",
+            "trigger": {
+              "type": "at",
+              "at": "2034-11-14T16:45:00+01:00"
+            },
+            "required_conditions": null,
+            "blockers": null,
+            "action_template": null
+          }
+        ]
+      },
+      "acceptance_projection": [
+        "exactly_one_update_intent",
+        "intent_id_copied_exactly_from_unique_active_intent",
+        "full_changed_trigger",
+        "all_unchanged_top_level_fields_omitted_or_null",
+        "no_create_cancel_fact_or_other_update"
+      ],
+      "acceptance": {
+        "mutation_type": "update_intent",
+        "mutation_count": 1,
+        "intent_id": "align_polaris_lens",
+        "changed_fields": [
+          "trigger"
+        ],
+        "trigger": {
+          "type": "at",
+          "at": "2034-11-14T16:45:00+01:00"
+        },
+        "unchanged_top_level_fields": [
+          "required_conditions",
+          "blockers",
+          "action_template"
+        ],
+        "no_other_mutations": true
+      }
+    },
+    {
+      "id": "C6",
+      "role": "compiler",
+      "category": "full_action_template_update",
+      "input": {
+        "event": {
+          "id": "w3-preflight-c6-event",
+          "at": "2034-12-04T09:15:00+00:00",
+          "kind": "user_message",
+          "text": "For the Meridian capsule dispatch, change the recipient to Dr. Rowan Keir; keep the room and project unchanged."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[{\"action_key\":\"w3-fixture-c6-source\",\"action_template\":{\"kind\":\"reminder\",\"payload\":{\"project\":\"Helios Ledger\",\"recipient\":\"Dr. Ilyana Voss\",\"room\":\"Orchid Bay 7\",\"subject\":\"dispatch meridian capsule\"},\"summary\":\"Dispatch the Meridian capsule.\"},\"blockers\":[],\"field_provenance\":{\"action_key\":[\"w3-fixture-c6-source\"],\"action_template.kind\":[\"w3-fixture-c6-source\"],\"action_template.payload.project\":[\"w3-fixture-c6-source\"],\"action_template.payload.recipient\":[\"w3-fixture-c6-source\"],\"action_template.payload.room\":[\"w3-fixture-c6-source\"],\"action_template.payload.subject\":[\"w3-fixture-c6-source\"],\"action_template.summary\":[\"w3-fixture-c6-source\"],\"blockers\":[\"w3-fixture-c6-source\"],\"required_conditions\":[\"w3-fixture-c6-source\"],\"status\":[\"w3-fixture-c6-source\"],\"trigger.at\":[\"w3-fixture-c6-source\"],\"trigger.type\":[\"w3-fixture-c6-source\"]},\"intent_id\":\"dispatch_meridian_capsule\",\"previous_revision_id\":null,\"required_conditions\":[],\"revision\":1,\"revision_id\":\"intent:dispatch_meridian_capsule:r1\",\"source_event_id\":\"w3-fixture-c6-source\",\"status\":\"active\",\"trigger\":{\"at\":\"2034-12-18T13:30:00Z\",\"type\":\"at\"},\"valid_from\":\"2034-12-01T08:00:00Z\",\"valid_to\":null}]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [],
+        "intent_updates": [
+          {
+            "intent_id": "dispatch_meridian_capsule",
+            "action_template": {
+              "kind": "reminder",
+              "payload": {
+                "subject": "dispatch meridian capsule",
+                "project": "Helios Ledger",
+                "recipient": "Dr. Rowan Keir",
+                "room": "Orchid Bay 7"
+              },
+              "summary": "Dispatch the Meridian capsule."
+            }
+          }
+        ],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": [
+          {
+            "op": "update_intent",
+            "intent_id": "dispatch_meridian_capsule",
+            "trigger": null,
+            "required_conditions": null,
+            "blockers": null,
+            "action_template": {
+              "kind": "reminder",
+              "payload": {
+                "subject": "dispatch meridian capsule",
+                "project": "Helios Ledger",
+                "recipient": "Dr. Rowan Keir",
+                "room": "Orchid Bay 7"
+              },
+              "summary": "Dispatch the Meridian capsule."
+            }
+          }
+        ]
+      },
+      "acceptance_projection": [
+        "exactly_one_update_intent",
+        "intent_id_copied_exactly_from_unique_active_intent",
+        "full_current_action_template",
+        "all_unchanged_source_backed_payload_leaves_preserved",
+        "only_event_licensed_leaves_changed",
+        "all_other_top_level_fields_omitted_or_null"
+      ],
+      "acceptance": {
+        "mutation_type": "update_intent",
+        "mutation_count": 1,
+        "intent_id": "dispatch_meridian_capsule",
+        "changed_fields": [
+          "action_template"
+        ],
+        "action_template": {
+          "kind": "reminder",
+          "payload": {
+            "subject": "dispatch meridian capsule",
+            "project": "Helios Ledger",
+            "recipient": "Dr. Rowan Keir",
+            "room": "Orchid Bay 7"
+          },
+          "summary": "Dispatch the Meridian capsule."
+        },
+        "preserved_payload_leaves": {
+          "subject": "dispatch meridian capsule",
+          "project": "Helios Ledger",
+          "room": "Orchid Bay 7"
+        },
+        "changed_payload_leaves": {
+          "recipient": "Dr. Rowan Keir"
+        },
+        "unchanged_top_level_fields": [
+          "trigger",
+          "required_conditions",
+          "blockers"
+        ],
+        "no_other_mutations": true
+      }
+    },
+    {
+      "id": "C7",
+      "role": "compiler",
+      "category": "complete_sparse_payload_including_zero",
+      "input": {
+        "event": {
+          "id": "w3-preflight-c7-event",
+          "at": "2034-04-06T08:00:00+05:30",
+          "kind": "user_message",
+          "text": "Remind me on April 9, 2034 at 10:30 to stage the supply handoff for item Aster Relay, project Silver Comet, quantity 0, recipient Captain Nia Sol, and room Quasar Room 12."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [
+          {
+            "intent_id": "stage_supply_handoff",
+            "trigger": {
+              "type": "at",
+              "at": "2034-04-09T10:30:00+05:30"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "payload": {
+                "subject": "stage supply handoff",
+                "item": "Aster Relay",
+                "project": "Silver Comet",
+                "quantity": 0,
+                "recipient": "Captain Nia Sol",
+                "room": "Quasar Room 12"
+              },
+              "summary": "Stage the supply handoff."
+            }
+          }
+        ],
+        "intent_updates": [],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": [
+          {
+            "op": "create_intent",
+            "intent_id": "stage_supply_handoff",
+            "trigger": {
+              "type": "at",
+              "at": "2034-04-09T10:30:00+05:30"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "kind": "reminder",
+              "payload": {
+                "subject": "stage supply handoff",
+                "item": "Aster Relay",
+                "project": "Silver Comet",
+                "quantity": 0,
+                "recipient": "Captain Nia Sol",
+                "room": "Quasar Room 12"
+              },
+              "summary": "Stage the supply handoff."
+            }
+          }
+        ]
+      },
+      "acceptance_projection": [
+        "exactly_one_create_intent",
+        "exact_complete_domain_payload",
+        "all_explicit_action_arguments_in_matching_slots",
+        "explicit_numeric_zero_preserved",
+        "no_unsourced_nonnull_optional_slots",
+        "no_filler_values",
+        "no_other_mutations"
+      ],
+      "acceptance": {
+        "mutation_type": "create_intent",
+        "mutation_count": 1,
+        "trigger": {
+          "type": "at",
+          "at": "2034-04-09T10:30:00+05:30"
+        },
+        "required_conditions": [],
+        "blockers": [],
+        "action_template": {
+          "kind": "reminder",
+          "payload": {
+            "subject": "stage supply handoff",
+            "item": "Aster Relay",
+            "project": "Silver Comet",
+            "quantity": 0,
+            "recipient": "Captain Nia Sol",
+            "room": "Quasar Room 12"
+          }
+        },
+        "intent_id": "structural_only",
+        "summary": "structural_only",
+        "no_other_mutations": true
+      }
+    },
+    {
+      "id": "C8",
+      "role": "compiler",
+      "category": "ambiguous_empty",
+      "input": {
+        "event": {
+          "id": "w3-preflight-c8-event",
+          "at": "2034-05-22T12:00:00+00:00",
+          "kind": "user_message",
+          "text": "Cancel the prism catalog reminder."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[{\"action_key\":\"w3-fixture-c8-source\",\"action_template\":{\"kind\":\"reminder\",\"payload\":{\"room\":\"North Alcove\",\"subject\":\"catalog prism samples\"},\"summary\":\"Catalog the prism samples in North Alcove.\"},\"blockers\":[],\"field_provenance\":{\"action_key\":[\"w3-fixture-c8-source\"],\"action_template.kind\":[\"w3-fixture-c8-source\"],\"action_template.payload.room\":[\"w3-fixture-c8-source\"],\"action_template.payload.subject\":[\"w3-fixture-c8-source\"],\"action_template.summary\":[\"w3-fixture-c8-source\"],\"blockers\":[\"w3-fixture-c8-source\"],\"required_conditions\":[\"w3-fixture-c8-source\"],\"status\":[\"w3-fixture-c8-source\"],\"trigger.at\":[\"w3-fixture-c8-source\"],\"trigger.type\":[\"w3-fixture-c8-source\"]},\"intent_id\":\"catalog_prism_samples_north\",\"previous_revision_id\":null,\"required_conditions\":[],\"revision\":1,\"revision_id\":\"intent:catalog_prism_samples_north:r1\",\"source_event_id\":\"w3-fixture-c8-source\",\"status\":\"active\",\"trigger\":{\"at\":\"2034-05-24T09:00:00Z\",\"type\":\"at\"},\"valid_from\":\"2034-05-10T08:00:00Z\",\"valid_to\":null},{\"action_key\":\"w3-fixture-c8-source\",\"action_template\":{\"kind\":\"reminder\",\"payload\":{\"room\":\"South Alcove\",\"subject\":\"catalog prism samples\"},\"summary\":\"Catalog the prism samples in South Alcove.\"},\"blockers\":[],\"field_provenance\":{\"action_key\":[\"w3-fixture-c8-source\"],\"action_template.kind\":[\"w3-fixture-c8-source\"],\"action_template.payload.room\":[\"w3-fixture-c8-source\"],\"action_template.payload.subject\":[\"w3-fixture-c8-source\"],\"action_template.summary\":[\"w3-fixture-c8-source\"],\"blockers\":[\"w3-fixture-c8-source\"],\"required_conditions\":[\"w3-fixture-c8-source\"],\"status\":[\"w3-fixture-c8-source\"],\"trigger.at\":[\"w3-fixture-c8-source\"],\"trigger.type\":[\"w3-fixture-c8-source\"]},\"intent_id\":\"catalog_prism_samples_south\",\"previous_revision_id\":null,\"required_conditions\":[],\"revision\":1,\"revision_id\":\"intent:catalog_prism_samples_south:r1\",\"source_event_id\":\"w3-fixture-c8-source\",\"status\":\"active\",\"trigger\":{\"at\":\"2034-05-25T09:00:00Z\",\"type\":\"at\"},\"valid_from\":\"2034-05-10T08:00:00Z\",\"valid_to\":null}]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [],
+        "intent_updates": [],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": []
+      },
+      "acceptance_projection": [
+        "all_four_mutation_arrays_empty",
+        "empty_domain_memory_delta",
+        "no_guessed_intent_target"
+      ],
+      "acceptance": {
+        "mutation_type": "empty_delta",
+        "mutation_count": 0,
+        "no_guessed_intent_target": true
+      }
+    }
+  ],
+  "decision_cases": [
+    {
+      "id": "D1",
+      "role": "decision",
+      "category": "no_action",
+      "input": {
+        "now": "2034-03-15T12:40:00-03:00",
+        "current_event_id": "w3-preflight-d1-event",
+        "context_events": [
+          {
+            "id": "w3-preflight-d1-event",
+            "at": "2034-03-15T12:40:00-03:00",
+            "kind": "observation",
+            "text": "Cirrus ribbons drifted above the basalt ridge."
+          }
+        ],
+        "decision_history": [],
+        "memory_view": {
+          "blocks": []
+        }
+      },
+      "valid_wire_example": {
+        "mode": "no_action",
+        "actions": []
+      },
+      "valid_domain_example": {
+        "actions": []
+      },
+      "acceptance_projection": [
+        "wire_mode_no_action",
+        "empty_wire_actions",
+        "empty_domain_actions"
+      ],
+      "acceptance": {
+        "mode": "no_action",
+        "actions": []
+      }
+    }
+  ]
+}

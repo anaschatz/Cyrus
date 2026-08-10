@@ -1,0 +1,780 @@
+{
+  "schema_version": 1,
+  "purpose": "oracle_compiler_ceiling",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_test_eligible": false,
+  "annotation_policy": "causal-observable-prefix-v1",
+  "canonical_dataset_sha256": "37a62b643ed920bf115aa0ea2495f00fc12bc349fabc4664ad430c4e9eb71115",
+  "scenarios": [
+    {
+      "scenario_id": "wd3_01_planetarium_deadline",
+      "events": [
+        {
+          "event_id": "wd3_01_e01",
+          "observable_event_sha256": "482fea7f71edc82186b32b3daec5b06c1c147132907c4a003beaadb6cd8a0f18",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "planetarium_narration",
+                "trigger": {
+                  "type": "at",
+                  "at": "2027-04-08T16:30:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "submit planetarium narration",
+                    "project": "Orion Dome"
+                  },
+                  "summary": "Submit planetarium narration"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_01_e02",
+          "observable_event_sha256": "1831b35cf06c6ff928b5c718d7bd1748826e394768ef4f5f84f0d4f5534f7152",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_01_e04",
+          "observable_event_sha256": "5a6574b69892b429f19f11accf65c330bed9c5bd74fc3901adde15506f4dccc5",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_01_e07",
+          "observable_event_sha256": "64b172d59047fbda30924a3443e5982cf7ae3f819cb25c498bf3aa486eb7eae4",
+          "delta": {
+            "mutations": []
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd3_02_kiln_cancellation",
+      "events": [
+        {
+          "event_id": "wd3_02_e01",
+          "observable_event_sha256": "c2a1366b6ba8a4e23de68adc1b5995dcc73174a3a3b7f6184a824bdef04937b8",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "ceramics_kiln",
+                "trigger": {
+                  "type": "at",
+                  "at": "2027-05-08T09:00:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "reserve ceramics kiln",
+                    "project": "glaze workshop"
+                  },
+                  "summary": "Reserve ceramics kiln"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_02_e02",
+          "observable_event_sha256": "7ffb6a4265ac5f7bc23c79d7af61121646bd248f43c813e01580ed74ff6dbca2",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_02_e04",
+          "observable_event_sha256": "c78f3b675d50de154c8d4e0d7e9ceb1622f1d691d19d7c0b1f7417fabb282df1",
+          "delta": {
+            "mutations": [
+              {
+                "op": "cancel_intent",
+                "intent_id": "ceramics_kiln"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_02_e06",
+          "observable_event_sha256": "2a56872f169a4a4263538368efeaf094c1bd29f37d88b5a22653198e91f6c9e1",
+          "delta": {
+            "mutations": []
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd3_03_transit_conjunction",
+      "events": [
+        {
+          "event_id": "wd3_03_e01",
+          "observable_event_sha256": "01099c7fb908c16170c4cb32d36098d02cf32a101fe55dba388b1b1b9c9df930",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "fossil_dispatch",
+                "trigger": {
+                  "type": "condition_transition",
+                  "active_from": "2027-06-07T08:45:00+03:00",
+                  "active_until": "2027-06-13T22:00:00+03:00"
+                },
+                "required_conditions": [
+                  {
+                    "key": {
+                      "entity": "exhibit_transit",
+                      "attribute": "permit_approved"
+                    },
+                    "operator": "eq",
+                    "value": true
+                  },
+                  {
+                    "key": {
+                      "entity": "foam_crate",
+                      "attribute": "sealed"
+                    },
+                    "operator": "eq",
+                    "value": true
+                  }
+                ],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "dispatch fossil cast",
+                    "shipment": "fossil cast"
+                  },
+                  "summary": "Dispatch fossil cast"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_03_e02",
+          "observable_event_sha256": "4ff8a47fafde291c4c0c70363e22f03c284edb1f267707029f4af959deb88a4e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "exhibit_transit",
+                  "attribute": "permit_approved"
+                },
+                "value": true
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_03_e03",
+          "observable_event_sha256": "afd350fb68466172999640051418ede5ccad57d58296915605b305055146f029",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_03_e04",
+          "observable_event_sha256": "9f7969b737f886307fa57d4dd996df66f906963cf060306643b4ead58ebddd9e",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "foam_crate",
+                  "attribute": "sealed"
+                },
+                "value": false
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_03_e05",
+          "observable_event_sha256": "2d6cd3395a887314b8d2925e1bdec306f5d54c2d1b8a4e31a764da1ab4bc17ff",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "foam_crate",
+                  "attribute": "sealed"
+                },
+                "value": true
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_03_e07",
+          "observable_event_sha256": "a6f1a38a02667348c74f9de2918941cdfd6706dfcd2fe9199cfe8c10f81ae3c3",
+          "delta": {
+            "mutations": []
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd3_04_survey_reschedule",
+      "events": [
+        {
+          "event_id": "wd3_04_e01",
+          "observable_event_sha256": "a31043bccffed7ecc26e62fc349a3263b9e91adf79a2b1912b24e60925d0396f",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "acoustic_survey_map",
+                "trigger": {
+                  "type": "at",
+                  "at": "2027-07-14T11:00:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "submit acoustic survey map",
+                    "project": "harbor survey"
+                  },
+                  "summary": "Submit acoustic survey map"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_04_e02",
+          "observable_event_sha256": "ee09714fd911efa4fc19060f10e65a4c18c1b447d206314995424f3561537c95",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_04_e03",
+          "observable_event_sha256": "75a72b5d869f662eaa2db9d22c05d6f46c54be590533e89596372165bc40eed4",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "acoustic_survey_map",
+                "trigger": {
+                  "type": "at",
+                  "at": "2027-07-16T15:00:00+03:00"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_04_e05",
+          "observable_event_sha256": "9b058be53d3370bb78325acb0fce1cc19ae088d4547c97ddbab0e77db9f582ca",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_04_e08",
+          "observable_event_sha256": "0d5566a0d689940768cfc438ee715793f10d2a660545199bab28c0d1750e81db",
+          "delta": {
+            "mutations": []
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd3_05_incubator_grounding",
+      "events": [
+        {
+          "event_id": "wd3_05_e01",
+          "observable_event_sha256": "b84fbfb3afc74a3e5bed24292c77f5e2cb5dff360151d4db6c917e0b9638d543",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "cedar_incubator_calibration",
+                "trigger": {
+                  "type": "condition_transition",
+                  "active_from": "2027-08-02T08:30:00+03:00",
+                  "active_until": "2027-08-08T22:00:00+03:00"
+                },
+                "required_conditions": [
+                  {
+                    "key": {
+                      "entity": "cedar_incubator",
+                      "attribute": "humidity"
+                    },
+                    "operator": "gte",
+                    "value": 80,
+                    "unit": "percent"
+                  }
+                ],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "calibrate cedar incubator",
+                    "item": "Cedar incubator"
+                  },
+                  "summary": "Calibrate Cedar incubator"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_05_e02",
+          "observable_event_sha256": "95cfd10b3d056f704894f694b6af73d4148599f624208357bee6112e688f0e19",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "birch_incubator",
+                  "attribute": "humidity"
+                },
+                "value": 88,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_05_e04",
+          "observable_event_sha256": "5efbd44c0d3ee00a012b20cc708a68c66e6187c4d208afaa366b382d935958d2",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "cedar_incubator",
+                  "attribute": "humidity"
+                },
+                "value": 75,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_05_e05",
+          "observable_event_sha256": "c70d6d48af1ee39adc3d4e597d5bad3aa9d3308e19f1e80f08769a9c084e8b13",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "birch_incubator",
+                  "attribute": "humidity"
+                },
+                "value": 100,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_05_e06",
+          "observable_event_sha256": "96bc45d7c04f9d49d4e50c17b530ca6ccc9af0463e951b1b71e283722c89e9d9",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "cedar_incubator",
+                  "attribute": "humidity"
+                },
+                "value": 82,
+                "unit": "percent"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd3_06_archive_desk_update",
+      "events": [
+        {
+          "event_id": "wd3_06_e01",
+          "observable_event_sha256": "b4e92b380a4db8151c3856f0baeffd83c982d02878ab4f17cb9cac5b05b1c667",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "archive_key_handoff",
+                "trigger": {
+                  "type": "at",
+                  "at": "2027-10-09T10:00:00+03:00"
+                },
+                "required_conditions": [],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "hand over archive keys",
+                    "address": "west lobby desk 3"
+                  },
+                  "summary": "Hand over archive keys"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_06_e03",
+          "observable_event_sha256": "b252cd4e629dcc843065636973956d21024f0e35f4ba731cea37e5f8a237b831",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_06_e04",
+          "observable_event_sha256": "2713449a4a895cb9297b33b1691bea3f0d001f980a03d37ac7213a9066a32b02",
+          "delta": {
+            "mutations": [
+              {
+                "op": "update_intent",
+                "intent_id": "archive_key_handoff",
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "hand over archive keys",
+                    "address": "south atrium desk 11"
+                  },
+                  "summary": "Hand over archive keys"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_06_e06",
+          "observable_event_sha256": "a95227e512ba2624e00f5dc01d15adea2b640558be1b241d03778576b8e3c981",
+          "delta": {
+            "mutations": []
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd3_07_shell_brainstorm",
+      "events": [
+        {
+          "event_id": "wd3_07_e01",
+          "observable_event_sha256": "fe14c792b817f47ebb5b0256d592fd5b0b78cb30ad31c6a40ea5cdde0652c426",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_07_e02",
+          "observable_event_sha256": "e5b4db2a4a694b93382867dc066cb107cddae1b064a6c8d4aeac1f8376676b5c",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_07_e03",
+          "observable_event_sha256": "2ed185c444e997288247d2f761440c043d030f7070f4fe0e6a0844ff135f9834",
+          "delta": {
+            "mutations": []
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd3_08_reef_recurrence",
+      "events": [
+        {
+          "event_id": "wd3_08_e01",
+          "observable_event_sha256": "21d924168024924dbeb3a627c6bbecc87811bf958af3493ab7ff16451a0fedf3",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "reef_salinity_log",
+                "trigger": {
+                  "type": "recurring",
+                  "local_time": "18:15:00",
+                  "weekdays": [
+                    "tuesday",
+                    "thursday"
+                  ],
+                  "start_date": "2027-09-13",
+                  "end_date": "2027-09-19",
+                  "timezone": "Europe/Athens"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "reef_log.{date}",
+                      "attribute": "completed"
+                    },
+                    "operator": "eq",
+                    "value": true
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "log lagoon reef salinity",
+                    "tank": "lagoon reef",
+                    "date": "{date}"
+                  },
+                  "summary": "Log lagoon reef salinity for {date}"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_08_e02",
+          "observable_event_sha256": "45c9e76ff1310b6530b4010e04477587f5555bee71fb54ee5196851d885c0bb5",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "reef_log.2027-09-14",
+                  "attribute": "completed"
+                },
+                "value": true
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_08_e04",
+          "observable_event_sha256": "d8964b409d6a72c46b050d5ff395f0786b22d58a0c3c202423cdb5f9daf3f392",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_08_e07",
+          "observable_event_sha256": "f5b1bd6c8dd688fc49caab71093b53d14a4356dbcbbf4c3db579245990d6ec6e",
+          "delta": {
+            "mutations": []
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd3_09_letter_reversal",
+      "events": [
+        {
+          "event_id": "wd3_09_e01",
+          "observable_event_sha256": "7f255eeac2915f089a8c69052201ceee60122888460b3f01be054052bb72d71c",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "theater_sponsorship_letter",
+                "trigger": {
+                  "type": "at",
+                  "at": "2027-12-10T17:00:00+02:00"
+                },
+                "required_conditions": [],
+                "blockers": [
+                  {
+                    "key": {
+                      "entity": "theater_sponsorship_letter",
+                      "attribute": "sent"
+                    },
+                    "operator": "eq",
+                    "value": true
+                  }
+                ],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "send theater sponsorship letter",
+                    "recipient": "theater sponsor"
+                  },
+                  "summary": "Send theater sponsorship letter"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_09_e02",
+          "observable_event_sha256": "292cf358472f3a6aee845b535195797798ca7ba4da40da811fa66e81bbf20400",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_09_e03",
+          "observable_event_sha256": "9c2ef4d7c85c13415e84570c3211681467730f801929c7dd6733c1bac012bd98",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "theater_sponsorship_letter",
+                  "attribute": "sent"
+                },
+                "value": true
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_09_e05",
+          "observable_event_sha256": "e541a8e29e14da8a9babd4354f2e561de9d3d7c1011250b16385f5864554ffc4",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "theater_sponsorship_letter",
+                  "attribute": "sent"
+                },
+                "value": false
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_09_e08",
+          "observable_event_sha256": "99740ac2c3f24c8b09b8f761fbc1292dd21baa0fd2d68950c8544be9e39b8d4e",
+          "delta": {
+            "mutations": []
+          }
+        }
+      ]
+    },
+    {
+      "scenario_id": "wd3_10_battery_threshold",
+      "events": [
+        {
+          "event_id": "wd3_10_e01",
+          "observable_event_sha256": "3c1810069f486842410aa866f35fcd1b1921cb2dc402bdeca606088b1d34327d",
+          "delta": {
+            "mutations": [
+              {
+                "op": "create_intent",
+                "intent_id": "west_roof_capacity_test",
+                "trigger": {
+                  "type": "condition_transition",
+                  "active_from": "2028-01-10T08:20:00+02:00",
+                  "active_until": "2028-01-16T22:00:00+02:00"
+                },
+                "required_conditions": [
+                  {
+                    "key": {
+                      "entity": "west_roof_battery",
+                      "attribute": "charge_pct"
+                    },
+                    "operator": "gte",
+                    "value": 72,
+                    "unit": "percent"
+                  }
+                ],
+                "blockers": [],
+                "action_template": {
+                  "kind": "reminder",
+                  "payload": {
+                    "subject": "start battery capacity test",
+                    "item": "west roof battery bank"
+                  },
+                  "summary": "Start battery capacity test"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_10_e02",
+          "observable_event_sha256": "6fef9de60e870cac279094ae9cf6e789b079c76405e54c67e080729608908bbd",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "east_roof_battery",
+                  "attribute": "charge_pct"
+                },
+                "value": 80,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_10_e04",
+          "observable_event_sha256": "a4fcf10f50e2ebf9c88adcdc14b3923a6ff6814e9c855a777e63a2858a46ef0c",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "west_roof_battery",
+                  "attribute": "charge_pct"
+                },
+                "value": 65,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_10_e05",
+          "observable_event_sha256": "676f5b7cd3cf772fb1ea7d844a59c9498d3668518fd8f8f79421e4304238173f",
+          "delta": {
+            "mutations": []
+          }
+        },
+        {
+          "event_id": "wd3_10_e06",
+          "observable_event_sha256": "54bf1b90597a0257d94aad133a64e5c6e5ffb247ebcaae306b20fa7ade4a6cd9",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "west_roof_battery",
+                  "attribute": "charge_pct"
+                },
+                "value": 74,
+                "unit": "percent"
+              }
+            ]
+          }
+        },
+        {
+          "event_id": "wd3_10_e08",
+          "observable_event_sha256": "b8ebcc18a5436480ee68727ba3fce51e9d95c14d47afcaa47af37112b69ac7fa",
+          "delta": {
+            "mutations": [
+              {
+                "op": "set_fact",
+                "key": {
+                  "entity": "west_roof_battery",
+                  "attribute": "charge_pct"
+                },
+                "value": 80,
+                "unit": "percent"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

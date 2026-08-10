@@ -1,0 +1,251 @@
+{
+  "dataset": "anamnesis-writer-diagnostic-v4",
+  "schema_version": 1,
+  "dataset_version": "v4",
+  "split": "writer-diagnostic-v4",
+  "status": "frozen-diagnostic",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_evidence": false,
+  "preregistered_final_eligible": false,
+  "member_of_development_35": false,
+  "member_of_sealed_set": false,
+  "frozen_at": "2026-08-08",
+  "freeze_order": {
+    "dataset_authored_before_w3_prompt": true,
+    "oracle_authored_before_w3_prompt": true,
+    "w3_prompt_existed_at_freeze": false,
+    "w3_prompt_status": "not-authored",
+    "w3_model_calls_before_freeze": 0
+  },
+  "review_status": {
+    "automated_integrity": "passed",
+    "gold_provenance_policy": "minimal-causal-evidence-v1",
+    "independent_human_review": "pending",
+    "independent_agent_review": "passed",
+    "independent_agent_review_date": "2026-08-08",
+    "independent_agent_review_note": "Passed after two independent agent audits, correction of all findings, and a final clean post-fix audit."
+  },
+  "origin": {
+    "type": "locally-authored",
+    "authorship": "brand-new-independent-v4",
+    "derived_from_prior_writer_diagnostic": false,
+    "longmemeval_items": 0,
+    "triggerbench_items": 0,
+    "external_dataset_items": 0
+  },
+  "scenario_count": 10,
+  "event_count": 62,
+  "non_clock_event_count": 39,
+  "expected_action_count": 8,
+  "forbidden_action_count": 13,
+  "no_action_scenario_count": 2,
+  "obsolete_trap_scenario_count": 3,
+  "optional_payload_slot_count": 34,
+  "family_counts": {
+    "basic_deadline": 1,
+    "cancellation": 1,
+    "conjunctive_trigger": 1,
+    "deadline_update": 1,
+    "entity_grounding": 1,
+    "fact_update": 1,
+    "negative_control": 1,
+    "recurring_intention": 1,
+    "reversible_completion": 1,
+    "threshold_trigger": 1
+  },
+  "canonical_action_subjects": {
+    "policy": "trimmed-lowercase-article-free-verb-object-v1",
+    "by_scenario": {
+      "wd4_01_marigold_permit": "submit permit",
+      "wd4_02_kestrel_cancellation": "reserve kiln",
+      "wd4_03_fenwick_conjunction": "launch transect",
+      "wd4_04_velvet_finch_reschedule": "inspect crate",
+      "wd4_05_mica_pavilion": "photograph facade",
+      "wd4_06_quill_recipient_update": "courier samples",
+      "wd4_07_sunken_orchard_quote": "polish map",
+      "wd4_08_quartz_weir_recurrence": "test alarm",
+      "wd4_09_indigo_harp_reversal": "dispatch prospectus",
+      "wd4_10_borealis_threshold": "close valve"
+    }
+  },
+  "file_sha256": "6b2530cb9f3426c792500f07e854d7f31ad84081ac77104cb8032737234ff91c",
+  "canonical_dataset_sha256": "ee80a55874ac6d6cfd5ee32484d91113bff78d829d66c9ff46bcb646456eb598",
+  "record_sha256": {
+    "wd4_01_marigold_permit": "2cc423c75e35cd8aec7bb3312af1d2fb11288e0658ec95aa4b12ef6c492d0a37",
+    "wd4_02_kestrel_cancellation": "68538982a3903b6389607d1416454ded093181a703fcd989b6c086b189b900f2",
+    "wd4_03_fenwick_conjunction": "bf64d48b40b3b09c08ac38a835f573196cd7e8a48464d5b5f3c4725f7038487e",
+    "wd4_04_velvet_finch_reschedule": "ea7533e91cdf92ada7fa9a48620657ae61f3b65acd303d17497738c13a656195",
+    "wd4_05_mica_pavilion": "45e993c67647dafb0c06c04e928ee057e36c220e6f7b8c60e7a85c24dc4a8b73",
+    "wd4_06_quill_recipient_update": "6988c7501ce222f918c9145d2ee24f11a11e4ebc4afaff0a572e3366fdda1928",
+    "wd4_07_sunken_orchard_quote": "f2fa08b2f67430502d743ab79081b58b8801551d47d1338981e85baee70d1d33",
+    "wd4_08_quartz_weir_recurrence": "c2158c7157f88af1bb0697d3e1c4a238fb46eddb392ae3888a17e39fc77f6dc6",
+    "wd4_09_indigo_harp_reversal": "875bbc6b5b1b66a30b9019b283b86edc145e263c4f84631e5ac5baa9b4821d0e",
+    "wd4_10_borealis_threshold": "abb45f5eac73582ab885c68ed49bf2680a38e70000925919751250940b75cb0e"
+  },
+  "scenario_origins": [
+    {
+      "scenario_id": "wd4_01_marigold_permit",
+      "family": "basic_deadline",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    },
+    {
+      "scenario_id": "wd4_02_kestrel_cancellation",
+      "family": "cancellation",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    },
+    {
+      "scenario_id": "wd4_03_fenwick_conjunction",
+      "family": "conjunctive_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    },
+    {
+      "scenario_id": "wd4_04_velvet_finch_reschedule",
+      "family": "deadline_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    },
+    {
+      "scenario_id": "wd4_05_mica_pavilion",
+      "family": "entity_grounding",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    },
+    {
+      "scenario_id": "wd4_06_quill_recipient_update",
+      "family": "fact_update",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    },
+    {
+      "scenario_id": "wd4_07_sunken_orchard_quote",
+      "family": "negative_control",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    },
+    {
+      "scenario_id": "wd4_08_quartz_weir_recurrence",
+      "family": "recurring_intention",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    },
+    {
+      "scenario_id": "wd4_09_indigo_harp_reversal",
+      "family": "reversible_completion",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    },
+    {
+      "scenario_id": "wd4_10_borealis_threshold",
+      "family": "threshold_trigger",
+      "origin": "locally-authored",
+      "author": "Anamnesis project",
+      "review_status": "automated-integrity-passed; independent-agent-review-passed; independent-human-review-pending"
+    }
+  ],
+  "optional_payload_grounding": {
+    "policy": "exact-source-cased-observable-text-v1",
+    "all_optional_slots_explicitly_grounded": true,
+    "automated_test": "tests/test_writer_diagnostic_v4.py"
+  },
+  "causal_derivability": {
+    "policy": "current-observable-plus-prior-active-state-v1",
+    "all_gold_mutations_prefix_derivable": true,
+    "future_or_gold_annotation_dependency": false,
+    "recurrence_iana_timezone_explicit_in_observable": true,
+    "mutation_weekday_date_pairs_explicit": true,
+    "named_weekday_date_pairs_validated_against_iso_calendar": true,
+    "named_weekday_date_pair_count": 7,
+    "condition_active_until_explicit": true,
+    "update_cancel_reference_one_active_intent": true,
+    "optional_payload_values_exact_source_cased": true,
+    "unchanged_update_leaves_may_derive_from_prior_active_state": true,
+    "conditional_future_scope_not_asserted_as_current_fact": true,
+    "summary_is_noncanonical": true,
+    "automated_test": "tests/test_writer_diagnostic_v4.py"
+  },
+  "w3_candidate_matching_protocol": {
+    "version": "w3.candidate-key.v1",
+    "gate_key_fields": [
+      "checkpoint",
+      "action_key",
+      "due_at",
+      "kind",
+      "canonical_payload",
+      "sorted_evidence"
+    ],
+    "excluded_from_gate": ["summary", "intent_id", "occurrence_id"],
+    "summary_role": "noncanonical UX text",
+    "hidden_exact_summary_gate": false,
+    "legacy_exact_key_diagnostic_only": true,
+    "legacy_exact_key_fields": [
+      "checkpoint",
+      "action_key",
+      "due_at",
+      "kind",
+      "canonical_payload",
+      "summary",
+      "sorted_evidence"
+    ]
+  },
+  "oracle_reference": {
+    "path": "eval/oracle/writer_diagnostic_memory_deltas.v4.json",
+    "file_sha256": "72308bb34bda758cc72dc651e3f0fd2fd2bd1bff820479e2cf0774ee8d66cf5c",
+    "canonical_artifact_sha256": "b877bcd6fe15767d9f1bb42a5840a799d2ef5a4a3691eb6a59ae2f9f7d40813b",
+    "annotation_policy": "causal-observable-prefix-v1",
+    "consumer_scope": "reporter-only-offline-replay",
+    "event_record_count": 39,
+    "visible_to_evaluated_writer": false,
+    "writer_input_eligible": false,
+    "human_annotation_measured": false,
+    "nonempty_delta_event_count": 21,
+    "mutation_count": 21,
+    "mutation_counts": {
+      "set_fact": 9,
+      "create_intent": 9,
+      "update_intent": 2,
+      "cancel_intent": 1
+    },
+    "offline_replay_ceiling": {
+      "tp": 8,
+      "fp": 0,
+      "fn": 0,
+      "provenance_exact": 8,
+      "obsolete_errors": 0,
+      "invalid_outputs": 0
+    }
+  },
+  "anti_overlap_attestation": {
+    "comparison_sets": [
+      "eval/scenarios/smoke.jsonl",
+      "eval/scenarios/dev.jsonl",
+      "eval/scenarios/sealed.jsonl",
+      "eval/scenarios/all.jsonl",
+      "eval/scenarios/writer_diagnostic.v1.jsonl",
+      "eval/scenarios/writer_diagnostic.v2.jsonl",
+      "eval/scenarios/writer_diagnostic.v3.jsonl"
+    ],
+    "scenario_ids_disjoint": true,
+    "event_ids_disjoint": true,
+    "canonical_record_hashes_disjoint": true,
+    "exact_titles_descriptions_event_texts_disjoint": true,
+    "casefolded_titles_descriptions_event_texts_disjoint": true,
+    "optional_payload_values_disjoint_casefolded": true,
+    "calendar_dates_disjoint": true,
+    "automated_test": "tests/test_writer_diagnostic_v4.py",
+    "old_contents_displayed_by_test": false,
+    "manual_source_content_reviewed_for_authorship": false,
+    "scope": "all pre-v4 core and writer-diagnostic scenario datasets"
+  }
+}

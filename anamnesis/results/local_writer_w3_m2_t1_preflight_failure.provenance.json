@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "artifact_type": "local_writer_w3_m2_t1_preflight_failure",
+  "title": "W3-M2-T1 transport-only preflight — failed",
+  "hypothesis_test_eligible": false,
+  "source": {
+    "git_commit": "ef13b6d222a44435c323db3a2c4b8361964c7111",
+    "clean_at_execution": true,
+    "repository": "https://github.com/anaschatz/anamnesis"
+  },
+  "protocol": {
+    "path": "eval/preflight/local_writer_w3_m2_t1.protocol.v1.json",
+    "sha256": "ef02b6bb019c705de96f98330b6e0f14532993635b2b6dc88614f4d1014db09c",
+    "intervention": "transport_only",
+    "transport_field": "reasoning_effort=none",
+    "parent_cell": "W3-M2",
+    "attempts_authorized": 1,
+    "attempts_present": 1,
+    "scenario_calls_authorized": 0,
+    "scenario_calls_present": 0
+  },
+  "model": {
+    "id": "ollama/qwen3.5:9b-q4_K_M",
+    "artifact_pin_path": "eval/ollama_qwen3_5_9b_q4_k_m.pin.json",
+    "artifact_pin_sha256": "1eb1883308ccaf2631384b8a6c1e19048d826d7f766b879de540e9a7f878ab13",
+    "manifest_sha256": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+    "model_blob_sha256": "dec52a44569a2a25341c4e4d3fee25846eed4f6f0b936278e3a3c900bb99d37c",
+    "verified_artifact_bytes": 6594474711,
+    "family": "qwen35",
+    "parameter_size": "9.7B",
+    "quantization": "Q4_K_M"
+  },
+  "frozen_inputs": {
+    "w3_fixture": {
+      "path": "eval/preflight/local_writer_w3.v1.json",
+      "sha256": "5628c3c1d7f8e1a5da43d6e567d55ac8e4fbabd8b9c4054325de6f4def1da30c"
+    },
+    "w3_protocol": {
+      "path": "eval/preflight/local_writer_w3.protocol.v1.json",
+      "sha256": "7f63c156a8af74ced2d5e5530b3e8083da95c7f46e14e1afafaaf864b3ce1915"
+    },
+    "w3_m2_protocol": {
+      "path": "eval/preflight/local_writer_w3_m2.protocol.v1.json",
+      "sha256": "1b563651b0b95a9a258082c1016dbc997b4da53b3573b24be54dcac30cb82d0e"
+    },
+    "pricing": {
+      "path": "eval/local_model_costs_w3_m2.json",
+      "sha256": "74f7321226f6fc71d9c8c88551653d8507d1a22a22ea4127226c91a5ce06267c"
+    },
+    "compiler_prompt_sha256": "412a63d6b42ea6b5e294401cabbcbacf5a6b7facddbd8fe04ca7b91914c141e5",
+    "compiler_schema_sha256": "8871ff344eb3a2e88a53b964ef2f24f089a72507c69073ec323cf26a428c3030",
+    "decision_prompt_sha256": "871fe15e3160e66abe7480cbde15dfb943dec2d0ff89bb01a03849ad35defd8d",
+    "decision_schema_sha256": "1b7c38d3f4bf150523ecc1e468ad3fb1f94753611f190d70f93abbf5ec582426",
+    "dependency_lock_sha256": "f7207290df1b0da3519ea50f04cb88a15f1cf9bf950b0d1e990424113f9b5376",
+    "research_contract_sha256": "42356cb5b1781f9702e0f5ff7634d288a960f9706c4d9186fc726988bb32c6af",
+    "architecture_contract_sha256": "85b3b9704556a7f0459c19e8b70f50302d60c43b11b0980687d471447b4d4797"
+  },
+  "implementation": {
+    "runtime_path": "src/anamnesis/local_runtime.py",
+    "runtime_sha256": "31b6b260c2380ffdb8609c501a3c7f47a4ebe570544d780fc6ed5aab5b3bbb8a",
+    "validator_path": "src/anamnesis/local_preflight.py",
+    "validator_sha256": "24a3a5aceea95039bfd2b03007b8eaabcbaf69e0fd85e22f30fdc3a8709af8f0",
+    "task_path": "eval/anamnesis_local_eval.py",
+    "task_sha256": "57c02a933736e8f1c61e375552ae5831ea62d7d62a1c8a8792b7344e168ff5a1"
+  },
+  "raw_log": {
+    "path": "results/runs/local/writer_w3_m2_t1/preflight/2026-08-08T13-57-01-00-00_local-model-preflight-w3-m2-t1_Fh4EYAwWY5NLV9Fa5M6rbW.eval",
+    "sha256": "93abb63b7f12154b875856af13886778e8e488267bb0a765ad9d044f0116a9d1",
+    "inspect_status": "success",
+    "run_id": "ePbVunKVEPaR7XsHRgKijy",
+    "model_events": 9,
+    "raw_requests_with_exact_transport_field": 9,
+    "retries": 0,
+    "cache_hits": 0,
+    "repair_calls": 0,
+    "max_tokens_stops": 0
+  },
+  "result": {
+    "passed": false,
+    "compiler_cases": 8,
+    "compiler_final_nonempty": 8,
+    "compiler_parse_valid": 0,
+    "compiler_semantic_valid": 0,
+    "decision_parse_valid": 1,
+    "decision_semantic_valid": 1,
+    "input_tokens": 17653,
+    "output_tokens": 2616,
+    "provider_api_cost_usd": 0.0,
+    "setup_latency_ms": 488280.5422510137,
+    "residency_probe_latency_ms": 9.996209002565593,
+    "strict_pass_validator_outcome": "rejected: local W3 semantic preflight result did not pass"
+  },
+  "output": {
+    "path": "results/local_writer_w3_m2_t1_preflight_failure.md",
+    "sha256": "a2cfab9056fa75beaac01a2aff54e4348905ce3665aa32d89e5b4bf704df648f"
+  }
+}

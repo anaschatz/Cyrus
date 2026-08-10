@@ -1,0 +1,64 @@
+{
+  "manifest_schema_version": 1,
+  "alias": "jarvis-local",
+  "platform": "macos-arm64",
+  "backend": {
+    "type": "mlx-worker",
+    "worker": {
+      "path": "runtime/mlx_worker_runtime.py",
+      "size_bytes": -1,
+      "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+    }
+  },
+  "model": {
+    "format": "mlx",
+    "context_window": 32768,
+    "artifacts": [
+      {
+        "path": "models/REPLACE_MODEL/config.json",
+        "size_bytes": -1,
+        "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+      },
+      {
+        "path": "models/REPLACE_MODEL/tokenizer.json",
+        "size_bytes": -1,
+        "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+      },
+      {
+        "path": "models/REPLACE_MODEL/weights.safetensors",
+        "size_bytes": -1,
+        "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+      }
+    ]
+  },
+  "python": {
+    "implementation": "CPython",
+    "version": "REPLACE_WITH_EXACT_VERSION",
+    "executable": {
+      "path": "python/bin/python3.11",
+      "size_bytes": -1,
+      "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+    },
+    "site_packages": "python/lib/python3.11/site-packages",
+    "packages": [
+      {
+        "name": "REPLACE-with-every-canonical-transitive-package",
+        "version": "REPLACE_WITH_EXACT_VERSION",
+        "wheel_filename": "REPLACE_WITH_EXACT_WHEEL_FILENAME.whl",
+        "wheel": {
+          "path": "wheels/REPLACE_WITH_EXACT_WHEEL_FILENAME.whl",
+          "size_bytes": -1,
+          "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+        }
+      }
+    ]
+  },
+  "capabilities": {
+    "text": true,
+    "stream": true,
+    "tools": false,
+    "json_object": false,
+    "json_schema": false
+  },
+  "qualification_report": "qualification-report.json"
+}

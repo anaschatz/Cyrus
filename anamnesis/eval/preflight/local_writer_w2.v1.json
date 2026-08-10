@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "purpose": "diagnostic",
+  "hypothesis_test_eligible": false,
+  "contracts": {
+    "compiler": {
+      "prompt_version": "local.v0.3",
+      "prompt_sha256": "024641f8d0ec16168eb9b7d8dbee67f92b7049fe6d35b604495aba273319d9dd",
+      "schema_sha256": "8871ff344eb3a2e88a53b964ef2f24f089a72507c69073ec323cf26a428c3030"
+    },
+    "decision": {
+      "prompt_version": "ollama.decision.v0.2",
+      "prompt_sha256": "871fe15e3160e66abe7480cbde15dfb943dec2d0ff89bb01a03849ad35defd8d",
+      "schema_sha256": "1b7c38d3f4bf150523ecc1e468ad3fb1f94753611f190d70f93abbf5ec582426"
+    }
+  },
+  "compiler_cases": [
+    {
+      "id": "C1",
+      "category": "trivial_explicit_same_day_at_subject_only",
+      "input": {
+        "event": {
+          "id": "w2-preflight-c1-event",
+          "at": "2027-04-12T08:35:00+03:00",
+          "kind": "user_message",
+          "text": "Remind me today at 15:40 to water the basil."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [
+          {
+            "intent_id": "water-basil-1540",
+            "trigger": {
+              "type": "at",
+              "at": "2027-04-12T15:40:00+03:00"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "payload": {
+                "subject": "water basil"
+              },
+              "summary": "Water the basil."
+            }
+          }
+        ],
+        "intent_updates": [],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": [
+          {
+            "op": "create_intent",
+            "intent_id": "water-basil-1540",
+            "trigger": {
+              "type": "at",
+              "at": "2027-04-12T15:40:00+03:00"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "kind": "reminder",
+              "payload": {
+                "subject": "water basil"
+              },
+              "summary": "Water the basil."
+            }
+          }
+        ]
+      },
+      "acceptance": {
+        "mutation_type": "create_intent",
+        "trigger": {
+          "type": "at",
+          "at": "2027-04-12T15:40:00+03:00"
+        },
+        "payload": {
+          "subject": "water basil"
+        },
+        "required_conditions": [],
+        "blockers": [],
+        "kind": "reminder",
+        "intent_id": "structural_only",
+        "summary": "structural_only"
+      }
+    },
+    {
+      "id": "C2",
+      "category": "trivial_explicit_next_day_at_address_only",
+      "input": {
+        "event": {
+          "id": "w2-preflight-c2-event",
+          "at": "2027-04-13T10:20:00+03:00",
+          "kind": "user_message",
+          "text": "Remind me tomorrow at 09:15 to collect the parcel at 42 Harbor Avenue."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [
+          {
+            "intent_id": "collect-parcel-0915",
+            "trigger": {
+              "type": "at",
+              "at": "2027-04-14T09:15:00+03:00"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "payload": {
+                "subject": "collect parcel",
+                "address": "42 Harbor Avenue"
+              },
+              "summary": "Collect the parcel at 42 Harbor Avenue."
+            }
+          }
+        ],
+        "intent_updates": [],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": [
+          {
+            "op": "create_intent",
+            "intent_id": "collect-parcel-0915",
+            "trigger": {
+              "type": "at",
+              "at": "2027-04-14T09:15:00+03:00"
+            },
+            "required_conditions": [],
+            "blockers": [],
+            "action_template": {
+              "kind": "reminder",
+              "payload": {
+                "subject": "collect parcel",
+                "address": "42 Harbor Avenue"
+              },
+              "summary": "Collect the parcel at 42 Harbor Avenue."
+            }
+          }
+        ]
+      },
+      "acceptance": {
+        "mutation_type": "create_intent",
+        "trigger": {
+          "type": "at",
+          "at": "2027-04-14T09:15:00+03:00"
+        },
+        "payload": {
+          "subject": "collect parcel",
+          "address": "42 Harbor Avenue"
+        },
+        "required_conditions": [],
+        "blockers": [],
+        "kind": "reminder",
+        "intent_id": "structural_only",
+        "summary": "structural_only"
+      }
+    },
+    {
+      "id": "C3",
+      "category": "irrelevant_observation_empty_memory_delta",
+      "input": {
+        "event": {
+          "id": "w2-preflight-c3-event",
+          "at": "2027-04-15T14:05:00+03:00",
+          "kind": "observation",
+          "text": "A sparrow flew past the window."
+        },
+        "active_state": "{\"facts\":[],\"intents\":[]}"
+      },
+      "valid_wire_example": {
+        "fact_assertions": [],
+        "intent_creates": [],
+        "intent_updates": [],
+        "intent_cancellations": []
+      },
+      "valid_domain_example": {
+        "mutations": []
+      },
+      "acceptance": {
+        "mutation_type": "empty_delta"
+      }
+    }
+  ],
+  "decision_cases": [
+    {
+      "id": "D1",
+      "category": "structured_memory_empty_irrelevant_raw_event_no_action",
+      "input": {
+        "now": "2027-04-16T12:10:00+03:00",
+        "current_event_id": "w2-preflight-d1-event",
+        "context_events": [
+          {
+            "id": "w2-preflight-d1-event",
+            "at": "2027-04-16T12:10:00+03:00",
+            "kind": "observation",
+            "text": "A breeze stirred the courtyard leaves."
+          }
+        ],
+        "decision_history": [],
+        "memory_view": {
+          "blocks": []
+        }
+      },
+      "valid_wire_example": {
+        "mode": "no_action",
+        "actions": []
+      },
+      "valid_domain_example": {
+        "actions": []
+      },
+      "acceptance": {
+        "mode": "no_action",
+        "actions": []
+      }
+    }
+  ]
+}

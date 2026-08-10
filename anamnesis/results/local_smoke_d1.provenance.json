@@ -1,0 +1,43 @@
+{
+  "artifact": "anamnesis_local_smoke_result_provenance",
+  "frozen_manifest": {
+    "path": "results/runs/local/d1/experiment.smoke.json",
+    "sha256": "0acb40c44320c1a8522ae4860e5715eb9dadc9e5c692adbb58c6570f9abb7f30"
+  },
+  "hypothesis_test_eligible": false,
+  "input_eval_logs": [
+    {
+      "path": "results/runs/local/d1/smoke/2026-08-07T19-22-00-00-00_local-no-memory_fxVRjo3BTqMK4SwHVFm3SL.eval",
+      "sha256": "92c0df0b1128245bb40e94aea4130f2e8fab8157a305e06893e01ed9be77b0d8"
+    },
+    {
+      "path": "results/runs/local/d1/smoke/2026-08-07T19-24-38-00-00_local-full-context_NvsTgfqCzMyKFaa2mGXbno.eval",
+      "sha256": "55e01a6ca0b37b754f919de5bf7f650ba049fa0969ef2cc49ace5f23d47caaf2"
+    },
+    {
+      "path": "results/runs/local/d1/smoke/2026-08-07T19-34-37-00-00_local-vector-rag_i25HE25EZArauBkvzbpbqB.eval",
+      "sha256": "132faa114ece958b2ec55f619f5dbbae8080d4df99e0aead0020320082437c70"
+    },
+    {
+      "path": "results/runs/local/d1/smoke/2026-08-07T19-42-01-00-00_local-anamnesis_Vg5hDZELhXA5xz4snykCnD.eval",
+      "sha256": "26d0fab7b24836d6b2d60130f2dd553531f4edb967b7932bfa802790fedcfb56"
+    }
+  ],
+  "outputs": {
+    "csv": {
+      "path": "results/local_smoke_d1.csv",
+      "sha256": "df2c99358b30a08807783109f1c5f4457baadb2c1d7aa4f9cff7240253f1e9d9"
+    },
+    "markdown": {
+      "path": "results/local_smoke_d1.md",
+      "sha256": "18a940b0e5e66e84746d2b8350c5bff9482b9df2b2502b797ffc86b5eae13dc7"
+    }
+  },
+  "scenario_dataset": {
+    "path": "eval/scenarios/smoke.jsonl",
+    "sha256": "e8f64c0f47896137932e748dc9934a9c4639afc84f6674a553e423b4a9f17c47"
+  },
+  "schema_version": 1,
+  "source_git_commit": "e4e7cf60ddb09abf019201a053ac77bcbe66111e",
+  "title": "Local smoke diagnostic \u2014 not a hypothesis test"
+}

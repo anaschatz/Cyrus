@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "dataset_name": "writer_diagnostic",
+  "dataset_version": "v2",
+  "status": "frozen-diagnostic",
+  "claim_scope": "diagnostic_development_only",
+  "hypothesis_evidence": false,
+  "preregistered_final_eligible": false,
+  "member_of_development_35": false,
+  "member_of_sealed_set": false,
+  "writer_prompt_status_at_freeze": "not-authored",
+  "path": "eval/scenarios/writer_diagnostic.v2.jsonl",
+  "file_sha256": "76e4caaac216c61f66df1af6457b2e138c034dc5db87a3a6e5bd40336d87c5ab",
+  "canonical_dataset_sha256": "b18f319e5ddb021edd0d93ce9469931b8fb538c3fba348c67ba8ef9d25964bc9",
+  "record_sha256": {
+    "wd2_01_planetarium_deadline": "9d22aedfe19b33c67f86715c39ba2dd405e8b835e43cf15fb0894a981430bd09",
+    "wd2_02_kiln_cancellation": "adc6bb30dd6957d30e32c4fefb4251aab468dfa5750024f9eca927f57f33bc8d",
+    "wd2_03_transit_conjunction": "7b9ecdc75c9022c97824006f8d881a9a6ba3dc9479ff87bff7bdf19b494acd20",
+    "wd2_04_survey_reschedule": "75518b6d1da96c7d12fe2ded680ea447ad1647487c6ec621f1d4ae79dad47783",
+    "wd2_05_incubator_grounding": "4b1e346072b7221c3f45bc15adfc5f4d4464277c9f39412e4eba169c720c3340",
+    "wd2_06_archive_desk_update": "d81f356054f750ce010cf2cf0c7ac9158860d05e0eac46f0be79389fe1b753e7",
+    "wd2_07_shell_brainstorm": "bbbb13c3b1babfad0c0f4cf1af19935996cba31bc6cca7cbc1d1416fc7194bfc",
+    "wd2_08_reef_recurrence": "de6a5b1c343b565fbe4c61d96397e46ee0aef0c141e38239276572966b53bfb0",
+    "wd2_09_letter_reversal": "28a279786437c627221cf2e378e206607f41f57d844e949b048fd8ea1a076953",
+    "wd2_10_battery_threshold": "7d9ebd7938e4695bf65ed061d954e541f0092d499941bcaaf9eb4dfa80bcb1cd"
+  },
+  "scenario_count": 10,
+  "event_count": 69,
+  "compiler_event_count": 46,
+  "expected_action_count": 8,
+  "forbidden_action_count": 18,
+  "no_action_scenario_count": 2,
+  "obsolete_trap_scenario_count": 3,
+  "family_counts": {
+    "basic_deadline": 1,
+    "cancellation": 1,
+    "conjunctive_trigger": 1,
+    "deadline_update": 1,
+    "entity_grounding": 1,
+    "fact_update": 1,
+    "negative_control": 1,
+    "recurring_intention": 1,
+    "reversible_completion": 1,
+    "threshold_trigger": 1
+  },
+  "origin": {
+    "type": "locally-authored",
+    "longmemeval_items": 0,
+    "triggerbench_items": 0,
+    "external_dataset_items": 0
+  },
+  "review_status": {
+    "automated_integrity": "passed",
+    "gold_provenance_policy": "minimal-causal-evidence-v1",
+    "independent_human_review": "pending"
+  },
+  "anti_overlap_attestation": {
+    "comparison_sets": [
+      "eval/scenarios/smoke.jsonl",
+      "eval/scenarios/dev.jsonl",
+      "eval/scenarios/sealed.jsonl",
+      "eval/scenarios/all.jsonl",
+      "eval/scenarios/writer_diagnostic.v1.jsonl"
+    ],
+    "scenario_ids_disjoint": true,
+    "event_ids_disjoint": true,
+    "canonical_record_hashes_disjoint": true,
+    "exact_titles_descriptions_event_texts_disjoint": true,
+    "automated_test": "tests/test_writer_diagnostic_v2.py",
+    "manual_source_content_reviewed_for_authorship": false
+  },
+  "scenario_origins": [
+    {"scenario_id": "wd2_01_planetarium_deadline", "family": "basic_deadline", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"},
+    {"scenario_id": "wd2_02_kiln_cancellation", "family": "cancellation", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"},
+    {"scenario_id": "wd2_03_transit_conjunction", "family": "conjunctive_trigger", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"},
+    {"scenario_id": "wd2_04_survey_reschedule", "family": "deadline_update", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"},
+    {"scenario_id": "wd2_05_incubator_grounding", "family": "entity_grounding", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"},
+    {"scenario_id": "wd2_06_archive_desk_update", "family": "fact_update", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"},
+    {"scenario_id": "wd2_07_shell_brainstorm", "family": "negative_control", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"},
+    {"scenario_id": "wd2_08_reef_recurrence", "family": "recurring_intention", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"},
+    {"scenario_id": "wd2_09_letter_reversal", "family": "reversible_completion", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"},
+    {"scenario_id": "wd2_10_battery_threshold", "family": "threshold_trigger", "origin": "locally-authored", "review_status": "automated-integrity-passed; independent-review-pending"}
+  ],
+  "oracle_reference": {
+    "path": "eval/oracle/writer_diagnostic_memory_deltas.v2.json",
+    "file_sha256": "49a7ad07bc7e441b28d7bfeed6d76cbe2d870d1b60b38a855c9c270ff385eec3",
+    "canonical_artifact_sha256": "2c5c406c0d7a81e6f66d9a6401976c6053e05118331e5b160e469426125e0f02",
+    "annotation_policy": "causal-observable-prefix-v1",
+    "event_record_count": 46,
+    "visible_to_evaluated_writer": false,
+    "human_annotation_measured": false,
+    "offline_replay_ceiling": {
+      "tp": 8,
+      "fp": 0,
+      "fn": 0,
+      "provenance_exact": 8,
+      "obsolete_errors": 0,
+      "invalid_outputs": 0
+    }
+  },
+  "freeze_rule": "Any content correction creates a new dataset version with new hashes; no W2 result may edit v2."
+}

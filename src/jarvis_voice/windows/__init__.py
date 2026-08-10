@@ -1,0 +1,2 @@
+"""Guarded native Windows adapters."""
+

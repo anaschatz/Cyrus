@@ -1,0 +1,53 @@
+{
+  "ptt_key": "F9",
+  "ptt_queue_capacity": 64,
+  "audio_queue_capacity": 256,
+  "maximum_hold_seconds": 30.0,
+  "maximum_utterance_seconds": 30.0,
+  "audio_input_device": null,
+  "whisper_model_directory": null,
+  "application": {
+    "shutdown_timeout_seconds": 5.0,
+    "log_maximum_bytes": 1048576,
+    "log_backup_count": 3
+  },
+  "asr": {
+    "execution_profile": "cpu",
+    "cpu_compute_type": "int8",
+    "cuda": {
+      "device_index": null,
+      "compute_type": "int8_float16",
+      "residency": "turn_scoped",
+      "minimum_free_vram_mb": 0,
+      "reserve_for_other_workloads_mb": 0,
+      "fallback_to_cpu": true,
+      "worker_start_timeout_seconds": 30.0,
+      "transcription_timeout_seconds": 120.0,
+      "warm_restart_limit": 1,
+      "vram_poll_interval_ms": 100
+    }
+  },
+  "vad": {
+    "artifact": {"path": null, "size": null, "sha256": null},
+    "threshold": 0.5,
+    "minimum_speech_ms": 80,
+    "padding_ms": 80
+  },
+  "orchestrator_url": "ws://127.0.0.1:8765",
+  "sapi_voices": {"el-GR": "", "en-US": ""},
+  "macos": {
+    "asr_backend": "whisper_cpp",
+    "whisper_cpp": {
+      "revision": "v1.9.2",
+      "executable": {"path": null, "size": null, "sha256": null},
+      "model": {"path": null, "size": null, "sha256": null},
+      "language": "auto",
+      "threads": 4,
+      "startup_timeout_seconds": 30.0,
+      "request_timeout_seconds": 120.0,
+      "maximum_response_bytes": 1048576
+    },
+    "system_voices": {"el-GR": "", "en-US": ""}
+  },
+  "logging_level": "INFO"
+}

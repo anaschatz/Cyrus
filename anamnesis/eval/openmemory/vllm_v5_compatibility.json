@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "purpose": "openmemory_vllm_v5_schema_alignment_compatibility",
+  "hypothesis_test_eligible": false,
+  "cases": [
+    {
+      "id": "omv5_emit_cobalt_sheet",
+      "event": {
+        "id": "omv5_event_cobalt_sheet",
+        "at": "2042-05-06T10:20:00+03:00",
+        "kind": "user_message",
+        "text": "Act now: archive the cobalt inspection sheet."
+      },
+      "retrospective_recall": [],
+      "expected_mode": "emit",
+      "expected_action_key": "omv5_event_cobalt_sheet",
+      "expected_evidence_event_ids": ["omv5_event_cobalt_sheet"]
+    },
+    {
+      "id": "omv5_no_action_courtyard",
+      "event": {
+        "id": "omv5_event_courtyard",
+        "at": "2042-05-07T14:45:00+03:00",
+        "kind": "observation",
+        "text": "Three swallows circle above the quiet courtyard."
+      },
+      "retrospective_recall": [],
+      "expected_mode": "no_action",
+      "expected_action_key": null,
+      "expected_evidence_event_ids": []
+    }
+  ]
+}

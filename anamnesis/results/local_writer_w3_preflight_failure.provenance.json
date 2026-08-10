@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "artifact": "anamnesis_local_w3_preflight_failure_provenance",
+  "title": "Local W3 writer preflight failure — no scenario run",
+  "hypothesis_test_eligible": false,
+  "intervention": "bundled-repair",
+  "candidate_status": "rejected_at_preflight",
+  "source_git_commit": "831dacb1879a055f80d0b469b3bc18f35f308073",
+  "source_commits": {
+    "blind_v4_dataset_freeze": "d8b9972bd2dd69f4336d784a5d8f9442aa808119",
+    "w3_prompt_protocol_freeze": "a9fb1602158c4545f6791c296dfc05d8decc7d90",
+    "post_prompt_fixture_freeze": "cfe632270a0ed0bc2a074fee3c65d24462614868",
+    "strict_w3_runtime": "831dacb1879a055f80d0b469b3bc18f35f308073"
+  },
+  "model": {
+    "name": "ollama/qwen3:4b-instruct",
+    "digest": "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0",
+    "pin_path": "eval/ollama_qwen3_4b_instruct.pin.json",
+    "pin_sha256": "dcf839abc1800ce80646f05b983a7feab825a5f0d1e7d75823f76b95e2f69e11",
+    "provider_api_cost_usd": 0.0
+  },
+  "contracts": {
+    "compiler_prompt_version": "local.v0.4",
+    "compiler_prompt_sha256": "412a63d6b42ea6b5e294401cabbcbacf5a6b7facddbd8fe04ca7b91914c141e5",
+    "compiler_schema_sha256": "8871ff344eb3a2e88a53b964ef2f24f089a72507c69073ec323cf26a428c3030",
+    "compiler_transport_sha256": "57d4c0a6152c5319fcd1adab4071ad010d107f9e65d987c1740fa47adaca1bcc",
+    "decision_prompt_version": "ollama.decision.v0.2",
+    "decision_prompt_sha256": "871fe15e3160e66abe7480cbde15dfb943dec2d0ff89bb01a03849ad35defd8d",
+    "decision_schema_sha256": "1b7c38d3f4bf150523ecc1e468ad3fb1f94753611f190d70f93abbf5ec582426",
+    "fixture_path": "eval/preflight/local_writer_w3.v1.json",
+    "fixture_sha256": "5628c3c1d7f8e1a5da43d6e567d55ac8e4fbabd8b9c4054325de6f4def1da30c",
+    "protocol_path": "eval/preflight/local_writer_w3.protocol.v1.json",
+    "protocol_sha256": "7f63c156a8af74ced2d5e5530b3e8083da95c7f46e14e1afafaaf864b3ce1915"
+  },
+  "execution": {
+    "seed": 101,
+    "temperature": 0.0,
+    "response_cache": false,
+    "max_retries": 0,
+    "structured_output_repair_calls": 0,
+    "max_samples": 1,
+    "max_tasks": 1,
+    "max_connections": 1,
+    "ollama_version": "0.31.1",
+    "context_length": 4096,
+    "quantization": "Q4_K_M",
+    "route": "http://127.0.0.1:11434/v1"
+  },
+  "preflight": {
+    "path": "results/runs/local/writer_diagnostic_w3/model_preflight.eval",
+    "sha256": "f64210de4e7dacc816ded706bdef96228c9276bd3bedcd92e10e0fa4b33ac97e",
+    "inspect_status": "success",
+    "semantic_passed": false,
+    "ordered_cases": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "D1"],
+    "passing_cases": ["C5", "C7", "D1"],
+    "parse_or_domain_invalid_cases": ["C2", "C4"],
+    "semantic_invalid_cases": ["C1", "C3", "C6", "C8"],
+    "input_tokens": 17326,
+    "output_tokens": 1044,
+    "model_call_latency_ms": 62644.909,
+    "residency_probe_latency_ms": 4.53,
+    "usage_complete": true,
+    "cost_complete": true,
+    "provider_api_cost_usd": 0.0
+  },
+  "case_results": [
+    {"id": "C1", "parse_error": false, "semantic_valid": false, "input_tokens": 1913, "output_tokens": 72, "latency_ms": 16514.259},
+    {"id": "C2", "parse_error": true, "semantic_valid": false, "input_tokens": 1922, "output_tokens": 161, "latency_ms": 6426.276},
+    {"id": "C3", "parse_error": false, "semantic_valid": false, "input_tokens": 1979, "output_tokens": 31, "latency_ms": 1745.441},
+    {"id": "C4", "parse_error": true, "semantic_valid": false, "input_tokens": 1955, "output_tokens": 168, "latency_ms": 6777.403},
+    {"id": "C5", "parse_error": false, "semantic_valid": true, "input_tokens": 2195, "output_tokens": 94, "latency_ms": 4745.395},
+    {"id": "C6", "parse_error": false, "semantic_valid": false, "input_tokens": 2251, "output_tokens": 165, "latency_ms": 7594.541},
+    {"id": "C7", "parse_error": false, "semantic_valid": true, "input_tokens": 1956, "output_tokens": 274, "latency_ms": 10808.287},
+    {"id": "C8", "parse_error": false, "semantic_valid": false, "input_tokens": 2473, "output_tokens": 67, "latency_ms": 5052.725},
+    {"id": "D1", "parse_error": false, "semantic_valid": true, "input_tokens": 682, "output_tokens": 12, "latency_ms": 2980.582}
+  ],
+  "pricing": {
+    "path": "eval/local_model_costs.json",
+    "sha256": "c185e2fad06d6bd2abaaf0be81a1720fc245555fa2a477c1b1bea558b28c2f74"
+  },
+  "frozen_writer_inputs": {
+    "dataset_path": "eval/scenarios/writer_diagnostic.v4.jsonl",
+    "dataset_raw_sha256": "6b2530cb9f3426c792500f07e854d7f31ad84081ac77104cb8032737234ff91c",
+    "reference_path": "eval/oracle/writer_diagnostic_memory_deltas.v4.json",
+    "reference_raw_sha256": "72308bb34bda758cc72dc651e3f0fd2fd2bd1bff820479e2cf0774ee8d66cf5c",
+    "used_for_model_evaluation": false
+  },
+  "outcome": {
+    "writer_scenarios_evaluated": 0,
+    "writer_scenario_compiler_calls": 0,
+    "measured_eval_logs": 0,
+    "writer_result_manifest_frozen": false,
+    "output_repair_attempted": false,
+    "retry_attempted": false,
+    "second_w3_attempt_authorized": false,
+    "w4_on_v4_authorized": false
+  },
+  "report": {
+    "path": "results/local_writer_w3_preflight_failure.md",
+    "sha256": "9012c2b7a9212a3a789a8d0347eba1e09d326842af112caa6cfb8162d5e91850"
+  }
+}

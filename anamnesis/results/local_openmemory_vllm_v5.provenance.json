@@ -1,0 +1,30 @@
+{
+  "hypothesis_test_eligible": false,
+  "inputs": {
+    "fixture": {
+      "path": "eval/openmemory/vllm_v5_compatibility.json",
+      "sha256": "fe3bdd57dfc51bbd374d81ded6ff6cbd4ba535e08595be39f5ad857bf1e923a0"
+    },
+    "pin": {
+      "path": "eval/openmemory/vllm_v5_compatibility.pin.json",
+      "sha256": "9de634f8806d295d6b6adad340bf23cdd874ae1c367d10d963144f881cdf6b5a"
+    },
+    "run": {
+      "path": "results/runs/local/openmemory_vllm_v5_compatibility/run.json",
+      "sha256": "d59aed0c221714f6dd5df7427e56179e8eafd1c71fc7a981446e43a546c1f290"
+    }
+  },
+  "outputs": {
+    "csv": {
+      "path": "results/local_openmemory_vllm_v5.csv",
+      "sha256": "57efea97c3ef08a262d224b1f2bfc1db9b6ef987e13a77004f3ea258402f5731"
+    },
+    "markdown": {
+      "path": "results/local_openmemory_vllm_v5.md",
+      "sha256": "7817aa772a8c3405115dc067a71e2e50e40022fdd417d02c1ad9c29f9f965133"
+    }
+  },
+  "schema_version": 1,
+  "source_commit": "e7e89e2992712246b24d520a4f86f32ccf7902cd",
+  "title": "OpenMemory + vLLM v5 schema compatibility \u2014 diagnostic only"
+}

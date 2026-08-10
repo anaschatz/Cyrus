@@ -1,0 +1,3 @@
+# The upstream wheel points at a moving Git branch. Use Resemble AI's pinned
+# PyPI release instead so the pilot lock is reproducible and wheel-only.
+resemble-perth==1.0.1

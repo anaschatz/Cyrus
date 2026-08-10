@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "purpose": "openmemory_vllm_v4_schema_canary",
+  "hypothesis_test_eligible": false,
+  "event": {
+    "id": "omv4_canary_weather_vane",
+    "at": "2041-02-03T09:15:00+02:00",
+    "kind": "observation",
+    "text": "A copper weather vane stands above the station entrance."
+  },
+  "retrospective_recall": [],
+  "expected_mode": "no_action"
+}
