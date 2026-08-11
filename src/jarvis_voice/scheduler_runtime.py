@@ -27,6 +27,7 @@ class SchedulerNativeRuntime:
         capabilities: tuple[str, ...],
         manifest_sha256: str,
         playback: SchedulerPlaybackController | None = None,
+        callback_qualification_sha256: str | None = None,
     ) -> None:
         if ("scheduler_notification_speech" in capabilities) != (playback is not None):
             raise ValueError("scheduler notification speech runtime qualification mismatch")
@@ -35,6 +36,7 @@ class SchedulerNativeRuntime:
         self.capabilities = capabilities
         self.manifest_sha256 = manifest_sha256
         self.playback = playback
+        self.callback_qualification_sha256 = callback_qualification_sha256
 
     @classmethod
     def from_config(
@@ -48,7 +50,7 @@ class SchedulerNativeRuntime:
         runtime_profile_sha256: str | None = None,
         platform_name: str | None = None,
     ) -> "SchedulerNativeRuntime":
-        compatibility, _qualification, delivery = load_qualified_native_delivery(
+        compatibility, _qualification, delivery, callback_qualification = load_qualified_native_delivery(
             config, platform_name=platform_name
         )
         from jarvis_orchestrator.scheduler_crypto import (
@@ -98,6 +100,9 @@ class SchedulerNativeRuntime:
                 capabilities=compatibility.capabilities,
                 manifest_sha256=compatibility.sha256,
                 playback=playback,
+                callback_qualification_sha256=(
+                    callback_qualification.sha256 if callback_qualification is not None else None
+                ),
             )
         except BaseException:
             journal.close()

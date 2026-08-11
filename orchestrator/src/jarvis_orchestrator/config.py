@@ -67,6 +67,7 @@ class OrchestratorConfig:
     scheduler_default_timezone: str = "Europe/Athens"
     scheduler_default_locale: str = "el-GR"
     voice_scheduler_compatibility_sha256: str = ""
+    voice_scheduler_callback_qualification_sha256: str = ""
     tools_enabled: bool = False
     tool_roots: Mapping[str, str] | None = None
     tool_app_ids: tuple[str, ...] = ()
@@ -253,6 +254,14 @@ class OrchestratorConfig:
             or any(c not in "0123456789abcdef" for c in self.voice_scheduler_compatibility_sha256)
         ):
             raise ValueError("voice_scheduler_compatibility_sha256 is invalid")
+        if self.voice_scheduler_callback_qualification_sha256 and (
+            len(self.voice_scheduler_callback_qualification_sha256) != 64
+            or any(
+                c not in "0123456789abcdef"
+                for c in self.voice_scheduler_callback_qualification_sha256
+            )
+        ):
+            raise ValueError("voice_scheduler_callback_qualification_sha256 is invalid")
         if self.cloud_enabled:
             if self.cloud_secret_file is None or not self.cloud_secret_file.is_absolute():
                 raise ValueError("cloud_secret_file must be an absolute external secret reference")

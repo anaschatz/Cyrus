@@ -30,6 +30,7 @@ class VoiceCore:
         delivery_journal: DeliveryDedupJournal | None = None,
         scheduler_capabilities: tuple[str, ...] = (),
         scheduler_manifest_sha256: str | None = None,
+        scheduler_callback_qualification_sha256: str | None = None,
     ) -> None:
         self.state = VoiceStateMachine()
         self.asr = asr
@@ -40,15 +41,22 @@ class VoiceCore:
         self.delivery_journal = delivery_journal
         self.scheduler_capabilities: tuple[str, ...] = ()
         self.scheduler_manifest_sha256: str | None = None
-        self.configure_scheduler_extension(scheduler_capabilities, scheduler_manifest_sha256)
+        self.scheduler_callback_qualification_sha256: str | None = None
+        self.configure_scheduler_extension(
+            scheduler_capabilities,
+            scheduler_manifest_sha256,
+            scheduler_callback_qualification_sha256,
+        )
 
     def configure_scheduler_extension(
         self,
         scheduler_capabilities: tuple[str, ...],
         scheduler_manifest_sha256: str | None,
+        scheduler_callback_qualification_sha256: str | None = None,
     ) -> None:
         allowed_scheduler = {
-            "jarvis.scheduler/1", "jarvis.approval-arbiter/1", "scheduler_notification_speech"
+            "jarvis.scheduler/1", "jarvis.approval-arbiter/1", "scheduler_notification_speech",
+            "scheduler_notification_actions",
         }
         if set(scheduler_capabilities) - allowed_scheduler:
             raise ValueError("unknown scheduler capability")
@@ -60,6 +68,13 @@ class VoiceCore:
             raise ValueError("qualified scheduler manifest is required")
         self.scheduler_capabilities = tuple(scheduler_capabilities)
         self.scheduler_manifest_sha256 = scheduler_manifest_sha256
+        actions = "scheduler_notification_actions" in scheduler_capabilities
+        if actions != (
+            isinstance(scheduler_callback_qualification_sha256, str)
+            and re.fullmatch(r"[0-9a-f]{64}", scheduler_callback_qualification_sha256) is not None
+        ):
+            raise ValueError("qualified scheduler callback manifest is required")
+        self.scheduler_callback_qualification_sha256 = scheduler_callback_qualification_sha256
 
     @property
     def session_id(self) -> str:
@@ -97,6 +112,10 @@ class VoiceCore:
             }
         if self.scheduler_manifest_sha256 is not None:
             payload["scheduler_manifest_sha256"] = self.scheduler_manifest_sha256
+        if self.scheduler_callback_qualification_sha256 is not None:
+            payload["scheduler_callback_qualification_sha256"] = (
+                self.scheduler_callback_qualification_sha256
+            )
         return self.client_events.create(
             "client.hello",
             payload,

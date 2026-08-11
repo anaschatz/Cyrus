@@ -38,7 +38,9 @@
     "full_body_when_locked": false,
     "native_helper_path": null,
     "native_helper_sha256": null,
-    "native_helper_code_identity_sha256": null
+    "native_helper_code_identity_sha256": null,
+    "callback_qualification_path": null,
+    "callback_qualification_sha256": null
   },
   "vad": {
     "artifact": {"path": null, "size": null, "sha256": null},

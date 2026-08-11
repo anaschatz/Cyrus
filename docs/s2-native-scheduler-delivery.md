@@ -101,3 +101,21 @@ continues to report `notification_actions=BLOCKED` with
 `native_action_callback_not_qualified`, and `reminders_overall` remains
 blocked. Exact authenticated scheduler APIs remain the authority for snooze and
 cancel.
+
+Physical callback qualification is intentionally interactive and must run
+against the embedded, signed helper artifact:
+
+```bash
+PYTHONPATH=src:orchestrator/src python3.11 \
+  scripts/run_macos_scheduler_callback_qualification.py \
+  --helper "/absolute/JARVIS Voice.app/Contents/Frameworks/helpers/jarvis-scheduler-native" \
+  --artifact-manifest /absolute/jarvis-scheduler-helper-artifact.json \
+  --output /absolute/scheduler-callback-qualification.json
+```
+
+The runner does not emit a manifest unless signature identity, permission,
+post/replace/remove, silent delivery, real Snooze and Cancel callbacks, callback
+authentication and reconnect replay all pass. Voice advertises
+`scheduler_notification_actions` plus the resulting qualification digest; the
+Orchestrator requires the independently pinned expected digest before tracking
+that connection as action-capable.

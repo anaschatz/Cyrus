@@ -69,6 +69,8 @@ class SchedulerClientConfig:
     native_helper_path: str | None = None
     native_helper_sha256: str | None = None
     native_helper_code_identity_sha256: str | None = None
+    callback_qualification_path: str | None = None
+    callback_qualification_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +165,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         "native_qualification_path", "native_qualification_sha256",
         "tts_qualification_path", "tts_qualification_sha256", "full_body_when_locked",
         "native_helper_path", "native_helper_sha256", "native_helper_code_identity_sha256",
+        "callback_qualification_path", "callback_qualification_sha256",
     }:
         raise BackendError("config.invalid_field", "Scheduler configuration is invalid", subsystem="config", safe_context={"field": "scheduler"})
     if not isinstance(macos_data, Mapping) or set(macos_data) - {"asr_backend", "whisper_cpp", "system_voices"}:
@@ -230,6 +233,8 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
             native_helper_code_identity_sha256=scheduler_data.get(
                 "native_helper_code_identity_sha256"
             ),
+            callback_qualification_path=scheduler_data.get("callback_qualification_path"),
+            callback_qualification_sha256=scheduler_data.get("callback_qualification_sha256"),
         ),
         vad=VadConfig(
             artifact=ArtifactConfig(artifact_data.get("path"), artifact_data.get("size"), artifact_data.get("sha256")),
@@ -305,6 +310,10 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         config.scheduler.native_helper_sha256,
         config.scheduler.native_helper_code_identity_sha256,
     )
+    scheduler_callback_values = (
+        config.scheduler.callback_qualification_path,
+        config.scheduler.callback_qualification_sha256,
+    )
     if config.scheduler.enabled:
         if any(value is None for value in scheduler_values):
             raise BackendError("config.scheduler_qualification_required", "Scheduler qualification files and digests are required", subsystem="config")
@@ -350,10 +359,43 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                         subsystem="config",
                         safe_context={"field": f"scheduler.{name}"},
                     )
+        if any(value is None for value in scheduler_callback_values) and any(
+            value is not None for value in scheduler_callback_values
+        ):
+            raise BackendError(
+                "config.scheduler_callback_qualification_incomplete",
+                "Scheduler callback qualification path and digest must be paired",
+                subsystem="config",
+            )
+        if all(value is not None for value in scheduler_callback_values):
+            callback_path = Path(str(config.scheduler.callback_qualification_path)).expanduser()
+            if not callback_path.is_absolute():
+                raise BackendError(
+                    "config.scheduler_path_not_absolute",
+                    "Scheduler callback qualification path must be absolute",
+                    subsystem="config",
+                    safe_context={"field": "scheduler.callback_qualification_path"},
+                )
+            if not re.fullmatch(r"[0-9a-f]{64}", str(config.scheduler.callback_qualification_sha256)):
+                raise BackendError(
+                    "config.scheduler_digest_invalid",
+                    "Scheduler callback qualification digest must be lowercase SHA-256",
+                    subsystem="config",
+                    safe_context={"field": "scheduler.callback_qualification_sha256"},
+                )
+        if all(value is not None for value in scheduler_helper_values) != all(
+            value is not None for value in scheduler_callback_values
+        ):
+            raise BackendError(
+                "config.scheduler_callback_authority_incomplete",
+                "Native callback helper and qualification must be enabled together",
+                subsystem="config",
+            )
     elif (
         any(value is not None for value in scheduler_values)
         or any(value is not None for value in scheduler_tts_values)
         or any(value is not None for value in scheduler_helper_values)
+        or any(value is not None for value in scheduler_callback_values)
         or config.scheduler.full_body_when_locked
     ):
         raise BackendError("config.scheduler_disabled_has_authority", "Disabled scheduler configuration cannot retain authority fields", subsystem="config")

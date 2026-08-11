@@ -487,6 +487,7 @@ def load_qualified_native_delivery(config: Any, *, platform_name: str | None = N
 
     from .scheduler_compatibility import load_scheduler_compatibility
     from .scheduler_native_qualification import load_native_scheduler_qualification
+    from .scheduler_callback_qualification import load_scheduler_callback_qualification
 
     selected = platform_name or sys.platform
     compatibility = load_scheduler_compatibility(
@@ -498,6 +499,23 @@ def load_qualified_native_delivery(config: Any, *, platform_name: str | None = N
         platform_name=selected,
         compatibility=compatibility,
     )
+    callback_qualification = None
+    if config.callback_qualification_path is not None:
+        callback_qualification = load_scheduler_callback_qualification(
+            Path(config.callback_qualification_path),
+            config.callback_qualification_sha256,
+            platform_name=selected,
+        )
+        if (
+            callback_qualification.helper_sha256 != config.native_helper_sha256
+            or callback_qualification.helper_code_identity_sha256
+            != config.native_helper_code_identity_sha256
+            or callback_qualification.adapter_sha256 != MACOS_SCHEDULER_HOST_ADAPTER_SHA256
+            or "scheduler_notification_actions" not in compatibility.capabilities
+        ):
+            raise ValueError("scheduler callback qualification binding mismatch")
+    elif "scheduler_notification_actions" in compatibility.capabilities:
+        raise ValueError("scheduler callback qualification missing")
     adapter, lock_state = platform_native_components(selected, config=config)
     if (
         adapter.qualification_sha256 != qualification.notification_adapter_sha256
@@ -509,4 +527,4 @@ def load_qualified_native_delivery(config: Any, *, platform_name: str | None = N
         lock_state=lock_state,
         qualified_full_body_opt_in=bool(config.full_body_when_locked),
     )
-    return compatibility, qualification, delivery
+    return compatibility, qualification, delivery, callback_qualification

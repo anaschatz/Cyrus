@@ -85,6 +85,7 @@ class WindowsVoiceRuntime:
             self.core.configure_scheduler_extension(
                 self.scheduler_runtime.capabilities,
                 self.scheduler_runtime.manifest_sha256,
+                self.scheduler_runtime.callback_qualification_sha256,
             )
         self.transcription = AsyncTranscriptionCoordinator(self.asr) if config.asr.execution_profile == "cuda" else None
         self.vad = SileroOnnxVad(

@@ -181,6 +181,7 @@ class OrchestratorService:
         self._connected_sessions: set[str] = set()
         self._cloud_sessions: dict[str, str] = {}
         self._scheduler_sessions: dict[str, str] = {}
+        self._scheduler_action_sessions: dict[str, str] = {}
         self._execution_scheduler: Callable[[str], None] | None = None
 
     def set_execution_scheduler(self, scheduler: Callable[[str], None] | None) -> None:
@@ -213,6 +214,7 @@ class OrchestratorService:
         *,
         cloud_session_id: str | None = None,
         scheduler_session_id: str | None = None,
+        scheduler_action_session_id: str | None = None,
     ) -> dict[str, Any] | None:
         with self._connection_lock:
             self._connected_sessions.add(connection_id)
@@ -220,6 +222,8 @@ class OrchestratorService:
                 self._cloud_sessions[connection_id] = cloud_session_id
             if scheduler_session_id is not None:
                 self._scheduler_sessions[connection_id] = scheduler_session_id
+            if scheduler_action_session_id is not None:
+                self._scheduler_action_sessions[connection_id] = scheduler_action_session_id
         conversation = self.store.active_conversation()
         if conversation and conversation["active_task_id"]:
             try:
@@ -235,6 +239,7 @@ class OrchestratorService:
             self._connected_sessions.discard(connection_id)
             self._cloud_sessions.pop(connection_id, None)
             self._scheduler_sessions.pop(connection_id, None)
+            self._scheduler_action_sessions.pop(connection_id, None)
             if self._connected_sessions:
                 return
         conversation = self.store.active_conversation()
@@ -257,6 +262,10 @@ class OrchestratorService:
     def has_scheduler_client(self) -> bool:
         with self._connection_lock:
             return bool(self._scheduler_sessions)
+
+    def has_scheduler_action_client(self) -> bool:
+        with self._connection_lock:
+            return bool(self._scheduler_action_sessions)
 
     def admit_envelope(self, envelope: Any) -> Any:
         if (

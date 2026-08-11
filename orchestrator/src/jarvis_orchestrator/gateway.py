@@ -290,6 +290,7 @@ class VoiceGateway:
         cloud_negotiated = False
         scheduler_negotiated = False
         scheduler_speech_negotiated = False
+        scheduler_actions_negotiated = False
         action_negotiated = False
         capture_idle = True
         connection_id = new_uuid4()
@@ -321,6 +322,13 @@ class VoiceGateway:
                     == self.service.config.voice_scheduler_compatibility_sha256
             )
             scheduler_speech_negotiated = scheduler_negotiated and "scheduler_notification_speech" in capabilities
+            scheduler_actions_negotiated = (
+                scheduler_negotiated
+                and "scheduler_notification_actions" in capabilities
+                and bool(self.service.config.voice_scheduler_callback_qualification_sha256)
+                and hello.payload.get("scheduler_callback_qualification_sha256")
+                == self.service.config.voice_scheduler_callback_qualification_sha256
+            )
             factory = EventFactory(session_id=session_id)
             await asyncio.wait_for(
                 websocket.send(factory.create("server.ready", {"protocol": "jarvis.voice/1"}).to_json()),
@@ -376,6 +384,7 @@ class VoiceGateway:
                 connection_id,
                 cloud_session_id=session_id if cloud_negotiated else None,
                 scheduler_session_id=session_id if scheduler_negotiated else None,
+                scheduler_action_session_id=(session_id if scheduler_actions_negotiated else None),
             )
             active_after_handshake = self.service.store.active_conversation()
             if cloud_negotiated and active_after_handshake is not None:
@@ -508,6 +517,9 @@ class VoiceGateway:
                                 observed_at_utc=event.payload["observed_at_utc"],
                             )
                         elif event.type == "scheduler.notification.action":
+                            if not scheduler_actions_negotiated:
+                                await websocket.close(code=1002, reason="extension_not_negotiated")
+                                break
                             self.service.scheduler.apply_notification_action(
                                 event_id=event.event_id,
                                 semantic_sha256=event.semantic_sha256,

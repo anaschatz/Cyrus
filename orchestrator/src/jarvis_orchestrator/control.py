@@ -140,7 +140,10 @@ class ControlApplication:
                 and self.service.has_scheduler_client()
             )
             compiler_ready = self.service.schedule_compiler is not None
-            notification_actions_ready = False
+            notification_actions_ready = (
+                bool(self.service.config.voice_scheduler_callback_qualification_sha256)
+                and self.service.has_scheduler_action_client()
+            )
             reminders_ready = (
                 arbiter_ready
                 and scheduler_state["state"] == "READY"
@@ -167,9 +170,13 @@ class ControlApplication:
                  "qualification_sha256": (
                      self.service.config.voice_scheduler_compatibility_sha256 or None
                  )},
-                {"name": "notification_actions", "state": "BLOCKED",
-                 "reason_code": "native_action_callback_not_qualified",
-                 "qualification_sha256": None},
+                {"name": "notification_actions",
+                 "state": "READY" if notification_actions_ready else "BLOCKED",
+                 "reason_code": "ready" if notification_actions_ready else "native_action_callback_not_qualified",
+                 "qualification_sha256": (
+                     self.service.config.voice_scheduler_callback_qualification_sha256
+                     if notification_actions_ready else None
+                 )},
                 {"name": "reminders_overall",
                  "state": "READY" if reminders_ready else "BLOCKED",
                  "reason_code": "ready" if reminders_ready else "required_capability_unavailable",

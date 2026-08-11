@@ -176,6 +176,35 @@ class SchedulerAdmissionTests(unittest.TestCase):
         self.assertEqual(after["notification_actions"]["state"], "BLOCKED")
         self.assertEqual(after["reminders_overall"]["state"], "BLOCKED")
 
+    def test_notification_actions_require_the_separately_qualified_connection(self) -> None:
+        configured = OrchestratorConfig.from_mapping({
+            "database_path": str(self.store.path),
+            "control_bearer_token": "control-private",
+            "inference_bearer_token": "inference-private",
+            "voice_scheduler_compatibility_sha256": "9" * 64,
+            "voice_scheduler_callback_qualification_sha256": "8" * 64,
+        })
+        service = OrchestratorService(
+            configured, self.store, self.model,
+            scheduler=self.scheduler, schedule_compiler=self.compiler,
+        )
+        app = ControlApplication(configured, service)
+        connection = str(uuid.uuid4())
+        session = str(uuid.uuid4())
+        service.attach_client(
+            connection,
+            scheduler_session_id=session,
+            scheduler_action_session_id=session,
+        )
+        capabilities = {
+            item["name"]: item for item in app.get("/v1/capabilities")[1]["capabilities"]
+        }
+        self.assertEqual(capabilities["notification_actions"]["state"], "READY")
+        self.assertEqual(
+            capabilities["notification_actions"]["qualification_sha256"], "8" * 64
+        )
+        self.assertEqual(capabilities["reminders_overall"]["state"], "READY")
+
 
 if __name__ == "__main__":
     unittest.main()

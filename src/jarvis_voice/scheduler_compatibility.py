@@ -60,7 +60,7 @@ def load_scheduler_compatibility(path: Path, expected_sha256: str) -> SchedulerC
         if item is not None and not re.fullmatch(r"[0-9a-f]{64}", item):
             raise ValueError(f"{name} invalid")
     capabilities = tuple(value["capabilities"])
-    allowed = {"jarvis.scheduler/1", "jarvis.approval-arbiter/1", "scheduler_notification_speech"}
+    allowed = {"jarvis.scheduler/1", "jarvis.approval-arbiter/1", "scheduler_notification_speech", "scheduler_notification_actions"}
     if set(capabilities) - allowed or not {"jarvis.scheduler/1", "jarvis.approval-arbiter/1"}.issubset(capabilities):
         raise ValueError("scheduler manifest capabilities invalid")
     return SchedulerCompatibilityManifest(digest, capabilities, value)
