@@ -88,17 +88,56 @@ class AcousticSilenceMonitorTests(unittest.TestCase):
         sampler = AcousticCalibrationSampler()
         sampler.begin("ambient")
         for _ in range(10):
-            sampler.publish_audio(array("f", [0.001] * 480).tobytes(), 48_000, 1.0)
+            sampler.publish_audio(array("f", [0.001] * 960).tobytes(), 48_000, 1.0)
         sampler.begin("playback")
         for _ in range(10):
-            sampler.publish_audio(array("f", [0.1] * 480).tobytes(), 48_000, 2.0)
+            sampler.publish_audio(array("f", [0.1] * 960).tobytes(), 48_000, 2.0)
         sampler.end()
+        sampler.close()
         levels = sampler.levels()
         calibration = derive_acoustic_threshold(levels["ambient"], levels["playback"])
         self.assertEqual(calibration.ambient_samples, 10)
         self.assertEqual(calibration.playback_samples, 10)
         self.assertGreaterEqual(calibration.separation_db, 39.0)
         self.assertLess(calibration.silence_threshold_dbfs, calibration.playback_p20_dbfs)
+
+    def test_calibration_worker_drains_small_queue_during_capture(self) -> None:
+        sampler = AcousticCalibrationSampler(capacity=4)
+        try:
+            for phase, amplitude in (("ambient", 0.001), ("playback", 0.1)):
+                sampler.begin(phase)
+                for index in range(12):
+                    sampler.publish_audio(
+                        array("f", [amplitude] * 480).tobytes(),
+                        48_000,
+                        float(index),
+                    )
+                    time.sleep(0.005)
+                sampler.end()
+        finally:
+            sampler.close()
+        levels = sampler.levels()
+        self.assertEqual(len(levels["ambient"]), 6)
+        self.assertEqual(len(levels["playback"]), 6)
+
+    def test_calibration_separation_failure_exposes_only_aggregate_levels(self) -> None:
+        with self.assertRaises(BackendError) as raised:
+            derive_acoustic_threshold([-30.0] * 10, [-20.0] * 10)
+        self.assertEqual(raised.exception.code, "qualification.acoustic_calibration_separation")
+        self.assertEqual(
+            raised.exception.safe_context,
+            {
+                "ambient_p95_dbfs": -30.0,
+                "playback_p20_dbfs": -20.0,
+                "playback_p50_dbfs": -20.0,
+                "playback_p80_dbfs": -20.0,
+                "playback_p95_dbfs": -20.0,
+                "separation_db": 10.0,
+                "required_separation_db": 12.0,
+                "ambient_samples": 10,
+                "playback_samples": 10,
+            },
+        )
 
 
 class MacNativeTelemetryCollectorTests(unittest.TestCase):

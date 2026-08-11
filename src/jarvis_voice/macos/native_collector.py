@@ -74,12 +74,35 @@ def derive_acoustic_threshold(
     """Derive a conservative silence threshold from microphone observations."""
 
     if len(ambient_levels_dbfs) < 10 or len(playback_levels_dbfs) < 10:
-        raise BackendError("qualification.acoustic_calibration_samples", "Acoustic calibration needs more samples", subsystem="qualification")
+        raise BackendError(
+            "qualification.acoustic_calibration_samples",
+            "Acoustic calibration needs more samples",
+            subsystem="qualification",
+            safe_context={
+                "ambient_samples": len(ambient_levels_dbfs),
+                "playback_samples": len(playback_levels_dbfs),
+            },
+        )
     ambient_p95 = _percentile(ambient_levels_dbfs, 0.95)
     playback_p20 = _percentile(playback_levels_dbfs, 0.20)
     separation = playback_p20 - ambient_p95
     if separation < 12.0:
-        raise BackendError("qualification.acoustic_calibration_separation", "Playback was not sufficiently audible at the microphone", subsystem="qualification")
+        raise BackendError(
+            "qualification.acoustic_calibration_separation",
+            "Playback was not sufficiently audible at the microphone",
+            subsystem="qualification",
+            safe_context={
+                "ambient_p95_dbfs": round(ambient_p95, 3),
+                "playback_p20_dbfs": round(playback_p20, 3),
+                "playback_p50_dbfs": round(_percentile(playback_levels_dbfs, 0.50), 3),
+                "playback_p80_dbfs": round(_percentile(playback_levels_dbfs, 0.80), 3),
+                "playback_p95_dbfs": round(_percentile(playback_levels_dbfs, 0.95), 3),
+                "separation_db": round(separation, 3),
+                "required_separation_db": 12.0,
+                "ambient_samples": len(ambient_levels_dbfs),
+                "playback_samples": len(playback_levels_dbfs),
+            },
+        )
     threshold = min(ambient_p95 + 6.0, playback_p20 - 6.0)
     threshold = max(-90.0, min(-10.0, threshold))
     return AcousticCalibration(
@@ -96,9 +119,24 @@ class AcousticCalibrationSampler:
     """Bounded callback sink whose report retains levels, never PCM or text."""
 
     def __init__(self, *, capacity: int = 4096) -> None:
-        self._frames: queue.Queue[tuple[str, bytes]] = queue.Queue(maxsize=capacity)
+        if capacity < 1:
+            raise BackendError(
+                "qualification.acoustic_calibration_capacity",
+                "Acoustic calibration queue capacity is invalid",
+                subsystem="qualification",
+            )
+        self._frames: queue.Queue[tuple[str, bytes, int] | None] = queue.Queue(maxsize=capacity)
         self._phase: str | None = None
-        self._overflow = False
+        self._overflow = threading.Event()
+        self._closed = threading.Event()
+        self._levels: dict[str, list[float]] = {"ambient": [], "playback": []}
+        self._levels_lock = threading.Lock()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="jarvis-acoustic-calibration",
+            daemon=True,
+        )
+        self._thread.start()
 
     def begin(self, phase: str) -> None:
         if phase not in {"ambient", "playback"}:
@@ -109,26 +147,77 @@ class AcousticCalibrationSampler:
         self._phase = None
 
     def publish_audio(self, pcm_float32: bytes, sample_rate: int, received_at: float) -> None:
-        del sample_rate, received_at
+        del received_at
         phase = self._phase
-        if phase is None or not pcm_float32 or len(pcm_float32) % 4:
+        if (
+            self._closed.is_set()
+            or phase is None
+            or sample_rate < 8_000
+            or not pcm_float32
+            or len(pcm_float32) % 4
+        ):
             return
         try:
-            self._frames.put_nowait((phase, bytes(pcm_float32)))
+            self._frames.put_nowait((phase, bytes(pcm_float32), sample_rate))
         except queue.Full:
-            self._overflow = True
+            self._overflow.set()
+
+    def _run(self) -> None:
+        pending = {"ambient": bytearray(), "playback": bytearray()}
+        rates: dict[str, int] = {}
+
+        def consume(phase: str, *, final: bool = False) -> None:
+            rate = rates.get(phase)
+            if rate is None:
+                return
+            window_bytes = max(1, round(rate * 0.02)) * 4
+            buffer = pending[phase]
+            while len(buffer) >= window_bytes or (final and buffer):
+                take = window_bytes if len(buffer) >= window_bytes else len(buffer)
+                pcm = bytes(buffer[:take])
+                del buffer[:take]
+                level, _sample_count = AcousticSilenceMonitor._level_dbfs(pcm)
+                with self._levels_lock:
+                    self._levels[phase].append(level)
+
+        while True:
+            item = self._frames.get()
+            try:
+                if item is None:
+                    consume("ambient", final=True)
+                    consume("playback", final=True)
+                    return
+                phase, pcm, sample_rate = item
+                previous_rate = rates.setdefault(phase, sample_rate)
+                if previous_rate != sample_rate:
+                    raise ValueError("sample rate changed during acoustic calibration")
+                pending[phase].extend(pcm)
+                consume(phase)
+            except Exception:
+                self._overflow.set()
+            finally:
+                self._frames.task_done()
+
+    def close(self) -> None:
+        if self._closed.is_set():
+            return
+        self.end()
+        self._closed.set()
+        try:
+            self._frames.put(None, timeout=2.0)
+        except queue.Full:
+            self._overflow.set()
+            return
+        self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            self._overflow.set()
 
     def levels(self) -> dict[str, list[float]]:
-        if self._overflow:
+        self.close()
+        if self._overflow.is_set():
             raise BackendError("qualification.acoustic_calibration_overflow", "Acoustic calibration queue overflowed", subsystem="qualification")
-        result: dict[str, list[float]] = {"ambient": [], "playback": []}
-        while True:
-            try:
-                phase, pcm = self._frames.get_nowait()
-            except queue.Empty:
-                return result
-            level, _sample_count = AcousticSilenceMonitor._level_dbfs(pcm)
-            result[phase].append(level)
+        with self._levels_lock:
+            return {phase: list(values) for phase, values in self._levels.items()}
 
 
 class AcousticSilenceMonitor:

@@ -50,6 +50,15 @@ def calibrate_macos_acoustic_threshold(
     sampler = AcousticCalibrationSampler()
     started = threading.Event()
     completed = threading.Event()
+
+    def playback_started(_unit: SpeechUnit) -> None:
+        sampler.begin("playback")
+        started.set()
+
+    def playback_completed(_unit: SpeechUnit) -> None:
+        sampler.end()
+        completed.set()
+
     capture = capture_factory(
         queue_capacity=config.audio_queue_capacity,
         maximum_utterance_seconds=config.maximum_utterance_seconds,
@@ -58,15 +67,14 @@ def calibrate_macos_acoustic_threshold(
     )
     tts = tts_factory(
         voice_mapping=config.macos.system_voices,
-        on_started=lambda _unit: started.set(),
-        on_completed=lambda _unit: completed.set(),
+        on_started=playback_started,
+        on_completed=playback_completed,
     )
     try:
         capture.start()
         sampler.begin("ambient")
         sleeper(ambient_seconds)
         sampler.end()
-        sampler.begin("playback")
         tts.enqueue(
             SpeechUnit(
                 response_id="acoustic-calibration",
@@ -80,11 +88,11 @@ def calibrate_macos_acoustic_threshold(
             raise BackendError("qualification.acoustic_calibration_tts_start", "Calibration playback did not start", subsystem="qualification")
         if not completed.wait(timeout=playback_timeout_seconds):
             raise BackendError("qualification.acoustic_calibration_tts_timeout", "Calibration playback did not complete", subsystem="qualification")
-        sampler.end()
     finally:
         sampler.end()
         capture.stop()
         tts.close()
+        sampler.close()
     levels = sampler.levels()
     calibration = derive_acoustic_threshold(levels["ambient"], levels["playback"])
     return {
