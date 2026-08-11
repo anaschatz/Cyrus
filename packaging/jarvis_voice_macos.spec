@@ -13,11 +13,12 @@ root = Path(SPEC).resolve().parents[1]
 source = root / "src"
 orchestrator_source = root / "orchestrator" / "src"
 helper = Path(os.environ["JARVIS_MACOS_WHISPER_SERVER"]).resolve(strict=True)
+action_helper = Path(os.environ["JARVIS_MACOS_ACTION_HELPER"]).resolve(strict=True)
 profile = Path(os.environ["JARVIS_MACOS_BUILD_PROFILE"]).resolve(strict=True)
 identity = os.environ["JARVIS_MACOS_CODESIGN_IDENTITY"]
 
 datas = [(str(profile), ".")]
-binaries = [(str(helper), "helpers")]
+binaries = [(str(helper), "helpers"), (str(action_helper), "helpers")]
 hiddenimports = [
     "jarvis_orchestrator.jcs",
     "jarvis_orchestrator.scheduler_crypto",
@@ -80,5 +81,7 @@ app = BUNDLE(
         "LSMinimumSystemVersion": "14.0",
         "NSHighResolutionCapable": True,
         "NSMicrophoneUsageDescription": "JARVIS Voice uses the microphone only while push-to-talk is held.",
+        "NSCalendarsFullAccessUsageDescription": "JARVIS uses Calendar only for actions you explicitly approve.",
+        "NSRemindersFullAccessUsageDescription": "JARVIS uses Reminders only for actions you explicitly approve.",
     },
 )

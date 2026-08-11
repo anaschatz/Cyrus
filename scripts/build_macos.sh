@@ -32,7 +32,25 @@ fi
 build_root=$(mktemp -d "${TMPDIR:-/tmp}/jarvis-macos-build.XXXXXX")
 trap 'rm -rf "$build_root"' EXIT
 export JARVIS_MACOS_BUILD_PROFILE="$build_root/jarvis-macos-runtime-profile.json"
+export JARVIS_MACOS_ACTION_HELPER_MANIFEST="$build_root/jarvis-action-helper.json"
 export PYTHONPATH="$repo_root/src:$repo_root/orchestrator/src"
+
+/usr/bin/swift build \
+  --package-path "$repo_root/native/macos_action_host" \
+  --scratch-path "$build_root/swift" \
+  --configuration release
+export JARVIS_MACOS_ACTION_HELPER="$build_root/swift/arm64-apple-macosx/release/jarvis-action-native"
+if [[ ! -x "$JARVIS_MACOS_ACTION_HELPER" || -L "$JARVIS_MACOS_ACTION_HELPER" ]]; then
+  print -u2 "The pinned Swift helper build did not produce the expected executable."
+  exit 2
+fi
+/usr/bin/codesign --force --options runtime --timestamp \
+  --sign "$JARVIS_MACOS_CODESIGN_IDENTITY" \
+  --entitlements "$repo_root/native/macos_action_host/JarvisActionNative.entitlements" \
+  "$JARVIS_MACOS_ACTION_HELPER"
+python3.11 scripts/inspect_macos_helper.py \
+  --helper "$JARVIS_MACOS_ACTION_HELPER" \
+  --output "$JARVIS_MACOS_ACTION_HELPER_MANIFEST"
 
 python3.11 scripts/build_macos_profile.py \
   --helper "$JARVIS_MACOS_WHISPER_SERVER" \
@@ -43,6 +61,10 @@ python3.11 -m compileall -q src tests packaging
 python3.11 -m PyInstaller --clean --noconfirm packaging/jarvis_voice_macos.spec
 
 app="$repo_root/dist/JARVIS Voice.app"
+embedded_action_helper="$app/Contents/Frameworks/helpers/jarvis-action-native"
+python3.11 scripts/inspect_macos_helper.py \
+  --helper "$embedded_action_helper" \
+  --output "$repo_root/dist/jarvis-action-helper-artifact.json"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
 /usr/sbin/spctl --assess --type execute --verbose=2 "$app"
 /usr/bin/ditto -c -k --keepParent "$app" "$build_root/JARVIS-Voice.zip"

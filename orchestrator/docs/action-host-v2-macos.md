@@ -39,10 +39,11 @@ The Python boundary invokes one fixed qualified executable with `shell=False`,
 suppresses native stderr, validates the structured result, and validates it again
 against the frozen registry before delivery.
 
-Build the helper with Swift 6 and macOS 14 as the deployment minimum. For a beta
-release it must be embedded in the signed JARVIS application and signed with the
-Hardened Runtime plus `JarvisActionNative.entitlements`. Record both the binary
-SHA-256 and SHA-256 of:
+`scripts/build_macos.sh` builds the helper from source with Swift 6, signs it
+separately with the Hardened Runtime, embeds it in the signed JARVIS application,
+and verifies the embedded copy before notarization. The inspection step rejects
+unsigned and ad-hoc signatures, requires a Developer ID Application authority
+and Team ID, and records both the binary SHA-256 and SHA-256 of:
 
 ```text
 /usr/bin/codesign --display --requirements - <helper>
