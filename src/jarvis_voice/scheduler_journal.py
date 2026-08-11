@@ -56,6 +56,16 @@ CREATE TABLE IF NOT EXISTS scheduler_delivery_attempts(
   observed_at_utc TEXT,
   UNIQUE(notification_id,attempt_ordinal)
 );
+CREATE TABLE IF NOT EXISTS scheduler_native_callbacks(
+  callback_id TEXT PRIMARY KEY,
+  notification_id TEXT NOT NULL,
+  frame_event_id TEXT NOT NULL UNIQUE REFERENCES encrypted_frames(event_id),
+  semantic_sha256 TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('PENDING','EMITTED','CLOSED')),
+  scheduler_event_id TEXT,
+  created_at_utc TEXT NOT NULL,
+  emitted_at_utc TEXT
+);
 """
 
 
@@ -331,6 +341,95 @@ class SchedulerClientJournal:
                 payloads.append(payload)
         return payloads
 
+    def notification_payload(self, notification_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._db.execute(
+                """SELECT event_id FROM encrypted_frames
+                   WHERE record_type='scheduler.notification.requested'
+                   AND state<>'QUARANTINED' ORDER BY created_at_utc DESC"""
+            ).fetchall()
+            tombstoned = self._db.execute(
+                "SELECT 1 FROM scheduler_tombstones WHERE notification_id=?", (notification_id,)
+            ).fetchone() is not None
+        if tombstoned:
+            return None
+        for item in row:
+            payload = self.read(item["event_id"])
+            if payload.get("notification_id") == notification_id:
+                return payload
+        return None
+
+    def stage_native_callback(
+        self, *, callback_id: str, semantic_sha256: str, payload: Mapping[str, Any]
+    ) -> str:
+        notification_id = payload.get("notification_id")
+        if not isinstance(notification_id, str):
+            raise ValueError("callback notification missing")
+        status = self.stage(
+            event_id=callback_id,
+            semantic_sha256=semantic_sha256,
+            event_type="scheduler.native.callback",
+            payload=payload,
+        )
+        with self._lock:
+            if self._db.execute(
+                "SELECT 1 FROM scheduler_tombstones WHERE notification_id=?", (notification_id,)
+            ).fetchone() is not None:
+                raise ValueError("callback.notification_not_active")
+            prior = self._db.execute(
+                "SELECT semantic_sha256 FROM scheduler_native_callbacks WHERE callback_id=?",
+                (callback_id,),
+            ).fetchone()
+            if prior is not None:
+                if prior["semantic_sha256"] != semantic_sha256:
+                    raise ValueError("protocol.conflicting_duplicate")
+                return "duplicate"
+            self._db.execute(
+                """INSERT INTO scheduler_native_callbacks(
+                   callback_id,notification_id,frame_event_id,semantic_sha256,state,created_at_utc
+                   ) VALUES(?,?,?,?, 'PENDING',?)""",
+                (callback_id, notification_id, callback_id, semantic_sha256, self._now()),
+            )
+        return status
+
+    def pending_native_callbacks(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT callback_id FROM scheduler_native_callbacks
+                   WHERE state='PENDING' ORDER BY created_at_utc,callback_id"""
+            ).fetchall()
+        return [self.read(row["callback_id"]) for row in rows]
+
+    def mark_native_callback_emitted(self, callback_id: str, scheduler_event_id: str) -> bool:
+        with self._lock:
+            return self._db.execute(
+                """UPDATE scheduler_native_callbacks SET state='EMITTED',scheduler_event_id=?,emitted_at_utc=?
+                   WHERE callback_id=? AND state='PENDING'""",
+                (scheduler_event_id, self._now(), callback_id),
+            ).rowcount == 1
+
+    def reset_emitted_native_callbacks(self) -> None:
+        with self._lock:
+            self._db.execute(
+                "UPDATE scheduler_native_callbacks SET state='PENDING' WHERE state='EMITTED'"
+            )
+
+    def native_callback_event_id(self, callback_id: str) -> str | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT scheduler_event_id FROM scheduler_native_callbacks WHERE callback_id=?",
+                (callback_id,),
+            ).fetchone()
+        return None if row is None else row["scheduler_event_id"]
+
+    def close_native_callback(self, scheduler_event_id: str) -> bool:
+        with self._lock:
+            return self._db.execute(
+                """UPDATE scheduler_native_callbacks SET state='CLOSED'
+                   WHERE scheduler_event_id=? AND state='EMITTED'""",
+                (scheduler_event_id,),
+            ).rowcount == 1
+
     def tombstone(self, notification_id: str, reason_code: str) -> None:
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
@@ -343,6 +442,11 @@ class SchedulerClientJournal:
                     """UPDATE scheduler_playback SET state='CANCELLED',updated_at_utc=?
                        WHERE notification_id=? AND state IN ('STAGED','PLAYING')""",
                     (self._now(), notification_id),
+                )
+                self._db.execute(
+                    """UPDATE scheduler_native_callbacks SET state='CLOSED'
+                       WHERE notification_id=? AND state IN ('PENDING','EMITTED')""",
+                    (notification_id,),
                 )
                 self._db.execute("COMMIT")
             except BaseException:

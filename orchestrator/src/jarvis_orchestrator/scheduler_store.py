@@ -1963,6 +1963,85 @@ class SchedulerStore:
         with self._transaction() as connection:
             self._cancel_job_tx(connection, job_id, job_revision, selected, cause_event_id)
 
+    def apply_notification_action(
+        self,
+        *,
+        event_id: str,
+        semantic_sha256: str,
+        action: str,
+        job_id: str,
+        job_revision: int,
+        occurrence: str,
+        expected_generation: int,
+        requested_due_at_utc: str | None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Durably deduplicate and apply a native notification action atomically."""
+
+        require_uuid4(event_id)
+        self._sha(semantic_sha256)
+        selected = now or utc_now()
+        replay_exists, _replay = self._existing_inbox(event_id, semantic_sha256)
+        if replay_exists:
+            with self._transaction() as connection:
+                self._append_outbox_tx(
+                    connection,
+                    event_type="scheduler.notification.action_result",
+                    payload={
+                        "action_event_id": event_id,
+                        "result": "DUPLICATE",
+                        "reason_code": "duplicate_action",
+                    },
+                    expires_at=selected + timedelta(seconds=30),
+                    now=selected,
+                    entity_id=event_id,
+                )
+            return False
+        with self._transaction() as connection:
+            existing = connection.execute(
+                "SELECT semantic_sha256 FROM scheduler_inbox WHERE event_id=?", (event_id,)
+            ).fetchone()
+            if existing is not None:
+                if existing["semantic_sha256"] != semantic_sha256:
+                    raise OrchestratorError("protocol.conflicting_duplicate", status=409)
+                return False
+            if action == "CANCEL":
+                if requested_due_at_utc is not None:
+                    raise OrchestratorError("invalid_request", status=400)
+                self._cancel_job_tx(connection, job_id, job_revision, selected, event_id)
+            elif action == "SNOOZE" and requested_due_at_utc is not None:
+                self._snooze_tx(
+                    connection,
+                    job_id=job_id,
+                    job_revision=job_revision,
+                    occurrence=occurrence,
+                    snooze_until_at_utc=requested_due_at_utc,
+                    cause_event_id=event_id,
+                    now=selected,
+                    expected_generation=expected_generation,
+                )
+            else:
+                raise OrchestratorError("invalid_request", status=400)
+            connection.execute(
+                """INSERT INTO scheduler_inbox(
+                   event_id,semantic_sha256,protocol,event_type,state,created_at,applied_at
+                   ) VALUES(?,?,?,'scheduler.notification.action','APPLIED',?,?)""",
+                (event_id, semantic_sha256, SCHEDULER_PROTOCOL, utc_text(selected), utc_text(selected)),
+            )
+            self._append_outbox_tx(
+                connection,
+                event_type="scheduler.notification.action_result",
+                payload={
+                    "action_event_id": event_id,
+                    "result": "APPLIED",
+                    "reason_code": "action_applied",
+                },
+                expires_at=selected + timedelta(seconds=30),
+                now=selected,
+                entity_id=event_id,
+            )
+        return True
+
     def record_delivery_receipt(
         self,
         *,

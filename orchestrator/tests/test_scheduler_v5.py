@@ -465,6 +465,45 @@ class SchedulerV5Tests(unittest.TestCase):
             "SELECT state FROM scheduler_deliveries WHERE notification_id=?", (delivery,)
         ).fetchone()[0], "REVOKED")
 
+    def test_native_notification_action_is_atomic_and_idempotent(self) -> None:
+        activated = self.activate()
+        action_event_id = str(uuid.uuid4())
+        applied = self.scheduler.apply_notification_action(
+            event_id=action_event_id,
+            semantic_sha256="9" * 64,
+            action="CANCEL",
+            job_id=activated["job_id"],
+            job_revision=1,
+            occurrence=activated["occurrence_id"],
+            expected_generation=0,
+            requested_due_at_utc=None,
+            now=self.reference,
+        )
+        duplicate = self.scheduler.apply_notification_action(
+            event_id=action_event_id,
+            semantic_sha256="9" * 64,
+            action="CANCEL",
+            job_id=activated["job_id"],
+            job_revision=1,
+            occurrence=activated["occurrence_id"],
+            expected_generation=0,
+            requested_due_at_utc=None,
+            now=self.reference,
+        )
+        self.assertTrue(applied)
+        self.assertFalse(duplicate)
+        self.assertEqual(self.base._connection.execute(
+            "SELECT COUNT(*) FROM scheduler_inbox WHERE event_id=?", (action_event_id,)
+        ).fetchone()[0], 1)
+        results = self.base._connection.execute(
+            """SELECT event_type FROM scheduler_outbox
+               WHERE entity_id=? ORDER BY ordinal""", (action_event_id,)
+        ).fetchall()
+        self.assertEqual([row[0] for row in results], [
+            "scheduler.notification.action_result",
+            "scheduler.notification.action_result",
+        ])
+
     def test_terminal_delivery_and_tombstone_precedence_ignore_late_receipt(self) -> None:
         activated = self.activate()
         due = self.reference + timedelta(minutes=20)

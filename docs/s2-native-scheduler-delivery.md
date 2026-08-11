@@ -70,10 +70,24 @@ response playback.
 
 ## Deliberate remaining gate
 
-Native notification action callbacks are not implemented by this increment.
-Accordingly `/v1/capabilities` may report `notification_delivery=READY` for a
-qualified connected client, but reports `notification_actions=BLOCKED` with
-`native_action_callback_not_qualified`. `reminders_overall` remains blocked
-until a signed native action host provides callback authentication and durable
-idempotency. Exact authenticated scheduler APIs remain the authority for snooze
-and cancel.
+The callback core accepts only exact `jarvis.scheduler-native-callback/1`
+envelopes authenticated with HMAC-SHA256 under a distinct 256-bit helper key.
+It rejects unknown fields, invalid UUID/SHA/timestamps, invalid action/due-time
+combinations, inactive or tombstoned notification IDs, and conflicting replay.
+The accepted payload is encrypted in the Voice scheduler journal before it can
+produce `scheduler.notification.action`; job, revision, occurrence and snooze
+generation are always recovered from the authoritative notification frame and
+never trusted from native input.
+
+The Orchestrator applies the action and records its inbox idempotency row in the
+same SQLite transaction. A durable `scheduler.notification.action_result`
+outbox frame closes the Voice callback. If a connection is lost before that
+result, Voice retransmits the same action `event_id` on reconnect and the
+Orchestrator returns `DUPLICATE` without repeating the mutation.
+
+The signed macOS helper and its Keychain/peer-identity binding are deliberately
+the next milestone. Until that artifact is qualified, `/v1/capabilities`
+continues to report `notification_actions=BLOCKED` with
+`native_action_callback_not_qualified`, and `reminders_overall` remains
+blocked. Exact authenticated scheduler APIs remain the authority for snooze and
+cancel.

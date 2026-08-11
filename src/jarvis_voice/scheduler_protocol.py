@@ -41,6 +41,7 @@ SERVER_SCHEDULER_EVENTS = frozenset(
         "scheduler.notification.requested",
         "scheduler.notification.speech",
         "scheduler.notification.tombstone",
+        "scheduler.notification.action_result",
     }
 )
 SCHEDULER_EVENTS = CLIENT_SCHEDULER_EVENTS | SERVER_SCHEDULER_EVENTS
@@ -73,6 +74,9 @@ _FIELDS: dict[str, set[str]] = {
     "scheduler.notification.action": {
         "action", "job_id", "job_revision", "occurrence_id", "snooze_generation",
         "requested_due_at_utc",
+    },
+    "scheduler.notification.action_result": {
+        "action_event_id", "result", "reason_code",
     },
     "scheduler.notification.speech": {
         "occurrence_id", "notification_id", "unit_index", "locale", "speakable_text",
@@ -174,6 +178,14 @@ class SchedulerEnvelope:
             raise ProtocolError("protocol.invalid_field", "invalid delivery stage")
         elif self.type == "scheduler.notification.action" and p["action"] not in {"SNOOZE", "CANCEL"}:
             raise ProtocolError("protocol.invalid_field", "invalid notification action")
+        elif self.type == "scheduler.notification.action_result":
+            _uuid4(p["action_event_id"], "action_event_id")
+            if (
+                p["result"] not in {"APPLIED", "DUPLICATE"}
+                or not isinstance(p["reason_code"], str)
+                or re.fullmatch(r"[a-z0-9_]{1,64}", p["reason_code"]) is None
+            ):
+                raise ProtocolError("protocol.invalid_field", "invalid notification action result")
         elif self.type == "scheduler.notification.speech":
             if (
                 not isinstance(p["unit_index"], int)

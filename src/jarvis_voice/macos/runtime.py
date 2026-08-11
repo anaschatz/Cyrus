@@ -446,6 +446,8 @@ class MacVoiceRuntime:
                         self.reliable.acknowledge(server_event)
                     self._send_all(self.core.handle_server_event(server_event))
                 if self.scheduler_runtime is not None:
+                    for action in self.scheduler_runtime.pump_native_callbacks():
+                        self.transport.send(action)
                     response = self.core.state.response
                     scheduler_allowed = (
                         self.core.state.input_state == InputState.IDLE

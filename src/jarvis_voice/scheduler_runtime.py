@@ -10,6 +10,7 @@ from typing import Any
 from .approval_arbiter import GlobalApprovalController
 from .backends import SpeechUnit, TtsBackend
 from .scheduler_client import SchedulerClientController
+from .scheduler_callback import NativeSchedulerCallback
 from .scheduler_journal import SchedulerClientJournal, default_scheduler_journal_path
 from .scheduler_native import QualifiedNativeSchedulerDelivery, load_qualified_native_delivery
 from .scheduler_playback import SchedulerPlaybackController
@@ -104,6 +105,7 @@ class SchedulerNativeRuntime:
 
     def begin_new_connection(self) -> None:
         self.controller.begin_new_connection()
+        self.controller.journal.reset_emitted_native_callbacks()
         if self.playback is not None:
             self.playback.factory = self.controller.factory
 
@@ -172,6 +174,8 @@ class SchedulerNativeRuntime:
                     cancellation_epoch=self.playback.active.unit.epoch if self.playback.active else 0,
                 ):
                     send(receipt)
+        elif event.type == "scheduler.notification.action_result":
+            self.controller.journal.close_native_callback(event.payload["action_event_id"])
 
     def pump_playback(self, *, allowed: bool) -> list[SchedulerEnvelope]:
         if self.playback is None:
@@ -196,6 +200,43 @@ class SchedulerNativeRuntime:
             if kind == "started"
             else self.playback.on_completed(unit)
         )
+
+    def ingest_native_callback(self, raw: bytes | str, *, key: bytes) -> str:
+        callback = NativeSchedulerCallback.verify(raw, key=key)
+        if self.controller.journal.notification_payload(callback.notification_id) is None:
+            raise ValueError("callback.notification_not_active")
+        payload = callback.payload()
+        import hashlib
+        import json
+        semantic = hashlib.sha256(json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()).hexdigest()
+        return self.controller.journal.stage_native_callback(
+            callback_id=callback.callback_id,
+            semantic_sha256=semantic,
+            payload=payload,
+        )
+
+    def pump_native_callbacks(self) -> list[SchedulerEnvelope]:
+        outbound: list[SchedulerEnvelope] = []
+        for callback in self.controller.journal.pending_native_callbacks():
+            notification = self.controller.journal.notification_payload(callback["notification_id"])
+            if notification is None:
+                continue
+            event_id = self.controller.journal.native_callback_event_id(callback["callback_id"])
+            event = self.controller.factory.create("scheduler.notification.action", {
+                "action": callback["action"],
+                "job_id": notification["job_id"],
+                "job_revision": notification["job_revision"],
+                "occurrence_id": notification["occurrence_id"],
+                "snooze_generation": notification["delivery_generation"],
+                "requested_due_at_utc": callback["requested_due_at_utc"],
+            }, event_id=event_id)
+            if self.controller.journal.mark_native_callback_emitted(
+                callback["callback_id"], event.event_id
+            ):
+                outbound.append(event)
+        return outbound
 
     def close(self) -> None:
         self.controller.journal.close()

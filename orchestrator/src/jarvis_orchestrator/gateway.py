@@ -508,20 +508,16 @@ class VoiceGateway:
                                 observed_at_utc=event.payload["observed_at_utc"],
                             )
                         elif event.type == "scheduler.notification.action":
-                            if event.payload["action"] == "CANCEL":
-                                self.service.scheduler.cancel_job(
-                                    event.payload["job_id"], event.payload["job_revision"],
-                                    cause_event_id=event.event_id,
-                                )
-                            else:
-                                self.service.scheduler.snooze_occurrence(
-                                    job_id=event.payload["job_id"],
-                                    job_revision=event.payload["job_revision"],
-                                    occurrence=event.payload["occurrence_id"],
-                                    expected_generation=event.payload["snooze_generation"],
-                                    snooze_until_at_utc=event.payload["requested_due_at_utc"],
-                                    cause_event_id=event.event_id,
-                                )
+                            self.service.scheduler.apply_notification_action(
+                                event_id=event.event_id,
+                                semantic_sha256=event.semantic_sha256,
+                                action=event.payload["action"],
+                                job_id=event.payload["job_id"],
+                                job_revision=event.payload["job_revision"],
+                                occurrence=event.payload["occurrence_id"],
+                                expected_generation=event.payload["snooze_generation"],
+                                requested_due_at_utc=event.payload["requested_due_at_utc"],
+                            )
                         continue
                     if protocol != CLOUD_APPROVAL_PROTOCOL or not cloud_negotiated:
                         await websocket.close(code=1002, reason="extension_not_negotiated")
