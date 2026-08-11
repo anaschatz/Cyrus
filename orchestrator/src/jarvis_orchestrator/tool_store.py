@@ -12,7 +12,7 @@ from typing import Any
 from .domain import OrchestratorError, StaleEpochError, TaskState, new_uuid4, parse_utc, utc_now, utc_text
 from .jcs import domain_sha256, jcs_bytes, jcs_text
 from .scheduler_store import MAXIMUM_APPROVAL_QUEUE
-from .tool_contracts import ToolOutcomeV1, ToolRegistryV1, arguments_sha256, canonical_uuid4
+from .tool_contracts import ToolOutcomeV1, ToolRegistryV1, ToolStatus, arguments_sha256, canonical_uuid4
 from .tool_crypto import EncryptedToolPayloadV1, ToolPayloadBindingV1, ToolPayloadCipherV1
 from .tool_provenance import ContentProvenanceV1
 from .tool_state import TERMINAL_TOOL_STATES, ToolRunEvent, ToolRunState, restart_event, transition_tool_state
@@ -323,6 +323,246 @@ class ToolStoreV1:
             self._store._append_task_event_tx(connection, task_id, epoch, "tool.awaiting_approval", {"approval_id": approval_id, "execution_id": execution_id, "tool_id": tool_id}, selected)
             self._audit_tx(connection, execution_id, task_id, epoch, tool_id, "PLANNED", "AWAITING_APPROVAL", "ok", args_digest, None, selected)
         return {"execution_id": execution_id, "approval_id": approval_id, "presentation_id": presentation_id, "preview_fetch_nonce": preview_nonce, "approval_binding_sha256": approval_binding, "status": "AWAITING_APPROVAL"}
+
+    def task_run(self, task_id: str, epoch: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM tool_executions WHERE task_id=? AND epoch=? ORDER BY created_at LIMIT 1",
+                (task_id, epoch),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "approval_id": row["approval_id"],
+            "arguments_sha256": row["arguments_sha256"],
+            "execution_id": row["execution_id"],
+            "idempotency_key": row["idempotency_key"],
+            "reason_code": row["reason_code"],
+            "result_sha256": row["result_sha256"],
+            "status": row["status"],
+            "tool_call_id": row["tool_call_id"],
+            "tool_id": row["tool_name"],
+        }
+
+    def issue_execution_permit(
+        self,
+        execution_id: str,
+        *,
+        task_id: str,
+        epoch: int,
+        policy_sha256: str,
+        scheduler_contract_sha256: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Atomically revalidate the approved run and bind one dispatch permit."""
+
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            self._store._guarded_task_tx(
+                connection, task_id, epoch, (TaskState.EXECUTING,)
+            )
+            row = connection.execute(
+                "SELECT * FROM tool_executions WHERE execution_id=? AND task_id=? AND epoch=?",
+                (execution_id, task_id, epoch),
+            ).fetchone()
+            if row is None or row["status"] != ToolRunState.APPROVED.value:
+                raise StaleEpochError()
+            definition = self.registry.resolve(row["tool_name"])
+            if any(
+                (
+                    row["registry_sha256"] != self.registry.digest,
+                    row["tool_schema_sha256"] != definition.schema_sha256,
+                    row["policy_sha256"] != policy_sha256,
+                    row["scheduler_contract_sha256"] != scheduler_contract_sha256,
+                )
+            ):
+                raise OrchestratorError("tool.readiness_changed", status=503)
+            payload = connection.execute(
+                "SELECT * FROM tool_sensitive_payloads WHERE payload_id=? AND purged_at IS NULL",
+                (row["arguments_payload_id"],),
+            ).fetchone()
+            if payload is None:
+                raise OrchestratorError("tool.payload_unavailable", status=503)
+            envelope = EncryptedToolPayloadV1(
+                payload["key_version"],
+                payload["nonce"],
+                payload["ciphertext_and_tag"],
+                payload["content_sha256"],
+                payload["aad_sha256"],
+            )
+            arguments = json.loads(
+                self.cipher.decrypt(
+                    envelope,
+                    self._payload_binding(execution_id, row["tool_name"], "ARGUMENTS"),
+                )
+            )
+            canonical = self.registry.validate(row["tool_name"], arguments)
+            if arguments_sha256(canonical) != row["arguments_sha256"]:
+                raise OrchestratorError("tool.binding_mismatch", status=409)
+            permit_id = new_uuid4()
+            changed = connection.execute(
+                """UPDATE tool_executions SET status='DISPATCH_COMMITTED',permit_id=?,
+                   dispatch_stage='PERMIT_COMMITTED',updated_at=?
+                   WHERE execution_id=? AND status='APPROVED'""",
+                (permit_id, utc_text(selected), execution_id),
+            )
+            if changed.rowcount != 1:
+                raise StaleEpochError()
+            self._audit_tx(
+                connection,
+                execution_id,
+                task_id,
+                epoch,
+                row["tool_name"],
+                ToolRunState.APPROVED.value,
+                ToolRunState.DISPATCH_COMMITTED.value,
+                "ok",
+                row["arguments_sha256"],
+                None,
+                selected,
+            )
+        return {
+            "arguments": canonical,
+            "arguments_sha256": row["arguments_sha256"],
+            "definition": definition,
+            "idempotency_key": row["idempotency_key"],
+            "permit_id": permit_id,
+            "policy_sha256": row["policy_sha256"],
+            "registry_sha256": row["registry_sha256"],
+            "scheduler_contract_sha256": row["scheduler_contract_sha256"],
+            "tool_call_id": row["tool_call_id"],
+            "user_intent_binding_sha256": row["user_intent_binding_sha256"],
+        }
+
+    def complete_execution(
+        self,
+        execution_id: str,
+        *,
+        task_id: str,
+        epoch: int,
+        outcome: ToolOutcomeV1,
+        result: Mapping[str, Any],
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Commit a final adapter result only while the task epoch is current."""
+
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            self._store._guarded_task_tx(
+                connection, task_id, epoch, (TaskState.EXECUTING,)
+            )
+            row = connection.execute(
+                "SELECT * FROM tool_executions WHERE execution_id=? AND task_id=? AND epoch=?",
+                (execution_id, task_id, epoch),
+            ).fetchone()
+            if row is None or row["status"] != ToolRunState.DISPATCH_COMMITTED.value:
+                raise StaleEpochError()
+            canonical = self.registry.validate_output(row["tool_name"], result)
+            result_bytes = jcs_bytes(canonical)
+            result_digest = hashlib.sha256(result_bytes).hexdigest()
+            result_payload_id = self._insert_payload_tx(
+                connection,
+                execution_id=execution_id,
+                tool_id=row["tool_name"],
+                kind="RESULT",
+                content=result_bytes,
+                created_at=utc_text(selected),
+                purge_after=None,
+            )
+            final_state = {
+                ToolStatus.VERIFIED: ToolRunState.VERIFIED,
+                ToolStatus.ACCEPTED: ToolRunState.ACCEPTED,
+                ToolStatus.FAILED: ToolRunState.FAILED,
+                ToolStatus.AMBIGUOUS: ToolRunState.AMBIGUOUS,
+            }[outcome.status]
+            connection.execute(
+                """UPDATE tool_executions SET status=?,verification=?,reason_code=?,
+                   result_sha256=?,result_payload_id=?,dispatch_stage='COMPLETED',
+                   completed_at=?,updated_at=? WHERE execution_id=? AND status='DISPATCH_COMMITTED'""",
+                (
+                    final_state.value,
+                    outcome.verification.value,
+                    outcome.reason_code,
+                    result_digest,
+                    result_payload_id,
+                    utc_text(selected),
+                    utc_text(selected),
+                    execution_id,
+                ),
+            )
+            self._audit_tx(
+                connection,
+                execution_id,
+                task_id,
+                epoch,
+                row["tool_name"],
+                ToolRunState.DISPATCH_COMMITTED.value,
+                final_state.value,
+                outcome.reason_code,
+                row["arguments_sha256"],
+                result_digest,
+                selected,
+            )
+        return self.registry.model_projection(row["tool_name"], canonical)
+
+    def mark_dispatch_ambiguous(
+        self,
+        execution_id: str,
+        *,
+        reason_code: str = "tool.ambiguous_after_dispatch",
+        now: datetime | None = None,
+    ) -> None:
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM tool_executions WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            if row is None or row["status"] != ToolRunState.DISPATCH_COMMITTED.value:
+                return
+            connection.execute(
+                """UPDATE tool_executions SET status='AMBIGUOUS',reason_code=?,
+                   completed_at=?,updated_at=? WHERE execution_id=? AND status='DISPATCH_COMMITTED'""",
+                (reason_code, utc_text(selected), utc_text(selected), execution_id),
+            )
+            self._audit_tx(
+                connection,
+                execution_id,
+                row["task_id"],
+                row["epoch"],
+                row["tool_name"],
+                ToolRunState.DISPATCH_COMMITTED.value,
+                ToolRunState.AMBIGUOUS.value,
+                reason_code,
+                row["arguments_sha256"],
+                None,
+                selected,
+            )
+
+    def result_projection(self, execution_id: str) -> dict[str, Any]:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT x.tool_name,x.result_payload_id,p.* FROM tool_executions x
+                   JOIN tool_sensitive_payloads p ON p.payload_id=x.result_payload_id
+                   WHERE x.execution_id=? AND p.purged_at IS NULL""",
+                (execution_id,),
+            ).fetchone()
+        if row is None:
+            raise OrchestratorError("tool.payload_unavailable", status=503)
+        envelope = EncryptedToolPayloadV1(
+            row["key_version"],
+            row["nonce"],
+            row["ciphertext_and_tag"],
+            row["content_sha256"],
+            row["aad_sha256"],
+        )
+        result = json.loads(
+            self.cipher.decrypt(
+                envelope,
+                self._payload_binding(execution_id, row["tool_name"], "RESULT"),
+            )
+        )
+        return self.registry.model_projection(row["tool_name"], result)
 
     def promote_next_action_approval(self, owner_session_id: str, *, now: datetime | None = None) -> dict[str, Any] | None:
         selected = now or utc_now()

@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .domain import OrchestratorError, new_uuid4, parse_utc, require_uuid4, utc_now, utc_text
+from .domain import OrchestratorError, TaskState, new_uuid4, parse_utc, require_uuid4, utc_now, utc_text
 from .jcs import domain_sha256, jcs_text
 from .scheduler_contract import (
     APPROVAL_TTL_SECONDS,
@@ -624,10 +624,14 @@ class SchedulerStore:
         self,
         compiled: CompiledProposal,
         *,
+        task_id: str | None = None,
+        epoch: int | None = None,
         now: datetime | None = None,
         api_event_id: str | None = None,
         api_semantic_sha256: str | None = None,
     ) -> dict[str, Any]:
+        if (task_id is None) != (epoch is None):
+            raise ValueError("task id and epoch must be supplied together")
         if (api_event_id is None) != (api_semantic_sha256 is None):
             raise ValueError("api event id and semantic hash must be supplied together")
         if api_event_id is not None:
@@ -648,6 +652,11 @@ class SchedulerStore:
         approval_id = new_uuid4()
         expires = selected + timedelta(seconds=APPROVAL_TTL_SECONDS)
         with self._transaction() as connection:
+            task = None
+            if task_id is not None:
+                task = self._store._guarded_task_tx(
+                    connection, task_id, int(epoch), (TaskState.EXECUTING,)
+                )
             if api_event_id is not None:
                 prior = self._api_result_tx(connection, api_event_id, str(api_semantic_sha256))
                 if prior is not None:
@@ -695,6 +704,35 @@ class SchedulerStore:
                     utc_text(expires),
                 ),
             )
+            if task is not None:
+                connection.execute(
+                    """INSERT INTO scheduler_task_links(
+                       proposal_id,task_id,epoch,state,result_json,created_at,resolved_at
+                       ) VALUES(?,?,?,'PENDING',NULL,?,NULL)""",
+                    (proposal_id, task_id, int(epoch), utc_text(selected)),
+                )
+                elapsed = float(task["active_elapsed_seconds"])
+                if task["active_started_at"] is not None:
+                    elapsed += max(
+                        0.0,
+                        (selected - parse_utc(task["active_started_at"])).total_seconds(),
+                    )
+                changed = connection.execute(
+                    """UPDATE tasks SET state='AWAITING_APPROVAL',active_elapsed_seconds=?,
+                       active_started_at=NULL,disconnect_expires_at=NULL,updated_at=?
+                       WHERE task_id=? AND epoch=? AND state='EXECUTING'""",
+                    (elapsed, utc_text(selected), task_id, int(epoch)),
+                )
+                if changed.rowcount != 1:
+                    raise OrchestratorError("stale_epoch", status=409)
+                self._store._append_task_event_tx(
+                    connection,
+                    task_id,
+                    int(epoch),
+                    "scheduler.awaiting_approval",
+                    {"approval_id": approval_id, "proposal_id": proposal_id},
+                    selected,
+                )
             connection.execute(
                 """INSERT INTO approval_arbiter_queue(
                    approval_id,producer_protocol,binding_sha256,state,created_at,expires_at,updated_at
@@ -736,6 +774,34 @@ class SchedulerStore:
                     now=selected,
                 )
             return result
+
+    def task_run(self, task_id: str, epoch: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT l.*,p.approval_id,p.operation,p.proposal_sha256,p.state AS proposal_state
+                   FROM scheduler_task_links l JOIN scheduler_proposals p USING(proposal_id)
+                   WHERE l.task_id=? AND l.epoch=?""",
+                (task_id, epoch),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "approval_id": row["approval_id"],
+            "operation": row["operation"],
+            "proposal_id": row["proposal_id"],
+            "proposal_sha256": row["proposal_sha256"],
+            "proposal_state": row["proposal_state"],
+            "result": json.loads(row["result_json"]) if row["result_json"] else None,
+            "state": row["state"],
+        }
+
+    def task_id_for_proposal(self, proposal_id: str) -> str | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT task_id FROM scheduler_task_links WHERE proposal_id=?",
+                (proposal_id,),
+            ).fetchone()
+        return str(row["task_id"]) if row is not None else None
 
     def _expire_waiting_tx(self, connection: sqlite3.Connection, now: datetime) -> None:
         rows = connection.execute(
@@ -991,7 +1057,7 @@ class SchedulerStore:
         self._sha(proposal_sha256)
         if decision not in {"approve", "deny"}:
             raise OrchestratorError("invalid_request", status=400)
-        selected = now or utc_now()
+        selected = parse_utc(utc_text(now or utc_now()))
         command_semantic = domain_sha256(
             "scheduler-approval-api-decision/1",
             {"approval_id": approval_id, "proposal_id": proposal_id,
@@ -1145,6 +1211,69 @@ class SchedulerStore:
                 "reason_code": result_reason,
                 "result": "applied",
             }
+            task_link = connection.execute(
+                "SELECT task_id,epoch,state FROM scheduler_task_links WHERE proposal_id=?",
+                (proposal_id,),
+            ).fetchone()
+            if task_link is not None:
+                task = self._store._guarded_task_tx(
+                    connection,
+                    task_link["task_id"],
+                    int(task_link["epoch"]),
+                    (TaskState.AWAITING_APPROVAL,),
+                )
+                link_state = "APPROVED" if decision == "approve" else "DENIED"
+                connection.execute(
+                    """UPDATE scheduler_task_links SET state=?,result_json=?,resolved_at=?
+                       WHERE proposal_id=? AND state='PENDING'""",
+                    (link_state, jcs_text(result_payload), utc_text(selected), proposal_id),
+                )
+                connection.execute(
+                    """UPDATE tasks SET state='EXECUTING',active_started_at=?,updated_at=?
+                       WHERE task_id=? AND epoch=? AND state='AWAITING_APPROVAL'""",
+                    (
+                        utc_text(selected),
+                        utc_text(selected),
+                        task_link["task_id"],
+                        int(task_link["epoch"]),
+                    ),
+                )
+                turn = connection.execute(
+                    "SELECT effects_json FROM canonical_turns WHERE task_id=? AND status='PENDING'",
+                    (task_link["task_id"],),
+                ).fetchone()
+                if turn is None:
+                    raise OrchestratorError("stale_epoch", status=409)
+                effects = json.loads(turn["effects_json"])
+                effects.append(
+                    {
+                        "kind": "scheduler" if decision == "approve" else "ToolDenied",
+                        "name": operation,
+                        "status": link_state,
+                        "arguments_sha256": proposal_sha256,
+                        "result_sha256": domain_sha256(
+                            "jarvis.scheduler-task-result/1", result_payload
+                        ),
+                    }
+                )
+                connection.execute(
+                    "UPDATE canonical_turns SET effects_json=? WHERE task_id=?",
+                    (jcs_text(effects), task_link["task_id"]),
+                )
+                self._store._append_task_event_tx(
+                    connection,
+                    task_link["task_id"],
+                    int(task_link["epoch"]),
+                    "scheduler.approval.decided",
+                    {
+                        "decision": decision,
+                        "proposal_id": proposal_id,
+                        "result_sha256": domain_sha256(
+                            "jarvis.scheduler-task-result/1", result_payload
+                        ),
+                    },
+                    selected,
+                )
             self._append_outbox_tx(
                 connection,
                 event_type="scheduler.approval.decision_result",

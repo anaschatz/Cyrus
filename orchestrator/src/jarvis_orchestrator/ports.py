@@ -100,11 +100,20 @@ class ToolExecutorPort(Protocol):
         self,
         *,
         execution_id: str,
+        permit_id: str,
+        tool_call_id: str,
         definition: ToolDefinitionV1,
         arguments: Mapping[str, Any],
+        arguments_sha256: str,
         idempotency_key: str,
+        registry_sha256: str,
+        policy_sha256: str,
+        scheduler_contract_sha256: str,
+        user_intent_binding_sha256: str,
         deadline_utc: str,
     ) -> tuple[ToolOutcomeV1, Mapping[str, Any]]: ...
+
+    async def acknowledge(self, execution_id: str, idempotency_key: str) -> None: ...
 
 
 class DisabledMemoryPort:

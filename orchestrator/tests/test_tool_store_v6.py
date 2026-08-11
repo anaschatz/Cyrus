@@ -32,11 +32,11 @@ class ToolStoreV6Tests(StoreCase, unittest.TestCase):
 
     def test_schema_is_v6_and_scheduler_tables_survive(self) -> None:
         store = self.make_store(tool_authority_enabled=True)
-        self.assertEqual(SCHEMA_VERSION, 6)
+        self.assertEqual(SCHEMA_VERSION, 7)
         with store._lock:
             version = store._connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             names = {row[0] for row in store._connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        self.assertEqual(version, "6")
+        self.assertEqual(version, "7")
         self.assertIn("scheduler_jobs", names)
         self.assertIn("tool_sensitive_payloads", names)
         self.assertIn("content_provenance", names)

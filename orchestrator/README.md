@@ -35,6 +35,29 @@ Conversation deletion always prompts for the full conversation ID. Logical delet
 - Completed canonical history uses project-owned versioned dataclasses. Pydantic messages are adapters; serialized Pydantic state is allowed only in a validated `ContinuationArtifactV1`.
 - Every physical Chat Completions POST consumes one persisted reservation permit. The reserved output allowance becomes the exact `max_completion_tokens` value.
 
+## Planner → approval → execution
+
+Schema v7 connects the previously separate capability components to the owning
+task lifecycle. Explicit schedule requests run only through the qualified local
+schedule compiler, create a scheduler proposal linked to the task, pause at
+`AWAITING_APPROVAL`, and resume the same task after F10/F11. Approval activates
+or rejects the scheduler operation atomically before the deterministic final
+voice response is committed.
+
+When tools are enabled, the local route planner selects one closed-registry
+tool, a second strict structured call extracts its arguments, and the
+Orchestrator persists the route, capability reservation, encrypted arguments,
+preview, and approval binding. F10 permits exactly one epoch-checked dispatch;
+F11 produces a durable denial and no adapter call. A qualified `ToolExecutorPort`
+returns a typed outcome which is validated, encrypted, reconciled into canonical
+effects, and supplied only to the local follow-up model. The production executor
+uses the authenticated Action Host v2 client; it ACKs a native result only after
+the Orchestrator commits it durably and can query/ACK that same idempotent result
+after restart without repeating the action. Cancellation invalidates pending
+scheduler/tool approvals, while a dispatched ambiguous action can never publish
+stale output. Production startup fails closed if tools are enabled without the
+configured Action Host socket, token and qualified executor.
+
 ## Verification
 
 ```sh

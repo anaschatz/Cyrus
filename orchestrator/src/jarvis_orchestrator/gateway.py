@@ -476,7 +476,7 @@ class VoiceGateway:
                             if not capture_idle:
                                 await websocket.close(code=1002, reason="capture_active")
                                 break
-                            self.service.scheduler.decide_approval(
+                            scheduler_result = self.service.scheduler.decide_approval(
                                 approval_id=event.payload["approval_id"],
                                 proposal_id=event.payload["proposal_id"],
                                 proposal_sha256=event.payload["proposal_sha256"],
@@ -487,6 +487,11 @@ class VoiceGateway:
                                 requested_event_id=event.payload["requested_event_id"],
                                 decision_nonce=event.payload["decision_nonce"],
                             )
+                            task_id = self.service.scheduler.task_id_for_proposal(
+                                scheduler_result["proposal_id"]
+                            )
+                            if task_id is not None:
+                                self._track_execution(task_id)
                             self.service.scheduler.promote_next_approval(
                                 session_id, supported_protocols=(SCHEDULER_PROTOCOL,)
                             )

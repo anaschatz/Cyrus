@@ -72,7 +72,7 @@ from .tool_provenance import (
     ProvenanceError,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 SCHEMA_SQL = """
@@ -473,6 +473,28 @@ CREATE TABLE IF NOT EXISTS cloud_provider_receipts (
 """
 
 
+MIGRATION_7_SQL = """
+CREATE TABLE IF NOT EXISTS planner_routes (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(task_id),
+    epoch INTEGER NOT NULL,
+    route_json TEXT NOT NULL,
+    route_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scheduler_task_links (
+    proposal_id TEXT PRIMARY KEY REFERENCES scheduler_proposals(proposal_id),
+    task_id TEXT NOT NULL UNIQUE REFERENCES tasks(task_id),
+    epoch INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('PENDING','APPROVED','DENIED','EXPIRED')),
+    result_json TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS scheduler_task_links_by_task
+ON scheduler_task_links(task_id,epoch,state);
+"""
+
+
 class OrchestratorStore:
     def __init__(
         self,
@@ -511,7 +533,7 @@ class OrchestratorStore:
             existing_version = self._connection.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone()
-            if existing_version is not None and existing_version["value"] not in {"1", "2", "3", "4", "5", "6"}:
+            if existing_version is not None and existing_version["value"] not in {"1", "2", "3", "4", "5", "6", "7"}:
                 raise RuntimeError("unsupported orchestrator database schema version")
             self._connection.executescript(SCHEMA_SQL)
             if existing_version is None:
@@ -585,6 +607,14 @@ class OrchestratorStore:
                     + "\nUPDATE schema_meta SET value='6' WHERE key='schema_version' AND value='5';\n"
                     + "COMMIT;"
                 )
+                current_version = 6
+            if current_version == 6:
+                self._connection.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + MIGRATION_7_SQL
+                    + "\nUPDATE schema_meta SET value='7' WHERE key='schema_version' AND value='6';\n"
+                    + "COMMIT;"
+                )
 
     def close(self) -> None:
         with self._lock:
@@ -653,6 +683,52 @@ class OrchestratorStore:
             "language": row["user_language"],
             "event_id": row["event_id"],
         }
+
+    def persist_planner_route(
+        self,
+        task_id: str,
+        epoch: int,
+        route: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Persist the validated planner decision before any capability work."""
+
+        selected = now or utc_now()
+        document = dict(route)
+        encoded = canonical_json(document)
+        digest = canonical_sha256(document)
+        with self._transaction() as connection:
+            self._guarded_task_tx(connection, task_id, epoch, (TaskState.ROUTING,))
+            existing = connection.execute(
+                "SELECT route_json,route_sha256 FROM planner_routes WHERE task_id=? AND epoch=?",
+                (task_id, epoch),
+            ).fetchone()
+            if existing is not None:
+                if existing["route_sha256"] != digest or existing["route_json"] != encoded:
+                    raise OrchestratorError("route_validation_failed", status=409)
+                return json.loads(existing["route_json"])
+            connection.execute(
+                "INSERT INTO planner_routes(task_id,epoch,route_json,route_sha256,created_at) VALUES(?,?,?,?,?)",
+                (task_id, epoch, encoded, digest, utc_text(selected)),
+            )
+            self._append_task_event_tx(
+                connection,
+                task_id,
+                epoch,
+                "planner.route.selected",
+                {"route": document.get("route", ""), "route_sha256": digest},
+                selected,
+            )
+        return document
+
+    def planner_route(self, task_id: str, epoch: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT route_json FROM planner_routes WHERE task_id=? AND epoch=?",
+                (task_id, epoch),
+            ).fetchone()
+        return json.loads(row["route_json"]) if row is not None else None
 
     def begin_memory_shadow_audit(
         self,
@@ -1364,6 +1440,44 @@ class OrchestratorStore:
             "UPDATE capability_reservations SET status='CANCELLED',completed_at=? WHERE task_id=? AND epoch=? AND status='RESERVED'",
             (utc_text(now), row["task_id"], row["epoch"]),
         )
+        connection.execute(
+            """UPDATE tool_executions SET status='CANCELLED',reason_code='tool.cancelled_pre_dispatch',
+               completed_at=?,updated_at=? WHERE task_id=? AND epoch=?
+               AND status IN ('PLANNED','AWAITING_APPROVAL','APPROVED')""",
+            (utc_text(now), utc_text(now), row["task_id"], row["epoch"]),
+        )
+        connection.execute(
+            """UPDATE tool_executions SET status='AMBIGUOUS',reason_code='tool.ambiguous_after_dispatch',
+               completed_at=?,updated_at=? WHERE task_id=? AND epoch=?
+               AND status IN ('DISPATCH_COMMITTED','DISPATCHED','VERIFYING')""",
+            (utc_text(now), utc_text(now), row["task_id"], row["epoch"]),
+        )
+        connection.execute(
+            """UPDATE approval_arbiter_queue SET state='INVALIDATED',updated_at=?
+               WHERE approval_id IN (
+                 SELECT approval_id FROM approvals WHERE task_id=? AND epoch=?
+               ) AND state IN ('WAITING_FOR_CHANNEL','PRESENTING','PRESENTED','DECIDING','WAITING_FOR_OWNER')""",
+            (utc_text(now), row["task_id"], row["epoch"]),
+        )
+        scheduler_links = connection.execute(
+            """SELECT l.proposal_id,p.approval_id FROM scheduler_task_links l
+               JOIN scheduler_proposals p USING(proposal_id)
+               WHERE l.task_id=? AND l.epoch=? AND l.state='PENDING'""",
+            (row["task_id"], row["epoch"]),
+        ).fetchall()
+        for link in scheduler_links:
+            connection.execute(
+                "UPDATE scheduler_task_links SET state='EXPIRED',resolved_at=? WHERE proposal_id=?",
+                (utc_text(now), link["proposal_id"]),
+            )
+            connection.execute(
+                "UPDATE scheduler_proposals SET state='EXPIRED',decided_at=? WHERE proposal_id=? AND state='PENDING'",
+                (utc_text(now), link["proposal_id"]),
+            )
+            connection.execute(
+                "UPDATE approval_arbiter_queue SET state='INVALIDATED',updated_at=? WHERE approval_id=?",
+                (utc_text(now), link["approval_id"]),
+            )
         connection.execute(
             """UPDATE research_runs SET stage='DISCARDED',updated_at=?
                WHERE task_id=? AND epoch=? AND stage!='COMPLETED'""",
@@ -2871,6 +2985,22 @@ class OrchestratorStore:
                 (utc_text(selected), reservation_id),
             )
 
+    def capability_reservation(
+        self,
+        task_id: str,
+        epoch: int,
+        *,
+        kind: str,
+        request_key: str,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM capability_reservations
+                   WHERE task_id=? AND epoch=? AND kind=? AND request_key=?""",
+                (task_id, epoch, kind, request_key),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def recover_after_restart(self, *, now: datetime | None = None) -> int:
         selected = now or utc_now()
         with self._lock:
@@ -2882,13 +3012,27 @@ class OrchestratorStore:
             try:
                 with self._transaction() as connection:
                     resumable = connection.execute(
-                        """SELECT 1 FROM cloud_approval_bindings b
-                           JOIN approvals a USING(approval_id)
-                           JOIN tasks t USING(task_id)
-                           JOIN conversations c USING(conversation_id)
-                           WHERE b.task_id=? AND b.epoch=? AND a.status='APPROVED'
-                           AND t.state='EXECUTING' AND t.cloud_dispatch_count=0
-                           AND t.tombstoned=0 AND c.current_epoch=t.epoch""",
+                        """SELECT 1 FROM tasks t JOIN conversations c USING(conversation_id)
+                           WHERE t.task_id=? AND t.epoch=? AND t.state='EXECUTING'
+                           AND t.tombstoned=0 AND c.current_epoch=t.epoch
+                           AND (
+                             EXISTS(
+                               SELECT 1 FROM cloud_approval_bindings b
+                               JOIN approvals a USING(approval_id)
+                               WHERE b.task_id=t.task_id AND b.epoch=t.epoch
+                                 AND a.status='APPROVED' AND t.cloud_dispatch_count=0
+                             )
+                             OR EXISTS(
+                               SELECT 1 FROM scheduler_task_links s
+                               WHERE s.task_id=t.task_id AND s.epoch=t.epoch
+                                 AND s.state IN ('APPROVED','DENIED')
+                             )
+                             OR EXISTS(
+                               SELECT 1 FROM tool_executions x
+                               WHERE x.task_id=t.task_id AND x.epoch=t.epoch
+                                 AND x.status IN ('APPROVED','DENIED','VERIFIED','ACCEPTED')
+                             )
+                           )""",
                         (row["task_id"], row["epoch"]),
                     ).fetchone()
                     if resumable is not None:

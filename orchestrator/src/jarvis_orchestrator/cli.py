@@ -41,7 +41,9 @@ from .scheduler_worker import SchedulerWorker
 from .schedule_compiler import LocalScheduleCompiler, load_compiler_qualification
 from .tool_contracts import ToolRegistryV1
 from .tool_crypto import ToolPayloadCipherV1
+from .tool_executor import ActionHostV2ToolExecutor
 from .tool_store import ToolStoreV1
+from .action_host_v2_client import ActionHostV2Client
 from .research_adapter import LoopbackResearchAdapter
 from .cloud_provider import (
     OpenRouterCloudAdapter,
@@ -416,6 +418,7 @@ async def _run_servers(
         except Exception:
             schedule_compiler = None
     tool_store: ToolStoreV1 | None = None
+    tool_executor: ActionHostV2ToolExecutor | None = None
     if config.tools_enabled:
         if tool_registry is None:
             raise RuntimeError("tools_enabled requires a frozen registry")
@@ -429,6 +432,16 @@ async def _run_servers(
             store,
             cipher=ToolPayloadCipherV1(tool_key_provider),
             registry=tool_registry,
+        )
+        assert config.action_host_socket_path is not None
+        assert config.action_host_token_file is not None
+        tool_executor = ActionHostV2ToolExecutor(
+            ActionHostV2Client(
+                socket_path=config.action_host_socket_path,
+                token_path=config.action_host_token_file,
+                auth_keys=tool_key_provider,
+                timeout_seconds=min(config.model_timeout_seconds, 30.0),
+            )
         )
     service = OrchestratorService(
         config,
@@ -451,6 +464,7 @@ async def _run_servers(
         schedule_compiler=schedule_compiler,
         tool_store=tool_store,
         tool_planner=model if config.tools_enabled else None,
+        tool_executor=tool_executor,
     )
     service.startup_recovery()
     if scheduler is not None:
