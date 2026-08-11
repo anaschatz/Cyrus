@@ -23,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
     parser.add_argument("--orchestrator-url")
     parser.add_argument(
+        "--trace-stages",
+        action="store_true",
+        help="Print only allowlisted content-free runtime stage names.",
+    )
+    parser.add_argument(
         "--ptt-key",
         choices=[*(f"F{index}" for index in range(1, 21)), "CONTROL_OPTION"],
         help="Qualification-only PTT override; the private production config is not modified.",
@@ -42,6 +47,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             config,
             output=args.output,
             timeout_seconds=args.timeout_seconds,
+            stage_sink=(
+                (lambda stage: print(f"[smoke.stage] {stage}", flush=True))
+                if args.trace_stages
+                else None
+            ),
         )
     except BackendError as exc:
         report = {

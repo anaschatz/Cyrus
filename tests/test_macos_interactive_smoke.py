@@ -129,11 +129,13 @@ class InteractiveSmokeScriptTests(unittest.TestCase):
                 "90",
                 "--ptt-key",
                 "CONTROL_OPTION",
+                "--trace-stages",
             ]
         )
         self.assertEqual(parsed.timeout_seconds, 90.0)
         self.assertEqual(parsed.model_dir, "/private/model")
         self.assertEqual(parsed.ptt_key, "CONTROL_OPTION")
+        self.assertTrue(parsed.trace_stages)
 
 
 if __name__ == "__main__":

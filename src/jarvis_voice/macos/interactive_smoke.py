@@ -20,6 +20,23 @@ from .runtime import MacVoiceRuntime
 
 SMOKE_SCHEMA_VERSION = 1
 CASE_ORDER = ("greek_turn", "english_turn", "no_speech", "barge_in")
+TRACEABLE_STAGE_EVENTS = frozenset(
+    {
+        "audio_stream_started",
+        "ptt_source_started",
+        "ptt_down_received",
+        "ptt_up_received",
+        "input_no_speech_created",
+        "transcript_final_created",
+        "speech_commit_received",
+        "tts_unit_started",
+        "speech_done_received",
+        "playback_completed_created",
+        "tts_cancel_dispatched",
+        "response_cancel_created",
+        "playback_interrupted_created",
+    }
+)
 
 
 def _milliseconds(later: float, earlier: float) -> float:
@@ -324,6 +341,7 @@ def run_interactive_macos_smoke(
     runtime_factory: Callable[[VoiceConfig], MacVoiceRuntime] = MacVoiceRuntime,
     server_factory: Callable[[str], MacSmokeLoopbackServer] = MacSmokeLoopbackServer,
     prompt_sink: Callable[[SmokePrompt], None] | None = None,
+    stage_sink: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     if timeout_seconds <= 0 or timeout_seconds > 3600:
         raise BackendError("smoke.timeout_invalid", "Smoke timeout is invalid", subsystem="smoke")
@@ -350,6 +368,9 @@ def run_interactive_macos_smoke(
         while not controller.finished and not runtime_error:
             snapshot: Sequence[Mapping[str, object]] = runtime.timing_snapshot()
             for entry in snapshot[cursor:]:
+                event_name = entry.get("event")
+                if stage_sink is not None and isinstance(event_name, str) and event_name in TRACEABLE_STAGE_EVENTS:
+                    stage_sink(event_name)
                 controller.feed(entry)
             cursor = len(snapshot)
             controller.tick(backend_idle=runtime.tts.is_idle, now=time.perf_counter())
