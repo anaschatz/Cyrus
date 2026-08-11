@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -53,6 +54,20 @@ CREATE TABLE IF NOT EXISTS scheduler_delivery_attempts(
   UNIQUE(notification_id,attempt_ordinal)
 );
 """
+
+
+def default_scheduler_journal_path() -> Path:
+    import sys
+
+    if sys.platform == "win32":
+        root = os.environ.get("LOCALAPPDATA", "").strip()
+        if not root:
+            raise ValueError("scheduler journal state root missing")
+        return Path(root) / "JARVIS Voice" / "state" / "scheduler.sqlite3"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "JARVIS Voice" / "state" / "scheduler.sqlite3"
+    root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    return root / "jarvis-voice" / "scheduler.sqlite3"
 
 
 class SchedulerClientJournal:
@@ -168,7 +183,7 @@ class SchedulerClientJournal:
                 raise
 
     def finish_native_dispatch(self, attempt_id: str, *, state: str, reason_code: str) -> bool:
-        if state not in {"OS_ACCEPTED", "OS_REJECTED"}:
+        if state not in {"OS_ACCEPTED", "OS_REJECTED", "AMBIGUOUS_OS_DISPATCH"}:
             raise ValueError("invalid native dispatch terminal state")
         with self._lock:
             return self._db.execute(
@@ -197,6 +212,40 @@ class SchedulerClientJournal:
             except BaseException:
                 self._db.execute("ROLLBACK")
                 raise
+
+    def notification_dispatch_needed(self, notification_id: str) -> bool:
+        with self._lock:
+            if self._db.execute(
+                "SELECT 1 FROM scheduler_tombstones WHERE notification_id=?", (notification_id,)
+            ).fetchone():
+                return False
+            accepted = self._db.execute(
+                """SELECT 1 FROM scheduler_delivery_attempts
+                   WHERE notification_id=? AND state='OS_ACCEPTED'""",
+                (notification_id,),
+            ).fetchone()
+            dispatching = self._db.execute(
+                """SELECT 1 FROM scheduler_delivery_attempts
+                   WHERE notification_id=? AND state='DISPATCHING'""",
+                (notification_id,),
+            ).fetchone()
+            return accepted is None and dispatching is None
+
+    def pending_notification_payloads(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT event_id FROM encrypted_frames f
+                   WHERE f.record_type='scheduler.notification.requested'
+                   AND f.state<>'QUARANTINED'
+                   ORDER BY f.created_at_utc,f.event_id"""
+            ).fetchall()
+        payloads: list[dict[str, Any]] = []
+        for row in rows:
+            payload = self.read(row["event_id"])
+            notification_id = payload.get("notification_id")
+            if isinstance(notification_id, str) and self.notification_dispatch_needed(notification_id):
+                payloads.append(payload)
+        return payloads
 
     def tombstone(self, notification_id: str, reason_code: str) -> None:
         with self._lock:

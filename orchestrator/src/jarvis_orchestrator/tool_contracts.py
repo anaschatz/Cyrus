@@ -493,6 +493,19 @@ class ToolDefinitionV1:
             {"input": self.input_schema, "output": self.output_schema, "preview_fields": list(self.preview_fields), "tool_id": self.tool_id},
         )
 
+    @property
+    def output_schema_sha256(self) -> str:
+        """Digest bound by Action Host v2 terminal results.
+
+        This additive digest does not alter the frozen combined v1 tool-schema
+        or registry digests.
+        """
+
+        return domain_sha256(
+            "jarvis.tool-output-schema/1",
+            {"output": self.output_schema, "tool_id": self.tool_id},
+        )
+
 
 def build_tool_definitions(
     *,

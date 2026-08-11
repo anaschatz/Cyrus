@@ -185,8 +185,9 @@ class SchedulerClientController:
         )
 
     def finish_native_dispatch(self, *, notification_id: str, attempt_id: str,
-                               accepted: bool, reason_code: str) -> SchedulerEnvelope:
-        stage = "OS_ACCEPTED" if accepted else "OS_REJECTED"
+                               accepted: bool, reason_code: str,
+                               ambiguous: bool = False) -> SchedulerEnvelope:
+        stage = "AMBIGUOUS_OS_DISPATCH" if ambiguous else "OS_ACCEPTED" if accepted else "OS_REJECTED"
         if not self.journal.finish_native_dispatch(
             attempt_id, state=stage, reason_code=reason_code
         ):
@@ -195,3 +196,6 @@ class SchedulerClientController:
             notification_id=notification_id, attempt_id=attempt_id,
             stage=stage, reason_code=reason_code,
         )
+
+    def native_dispatch_needed(self, notification_id: str) -> bool:
+        return self.journal.notification_dispatch_needed(notification_id)

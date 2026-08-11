@@ -6,10 +6,12 @@ import unittest
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import _bootstrap  # noqa: F401
 
 from jarvis_orchestrator.config import OrchestratorConfig
+from jarvis_orchestrator.control import ControlApplication
 from jarvis_orchestrator.domain import ModelChunk, ModelRequest, TaskState
 from jarvis_orchestrator.schedule_admission import classify_schedule_request
 from jarvis_orchestrator.scheduler_contract import PackagedTimezoneProvider, compile_proposal
@@ -35,6 +37,7 @@ class Compiler:
     def __init__(self, scheduler: SchedulerStore) -> None:
         self.scheduler = scheduler
         self.calls = 0
+        self.qualification = SimpleNamespace(sha256="1" * 64)
 
     def compile(self, model_input):
         self.calls += 1
@@ -139,6 +142,29 @@ class SchedulerAdmissionTests(unittest.TestCase):
         self.assertEqual(self.model.calls, 0)
         history = self.store.canonical_conversation(completed.conversation_id)
         self.assertIn("currently unavailable", history.turns[0].assistant_text)
+
+    def test_capability_reports_native_delivery_only_for_qualified_connection(self) -> None:
+        configured = OrchestratorConfig.from_mapping({
+            "database_path": str(self.store.path),
+            "control_bearer_token": "control-private",
+            "inference_bearer_token": "inference-private",
+            "voice_scheduler_compatibility_sha256": "9" * 64,
+        })
+        service = OrchestratorService(
+            configured,
+            self.store,
+            self.model,
+            scheduler=self.scheduler,
+            schedule_compiler=self.compiler,
+        )
+        app = ControlApplication(configured, service)
+        before = {item["name"]: item for item in app.get("/v1/capabilities")[1]["capabilities"]}
+        self.assertEqual(before["notification_delivery"]["state"], "BLOCKED")
+        service.attach_client(str(uuid.uuid4()), scheduler_session_id=str(uuid.uuid4()))
+        after = {item["name"]: item for item in app.get("/v1/capabilities")[1]["capabilities"]}
+        self.assertEqual(after["notification_delivery"]["state"], "READY")
+        self.assertEqual(after["notification_actions"]["state"], "BLOCKED")
+        self.assertEqual(after["reminders_overall"]["state"], "BLOCKED")
 
 
 if __name__ == "__main__":

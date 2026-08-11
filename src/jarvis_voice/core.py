@@ -38,6 +38,15 @@ class VoiceCore:
         self.server_sequence = SequenceTracker()
         self.pending_submission_event_id: str | None = None
         self.delivery_journal = delivery_journal
+        self.scheduler_capabilities: tuple[str, ...] = ()
+        self.scheduler_manifest_sha256: str | None = None
+        self.configure_scheduler_extension(scheduler_capabilities, scheduler_manifest_sha256)
+
+    def configure_scheduler_extension(
+        self,
+        scheduler_capabilities: tuple[str, ...],
+        scheduler_manifest_sha256: str | None,
+    ) -> None:
         allowed_scheduler = {
             "jarvis.scheduler/1", "jarvis.approval-arbiter/1", "scheduler_notification_speech"
         }
@@ -49,7 +58,7 @@ class VoiceCore:
             or not {"jarvis.scheduler/1", "jarvis.approval-arbiter/1"}.issubset(scheduler_capabilities)
         ):
             raise ValueError("qualified scheduler manifest is required")
-        self.scheduler_capabilities = scheduler_capabilities
+        self.scheduler_capabilities = tuple(scheduler_capabilities)
         self.scheduler_manifest_sha256 = scheduler_manifest_sha256
 
     @property
