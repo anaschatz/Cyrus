@@ -1,2 +1,6 @@
 # Isolated macOS Apple Silicon qualification environment only.
+# This PyPI wheel supplies the fully hashed dependency closure. It is replaced
+# in the pilot venv by the exact V3 source overlay in chatterbox-pilot-source.txt.
 chatterbox-tts==0.1.7
+# Perth 1.0.1 still imports pkg_resources; setuptools 81+ removed it.
+setuptools==80.9.0

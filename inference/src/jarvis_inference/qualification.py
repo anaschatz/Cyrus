@@ -67,10 +67,14 @@ def evaluate_evidence(
     }, "provenance")
     if provenance["challenge"] != expected_provenance["challenge"] or provenance["identity_digest"] != expected_provenance["identity_digest"] or provenance["fixture_digest"] != item["fixture_digest"]:
         raise invalid("qualification_provenance_mismatch", "Qualification evidence is not bound to this exclusive run.")
-    for key in ("started_unix_ns", "completed_unix_ns", "monotonic_elapsed_ns"):
-        if type(provenance[key]) is not int or provenance[key] <= 0:
+    for key in ("started_unix_ns", "completed_unix_ns"):
+        if not isinstance(provenance[key], str) or not re.fullmatch(r"[1-9][0-9]{0,19}", provenance[key]):
             raise invalid("invalid_qualification_evidence", "Qualification provenance timestamps are invalid.")
-    if provenance["started_unix_ns"] < expected_provenance["not_before_unix_ns"] or provenance["completed_unix_ns"] > expected_provenance["not_after_unix_ns"] or provenance["completed_unix_ns"] < provenance["started_unix_ns"]:
+    if type(provenance["monotonic_elapsed_ns"]) is not int or provenance["monotonic_elapsed_ns"] <= 0:
+        raise invalid("invalid_qualification_evidence", "Qualification provenance timestamps are invalid.")
+    started_unix_ns = int(provenance["started_unix_ns"])
+    completed_unix_ns = int(provenance["completed_unix_ns"])
+    if started_unix_ns < expected_provenance["not_before_unix_ns"] or completed_unix_ns > expected_provenance["not_after_unix_ns"] or completed_unix_ns < started_unix_ns:
         raise invalid("qualification_provenance_mismatch", "Qualification evidence falls outside this run boundary.")
     if provenance["monotonic_elapsed_ns"] > expected_provenance["max_elapsed_ns"]:
         raise invalid("qualification_provenance_mismatch", "Qualification monotonic provenance is invalid.")
@@ -252,9 +256,18 @@ def _run_fixture_runner(
             "JARVIS_QUAL_BASE_URL": base_url,
             "JARVIS_QUAL_API_KEY": api_key,
         })
+        if manifest.platform == "macos-arm64":
+            executable = resolve_local(
+                manifest.root,
+                manifest.python["executable"]["path"],
+                "python.executable",
+            )
+            command = [str(executable), "-I", str(runner)]
+        else:
+            command = [str(runner)]
         try:
             result = subprocess.run(
-                [str(runner)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, env=environment, cwd=manifest.root,
                 timeout=24 * 60 * 60, check=False,
             )
@@ -325,7 +338,6 @@ class _QualificationProduction(Production):
                     active.close()
                 candidate = None
                 try:
-                    verify_artifacts(self.manifest)
                     candidate = self.engine_factory(self.manifest)
                     with self.state_lock:
                         self.engine = None
@@ -379,6 +391,26 @@ class _QualificationProduction(Production):
         result = inject()
         self._record_termination(engine)
         return result
+
+    def inject_qualification_cancel(self, phase: str) -> dict[str, Any]:
+        with self.state_lock:
+            engine = self.engine
+        snapshot = getattr(engine, "runtime_snapshot", lambda: {})() if engine is not None else {}
+        if engine is None or not engine.ready() or snapshot.get("phase") != phase:
+            raise ApplianceError(409, "qualification_phase_mismatch", "The qualification backend is not in the requested phase.")
+        process = getattr(engine, "process", None)
+        pid = process.pid if process is not None else None
+        if process is not None:
+            setattr(engine, "_qualification_original_pid", process.pid)
+        engine.cancel()
+        self._record_termination(engine)
+        result = getattr(engine, "runtime_snapshot", lambda: {})()
+        return {
+            "pid": pid,
+            "phase": result.get("last_termination_phase"),
+            "elapsed_seconds": result.get("last_termination_elapsed"),
+            "exit_ok": result.get("last_termination_exit_ok"),
+        }
 
 
 def _start_qualification_gateway(manifest: Manifest, engine: Any, engine_factory: Any):

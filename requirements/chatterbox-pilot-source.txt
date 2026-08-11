@@ -1,0 +1,3 @@
+# Official Chatterbox Multilingual V3 release commit. Install this exact source
+# with --no-deps after chatterbox-pilot.lock; never install the moving master.
+chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@65b18437192794391a0308a8f705b1e33e633948

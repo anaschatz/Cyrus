@@ -13,6 +13,24 @@ import sys
 from typing import Any
 
 
+def structured_logits_processor(
+    outlines_module: Any,
+    processor_factory: Any,
+    model: Any,
+    tokenizer: Any,
+    schema: dict[str, Any],
+) -> Any:
+    """Build a grammar processor without letting Outlines retokenize input."""
+    output_type = outlines_module.json_schema(schema)
+    wrapped_model = outlines_module.from_mlxlm(model, tokenizer)
+    return processor_factory(
+        None,
+        wrapped_model,
+        output_type.schema,
+        output_type.whitespace_pattern,
+    )
+
+
 def emit(value: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n")
     sys.stdout.flush()
@@ -80,12 +98,23 @@ def main() -> int:
                 else:
                     # The Outlines adapter is constructed per request so no
                     # parser/FSM state is reusable by the next request.
+                    import mlx_lm
                     import outlines
-                    outline_model = outlines.from_mlxlm(model, tokenizer)
-                    iterator = outline_model.stream(
-                        list(prepared_tokens), output_type=schema,
+                    from outlines.backends import get_json_schema_logits_processor
+                    processor = structured_logits_processor(
+                        outlines,
+                        get_json_schema_logits_processor,
+                        model,
+                        tokenizer,
+                        schema,
+                    )
+                    iterator = mlx_lm.stream_generate(
+                        model,
+                        tokenizer,
+                        prompt=list(prepared_tokens),
                         max_tokens=command["max_tokens"],
                         sampler=sampler,
+                        logits_processors=[processor],
                     )
                 for response in iterator:
                     text = response if isinstance(response, str) else getattr(response, "text", None)
@@ -110,7 +139,7 @@ def main() -> int:
                 iterator = None
                 response = None
                 if schema is not None:
-                    outline_model = None
+                    processor = None
                 prepared_tokens = None
             elif operation == "cleanup":
                 prepared_tokens = None

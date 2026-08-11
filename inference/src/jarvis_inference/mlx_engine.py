@@ -15,7 +15,7 @@ from .engine import EngineFailure, EngineProtocolFailure, GenerationEvent, Prepa
 from .errors import ApplianceError
 from .limits import BACKEND_EVENT_BYTES, ENGINE_LOAD_SECONDS, IDLE_OR_EXIT_SECONDS
 from .manifest import Manifest, resolve_local, verify_artifacts
-from .rendering import render_prompt
+from .rendering import render_mlx_qwen3_prompt
 from .strict_json import canonical_bytes, canonical_text, parse_body, parse_text
 
 
@@ -79,7 +79,7 @@ class MlxWorkerEngine:
 
     def prepare(self, request, deadline: float) -> PreparedPrompt:
         self.phase = "prepare"
-        prompt = render_prompt(request)
+        prompt = render_mlx_qwen3_prompt(request)
         result = self._exchange({"op": "prepare", "prompt": prompt}, deadline)
         if not isinstance(result, dict) or set(result) != {"event", "token_ids"} or result.get("event") != "prepared":
             raise EngineProtocolFailure("MLX worker returned an invalid prepare event")

@@ -62,3 +62,25 @@ def render_prompt(request: NormalizedRequest) -> str:
     parts.append("<|assistant|>\n")
     return "".join(parts)
 
+
+def render_mlx_qwen3_prompt(request: NormalizedRequest) -> str:
+    """Render the qualified Qwen3 MLX text profile with thinking disabled.
+
+    The production macOS manifest exposes text/stream only. Keeping this
+    renderer explicit avoids executing a mutable tokenizer Jinja template at
+    runtime while preserving its exact Qwen3 generation boundary.
+    """
+
+    if request.tools or request.response_format.type != "text":
+        raise ValueError("the qualified MLX Qwen3 profile supports text output only")
+    parts: list[str] = []
+    for message in request.messages:
+        if message.role not in {"system", "user", "assistant"}:
+            raise ValueError("the qualified MLX Qwen3 profile received an unsupported role")
+        if message.tool_calls or message.tool_call_id is not None or message.content is None:
+            raise ValueError("the qualified MLX Qwen3 profile received unsupported history")
+        parts.append(
+            f"<|im_start|>{message.role}\n{message.content}<|im_end|>\n"
+        )
+    parts.append("<|im_start|>assistant\n<think>\n\n</think>\n\n")
+    return "".join(parts)

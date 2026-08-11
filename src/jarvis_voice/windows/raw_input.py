@@ -7,7 +7,7 @@ import threading
 from typing import Any
 
 from ..errors import BackendError
-from ..ptt import PttEventPublisher, RawKeyboardPacket
+from ..ptt import ApprovalKeyPublisher, PttEventPublisher, RawKeyboardPacket
 
 WM_INPUT = 0x00FF
 WM_INPUT_DEVICE_CHANGE = 0x00FE
@@ -29,8 +29,9 @@ class RawInputPttSource:
 
     passive = True
 
-    def __init__(self, publisher: PttEventPublisher) -> None:
+    def __init__(self, publisher: PttEventPublisher, approval_publisher: ApprovalKeyPublisher | None = None) -> None:
         self.publisher = publisher
+        self.approval_publisher = approval_publisher
         self._thread: threading.Thread | None = None
         self._hwnd: int | None = None
         self._ready = threading.Event()
@@ -152,7 +153,11 @@ class RawInputPttSource:
                         raw = ctypes.cast(buffer, ctypes.POINTER(RAWINPUT)).contents
                         if raw.header.dwType == RIM_TYPEKEYBOARD:
                             keyboard = raw.keyboard
-                            self.publisher.handle_packet(int(raw.header.hDevice or 0), RawKeyboardPacket(keyboard.MakeCode, keyboard.Flags, keyboard.VKey, keyboard.Message, keyboard.ExtraInformation), received_at)
+                            device_id = int(raw.header.hDevice or 0)
+                            packet = RawKeyboardPacket(keyboard.MakeCode, keyboard.Flags, keyboard.VKey, keyboard.Message, keyboard.ExtraInformation)
+                            self.publisher.handle_packet(device_id, packet, received_at)
+                            if self.approval_publisher is not None:
+                                self.approval_publisher.handle_packet(device_id, packet, received_at)
                 return 0
             if message == WM_INPUT_DEVICE_CHANGE and wparam == GIDC_REMOVAL:
                 self.publisher.device_removed(int(lparam), received_at); return 0

@@ -62,7 +62,12 @@ class VoiceCore:
             "client.hello",
             {
                 "protocol": "jarvis.voice/1",
-                "capabilities": ["speech_commits", "speech_done", "output_epochs"],
+                "capabilities": [
+                    "speech_commits",
+                    "speech_done",
+                    "output_epochs",
+                    "jarvis.cloud-approval/1",
+                ],
             },
         )
 

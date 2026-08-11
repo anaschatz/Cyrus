@@ -133,6 +133,26 @@ The same `JARVIS_GATEWAY_WHEEL` and the five `JARVIS_QUAL_GPU_*` /
 supplied to production `serve`; otherwise the pass identity does not match and
 readiness remains false.
 
+### Local Apple M3 profiles
+
+The local `native/macos-m3` bundle keeps model qualifications independent:
+
+- `manifest.json` / `qualification-report.json`: qualified 0.5B fallback.
+- `manifest-qwen3-4b.json` / `qualification-report-qwen3-4b.json`: qualified
+  Qwen3 4B primary profile.
+
+Regenerate either manifest without changing the other profile:
+
+```text
+native/macos-m3/python/bin/python3.11 native/macos-m3/build_manifest.py --profile qwen2.5-0.5b
+native/macos-m3/python/bin/python3.11 native/macos-m3/build_manifest.py --profile qwen3-4b
+```
+
+The 4B profile is capped at a qualified `32768`-token context window even
+though the upstream model advertises a larger architectural maximum. Serving
+always uses the chosen profile's manifest and its matching pass report; a pass
+from one profile is never accepted for the other.
+
 The example manifests in `examples/` deliberately contain `REPLACE_*` strings
 and negative sizes. They are documentation templates and are intentionally
 invalid until every artifact is locally measured and hashed.

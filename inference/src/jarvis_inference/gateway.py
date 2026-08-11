@@ -60,10 +60,12 @@ def effective_configuration() -> dict[str, Any]:
         "port": PORT,
         "single_active_request": True,
         "queue": False,
-        "total_request_seconds": TOTAL_SECONDS,
-        "prefill_seconds": PREFILL_SECONDS,
-        "stream_idle_seconds": STREAM_IDLE_SECONDS,
-        "blocked_write_seconds": BLOCKED_WRITE_SECONDS,
+        # RFC 8785 serializes integral floats as JSON integers. Keep this
+        # persisted qualification identity type-stable across a restart.
+        "total_request_seconds": int(TOTAL_SECONDS),
+        "prefill_seconds": int(PREFILL_SECONDS),
+        "stream_idle_seconds": int(STREAM_IDLE_SECONDS),
+        "blocked_write_seconds": int(BLOCKED_WRITE_SECONDS),
         "pre_output_retries": 1,
     }
 
@@ -194,7 +196,6 @@ class Production:
                             if self.engine is active:
                                 self.engine = None
                                 self.ready_state = False
-                    verify_artifacts(self.manifest)
                     candidate = self.engine_factory(self.manifest)
                     with self.state_lock:
                         self.loading_engine = candidate
@@ -264,7 +265,6 @@ class Production:
             active.close()
             if breaker is not None and not already_recorded:
                 breaker.record_restart()
-        verify_artifacts(self.manifest)
         engine = self.engine_factory(self.manifest)
         with self.state_lock:
             if self.stop.is_set():
@@ -338,6 +338,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
         try:
             self._admit_peer_host()
             self._authenticate()
+            inject_cancel = getattr(self.production, "inject_qualification_cancel", None)
+            if self.path == "/jarvis/qualification/cancel" and callable(inject_cancel):
+                self._media_headers()
+                document = parse_body(self._read_body(started))
+                if not isinstance(document, dict) or set(document) != {"phase"} or document["phase"] not in {"prefill", "stream"}:
+                    raise ApplianceError(400, "invalid_qualification_control", "The qualification control payload is invalid.")
+                self._json(200, inject_cancel(document["phase"]))
+                return
             inject_crash = getattr(self.production, "inject_qualification_crash", None)
             if self.path == "/jarvis/qualification/crash" and callable(inject_crash):
                 self._media_headers()
@@ -754,6 +762,11 @@ class GatewayServer(ThreadingHTTPServer):
         actual_port = int(self.server_address[1])
         self.allowed_hosts = allowed_hosts or ({"127.0.0.1:" + str(actual_port), "localhost:" + str(actual_port)} if actual_port != PORT else ALLOWED_HOSTS)
         production.start_background()
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        # socketserver's default prints tracebacks for expected disconnects.
+        # The appliance keeps process/request diagnostics content-free.
+        return
 
 
 def serve(production: Production) -> None:

@@ -13,12 +13,19 @@ from .audio import resample_audio
 from .backends import SpeechUnit
 from .config import VoiceConfig
 from .core import VoiceCore
+from .cloud_approval import (
+    CloudApprovalController,
+    CloudApprovalEnvelope,
+    CloudApprovalJournal,
+    default_cloud_approval_journal_path,
+)
 from .delivery_journal import DeliveryDedupJournal, default_delivery_journal_path
 from .errors import BackendError
-from .ptt import PttEvent, PttEventPublisher, PttTransition, function_key_vkey
+from .ptt import ApprovalKeyPublisher, PttEvent, PttEventPublisher, PttTransition, function_key_vkey
 from .reliable import ReliableSubmissionManager
 from .transport import LoopbackWebSocketTransport
 from .transcription import AsyncTranscriptionCoordinator
+from .state import InputState
 from .vad import SileroOnnxVad
 from .windows.audio_capture import WasapiAudioCapture
 from .windows.raw_input import RawInputPttSource
@@ -50,6 +57,8 @@ class WindowsVoiceRuntime:
         self.asr = (asr_factory or AsrBackendFactory()).create(config)
         self.delivery_journal = DeliveryDedupJournal(default_delivery_journal_path())
         self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
+        self.cloud_journal = CloudApprovalJournal(default_cloud_approval_journal_path())
+        self.cloud_approval = CloudApprovalController(session_id=self.core.session_id, journal=self.cloud_journal)
         self.transcription = AsyncTranscriptionCoordinator(self.asr) if config.asr.execution_profile == "cuda" else None
         self.vad = SileroOnnxVad(
             artifact_path=artifact.path,
@@ -65,7 +74,8 @@ class WindowsVoiceRuntime:
             maximum_hold_seconds=config.maximum_hold_seconds,
             ptt_vkey=function_key_vkey(config.ptt_key),
         )
-        self.ptt = RawInputPttSource(self.publisher)
+        self.approval_keys = ApprovalKeyPublisher()
+        self.ptt = RawInputPttSource(self.publisher, self.approval_keys)
         self.audio = WasapiAudioCapture(queue_capacity=config.audio_queue_capacity, maximum_utterance_seconds=config.maximum_utterance_seconds, device=config.audio_input_device)
         self._running = False
         self._stop_requested = threading.Event()
@@ -87,11 +97,13 @@ class WindowsVoiceRuntime:
         self.transport.close()
         self.delivery_journal.close()
         self.core.begin_new_connection()
+        self.cloud_approval.begin_new_connection()
         self.transport.send(self.core.client_hello())
         self.transport.send(self.reliable.reconnect_event(self.core))
 
     def _handle_ptt(self, event: PttEvent) -> None:
         if event.transition == PttTransition.DOWN:
+            self.cloud_approval.disarm_for_ptt()
             self.timings.append({"event": "ptt_down_received", "timestamp": event.received_at})
             outbound = self.core.ptt_down()
             if self.transcription is not None:
@@ -152,6 +164,21 @@ class WindowsVoiceRuntime:
                 forced = self.publisher.take_forced_release()
                 if forced is not None:
                     self._handle_ptt(forced)
+                while True:
+                    try:
+                        key_event = self.approval_keys.events.get_nowait()
+                    except queue.Empty:
+                        break
+                    if key_event.is_down:
+                        decision = self.cloud_approval.key_down(
+                            key_event.key,
+                            key_counter=key_event.counter,
+                            capture_idle=self.core.state.input_state == InputState.IDLE,
+                            autorepeat=key_event.autorepeat,
+                        )
+                        if decision is not None:
+                            self.transport.send(decision)
+                            self.cloud_approval.mark_decision_sent(decision.event_id, now=now)
                 self._poll_transcription()
                 while True:
                     try:
@@ -162,12 +189,22 @@ class WindowsVoiceRuntime:
                     self._send_all(events)
                 for retry in self.reliable.due_retransmissions(self.core):
                     self.transport.send(retry)
+                for retry in self.cloud_approval.due_decision_retransmissions(now=now):
+                    self.transport.send(retry)
                 if self.reliable.consume_connected_timeout():
                     self._reconnect_pending()
                 while True:
                     server_event = self.transport.receive()
                     if server_event is None:
                         break
+                    if isinstance(server_event, CloudApprovalEnvelope):
+                        for reply in self.cloud_approval.handle_server_event(
+                            server_event,
+                            key_counter=self.approval_keys.counter,
+                            both_keys_up=self.approval_keys.both_keys_up,
+                        ):
+                            self.transport.send(reply)
+                        continue
                     if server_event.type == "response.speech.commit":
                         self.timings.append({"event": "speech_commit_received", "timestamp": time.perf_counter()})
                     if server_event.type == "server.ack":
@@ -202,3 +239,4 @@ class WindowsVoiceRuntime:
         self.tts.cancel(2**63 - 1, "application_close")
         self.tts.close()
         self.transport.close()
+        self.cloud_journal.close()

@@ -212,8 +212,25 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         ),
         logging_level=str(data.get("logging_level", "INFO")).upper(),
     )
-    if not config.ptt_key.startswith("F") or not config.ptt_key[1:].isdigit() or not 1 <= int(config.ptt_key[1:]) <= 24:
-        raise BackendError("config.unsupported_ptt_key", "PTT key must be F1 through F24", subsystem="config", safe_context={"field": "ptt_key"})
+    function_key = (
+        config.ptt_key.startswith("F")
+        and config.ptt_key[1:].isdigit()
+        and 1 <= int(config.ptt_key[1:]) <= 24
+    )
+    if not function_key and config.ptt_key != "CONTROL_OPTION":
+        raise BackendError(
+            "config.unsupported_ptt_key",
+            "PTT key must be F1 through F24 or the macOS CONTROL_OPTION chord",
+            subsystem="config",
+            safe_context={"field": "ptt_key"},
+        )
+    if config.ptt_key in {"F10", "F11"}:
+        raise BackendError(
+            "config.reserved_approval_key",
+            "F10 and F11 are reserved for negotiated cloud approval",
+            subsystem="config",
+            safe_context={"field": "ptt_key"},
+        )
     if config.maximum_hold_seconds <= 0 or config.maximum_utterance_seconds <= 0:
         raise BackendError("config.invalid_field", "Durations must be positive", subsystem="config", safe_context={"field": "duration"})
     if config.asr.execution_profile not in {"cpu", "cuda"}:

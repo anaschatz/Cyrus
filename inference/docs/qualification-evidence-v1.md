@@ -30,14 +30,16 @@ exits zero. Its top-level object includes the numerical fields below plus:
     "challenge": "<JARVIS_QUAL_CHALLENGE>",
     "identity_digest": "<JARVIS_QUAL_IDENTITY_DIGEST>",
     "fixture_digest": "<same top-level fixture_digest>",
-    "started_unix_ns": 1,
-    "completed_unix_ns": 2,
+    "started_unix_ns": "1",
+    "completed_unix_ns": "2",
     "monotonic_elapsed_ns": 1
   }
 }
 ```
 
-The wall timestamps must fall inside the qualifier-observed subprocess
+The two Unix-nanosecond wall timestamps are decimal digit strings so their
+full precision remains inside the appliance's strict I-JSON/JCS numeric domain.
+They must fall inside the qualifier-observed subprocess
 boundary and the monotonic duration cannot exceed that boundary. The runner is
 hashed before and after execution and its identity is recorded in the pass
 report. This prevents accidental stale/static evidence reuse; resistance to a

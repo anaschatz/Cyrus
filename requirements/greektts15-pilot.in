@@ -1,0 +1,5 @@
+# Isolated Apple Silicon pilot only; never install into the production voice env.
+mlx==0.32.0
+mlx-lm==0.31.3
+snac==1.2.1
+torch==2.6.0

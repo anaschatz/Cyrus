@@ -1,0 +1,4 @@
+# Isolated STOMA Parquet extraction dependency for CPython 3.11/macOS arm64.
+# Source metadata: https://pypi.org/pypi/pyarrow/25.0.1/json
+pyarrow==25.0.1 \
+    --hash=sha256:51093dd9e10325fbdb3c10a2ae7c4806e5c822d94e74ae4938b26524a3323fee

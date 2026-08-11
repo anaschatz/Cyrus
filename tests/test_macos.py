@@ -26,8 +26,11 @@ from jarvis_voice.macos.ptt import (
     CG_EVENT_KEY_DOWN,
     CG_EVENT_KEY_UP,
     CG_EVENT_TAP_DISABLED_BY_TIMEOUT,
+    MAC_CONTROL_OPTION_KEYCODE,
     MacEventTapPttSource,
     mac_function_keycode,
+    mac_ptt_keycode,
+    mac_ptt_vkey,
 )
 from jarvis_voice.macos.system_tts import MacSystemTtsBackend
 from jarvis_voice.macos.whisper_cpp import WhisperCppSidecarBackend, parse_whisper_response
@@ -130,6 +133,23 @@ class MacPttTests(unittest.TestCase):
         denied = MacEventTapPttSource(self.publisher(), key="F9", adapter=FakeTapAdapter(False))
         with mock.patch("jarvis_voice.macos.ptt.sys.platform", "darwin"), self.assertRaisesRegex(BackendError, "input.macos_listen_permission_required"):
             denied.start()
+
+    def test_control_option_chord_publishes_passive_transitions(self) -> None:
+        publisher = PttEventPublisher(
+            capacity=8,
+            maximum_hold_seconds=5.0,
+            ptt_vkey=mac_ptt_vkey("CONTROL_OPTION"),
+        )
+        source = MacEventTapPttSource(
+            publisher,
+            key="CONTROL_OPTION",
+            adapter=FakeTapAdapter(True),
+        )
+        source.handle_event(CG_EVENT_KEY_DOWN, MAC_CONTROL_OPTION_KEYCODE, False, 1.0)
+        source.handle_event(CG_EVENT_KEY_UP, MAC_CONTROL_OPTION_KEYCODE, False, 1.1)
+        self.assertEqual(publisher.events.get_nowait().transition, PttTransition.DOWN)
+        self.assertEqual(publisher.events.get_nowait().transition, PttTransition.UP)
+        self.assertEqual(mac_ptt_keycode("CONTROL_OPTION"), MAC_CONTROL_OPTION_KEYCODE)
 
     def test_only_f1_through_f20_are_supported(self) -> None:
         self.assertEqual(mac_function_keycode("F20"), 90)

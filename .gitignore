@@ -13,3 +13,4 @@ orchestrator.local.json
 *.sqlite3-shm
 .venv/
 inference/native/macos-m3/
+artifacts/

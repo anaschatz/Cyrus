@@ -31,6 +31,11 @@ This command opens CoreAudio, starts the passive PTT event tap and can speak thr
 
 Exercise Greek, English, silence, forced release, first/last-unit barge-in, reconnect deduplication and shutdown. Do not call this milestone complete merely because the passive model check passes.
 
+When the function row must remain in multimedia mode, macOS also accepts the
+passive `CONTROL_OPTION` PTT chord. Hold Control and Option together while
+speaking and release either modifier to end capture. The chord is listen-only,
+does not suppress either modifier and does not change the Windows F-key path.
+
 ## Deferred
 
 Dependency installation, permission changes, downloading/converting models, obtaining Silero, acquiring/building `whisper-server`, Metal latency qualification, `.app` packaging, signing and notarization remain explicit later actions.

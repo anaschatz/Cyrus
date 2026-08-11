@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -10,6 +11,7 @@ from .config import is_loopback_websocket_url
 from .errors import BackendError
 from .fakes import FakeOrchestrator
 from .protocol import Envelope
+from .cloud_approval import CloudApprovalEnvelope
 
 
 class SyncConnection(Protocol):
@@ -38,7 +40,7 @@ class LoopbackWebSocketTransport:
             factory = connect
         self._connection = factory(self.url)
 
-    def send(self, event: Envelope) -> None:
+    def send(self, event: Envelope | CloudApprovalEnvelope) -> None:
         try:
             self.connect()
             assert self._connection is not None
@@ -48,7 +50,7 @@ class LoopbackWebSocketTransport:
         except Exception as exc:
             raise BackendError("transport.send_failed", "WebSocket send failed", subsystem="transport", retryable=True) from exc
 
-    def receive(self) -> Envelope | None:
+    def receive(self) -> Envelope | CloudApprovalEnvelope | None:
         try:
             self.connect()
             assert self._connection is not None
@@ -59,6 +61,12 @@ class LoopbackWebSocketTransport:
             raise
         except Exception as exc:
             raise BackendError("transport.receive_failed", "WebSocket receive failed", subsystem="transport", retryable=True) from exc
+        try:
+            preview = json.loads(raw)
+        except Exception as exc:
+            raise BackendError("transport.invalid_json", "WebSocket frame is invalid", subsystem="transport") from exc
+        if isinstance(preview, dict) and "protocol" in preview:
+            return CloudApprovalEnvelope.from_json(raw)
         return Envelope.from_json(raw)
 
     def close(self) -> None:

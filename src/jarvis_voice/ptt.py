@@ -11,6 +11,8 @@ from typing import Hashable
 from .errors import BackendError
 
 VK_F9 = 0x78
+VK_F10 = 0x79
+VK_F11 = 0x7A
 VK_F1 = 0x70
 RI_KEY_BREAK = 0x0001
 KEYBOARD_OVERRUN_MAKE_CODE = 0x00FF
@@ -41,6 +43,70 @@ class RawKeyboardPacket:
     @property
     def is_break(self) -> bool:
         return bool(self.flags & RI_KEY_BREAK)
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalKeyEvent:
+    key: str
+    is_down: bool
+    counter: int
+    received_at: float
+    autorepeat: bool = False
+
+
+class ApprovalKeyPublisher:
+    """Passive F10/F11 transitions with held-key and repeat suppression."""
+
+    def __init__(self, *, capacity: int = 16) -> None:
+        self.events: queue.Queue[ApprovalKeyEvent] = queue.Queue(maxsize=capacity)
+        self._held: set[tuple[Hashable, str]] = set()
+        self._counter = 0
+
+    @property
+    def counter(self) -> int:
+        return self._counter
+
+    @property
+    def both_keys_up(self) -> bool:
+        return not any(key in {"F10", "F11"} for _device, key in self._held)
+
+    def handle_packet(
+        self,
+        device: Hashable,
+        packet: RawKeyboardPacket,
+        received_at: float,
+        *,
+        autorepeat: bool = False,
+    ) -> None:
+        key = "F10" if packet.vkey == VK_F10 else "F11" if packet.vkey == VK_F11 else None
+        if key is None:
+            return
+        identity = (device, key)
+        if packet.is_break:
+            if identity not in self._held:
+                return
+            self._held.remove(identity)
+            self._counter += 1
+            self._publish(ApprovalKeyEvent(key, False, self._counter, received_at))
+            return
+        if autorepeat or identity in self._held:
+            return
+        self._held.add(identity)
+        self._counter += 1
+        self._publish(ApprovalKeyEvent(key, True, self._counter, received_at, autorepeat=False))
+
+    def clear(self) -> None:
+        self._held.clear()
+
+    def _publish(self, event: ApprovalKeyEvent) -> None:
+        try:
+            self.events.put_nowait(event)
+        except queue.Full as exc:
+            raise BackendError(
+                "input.approval_key_queue_overflow",
+                "Approval key queue overflowed",
+                subsystem="input",
+            ) from exc
 
 
 def parse_raw_keyboard_payload(payload: bytes) -> RawKeyboardPacket:

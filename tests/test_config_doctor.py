@@ -45,6 +45,10 @@ class ConfigDoctorTests(unittest.TestCase):
 
     def test_ptt_function_key_is_configurable(self) -> None:
         self.assertEqual(voice_config_from_mapping({"ptt_key": "f24"}).ptt_key, "F24")
+        self.assertEqual(
+            voice_config_from_mapping({"ptt_key": "control_option"}).ptt_key,
+            "CONTROL_OPTION",
+        )
         with self.assertRaisesRegex(BackendError, "config.unsupported_ptt_key"):
             voice_config_from_mapping({"ptt_key": "F25"})
 

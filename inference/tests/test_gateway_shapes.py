@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import json
 import unittest
 
 from jarvis_inference.contracts import Capabilities, normalize_request
 from jarvis_inference.engine import GenerationEvent, PreparedPrompt
-from jarvis_inference.gateway import GatewayHandler
+from jarvis_inference.gateway import GatewayHandler, effective_configuration
+from jarvis_inference.strict_json import canonical_bytes
+
+
+class EffectiveConfigurationTests(unittest.TestCase):
+    def test_qualification_identity_survives_canonical_json_round_trip(self) -> None:
+        configuration = effective_configuration()
+        self.assertEqual(json.loads(canonical_bytes(configuration)), configuration)
 
 
 class UsageTests(unittest.TestCase):

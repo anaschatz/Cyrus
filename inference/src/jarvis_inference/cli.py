@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 from typing import Any
@@ -64,7 +65,18 @@ def main(argv: list[str] | None = None) -> int:
         if len(secret.encode("utf-8")) < 32:
             raise ApplianceError(503, "missing_api_key", "JARVIS_INFERENCE_API_KEY must contain at least 32 UTF-8 bytes.")
         production = Production(manifest, secret, engine_factory)
-        serve(production)
+        previous_term = signal.getsignal(signal.SIGTERM)
+
+        def stop_service(signum: int, frame: Any) -> None:
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, stop_service)
+        try:
+            serve(production)
+        except KeyboardInterrupt:
+            return 0
+        finally:
+            signal.signal(signal.SIGTERM, previous_term)
         return 0
     except ApplianceError as exc:
         print(json.dumps(exc.public(), separators=(",", ":")), file=sys.stderr)

@@ -1,0 +1,6 @@
+# Resolve as a separate, fully hashed lock inside the approved WSL2 profile.
+# Keep --index-url (not --extra-index-url) so torch can only come from the
+# official PyTorch CUDA 12.6 wheel index.
+--index-url https://download.pytorch.org/whl/cu126
+
+torch==2.12.1

@@ -16,8 +16,11 @@ if str(SRC) not in sys.path:
 
 from jarvis_voice.errors import BackendError  # noqa: E402
 from jarvis_voice.macos.chatterbox_pilot import (  # noqa: E402
+    VOICE_CONVERSION_LABELS,
+    acquire_chatterbox_model,
     chatterbox_pilot_preflight,
     run_chatterbox_pilot,
+    run_chatterbox_voice_conversion_pilot,
 )
 from jarvis_voice.qualification import write_report  # noqa: E402
 
@@ -29,10 +32,22 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--storage-root", required=True)
     preflight.add_argument("--model-dir", required=True)
     preflight.add_argument("--report")
+    acquire = commands.add_parser("acquire")
+    acquire.add_argument("--storage-root", required=True)
+    acquire.add_argument("--model-dir", required=True)
+    acquire.add_argument("--report", required=True)
     run = commands.add_parser("run")
     run.add_argument("--model-dir", required=True)
     run.add_argument("--output-dir", required=True)
     run.add_argument("--report", required=True)
+    run.add_argument("--reference-audio")
+    convert = commands.add_parser("voice-convert")
+    convert.add_argument("--model-dir", required=True)
+    convert.add_argument("--output-dir", required=True)
+    convert.add_argument("--source-audio", required=True)
+    convert.add_argument("--target-voice-audio", required=True)
+    convert.add_argument("--label", choices=VOICE_CONVERSION_LABELS, required=True)
+    convert.add_argument("--report", required=True)
     return parser
 
 
@@ -41,8 +56,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "preflight":
             report = chatterbox_pilot_preflight(args.storage_root, args.model_dir)
+        elif args.command == "acquire":
+            report = acquire_chatterbox_model(args.storage_root, args.model_dir)
+        elif args.command == "run":
+            report = run_chatterbox_pilot(args.model_dir, args.output_dir, args.reference_audio)
         else:
-            report = run_chatterbox_pilot(args.model_dir, args.output_dir)
+            report = run_chatterbox_voice_conversion_pilot(
+                args.model_dir,
+                args.output_dir,
+                args.source_audio,
+                args.target_voice_audio,
+                label=args.label,
+            )
         if args.report:
             write_report(args.report, report)
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))

@@ -15,7 +15,7 @@ from .. import PROTOCOL_VERSION, __version__
 from ..config import VoiceConfig, is_loopback_websocket_url
 from ..manifest import ManifestValidationResult, validate_model_directory
 from ..vad import validate_artifact
-from .ptt import CoreGraphicsEventTapAdapter, mac_function_keycode
+from .ptt import CoreGraphicsEventTapAdapter, mac_ptt_keycode
 from .whisper_cpp import _validate_artifact
 
 
@@ -158,7 +158,7 @@ def macos_doctor_report(
         }
 
     try:
-        mac_function_keycode(config.ptt_key)
+        mac_ptt_keycode(config.ptt_key)
         permitted = bool((permission_probe or CoreGraphicsEventTapAdapter().preflight)())
         ptt = _status(
             "ready" if permitted else "blocked",

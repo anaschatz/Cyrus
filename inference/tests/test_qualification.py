@@ -57,8 +57,8 @@ class QualificationTests(unittest.TestCase):
             "deterministic_seeds": [1], "identity": identity,
             "provenance": {
                 "challenge": "c" * 64, "identity_digest": "d" * 64,
-                "fixture_digest": "b" * 64, "started_unix_ns": 101,
-                "completed_unix_ns": 299, "monotonic_elapsed_ns": 400,
+                "fixture_digest": "b" * 64, "started_unix_ns": "101",
+                "completed_unix_ns": "299", "monotonic_elapsed_ns": 400,
             },
             "streaming": {"greek_success": 20, "english_success": 20},
             "tools": {"named_success": 0, "required_success": 0},
