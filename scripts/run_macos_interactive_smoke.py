@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 
 from jarvis_voice.config import load_voice_config
 from jarvis_voice.errors import BackendError
@@ -20,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
+    parser.add_argument("--orchestrator-url")
     return parser
 
 
@@ -27,6 +29,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         config = with_faster_whisper_cpu_smoke(load_voice_config(args.config), args.model_dir)
+        if args.orchestrator_url is not None:
+            config = replace(config, orchestrator_url=args.orchestrator_url)
         report = run_interactive_macos_smoke(
             config,
             output=args.output,
