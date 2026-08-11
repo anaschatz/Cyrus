@@ -1,6 +1,6 @@
 # Milestone 4 — Native Windows release qualification
 
-This gate does not build, install, download or sign anything. It evaluates one already-built, already-signed `onedir` artifact on native Windows 11 x64 with CPython 3.11 and the approved local model/VAD/config.
+This gate does not build, install, download or sign anything. It evaluates one already-built, already-signed `onedir` artifact on native Windows 11 x64 with CPython 3.11 and the approved local model/VAD/config. A release now also requires the strict native-hardware evidence described in `native-voice-qualification.md`; the smaller case table below is scenario coverage, not the 200-turn reliability gate.
 
 ## Evidence boundary
 
@@ -52,6 +52,7 @@ After the M3 build, signing/timestamping and post-sign manifest regeneration are
 powershell -ExecutionPolicy Bypass -File .\scripts\qualify_windows.ps1 `
   -Config C:\JARVIS-Config\voice.json `
   -Samples C:\JARVIS-Evidence\cpu-samples.json `
+  -NativeEvidence C:\JARVIS-Evidence\native-hardware.json `
   -Output C:\JARVIS-Evidence\release-qualification.json
 ```
 
@@ -63,11 +64,12 @@ The script first asks the packaged EXE to write its own redacted doctor report. 
 4. `signtool verify /pa /all /tw` exit code `0` for every `.exe`, `.dll` and `.pyd`;
 5. matching frozen product/protocol version, `onedir`, DLL hardening, external mutable paths and tray/host readiness;
 6. required functional samples and latency distributions.
+7. at least 200 real hardware turns, zero duplicate transcript/playback, zero stuck PTT, acoustic barge-in below 200 ms, microphone/sleep recovery and an eight-hour stable-memory soak.
 
 SignTool output is captured and discarded; it is never copied into the report. Exit code `2` is a warning according to Microsoft and is deliberately treated as release-blocking. The report contains no artifact paths or signer identity.
 
 ## Approval rule
 
-`ready: true` means every mechanical M4 gate passed for this artifact and sample file. It does not approve latency on its own: review the recorded p50/p95 distributions and compare them with an explicitly accepted SLO before publication.
+`ready: true` means every mechanical M4 gate and the strict native-hardware acceptance gate passed for this artifact and evidence set. Software-only purge latency never substitutes for the acoustic result.
 
 `ready: false` is final for that evidence run. Correct the underlying artifact/config/signature/sample problem and create a fresh run; do not edit the report.

@@ -12,9 +12,10 @@ import struct
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 FIXTURE_IPV4 = "93.184.216.10"
+FIXTURE_IPV6 = "2606:4700:4700:100::10"
 _LONG_EN = ("The verified qualification document contains deterministic English evidence for exact extraction, language eligibility, passage ranking, and bounded corpus construction. " * 5).encode()
 _LONG_EL = ("Το επαληθευμένο δοκιμαστικό έγγραφο περιέχει σταθερά ελληνικά τεκμήρια για ακριβή εξαγωγή, γλωσσική επιλεξιμότητα και κατάταξη αποσπασμάτων. " * 5).encode()
 
@@ -28,6 +29,21 @@ class FixtureHTTPHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         host = self.headers.get("Host", "").partition(":")[0].casefold()
+        if self.path.startswith("/searx"):
+            body = json.dumps(
+                {
+                    "results": [
+                        {
+                            "title": "Offline qualification result",
+                            "url": "https://example.org/qualification-result",
+                            "content": "deterministic offline result",
+                        }
+                    ]
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            return self._reply(200, body, {"Content-Type": "application/json"})
         if self.path == "/robots.txt":
             return self._robots(host)
         if self.path == "/redirect-valid":
@@ -52,6 +68,13 @@ class FixtureHTTPHandler(BaseHTTPRequestHandler):
         if self.path == "/date-jsonld":
             metadata = b"<script type='application/ld+json'>{\"datePublished\":\"2026-08-10T10:00:00Z\"}</script>"
             return self._html(_LONG_EN, metadata=metadata)
+        if self.path == "/date-article-meta":
+            metadata = b"<meta property='article:published_time' content='2026-08-10T10:00:00Z'>"
+            return self._html(_LONG_EN, metadata=metadata)
+        if self.path == "/near-a":
+            return self._html(_LONG_EN + b" Source edition alpha.", date="2026-08-10T10:00:00Z")
+        if self.path == "/near-b":
+            return self._html(_LONG_EN + b" Source edition beta.", date="2026-08-10T10:00:00Z")
         if self.path == "/gzip-limit":
             body = gzip.compress(b"x" * (2 * 1024 * 1024 + 1))
             return self._reply(200, body, {"Content-Type": "text/plain", "Content-Encoding": "gzip"})
@@ -122,6 +145,31 @@ class FixtureHTTPServer(ThreadingHTTPServer):
         super().__init__(address, FixtureHTTPHandler)
 
 
+class FixtureHTTPServerV6(FixtureHTTPServer):
+    address_family = socket.AF_INET6
+
+
+class TunnelFixtureHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        self.request.settimeout(20)
+        try:
+            while True:
+                value = self.request.recv(64 * 1024)
+                if not value:
+                    return
+                if value.startswith(b"idle"):
+                    time.sleep(15)
+                    return
+                self.request.sendall(value)
+        except OSError:
+            return
+
+
+class TunnelFixtureServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 class SearchFixtureHandler(BaseHTTPRequestHandler):
     def log_message(self, *_: object) -> None:
         return
@@ -133,9 +181,13 @@ class SearchFixtureHandler(BaseHTTPRequestHandler):
             query = fields.get("q", [""])[0]
         except (ValueError, UnicodeDecodeError):
             query = ""
-        route = _CASE_ROUTES.get(query, "/doc")
-        host = _CASE_HOSTS.get(query, "allowed.fixture.test")
-        value = {"results": [{"url": f"http://{host}{route}", "title": "Fixture", "content": "ranking only", "engine": "qualification"}]}
+        candidates = _search_candidates(query)
+        value = {
+            "results": [
+                {"url": url, "title": "Fixture", "content": "ranking only", "engine": "qualification"}
+                for url in candidates
+            ]
+        }
         body = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -146,15 +198,34 @@ class SearchFixtureHandler(BaseHTTPRequestHandler):
 
 _CASE_HOSTS = {
     "robots_disallow": "robots-disallow.fixture.test", "robots_404": "robots404.fixture.test",
-    "robots_410": "robots410.fixture.test", "robots_fail_closed": "robots-malformed.fixture.test",
+    "robots_410": "robots410.fixture.test", "robots_malformed": "robots-malformed.fixture.test",
+    "robots_oversized": "robots-oversized.fixture.test", "robots_timeout": "robots-timeout.fixture.test",
+    "robots_401": "robots401.fixture.test", "robots_403": "robots403.fixture.test",
+    "robots_429": "robots429.fixture.test", "robots_5xx": "robots500.fixture.test",
     "ipv4_private_reserved": "private-v4.fixture.test", "ipv6_private_reserved": "private-v6.fixture.test",
     "mixed_dns_answers": "mixed.fixture.test", "dns_rebinding": "rebind.fixture.test",
 }
 _CASE_ROUTES = {
-    "redirect_revalidation": "/redirect-private", "mime_limit": "/mime-pdf",
+    "redirect_valid": "/redirect-valid", "redirect_forbidden": "/redirect-private",
+    "html_document": "/doc", "xhtml_document": "/xhtml", "plain_text_document": "/plain",
+    "mime_forbidden": "/mime-pdf",
     "compressed_body_limit": "/body-limit", "decompressed_body_limit": "/gzip-limit",
     "single_transient_retry": "/transient-503", "deadline": "/delayed", "cancellation": "/delayed",
+    "language_greek": "/greek", "language_english": "/doc",
+    "language_unsupported": "/unsupported", "language_insufficient": "/short",
+    "date_conflict": "/date-conflict", "date_jsonld": "/date-jsonld",
+    "date_article_meta": "/date-article-meta",
 }
+
+
+def _search_candidates(query: str) -> tuple[str, ...]:
+    if query == "duplicate_exact":
+        return ("http://exact-a.fixture.test/doc", "http://exact-b.fixture.test/doc")
+    if query == "duplicate_syndicated_near":
+        return ("http://near-a.fixture.test/near-a", "http://near-b.fixture.test/near-b")
+    host = _CASE_HOSTS.get(query, "allowed.fixture.test")
+    route = _CASE_ROUTES.get(query, "/doc")
+    return (f"http://{host}{route}",)
 
 
 class DNSFixtureHandler(socketserver.BaseRequestHandler):
@@ -200,6 +271,10 @@ class DNSFixtureServer(socketserver.ThreadingUDPServer):
                 count = self._counts.get(name, 0)
                 self._counts[name] = count + 1
             return (FIXTURE_IPV4,) if count == 0 else ("127.0.0.1",)
+        if name == "public-v6.fixture.test" and qtype == 28:
+            return (FIXTURE_IPV6,)
+        if name == "tunnel.fixture.test" and qtype == 1:
+            return ("93.184.216.11",)
         if name.endswith(".fixture.test") and qtype == 1:
             return (FIXTURE_IPV4,)
         return ()
@@ -221,7 +296,7 @@ def _decode_name(value: bytes, offset: int) -> tuple[str, int]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jarvis-research-fixture")
-    parser.add_argument("kind", choices=("http", "search", "dns"))
+    parser.add_argument("kind", choices=("http", "search", "dns", "tunnel"))
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--port", type=int)
     args = parser.parse_args(argv)
@@ -229,8 +304,11 @@ def main(argv: list[str] | None = None) -> int:
         server = DNSFixtureServer((args.bind, args.port or 53))
     elif args.kind == "search":
         server = ThreadingHTTPServer((args.bind, args.port or 8080), SearchFixtureHandler)
+    elif args.kind == "tunnel":
+        server = TunnelFixtureServer((args.bind, args.port or 443), TunnelFixtureHandler)
     else:
-        server = FixtureHTTPServer((args.bind, args.port or 80))
+        server_type = FixtureHTTPServerV6 if ":" in args.bind else FixtureHTTPServer
+        server = server_type((args.bind, args.port or 80))
     try:
         server.serve_forever(0.1)
     except KeyboardInterrupt:

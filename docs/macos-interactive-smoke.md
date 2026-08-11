@@ -23,6 +23,11 @@ PYTHONPATH=src \
 
 Ο runner κλείνει μόνος του μετά το τέταρτο case. `Ctrl-C` δημιουργεί blocked partial evidence αντί για pass.
 
+Το `ready` αυτού του report σημαίνει μόνο ότι πέρασε το σύντομο interactive
+smoke. Δεν αποτελεί production-ready gate: δεν μετρά acoustic silence, 200
+turns, disconnect/sleep recovery ή 8ωρο soak. Το report το δηλώνει ρητά με
+`acoustic_silence_measured: false` και `satisfies_native_ready_gate: false`.
+
 ## Privacy boundary
 
 Το captured audio, το user transcript και τα protocol IDs παραμένουν μόνο στη μνήμη. Το report περιέχει αποκλειστικά language codes, pass/fail flags και monotonic latency deltas. Το fixed fake TTS response στέλνεται στο `/usr/bin/say` μέσω stdin και δεν αποθηκεύεται στο evidence.

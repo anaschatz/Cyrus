@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
@@ -36,8 +37,14 @@ class ResearchQualificationRunnerTests(unittest.TestCase):
                 "case_id": case_id,
                 "idempotency_key": "q-" + case_id,
                 "query": case_id,
-                "expected_http": 200,
-                "expected_source_count": 0,
+                "expected": {
+                    "http": 200,
+                    "source_count": 0,
+                    "language_codes": [],
+                    "date_provenance": [],
+                    "independence_group_count": 0,
+                    "retry_count": 0,
+                },
                 "cancel_after_ms": 0,
             }
             for case_id in sorted(MANDATORY_LIVE_CASES)
@@ -118,6 +125,18 @@ class ResearchQualificationRunnerTests(unittest.TestCase):
         evidence["evidence_sha256"] = digest
         evidence["record_sha256"] = record_digest(evidence)
         verify_accepted_evidence(evidence)
+
+        image_changed = deepcopy(evidence)
+        image_changed["image_sha256"]["research-api"] = "1" * 64
+        image_changed["record_sha256"] = record_digest(image_changed)
+        with self.assertRaisesRegex(ValueError, "digest binding"):
+            verify_accepted_evidence(image_changed)
+
+        case_changed = deepcopy(evidence)
+        case_changed["cases"][0]["code"] = "changed"
+        case_changed["record_sha256"] = record_digest(case_changed)
+        with self.assertRaisesRegex(ValueError, "digest binding"):
+            verify_accepted_evidence(case_changed)
 
         evidence["cases"][0]["duration_ms"] = 99
         self.assertEqual(qualification_digest(evidence), digest)

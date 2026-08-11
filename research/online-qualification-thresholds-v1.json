@@ -1,0 +1,15 @@
+{
+  "version": "online-retrieval-thresholds/1",
+  "thresholds": {
+    "overall_recall_at_5": 0.75,
+    "language_recall_at_5": 0.70,
+    "overall_recall_at_10": 0.85,
+    "language_recall_at_10": 0.80,
+    "overall_mrr_at_10": 0.65,
+    "language_mrr_at_10": 0.60,
+    "primary_source_recall": 0.80,
+    "quote_reconstruction": 1.0,
+    "citation_coverage": 1.0,
+    "p95_latency_seconds": 45.0
+  }
+}

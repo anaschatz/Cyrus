@@ -1,0 +1,23 @@
+{
+  "version": "research-image-manifest/1",
+  "images": [
+    {
+      "name": "egress-guard",
+      "reference": "REPLACE_WITH_REGISTRY_REPOSITORY_AT_SHA256",
+      "platform": "linux/arm64",
+      "configuration_sha256": "REPLACE_WITH_CONFIGURATION_SHA256"
+    },
+    {
+      "name": "research-api",
+      "reference": "REPLACE_WITH_REGISTRY_REPOSITORY_AT_SHA256",
+      "platform": "linux/arm64",
+      "configuration_sha256": "REPLACE_WITH_CONFIGURATION_SHA256"
+    },
+    {
+      "name": "searxng",
+      "reference": "REPLACE_WITH_REGISTRY_REPOSITORY_AT_SHA256",
+      "platform": "linux/arm64",
+      "configuration_sha256": "REPLACE_WITH_CONFIGURATION_SHA256"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "version": "cloud-release-qualification/1",
+  "qualified_at": "REPLACE_WITH_UTC",
+  "valid_until": "REPLACE_WITH_UTC_NOT_MORE_THAN_31_DAYS_LATER",
+  "key": {
+    "dedicated": true,
+    "include_byok_in_limit": false,
+    "is_management_key": false,
+    "is_provisioning_key": false,
+    "key_sha256": "REPLACE_WITH_DEDICATED_KEY_DOMAIN_SHA256",
+    "limit_microusd": 5000000,
+    "limit_reset": "monthly",
+    "observed_at": "REPLACE_WITH_UTC"
+  },
+  "endpoint_evidence": [],
+  "voice_approval": {
+    "duplicate_dispatch_count": 0,
+    "f10_applied_count": 0,
+    "f11_denied_count": 0,
+    "real_voice_client": false
+  },
+  "privacy": {
+    "classifier_version": "jarvis-privacy/1",
+    "english_case_count": 0,
+    "failure_count": 0,
+    "greek_case_count": 0,
+    "mixed_case_count": 0,
+    "policy_sha256": "REPLACE_WITH_CURRENT_POLICY_SHA256"
+  },
+  "faults": {
+    "disconnect_passed": false,
+    "missing_usage_passed": false,
+    "no_duplicate_dispatch_passed": false,
+    "stale_catalog_passed": false,
+    "timeout_passed": false
+  },
+  "shadow": {
+    "budget_violation_count": 0,
+    "ended_at": "REPLACE_WITH_UTC",
+    "external_dispatch_count": 0,
+    "fallback_count": 0,
+    "maximum_ledger_microusd": 0,
+    "projected_reserved_microusd": 0,
+    "started_at": "REPLACE_WITH_UTC_AT_LEAST_30_DAYS_EARLIER",
+    "turn_count": 0
+  }
+}

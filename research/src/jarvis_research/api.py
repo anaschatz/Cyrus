@@ -319,13 +319,17 @@ class ResearchRequestHandler(BaseHTTPRequestHandler):
         self._reply(status, canonical_json({"error": {"code": code}}).encode("utf-8"))
 
     def _reply(self, status: int, body: bytes) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", JSON_CONTENT_TYPE)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", JSON_CONTENT_TYPE)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # A cancelled caller must not turn into an unsanitized server traceback.
+            return
 
 
 def serve(config: RuntimeConfigV1 | None = None) -> None:

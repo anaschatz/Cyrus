@@ -19,8 +19,12 @@ from jarvis_orchestrator.anamnesis_shadow import (
     LifecycleOperation,
 )
 from jarvis_orchestrator.config import OrchestratorConfig
-from jarvis_orchestrator.domain import ModelChunk, ModelUsage
+from jarvis_orchestrator.domain import ModelChunk, ModelUsage, canonical_sha256
 from jarvis_orchestrator.model import BudgetedModelPort
+from jarvis_orchestrator.memory_release import (
+    MEMORY_RELEASE_POLICY_SHA256,
+    ShadowHistoryReaderFacade,
+)
 from jarvis_orchestrator.service import OrchestratorService
 from jarvis_orchestrator.shadow_audit import build_shadow_trial_report
 from jarvis_orchestrator.store import OrchestratorStore
@@ -60,7 +64,9 @@ class ShadowAuditReportTests(unittest.TestCase):
             config,
             store,
             BudgetedModelPort(store, _StaticModel()),
-            memory=AnamnesisShadowAdapter(store, writer),
+            memory=AnamnesisShadowAdapter(
+                ShadowHistoryReaderFacade(store.memory_shadow_history), writer
+            ),
         )
         for language, text in (
             ("en", "Remember that I prefer tea."),
@@ -101,6 +107,10 @@ class ShadowAuditReportTests(unittest.TestCase):
             self.assertEqual(report["active_shadow_memories"], 0)
             self.assertEqual(report["authoritative_memory_records"], 0)
             self.assertEqual(report["authority_violations"], 0)
+            self.assertEqual(
+                report["release_policy_counts"],
+                {MEMORY_RELEASE_POLICY_SHA256: 3},
+            )
             self.assertTrue(report["integrity_passed"])
             self.assertFalse(report["sample_sufficient"])
             self.assertEqual(
@@ -142,6 +152,75 @@ class ShadowAuditReportTests(unittest.TestCase):
             self.assertFalse(report["integrity_passed"])
             self.assertEqual(report["authority_violations"], 1)
             self.assertEqual(report["decision"], "shadow_trial_rejected")
+
+    def test_policy_and_malformed_proposal_tamper_fail_closed(self) -> None:
+        for mutation in ("policy", "proposal"):
+            with (
+                self.subTest(mutation=mutation),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path = self._database(directory)
+                connection = __import__("sqlite3").connect(path)
+                row = connection.execute(
+                    """SELECT event_sequence,payload_json FROM task_events
+                       WHERE event_type='memory.shadow.proposed'
+                       ORDER BY event_sequence LIMIT 1"""
+                ).fetchone()
+                payload = json.loads(row[1])
+                if mutation == "policy":
+                    payload["release_policy_sha256"] = "0" * 64
+                else:
+                    payload["proposal"] = "malformed"
+                    payload["proposal_sha256"] = canonical_sha256("malformed")
+                connection.execute(
+                    "UPDATE task_events SET payload_json=? WHERE event_sequence=?",
+                    (
+                        json.dumps(
+                            payload,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        row[0],
+                    ),
+                )
+                connection.commit()
+                connection.close()
+                report = build_shadow_trial_report(path)
+                self.assertFalse(report["integrity_passed"])
+                self.assertGreaterEqual(report["invalid_rows"], 1)
+                self.assertEqual(report["decision"], "shadow_trial_rejected")
+
+    def test_explicit_retrospective_record_is_reported_but_not_shadow_authority(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._database(directory)
+            store = OrchestratorStore(path)
+            try:
+                with store._lock:
+                    row = store._connection.execute(
+                        """SELECT t.task_id,t.conversation_id,t.epoch,i.event_id
+                           FROM tasks t JOIN inbox i USING(task_id)
+                           WHERE t.state='COMPLETED'
+                           ORDER BY t.epoch DESC LIMIT 1"""
+                    ).fetchone()
+                assert row is not None
+                store.add_memory_record(
+                    conversation_id=row["conversation_id"],
+                    task_id=row["task_id"],
+                    epoch=row["epoch"],
+                    source_event_id="explicit-memory-source",
+                    scoped_user_id="local-user",
+                    content="explicit remembered fact",
+                    metadata={"origin": "explicit_command"},
+                )
+            finally:
+                store.close()
+            report = build_shadow_trial_report(path)
+            self.assertEqual(report["retrospective_memory_records"], 1)
+            self.assertEqual(report["authority_violations"], 0)
+            self.assertTrue(report["integrity_passed"])
 
     def test_missing_database_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

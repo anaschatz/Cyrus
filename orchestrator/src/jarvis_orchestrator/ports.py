@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Any, Mapping, Protocol
 
 from .domain import ModelChunk, ModelRequest
+from .tool_contracts import ToolDefinitionV1, ToolOutcomeV1
 from .cloud_provider import CloudModelResultV1, OpenRouterRevalidationV1
 from .cloud_contract import QualifiedEndpointV1
 from .cloud_routing import ContextScope, OutputContract, TaskProfileV1
@@ -81,6 +82,29 @@ class ResearchPlannerPort(Protocol):
 
 class ToolPort(Protocol):
     async def execute(self, name: str, arguments: Mapping[str, Any], *, idempotency_key: str) -> Mapping[str, Any]: ...
+
+
+class ToolPlannerPort(Protocol):
+    async def plan_with_correction(self, request: ModelRequest): ...
+
+    async def plan_tool_arguments(
+        self,
+        request: ModelRequest,
+        *,
+        definition: ToolDefinitionV1,
+    ) -> Mapping[str, Any]: ...
+
+
+class ToolExecutorPort(Protocol):
+    async def execute_typed(
+        self,
+        *,
+        execution_id: str,
+        definition: ToolDefinitionV1,
+        arguments: Mapping[str, Any],
+        idempotency_key: str,
+        deadline_utc: str,
+    ) -> tuple[ToolOutcomeV1, Mapping[str, Any]]: ...
 
 
 class DisabledMemoryPort:

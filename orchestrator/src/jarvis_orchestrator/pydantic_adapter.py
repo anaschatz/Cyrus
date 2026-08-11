@@ -22,6 +22,7 @@ from .domain import ModelChunk, ModelRequest, ModelUsage, RouteDecision, canonic
 from .history import canonical_messages_to_pydantic
 from .model import DispatchPermit, GuardedAsyncTransport, _dispatch_reservation
 from .store import OrchestratorStore
+from .tool_contracts import ToolDefinitionV1
 from .research import (
     NormalizedDocumentV1,
     RankedPassageV1,
@@ -227,6 +228,112 @@ class PydanticAgentModelPort:
         finally:
             _pydantic_context.reset(token)
         return RouteDecision(**result.output.model_dump()).validate(self._registered_tools)
+
+    async def plan_tool_arguments(
+        self,
+        request: ModelRequest,
+        *,
+        definition: ToolDefinitionV1,
+    ) -> Mapping[str, Any]:
+        """Generate one strict argument object for one already-selected tool."""
+
+        from enum import Enum
+        from typing import Annotated
+
+        from pydantic import ConfigDict, Field, create_model
+        from pydantic_ai import Agent
+        from pydantic_ai.output import NativeOutput, ToolOutput
+        from pydantic_ai.usage import UsageLimits
+
+        if definition.tool_id not in self._registered_tools:
+            raise RuntimeError("tool is not registered in the local planner")
+
+        counter = 0
+
+        def build_type(schema: Mapping[str, Any], name: str) -> Any:
+            nonlocal counter
+            selected = schema.get("type")
+            if selected == "string":
+                values = schema.get("enum")
+                if values is not None:
+                    counter += 1
+                    return Enum(
+                        f"JarvisToolEnum{counter}",
+                        {f"value_{index}": value for index, value in enumerate(values)},
+                        type=str,
+                    )
+                return Annotated[
+                    str,
+                    Field(
+                        min_length=schema.get("minLength"),
+                        max_length=schema.get("maxLength"),
+                    ),
+                ]
+            if selected == "integer":
+                return Annotated[
+                    int,
+                    Field(ge=schema.get("minimum"), le=schema.get("maximum")),
+                ]
+            if selected == "boolean":
+                return bool
+            if selected == "array":
+                item_type = build_type(schema["items"], f"{name}Item")
+                return Annotated[
+                    list[item_type],
+                    Field(
+                        min_length=schema.get("minItems"),
+                        max_length=schema.get("maxItems"),
+                    ),
+                ]
+            if selected == "object":
+                fields = {
+                    field_name: (build_type(field_schema, f"{name}{field_name.title()}"), ...)
+                    for field_name, field_schema in schema["properties"].items()
+                }
+                return create_model(
+                    name,
+                    __config__=ConfigDict(extra="forbid", use_enum_values=True),
+                    **fields,
+                )
+            raise RuntimeError("unsupported frozen tool schema type")
+
+        model_type = build_type(definition.input_schema, "JarvisToolArguments")
+        output = (
+            NativeOutput(model_type, name="tool_arguments", strict=True)
+            if self._json_schema_capable
+            else ToolOutput(model_type, name="tool_arguments", strict=True, max_retries=0)
+        )
+        planner = Agent(
+            self.__budgeted_model,
+            output_type=output,
+            retries={"tools": 0, "output": 0},
+        )
+        history, prompt = canonical_messages_to_pydantic(request.messages)
+        context = PydanticDispatchContext(
+            request.task_id,
+            request.epoch,
+            request.purpose,
+            request.output_allowance,
+            request.timeout_seconds,
+        )
+        token = _pydantic_context.set(context)
+        try:
+            result = await planner.run(
+                prompt,
+                message_history=history,
+                instructions=request.system_prompt,
+                model_settings={
+                    "max_tokens": request.output_allowance,
+                    "temperature": 0,
+                    "top_p": 1,
+                    "parallel_tool_calls": False,
+                    "timeout": request.timeout_seconds,
+                },
+                usage_limits=UsageLimits(request_limit=1),
+            )
+        finally:
+            _pydantic_context.reset(token)
+        return definition.validate_input(result.output.model_dump(mode="json"))
 
     async def profile_task(
         self,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -52,6 +53,7 @@ from .cloud_contract import (
 )
 from .cloud_routing import RoutePlanV1, RoutingFactsV1, TaskProfileV1
 from .jcs import domain_sha256, jcs_text
+from .memory_release import shadow_safety_fields, validate_shadow_audit_payload
 from .research import (
     MAX_RUN_DOCUMENT_BYTES,
     EvidenceBundleV1,
@@ -60,8 +62,17 @@ from .research import (
     reconstruct,
     validate_syntactic_citation_coverage,
 )
+from .scheduler_store import MIGRATION_5_SQL
+from .tool_store import MIGRATION_6_SQL
+from .tool_provenance import (
+    ContentProvenanceV1,
+    ContentSourceKind,
+    EgressDisposition,
+    PolicyLabel,
+    ProvenanceError,
+)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 
 SCHEMA_SQL = """
@@ -473,7 +484,10 @@ class OrchestratorStore:
         approval_ttl: timedelta = DEFAULT_APPROVAL_TTL,
         disconnect_ttl: timedelta = DEFAULT_DISCONNECT_TTL,
         delivery_ttl: timedelta = DEFAULT_DELIVERY_TTL,
+        tool_authority_enabled: bool = False,
     ) -> None:
+        if not isinstance(tool_authority_enabled, bool):
+            raise TypeError("tool_authority_enabled must be boolean")
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
@@ -485,6 +499,7 @@ class OrchestratorStore:
         self.approval_ttl = approval_ttl
         self.disconnect_ttl = disconnect_ttl
         self.delivery_ttl = delivery_ttl
+        self.tool_authority_enabled = tool_authority_enabled
         with self._lock:
             self._connection.execute("PRAGMA journal_mode=WAL")
             self._connection.execute("PRAGMA foreign_keys=ON")
@@ -496,7 +511,7 @@ class OrchestratorStore:
             existing_version = self._connection.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone()
-            if existing_version is not None and existing_version["value"] not in {"1", "2", "3", "4"}:
+            if existing_version is not None and existing_version["value"] not in {"1", "2", "3", "4", "5", "6"}:
                 raise RuntimeError("unsupported orchestrator database schema version")
             self._connection.executescript(SCHEMA_SQL)
             if existing_version is None:
@@ -538,6 +553,36 @@ class OrchestratorStore:
                     + add_dispatch_count
                     + MIGRATION_4_SQL
                     + "\nUPDATE schema_meta SET value='4' WHERE key='schema_version' AND value='3';\n"
+                    + "COMMIT;"
+                )
+                current_version = 4
+            if current_version == 4:
+                self._connection.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + MIGRATION_5_SQL
+                    + "\nUPDATE schema_meta SET value='5' WHERE key='schema_version' AND value='4';\n"
+                    + "COMMIT;"
+                )
+                current_version = 5
+            if current_version == 5:
+                tool_columns = {
+                    row["name"]
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(tool_executions)"
+                    ).fetchall()
+                }
+                migration_6_lines: list[str] = []
+                for statement_line in MIGRATION_6_SQL.splitlines():
+                    stripped = statement_line.strip()
+                    if stripped.startswith("ALTER TABLE tool_executions ADD COLUMN "):
+                        column_name = stripped.split()[5]
+                        if column_name in tool_columns:
+                            continue
+                    migration_6_lines.append(statement_line)
+                self._connection.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + "\n".join(migration_6_lines)
+                    + "\nUPDATE schema_meta SET value='6' WHERE key='schema_version' AND value='5';\n"
                     + "COMMIT;"
                 )
 
@@ -620,18 +665,29 @@ class OrchestratorStore:
     ) -> bool:
         selected = now or utc_now()
         payload = {
+            **shadow_safety_fields(),
             "status": "pending",
             "source_event_id": source_event_id,
             "text_sha256": text_sha256,
         }
         with self._transaction() as connection:
             task = connection.execute(
-                "SELECT epoch,state FROM tasks WHERE task_id=?", (task_id,)
+                """SELECT k.epoch,k.state,t.user_text,i.event_id
+                   FROM tasks k JOIN canonical_turns t USING(task_id)
+                   JOIN inbox i USING(task_id)
+                   WHERE k.task_id=?""",
+                (task_id,),
             ).fetchone()
             if task is None:
                 raise OrchestratorError("not_found", status=404)
             if task["epoch"] != epoch or task["state"] != TaskState.COMPLETED.value:
                 raise StaleEpochError()
+            if (
+                source_event_id != task["event_id"]
+                or text_sha256
+                != hashlib.sha256(task["user_text"].encode("utf-8")).hexdigest()
+            ):
+                raise ValueError("memory shadow source binding is invalid")
             try:
                 self._append_task_event_tx(
                     connection,
@@ -656,17 +712,44 @@ class OrchestratorStore:
     ) -> None:
         if event_type not in {"memory.shadow.proposed", "memory.shadow.failed"}:
             raise ValueError("memory shadow audit event type is invalid")
+        validate_shadow_audit_payload(event_type, payload)
         selected = now or utc_now()
         with self._transaction() as connection:
+            pending_row = connection.execute(
+                """SELECT e.event_sequence,e.payload_json,t.user_text,i.event_id
+                   FROM task_events e JOIN canonical_turns t USING(task_id)
+                   JOIN inbox i USING(task_id)
+                   WHERE e.task_id=? AND e.epoch=?
+                     AND e.event_type='memory.shadow.pending'""",
+                (task_id, epoch),
+            ).fetchone()
+            if pending_row is None:
+                raise OrchestratorError("memory_shadow_audit_missing", status=409)
+            pending = json.loads(pending_row["payload_json"])
+            expected_pending = {
+                **shadow_safety_fields(),
+                "status": "pending",
+                "source_event_id": pending_row["event_id"],
+                "text_sha256": hashlib.sha256(
+                    pending_row["user_text"].encode("utf-8")
+                ).hexdigest(),
+            }
+            if (
+                pending != expected_pending
+                or payload.get("source_event_id") != pending["source_event_id"]
+                or payload.get("text_sha256") != pending["text_sha256"]
+            ):
+                raise OrchestratorError(
+                    "memory_shadow_audit_binding_invalid", status=409
+                )
             changed = connection.execute(
                 """UPDATE task_events SET event_type=?,payload_json=?,created_at=?
-                   WHERE task_id=? AND epoch=? AND event_type='memory.shadow.pending'""",
+                   WHERE event_sequence=? AND event_type='memory.shadow.pending'""",
                 (
                     event_type,
                     canonical_json(payload),
                     utc_text(selected),
-                    task_id,
-                    epoch,
+                    pending_row["event_sequence"],
                 ),
             )
             if changed.rowcount != 1:
@@ -724,6 +807,62 @@ class OrchestratorStore:
             }
             for row in rows
         ]
+
+    def shadow_authority_fingerprint(self, task_id: str) -> str:
+        """Hash task-scoped authority that a shadow writer must never change.
+
+        Task scope avoids false positives if the next turn is admitted while
+        this completed turn's bounded shadow observation is still running.
+        """
+
+        with self._lock:
+            projection = {
+                "memory_records": [
+                    dict(row)
+                    for row in self._connection.execute(
+                        """SELECT record_id,task_id,source_event_id,scoped_user_id,
+                                  content_sha256,metadata_json,created_at
+                           FROM memory_records WHERE task_id=?
+                           ORDER BY record_id""",
+                        (task_id,),
+                    ).fetchall()
+                ],
+                "approvals": [
+                    dict(row)
+                    for row in self._connection.execute(
+                        """SELECT approval_id,task_id,epoch,kind,name,
+                                  arguments_sha256,status,created_at,expires_at,decided_at
+                           FROM approvals WHERE task_id=?
+                           ORDER BY approval_id""",
+                        (task_id,),
+                    ).fetchall()
+                ],
+                "capability_reservations": [
+                    dict(row)
+                    for row in self._connection.execute(
+                        """SELECT r.reservation_id,r.task_id,r.epoch,r.kind,
+                                  r.request_key,r.arguments_sha256,r.status,
+                                  r.created_at,r.completed_at
+                           FROM capability_reservations r
+                           WHERE r.task_id=?
+                           ORDER BY r.reservation_id""",
+                        (task_id,),
+                    ).fetchall()
+                ],
+                "tool_executions": [
+                    dict(row)
+                    for row in self._connection.execute(
+                        """SELECT x.execution_id,x.task_id,x.epoch,x.tool_call_id,
+                                  x.tool_name,x.arguments_sha256,x.status,
+                                  x.result_sha256,x.created_at,x.completed_at
+                           FROM tool_executions x
+                           WHERE x.task_id=?
+                           ORDER BY x.execution_id""",
+                        (task_id,),
+                    ).fetchall()
+                ],
+            }
+        return canonical_sha256(projection)
 
     def begin_memory_recall(
         self,
@@ -1171,6 +1310,13 @@ class OrchestratorStore:
             (utc_text(now), row["task_id"], row["epoch"]),
         )
         connection.execute(
+            """UPDATE approval_arbiter_queue SET state='INVALIDATED',updated_at=?
+               WHERE approval_id IN (
+                 SELECT approval_id FROM cloud_approval_bindings WHERE task_id=? AND epoch=?
+               ) AND state IN ('WAITING_FOR_CHANNEL','PRESENTING','PRESENTED','WAITING_FOR_OWNER')""",
+            (utc_text(now), row["task_id"], row["epoch"]),
+        )
+        connection.execute(
             """UPDATE cloud_extension_outbox SET state='STALE'
                WHERE task_id=? AND task_epoch=? AND state='REPLAYABLE'""",
             (row["task_id"], row["epoch"]),
@@ -1495,6 +1641,20 @@ class OrchestratorStore:
         delivery = utc_text(selected + (delivery_ttl or self.delivery_ttl))
         with self._transaction() as connection:
             row = self._guarded_task_tx(connection, task_id, epoch, (TaskState.RESPONDING,))
+            turn = connection.execute(
+                "SELECT turn_id,user_text FROM canonical_turns WHERE task_id=? AND status='PENDING'",
+                (task_id,),
+            ).fetchone()
+            if turn is None:
+                raise InvalidStateError()
+            provenance = self._derive_response_provenance_tx(
+                connection,
+                task_id=task_id,
+                conversation_id=row["conversation_id"],
+                turn_id=turn["turn_id"],
+                user_text=turn["user_text"],
+                assistant_text=assistant_text,
+            )
             existing_text = connection.execute(
                 "SELECT COUNT(*) FROM outbox WHERE response_id=? AND event_type='response.text.delta'",
                 (row["response_id"],),
@@ -1561,11 +1721,97 @@ class OrchestratorStore:
                 (assistant_text, utc_text(selected), task_id),
             )
             connection.execute(
+                """INSERT INTO content_provenance(
+                   entity_kind,entity_id,provenance_json,provenance_sha256,
+                   policy_label,egress_disposition,created_at
+                   ) VALUES('canonical_turn',?,?,?,?,?,?)""",
+                (
+                    turn["turn_id"],
+                    jcs_text(provenance.to_dict()),
+                    provenance.sha256,
+                    provenance.policy_label.value,
+                    provenance.egress.value,
+                    utc_text(selected),
+                ),
+            )
+            connection.execute(
                 "UPDATE conversations SET revision=revision+1,updated_at=? WHERE conversation_id=? AND current_epoch=?",
                 (utc_text(selected), row["conversation_id"], epoch),
             )
             self._append_task_event_tx(connection, task_id, epoch, "COMPLETED", {}, selected)
             return self._task_from_row(connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
+
+    def _derive_response_provenance_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        task_id: str,
+        conversation_id: str,
+        turn_id: str,
+        user_text: str,
+        assistant_text: str,
+    ) -> ContentProvenanceV1:
+        """Derive output labels in code; callers and models cannot downgrade them."""
+
+        inputs: list[ContentProvenanceV1] = [
+            ContentProvenanceV1.source(ContentSourceKind.USER_INPUT, turn_id, user_text)
+        ]
+        prior = connection.execute(
+            """SELECT p.provenance_json,p.policy_label,p.egress_disposition,ct.turn_id,ct.assistant_text
+               FROM canonical_turns ct
+               LEFT JOIN content_provenance p
+                 ON p.entity_kind='canonical_turn' AND p.entity_id=ct.turn_id
+               WHERE ct.conversation_id=? AND ct.status='COMPLETED'
+               ORDER BY ct.created_at,ct.turn_id""",
+            (conversation_id,),
+        ).fetchall()
+        for item in prior:
+            try:
+                if item["provenance_json"] is None:
+                    raise ProvenanceError("missing provenance")
+                inputs.append(ContentProvenanceV1.from_dict(json.loads(item["provenance_json"])))
+            except (json.JSONDecodeError, ProvenanceError):
+                inputs.append(
+                    ContentProvenanceV1.source(
+                        ContentSourceKind.LEGACY_UNVERIFIED,
+                        item["turn_id"],
+                        item["assistant_text"],
+                    )
+                )
+
+        event_types = {
+            event["event_type"]
+            for event in connection.execute(
+                "SELECT event_type FROM task_events WHERE task_id=?", (task_id,)
+            ).fetchall()
+        }
+        if any(value.startswith("tool.") for value in event_types):
+            # This rule covers model text, adapter summaries and deterministic
+            # templates alike: every canonical output of a tool task is private.
+            return ContentProvenanceV1.tool_task_output(
+                task_id=task_id,
+                content=assistant_text,
+                inputs=inputs,
+                deterministic=True,
+            )
+        if any(value.startswith("memory.recall.") for value in event_types):
+            inputs.append(
+                ContentProvenanceV1.source(
+                    ContentSourceKind.MEMORY_RECALL, task_id, assistant_text
+                )
+            )
+        if any(value.startswith("research.") for value in event_types):
+            inputs.append(
+                ContentProvenanceV1.source(
+                    ContentSourceKind.RESEARCH_EVIDENCE, task_id, assistant_text
+                )
+            )
+        inputs.append(
+            ContentProvenanceV1.source(
+                ContentSourceKind.LOCAL_MODEL, task_id, assistant_text
+            )
+        )
+        return ContentProvenanceV1.derive(inputs)
 
     def cancel_task(
         self,
@@ -1786,6 +2032,8 @@ class OrchestratorStore:
     ) -> str:
         if kind not in {"research", "cloud_model", "tool"}:
             raise ValueError("invalid approval kind")
+        if kind == "tool" and not self.tool_authority_enabled:
+            raise OrchestratorError("forbidden", status=403)
         selected = now or utc_now()
         with self._transaction() as connection:
             row = self._guarded_task_tx(connection, task_id, epoch, (TaskState.EXECUTING,))
@@ -2129,7 +2377,12 @@ class OrchestratorStore:
         with self._lock:
             rows = self._connection.execute(
                 """SELECT ct.* FROM canonical_turns ct
+                   JOIN content_provenance p
+                     ON p.entity_kind='canonical_turn' AND p.entity_id=ct.turn_id
                    WHERE ct.conversation_id=? AND ct.status='COMPLETED'
+                   AND p.policy_label='STANDARD'
+                   AND p.egress_disposition='REVIEWABLE'
+                   AND length(p.provenance_sha256)=64
                    AND ct.effects_json='[]'
                    AND NOT EXISTS (
                        SELECT 1 FROM task_events e WHERE e.task_id=ct.task_id AND (
@@ -2281,6 +2534,8 @@ class OrchestratorStore:
         limits = {"tool": 4, "research": 1, "cloud_model": 0}
         if kind not in limits:
             raise ValueError("invalid capability kind")
+        if kind == "tool" and not self.tool_authority_enabled:
+            raise OrchestratorError("forbidden", status=403)
         selected = now or utc_now()
         with self._transaction() as connection:
             self._guarded_task_tx(connection, task_id, epoch, (TaskState.EXECUTING,))
@@ -2852,6 +3107,15 @@ class OrchestratorStore:
             if changed.rowcount != 1:
                 raise OrchestratorError("cloud_unqualified", status=409)
 
+    def disable_all_endpoint_qualifications(self) -> int:
+        """Fail-closed startup fence before release qualification is rechecked."""
+
+        with self._transaction() as connection:
+            changed = connection.execute(
+                "UPDATE endpoint_qualifications SET enabled=0 WHERE enabled=1"
+            )
+            return changed.rowcount
+
     def store_cloud_provider_receipt(
         self,
         task_id: str,
@@ -3031,6 +3295,27 @@ class OrchestratorStore:
                     binding.expires_at,
                 ),
             )
+            queue_count = connection.execute(
+                """SELECT COUNT(*) FROM approval_arbiter_queue WHERE state IN (
+                   'WAITING_FOR_CHANNEL','PRESENTING','PRESENTED','DECIDING','WAITING_FOR_OWNER')"""
+            ).fetchone()[0]
+            if queue_count >= 64:
+                raise OrchestratorError("APPROVAL_QUEUE_FULL", status=409)
+            connection.execute(
+                """INSERT INTO approval_arbiter_queue(
+                   approval_id,producer_protocol,binding_sha256,state,created_at,expires_at,updated_at
+                   ) VALUES(?, 'jarvis.cloud-approval/1',?,'WAITING_FOR_CHANNEL',?,?,?)""",
+                (approval_id, binding.sha256, utc_text(selected), binding.expires_at, utc_text(selected)),
+            )
+            active_channel = connection.execute(
+                """SELECT approval_id FROM approval_arbiter_queue WHERE state IN (
+                   'PRESENTING','PRESENTED','DECIDING','WAITING_FOR_OWNER') LIMIT 1"""
+            ).fetchone()
+            queue_head = connection.execute(
+                """SELECT approval_id FROM approval_arbiter_queue WHERE state='WAITING_FOR_CHANNEL'
+                   ORDER BY arbiter_seq,approval_id LIMIT 1"""
+            ).fetchone()
+            present_now = active_channel is None and queue_head is not None and queue_head["approval_id"] == approval_id
             connection.execute(
                 """INSERT INTO cloud_presentations(
                    presentation_id,approval_id,task_id,epoch,owner_session_id,decision_nonce,
@@ -3085,6 +3370,19 @@ class OrchestratorStore:
                 event_id=requested_event_id,
                 now=selected,
             )
+            if present_now:
+                connection.execute(
+                    """UPDATE approval_arbiter_queue SET state='PRESENTING',owner_session_id=?,
+                       presentation_id=?,requested_event_id=?,decision_nonce=?,updated_at=?
+                       WHERE approval_id=? AND state='WAITING_FOR_CHANNEL'""",
+                    (owner_session_id, presentation_id, requested_event_id, decision_nonce,
+                     utc_text(selected), approval_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE cloud_extension_outbox SET state='NON_REPLAYABLE' WHERE event_id=?",
+                    (requested_event_id,),
+                )
             elapsed = float(task["active_elapsed_seconds"])
             if task["active_started_at"] is not None:
                 elapsed += max(0.0, (selected - parse_utc(task["active_started_at"])).total_seconds())
@@ -3122,21 +3420,45 @@ class OrchestratorStore:
         with self._transaction() as connection:
             row = connection.execute(
                 """SELECT p.*,b.binding_json,b.binding_sha256,b.conversation_id,
-                          b.expires_at,c.current_epoch
+                          b.expires_at,c.current_epoch,q.state AS arbiter_state
                    FROM cloud_presentations p
                    JOIN cloud_approval_bindings b USING(approval_id)
+                   JOIN approval_arbiter_queue q USING(approval_id)
                    JOIN approvals a USING(approval_id)
                    JOIN conversations c USING(conversation_id)
                    JOIN tasks t USING(task_id)
                    WHERE p.state='PENDING' AND a.status='PENDING'
                    AND t.state='AWAITING_APPROVAL' AND t.tombstoned=0
                    AND t.epoch=c.current_epoch AND b.expires_at>?
-                   ORDER BY p.created_at DESC LIMIT 1""",
+                   AND q.producer_protocol='jarvis.cloud-approval/1'
+                   AND (
+                     q.state IN ('PRESENTING','PRESENTED','WAITING_FOR_OWNER')
+                     OR (
+                       q.state='WAITING_FOR_CHANNEL'
+                       AND NOT EXISTS(SELECT 1 FROM approval_arbiter_queue active WHERE active.state IN (
+                         'PRESENTING','PRESENTED','DECIDING','WAITING_FOR_OWNER'))
+                       AND q.arbiter_seq=(SELECT MIN(head.arbiter_seq) FROM approval_arbiter_queue head
+                                         WHERE head.state='WAITING_FOR_CHANNEL')
+                     )
+                   )
+                   ORDER BY q.arbiter_seq,q.approval_id LIMIT 1""",
                 (utc_text(selected),),
             ).fetchone()
             if row is None:
                 return None
-            if row["owner_session_id"] == session_id:
+            if row["owner_session_id"] == session_id and row["arbiter_state"] != "WAITING_FOR_OWNER":
+                connection.execute(
+                    """UPDATE approval_arbiter_queue SET state='PRESENTING',owner_session_id=?,
+                       presentation_id=?,requested_event_id=?,decision_nonce=?,updated_at=?
+                       WHERE approval_id=?""",
+                    (session_id, row["presentation_id"], row["requested_event_id"],
+                     row["decision_nonce"], utc_text(selected), row["approval_id"]),
+                )
+                connection.execute(
+                    """UPDATE cloud_extension_outbox SET state='REPLAYABLE',next_attempt_at=?,attempt_count=0
+                       WHERE event_id=? AND state='NON_REPLAYABLE'""",
+                    (utc_text(selected), row["requested_event_id"]),
+                )
                 return {
                     "approval_id": row["approval_id"],
                     "presentation_id": row["presentation_id"],
@@ -3227,6 +3549,13 @@ class OrchestratorStore:
                 event_id=requested_event_id,
                 now=selected,
             )
+            connection.execute(
+                """UPDATE approval_arbiter_queue SET state='PRESENTING',owner_session_id=?,
+                   presentation_id=?,requested_event_id=?,decision_nonce=?,updated_at=?
+                   WHERE approval_id=?""",
+                (session_id, presentation_id, requested_event_id, decision_nonce,
+                 utc_text(selected), row["approval_id"]),
+            )
             return {
                 "approval_id": row["approval_id"],
                 "presentation_id": presentation_id,
@@ -3284,12 +3613,19 @@ class OrchestratorStore:
             )
 
     def acknowledge_cloud_extension(self, event_id: str, *, now: datetime | None = None) -> bool:
-        del now
+        selected = now or utc_now()
         with self._transaction() as connection:
-            return connection.execute(
+            changed = connection.execute(
                 "UPDATE cloud_extension_outbox SET state='ACKED' WHERE event_id=? AND state='REPLAYABLE'",
                 (event_id,),
             ).rowcount == 1
+            if changed:
+                connection.execute(
+                    """UPDATE approval_arbiter_queue SET state='PRESENTED',updated_at=?
+                       WHERE requested_event_id=? AND state='PRESENTING'""",
+                    (utc_text(selected), event_id),
+                )
+            return changed
 
     def cloud_extension_is_current(self, event_id: str) -> bool:
         with self._lock:
@@ -3366,9 +3702,11 @@ class OrchestratorStore:
             binding = connection.execute(
                 """SELECT b.*,a.status AS approval_status,t.state AS task_state,
                           t.tombstoned,c.current_epoch,p.owner_session_id,p.decision_nonce,
-                          p.requested_event_id,p.state AS presentation_state
+                          p.requested_event_id,p.state AS presentation_state,
+                          q.state AS arbiter_state,q.owner_session_id AS arbiter_owner_session_id
                    FROM cloud_approval_bindings b
                    JOIN approvals a USING(approval_id)
+                   JOIN approval_arbiter_queue q USING(approval_id)
                    JOIN tasks t USING(task_id)
                    JOIN conversations c USING(conversation_id)
                    LEFT JOIN cloud_presentations p
@@ -3391,6 +3729,8 @@ class OrchestratorStore:
                     reason = "presentation_superseded"
                 elif binding["owner_session_id"] != session_id:
                     reason = "not_owner"
+                elif binding["arbiter_owner_session_id"] != session_id or binding["arbiter_state"] not in {"PRESENTING", "PRESENTED"}:
+                    reason = "not_owner"
                 elif not capture_idle:
                     reason = "capture_active"
                 elif binding["decision_nonce"] != decision_nonce or binding["requested_event_id"] != requested_event_id:
@@ -3400,6 +3740,12 @@ class OrchestratorStore:
                 else:
                     reason = "approved" if decision == "approve" else "denied"
                     applied = True
+
+            if applied:
+                connection.execute(
+                    "UPDATE approval_arbiter_queue SET state='DECIDING',updated_at=? WHERE approval_id=?",
+                    (utc_text(selected), approval_id),
+                )
 
             connection.execute(
                 """INSERT INTO cloud_extension_inbox(
@@ -3494,6 +3840,10 @@ class OrchestratorStore:
                     "DECISION_WAITING_RECONNECT",
                     {"approval_id": approval_id, "decision": decision},
                     selected,
+                )
+                connection.execute(
+                    "UPDATE approval_arbiter_queue SET state='RESOLVED',updated_at=? WHERE approval_id=?",
+                    (utc_text(selected), approval_id),
                 )
             return {
                 "duplicate": False,

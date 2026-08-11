@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $Samples,
+    [Parameter(Mandatory = $true)] [string] $NativeEvidence,
     [Parameter(Mandatory = $true)] [string] $Output,
     [string] $Distribution
 )
@@ -19,6 +20,7 @@ if (-not $Distribution) {
 $DistributionPath = (Resolve-Path $Distribution).Path
 $ConfigPath = (Resolve-Path $Config).Path
 $SamplesPath = (Resolve-Path $Samples).Path
+$NativeEvidencePath = (Resolve-Path $NativeEvidence).Path
 $OutputPath = [IO.Path]::GetFullPath($Output)
 $OutputDirectory = [IO.Path]::GetDirectoryName($OutputPath)
 if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
@@ -40,6 +42,7 @@ py -3.11 -m jarvis_voice qualify-release `
     --distribution $DistributionPath `
     --samples $SamplesPath `
     --frozen-doctor $FrozenDoctor `
+    --native-evidence $NativeEvidencePath `
     --output $OutputPath
 $QualificationExit = $LASTEXITCODE
 

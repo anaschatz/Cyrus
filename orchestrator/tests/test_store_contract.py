@@ -162,7 +162,9 @@ class StoreContractTests(StoreCase, unittest.TestCase):
         self.assertEqual(states, {"NON_REPLAYABLE"})
 
     def test_approval_pauses_active_clock_and_offline_decision_waits_for_reconnect(self) -> None:
-        store = self.make_store(active_budget_seconds=120)
+        store = self.make_store(
+            active_budget_seconds=120, tool_authority_enabled=True
+        )
         task = self.executing(store, self.admitted(store, event_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4())), now=NOW)
         approval = store.create_approval(
             task.task_id, task.epoch, kind="tool", name="lamp", arguments={"on": True}, now=NOW + timedelta(seconds=60)
@@ -179,7 +181,7 @@ class StoreContractTests(StoreCase, unittest.TestCase):
         self.assertEqual(resumed.remaining_active_seconds(now=NOW + timedelta(minutes=5, seconds=20)), 50)
 
     def test_awaiting_approval_ignores_disconnect_but_decision_reconnect_expires(self) -> None:
-        store = self.make_store()
+        store = self.make_store(tool_authority_enabled=True)
         task = self.executing(store, self.admitted(store, event_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4())))
         approval = store.create_approval(task.task_id, task.epoch, kind="tool", name="lamp", arguments={}, now=NOW)
         store.set_disconnected(task.task_id, task.epoch, now=NOW)

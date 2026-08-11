@@ -62,6 +62,7 @@ from .memory import (
     MemoryProposal,
     ShadowMemoryServicePort,
 )
+from .memory_release import shadow_safety_fields
 from .ports import (
     DisabledMemoryPort,
     DisabledResearchPort,
@@ -71,6 +72,7 @@ from .ports import (
     ResearchPort,
     CloudModelPort,
     TaskProfilerPort,
+    ToolPlannerPort,
 )
 from .research import (
     EvidenceBundleV1,
@@ -88,7 +90,9 @@ from .research import (
 )
 from .speech import SpeechSegmenterV1, resolve_locale
 from .store import OrchestratorStore
+from .scheduler_store import SchedulerStore
 from .research_security import reject_sensitive_text
+from .tool_store import ToolStoreV1
 
 SYSTEM_PROMPT = (
     "You are JARVIS, a concise bilingual Greek/English local voice assistant. "
@@ -117,9 +121,20 @@ class OrchestratorService:
         task_profiler: TaskProfilerPort | None = None,
         cloud_model: CloudModelPort | None = None,
         cloud_endpoints: tuple[QualifiedEndpointV1, ...] = (),
+        cloud_release_verified: bool = False,
+        scheduler: SchedulerStore | None = None,
+        schedule_compiler: Any | None = None,
+        tool_store: ToolStoreV1 | None = None,
+        tool_planner: ToolPlannerPort | None = None,
     ) -> None:
         self.config = config
         self.store = store
+        self.scheduler = scheduler
+        self.schedule_compiler = schedule_compiler
+        if config.tools_enabled and (tool_store is None or tool_planner is None):
+            raise RuntimeError("tools_enabled requires a qualified registry, store and local planner")
+        self.tool_store = tool_store
+        self.tool_planner = tool_planner
         self.model = model
         self.inference_control = inference_control
         self.memory = memory or DisabledShadowMemoryService()
@@ -130,8 +145,15 @@ class OrchestratorService:
             raise RuntimeError("research_enabled requires qualified planner and ResearchPort")
         self.research_planner = research_planner
         self.research = research or DisabledResearchPort()
-        if config.cloud_enabled and (task_profiler is None or cloud_model is None or not cloud_endpoints):
-            raise RuntimeError("cloud_enabled requires a qualified profiler, CloudModelPort and endpoint registry")
+        if config.cloud_enabled and (
+            not cloud_release_verified
+            or task_profiler is None
+            or cloud_model is None
+            or not cloud_endpoints
+        ):
+            raise RuntimeError(
+                "cloud_enabled requires verified release evidence, a qualified profiler, CloudModelPort and endpoint registry"
+            )
         self.task_profiler = task_profiler
         self.cloud_model = cloud_model
         self.cloud_endpoints = tuple(cloud_endpoints)
@@ -139,6 +161,7 @@ class OrchestratorService:
         self._connection_lock = threading.RLock()
         self._connected_sessions: set[str] = set()
         self._cloud_sessions: dict[str, str] = {}
+        self._scheduler_sessions: dict[str, str] = {}
         self._execution_scheduler: Callable[[str], None] | None = None
 
     def set_execution_scheduler(self, scheduler: Callable[[str], None] | None) -> None:
@@ -149,7 +172,10 @@ class OrchestratorService:
             self._execution_scheduler(task_id)
 
     def startup_recovery(self) -> int:
-        return self.store.recover_after_restart()
+        recovered = self.store.recover_after_restart()
+        if self.tool_store is not None:
+            recovered += self.tool_store.recover_uncertain()
+        return recovered
 
     def ready(self) -> bool:
         try:
@@ -162,11 +188,19 @@ class OrchestratorService:
         with self._connection_lock:
             return bool(self._connected_sessions)
 
-    def attach_client(self, connection_id: str, *, cloud_session_id: str | None = None) -> dict[str, Any] | None:
+    def attach_client(
+        self,
+        connection_id: str,
+        *,
+        cloud_session_id: str | None = None,
+        scheduler_session_id: str | None = None,
+    ) -> dict[str, Any] | None:
         with self._connection_lock:
             self._connected_sessions.add(connection_id)
             if cloud_session_id is not None:
                 self._cloud_sessions[connection_id] = cloud_session_id
+            if scheduler_session_id is not None:
+                self._scheduler_sessions[connection_id] = scheduler_session_id
         conversation = self.store.active_conversation()
         if conversation and conversation["active_task_id"]:
             try:
@@ -181,6 +215,7 @@ class OrchestratorService:
         with self._connection_lock:
             self._connected_sessions.discard(connection_id)
             self._cloud_sessions.pop(connection_id, None)
+            self._scheduler_sessions.pop(connection_id, None)
             if self._connected_sessions:
                 return
         conversation = self.store.active_conversation()
@@ -199,6 +234,10 @@ class OrchestratorService:
             if not self._cloud_sessions:
                 return None
             return self._cloud_sessions[next(reversed(self._cloud_sessions))]
+
+    def has_scheduler_client(self) -> bool:
+        with self._connection_lock:
+            return bool(self._scheduler_sessions)
 
     def admit_envelope(self, envelope: Any) -> Any:
         if (
@@ -343,6 +382,10 @@ class OrchestratorService:
         if not started:
             return
         try:
+            authority_before = self.store.shadow_authority_fingerprint(task.task_id)
+        except Exception:
+            return
+        try:
             observation = MemoryObservation(
                 task_id=task.task_id,
                 conversation_id=task.conversation_id,
@@ -365,13 +408,26 @@ class OrchestratorService:
                 "summary": proposal.summary,
                 "writer_contract_sha256": proposal.writer_contract_sha256,
             }
+            proposal_sha256 = canonical_sha256(proposal_payload)
+            authority_after = self.store.shadow_authority_fingerprint(task.task_id)
             payload = {
+                **shadow_safety_fields(),
                 "status": "proposed",
                 "source_event_id": observation.source_event_id,
                 "text_sha256": text_sha256,
                 "proposal": proposal_payload,
-                "proposal_sha256": canonical_sha256(proposal_payload),
-                "authoritative_state_changed": False,
+                "proposal_sha256": proposal_sha256,
+                "authority_state_before_sha256": authority_before,
+                "authority_state_after_sha256": authority_after,
+                "provenance": {
+                    "current_source_event_id": observation.source_event_id,
+                    "source_text_sha256": text_sha256,
+                    "superseded_source_event_ids": list(
+                        proposal.supersedes_source_event_ids
+                    ),
+                    "writer_contract_sha256": proposal.writer_contract_sha256,
+                    "proposal_sha256": proposal_sha256,
+                },
             }
             self.store.finish_memory_shadow_audit(
                 task.task_id,
@@ -381,32 +437,38 @@ class OrchestratorService:
             )
         except TimeoutError:
             try:
+                authority_after = self.store.shadow_authority_fingerprint(task.task_id)
                 self.store.finish_memory_shadow_audit(
                     task.task_id,
                     task.epoch,
                     event_type="memory.shadow.failed",
                     payload={
+                        **shadow_safety_fields(),
                         "status": "failed",
                         "source_event_id": input_record["event_id"],
                         "text_sha256": text_sha256,
                         "error_code": "timeout",
-                        "authoritative_state_changed": False,
+                        "authority_state_before_sha256": authority_before,
+                        "authority_state_after_sha256": authority_after,
                     },
                 )
             except Exception:
                 pass
         except Exception:
             try:
+                authority_after = self.store.shadow_authority_fingerprint(task.task_id)
                 self.store.finish_memory_shadow_audit(
                     task.task_id,
                     task.epoch,
                     event_type="memory.shadow.failed",
                     payload={
+                        **shadow_safety_fields(),
                         "status": "failed",
                         "source_event_id": input_record["event_id"],
                         "text_sha256": text_sha256,
                         "error_code": "service_error",
-                        "authoritative_state_changed": False,
+                        "authority_state_before_sha256": authority_before,
+                        "authority_state_after_sha256": authority_after,
                     },
                 )
             except Exception:
@@ -1171,9 +1233,19 @@ class OrchestratorService:
         return self.store.create_approval(task_id, epoch, kind=kind, name=name, arguments=arguments)
 
     def decide_approval(self, approval_id: str, epoch: int, decision: str) -> dict[str, Any]:
-        if self.store.approval_kind(approval_id) == "cloud_model":
+        kind = self.store.approval_kind(approval_id)
+        if kind == "cloud_model":
             raise OrchestratorError("forbidden", status=403)
-        result = self.store.decide_approval(approval_id, epoch, decision, client_connected=self.has_client())
+        if kind == "tool":
+            if self.tool_store is None:
+                raise OrchestratorError("tool.disabled", status=503)
+            result = self.tool_store.decide_action_approval(
+                approval_id=approval_id,
+                epoch=epoch,
+                decision=decision,
+            )
+        else:
+            result = self.store.decide_approval(approval_id, epoch, decision, client_connected=self.has_client())
         if result["task_state"] == TaskState.EXECUTING.value:
             self._schedule(result["task_id"])
         return result

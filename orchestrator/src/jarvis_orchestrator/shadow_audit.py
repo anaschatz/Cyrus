@@ -11,6 +11,11 @@ from typing import Any
 
 from .anamnesis_shadow import reconstruct_active_shadow_memories
 from .domain import canonical_json
+from .memory_release import (
+    MEMORY_RELEASE_POLICY_SHA256,
+    MEMORY_RELEASE_POLICY_VERSION,
+    validate_shadow_audit_payload,
+)
 
 
 SHADOW_AUDIT_REPORT_VERSION = "jarvis.shadow-audit-report.v1"
@@ -45,7 +50,7 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
         schema = connection.execute(
             "SELECT value FROM schema_meta WHERE key='schema_version'"
         ).fetchone()
-        if schema is None or schema["value"] not in {"2", "3", "4"}:
+        if schema is None or schema["value"] not in {"2", "3", "4", "5", "6"}:
             raise RuntimeError("unsupported shadow audit database schema")
         rows = connection.execute(
             """SELECT e.event_sequence,e.epoch,e.event_type,e.payload_json,e.created_at,
@@ -75,6 +80,7 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
     event_counts: Counter[str] = Counter()
     operation_counts: Counter[str] = Counter()
     writer_contract_counts: Counter[str] = Counter()
+    release_policy_counts: Counter[str] = Counter()
     histories: dict[str, list[dict[str, Any]]] = defaultdict(list)
     audited_conversations: set[str] = set()
     invalid_rows = 0
@@ -96,6 +102,28 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
         if not isinstance(payload, dict):
             invalid_rows += 1
             continue
+        if (
+            payload.get("release_policy_version") != MEMORY_RELEASE_POLICY_VERSION
+            or payload.get("release_policy_sha256")
+            != MEMORY_RELEASE_POLICY_SHA256
+        ):
+            invalid_rows += 1
+            continue
+        release_policy_counts[MEMORY_RELEASE_POLICY_SHA256] += 1
+        if event_type != "memory.shadow.pending":
+            if (
+                payload.get("authoritative_state_changed") is not False
+                or payload.get("automatic_side_effect_requested") is not False
+                or payload.get("action_evidence_emitted") is not False
+                or payload.get("authority_state_before_sha256")
+                != payload.get("authority_state_after_sha256")
+            ):
+                authority_violations += 1
+            try:
+                validate_shadow_audit_payload(event_type, payload)
+            except (TypeError, ValueError):
+                invalid_rows += 1
+                continue
         content_free_audit_projection.append(
             {
                 "event_sequence": row["event_sequence"],
@@ -105,8 +133,6 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
                 "created_at": row["created_at"],
             }
         )
-        if payload.get("authoritative_state_changed") is not False:
-            authority_violations += 1
         if event_type != "memory.shadow.proposed":
             continue
         proposal = payload.get("proposal")
@@ -162,7 +188,6 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
         invalid_rows == 0
         and invalid_histories == 0
         and authority_violations == 0
-        and authoritative_memory_records == 0
         and event_counts["memory.shadow.pending"] == 0
         and event_counts["memory.shadow.failed"] == 0
     )
@@ -195,11 +220,13 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
             for operation in ("upsert", "cancel", "ignore")
         },
         "writer_contract_counts": dict(sorted(writer_contract_counts.items())),
+        "release_policy_counts": dict(sorted(release_policy_counts.items())),
         "active_shadow_memories": active_shadow_memories,
         "invalid_rows": invalid_rows,
         "invalid_histories": invalid_histories,
         "authority_violations": authority_violations,
         "authoritative_memory_records": authoritative_memory_records,
+        "retrospective_memory_records": authoritative_memory_records,
         "minimum_conversations": MINIMUM_REAL_SESSION_CONVERSATIONS,
         "minimum_turns": MINIMUM_REAL_SESSION_TURNS,
         "sample_sufficient": sample_sufficient,

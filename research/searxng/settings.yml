@@ -18,6 +18,11 @@ outgoing:
   max_request_timeout: 3.0
   pool_connections: 16
   pool_maxsize: 16
+  enable_http2: false
+  retries: 0
+  proxies:
+    all://:
+      - http://searx-egress-auth:8081
 
 ui:
   static_use_hash: true

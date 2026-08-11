@@ -16,6 +16,7 @@ from jarvis_voice.cli import main
 from jarvis_voice.config import voice_config_from_mapping
 from jarvis_voice.distribution import write_distribution_manifest
 from jarvis_voice.errors import BackendError
+from jarvis_voice.native_qualification import native_evidence_template
 from jarvis_voice.qualification import (
     CASE_REQUIREMENTS,
     DISPATCH_LATENCY,
@@ -67,6 +68,49 @@ def frozen_doctor(*, ready: bool = True) -> dict[str, object]:
             "packaging": {"status": status, "frozen": True, "bundle_mode": "onedir", "dll_search": {"status": status}, "mutable_data": {"status": status}},
         },
     }
+
+
+def ready_native_windows() -> dict[str, object]:
+    evidence = native_evidence_template("windows")
+    evidence["provenance"] = {
+        "native_machine": True,
+        "voice_layer_mocks_used": False,
+        "synthetic_voice_turns": False,
+        "hardware_capture": True,
+        "physical_ptt": True,
+        "physical_playback": True,
+    }
+    for value in evidence["cases"].values():
+        value.update({"status": "pass", "attempts": 1})
+    evidence["counters"].update(
+        {
+            "real_voice_turns": 200,
+            "microphone_disconnect_recoveries": 1,
+            "sleep_resume_recoveries": 1,
+        }
+    )
+    evidence["acoustic_barge_in"] = {
+        "method": "acoustic_microphone",
+        "audio_path": "wired",
+        "samples": 20,
+        "max_ptt_to_silence_ms": 150.0,
+        "silence_hold_ms": 50,
+    }
+    evidence["soak"] = {
+        "duration_seconds": 28_800,
+        "rss_samples": 97,
+        "rss_start_bytes": 300_000_000,
+        "rss_end_bytes": 301_000_000,
+        "rss_peak_bytes": 350_000_000,
+        "rss_slope_bytes_per_hour": 125_000.0,
+    }
+    evidence["runtime_profile"] = {
+        "mode": "signed_package",
+        "fingerprint_sha256": "b" * 64,
+        "stable": True,
+        "signed": True,
+    }
+    return evidence
 
 
 class QualificationSampleTests(unittest.TestCase):
@@ -169,8 +213,9 @@ class ReleaseReportTests(unittest.TestCase):
             (distribution / "JARVIS Voice.exe").write_bytes(b"exe"); write_distribution_manifest(distribution)
             samples = root / "samples.json"; samples.write_text(json.dumps({"schema_version": 1, "samples": enough_samples()}))
             frozen = root / "frozen.json"; frozen.write_text(json.dumps(frozen_doctor()))
+            native = root / "native.json"; native.write_text(json.dumps(ready_native_windows()))
             report = build_release_report(
-                voice_config_from_mapping({}), distribution=distribution, samples_path=samples, frozen_doctor_path=frozen,
+                voice_config_from_mapping({}), distribution=distribution, samples_path=samples, frozen_doctor_path=frozen, native_evidence_path=native,
                 now=lambda: datetime(2026, 8, 10, tzinfo=UTC), host_probe=lambda: {"status": "ready", "code": "host.ready"},
                 doctor_runner=lambda _: {"ready": True, "network_used": False},
                 signature_verifier=lambda _: {"status": "ready", "code": "signature.ready", "files_checked": 1},
@@ -187,8 +232,9 @@ class ReleaseReportTests(unittest.TestCase):
             self.assertEqual(main(["qualification-record", "--samples", str(samples), "--case", "no_speech", "--outcome", "pass"]), 0)
             distribution = root / "dist"; distribution.mkdir(); (distribution / "JARVIS Voice.exe").write_bytes(b"unsigned"); write_distribution_manifest(distribution)
             frozen = root / "frozen.json"; frozen.write_text(json.dumps(frozen_doctor(ready=False)))
+            native = root / "native.json"; native.write_text(json.dumps(native_evidence_template("windows")))
             output = root / "qualification.json"
-            code = main(["qualify-release", "--config", str(Path(__file__).resolve().parents[1] / "config.example.json"), "--distribution", str(distribution), "--samples", str(samples), "--frozen-doctor", str(frozen), "--output", str(output)])
+            code = main(["qualify-release", "--config", str(Path(__file__).resolve().parents[1] / "config.example.json"), "--distribution", str(distribution), "--samples", str(samples), "--frozen-doctor", str(frozen), "--native-evidence", str(native), "--output", str(output)])
             self.assertEqual(code, 2)
             report = json.loads(output.read_text())
             self.assertFalse(report["ready"]); self.assertEqual(report["checks"]["host"]["status"], "blocked"); self.assertEqual(report["checks"]["authenticode"]["status"], "blocked")

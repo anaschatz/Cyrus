@@ -703,6 +703,7 @@ class CloudLifecycleE2ETests(unittest.IsolatedAsyncioTestCase):
                 task_profiler=_Profiler(),
                 cloud_model=cloud,
                 cloud_endpoints=(endpoint,),
+                cloud_release_verified=True,
             )
             session_id = str(uuid.uuid4())
             service.attach_client("connection", cloud_session_id=session_id)
@@ -780,6 +781,7 @@ class OpenRouterBoundaryTests(unittest.IsolatedAsyncioTestCase):
                                     "max_completion_tokens": 2048,
                                     "model_id": DEEPSEEK_MODEL,
                                     "pricing": {"prompt": "0.00000009", "completion": "0.00000018", "request": "0"},
+                                    "provider_name": "Provider Inc",
                                     "quantization": "fp8",
                                     "status": 0,
                                     "supported_parameters": ["top_p", "temperature", "reasoning", "max_tokens"],
@@ -793,7 +795,7 @@ class OpenRouterBoundaryTests(unittest.IsolatedAsyncioTestCase):
                 if request.url.path == "/api/v1/key":
                     return httpx.Response(
                         200,
-                        json={"data": {"limit": 10, "limit_remaining": 9, "usage_monthly": 1, "limit_reset": "monthly"}},
+                        json={"data": {"include_byok_in_limit": False, "is_management_key": False, "is_provisioning_key": False, "limit": 5, "limit_remaining": 4, "usage_monthly": 1, "limit_reset": "monthly"}},
                         request=request,
                     )
                 raise AssertionError(request.url.path)
@@ -806,7 +808,9 @@ class OpenRouterBoundaryTests(unittest.IsolatedAsyncioTestCase):
             )
             self.addAsyncCleanup(adapter.aclose)
             result = await adapter.revalidate(endpoint)
-            self.assertEqual(result.key_remaining_microusd, 9_000_000)
+            self.assertEqual(result.key_remaining_microusd, 4_000_000)
+            self.assertEqual(result.key_limit_microusd, 5_000_000)
+            self.assertTrue(result.key_policy_verified)
             with self.assertRaisesRegex(Exception, "cloud_dispatch_without_permit"):
                 await adapter._dispatch_client.post("/chat/completions", json={})
 

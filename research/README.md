@@ -74,3 +74,45 @@ direct fetch; browser support requires a later, separately reviewed milestone.
 The Orchestrator owns durable plans, approvals, epochs, cited snapshots and
 publication. The sidecar owns public search/fetch/extraction and returns the
 closed `ResearchCorpusV1` contract. Firecrawl is not part of v1.
+
+## Online retrieval quality gate
+
+The next, separate gate is `online-retrieval-quality/1`.  Its checked-in seed
+is `benchmarks/retrieval-benchmark-seed-v1.json`: exactly 50 Greek and 50
+English cases.  It is intentionally marked `UNREVIEWED`; empty qrels are not
+qualification evidence and force a rejected result.  A reviewer can validate
+the artifact and export a JSONL worksheet without invoking a model:
+
+```console
+uv run --frozen jarvis-research-benchmark \
+  --benchmark benchmarks/retrieval-benchmark-seed-v1.json \
+  --review-jsonl /secure/review/retrieval-qrels-v1.jsonl
+```
+
+Production image identity is supplied in the closed
+`research-image-manifest/1` format.  `image-manifest.template.json` contains
+deliberately invalid placeholders: replace them with registry
+`repository@sha256:<manifest-digest>` references plus the matching image
+configuration digests.  Local image IDs and mutable tags are rejected.
+
+The metric thresholds are explicit in
+`online-qualification-thresholds-v1.json`; the runner has no permissive hidden
+fallback.  A fail-closed evidence record can be produced with:
+
+```console
+uv run --frozen jarvis-research-online-qualify \
+  --benchmark benchmarks/retrieval-benchmark-seed-v1.json \
+  --images image-manifest.production.json \
+  --thresholds online-qualification-thresholds-v1.json \
+  --output results/online-retrieval-quality-v1.json
+```
+
+`--execute-live --bearer-token-file <secret>` is accepted only after every
+case is human-reviewed and the three registry images match the runtime image
+configuration and platform.  Case evidence contains IDs, qrel ranks, counts,
+durations and hashes only—never queries, result URLs, titles or documents.
+The live retrieval metrics alone cannot accept the release: quote integrity,
+freshness/conflict/independence, bandwidth, real Orchestrator cancellation and
+privacy interception remain mandatory independent decisions.  Until those
+evidence producers are connected, the runner reports their typed blockers and
+keeps `research_enabled` false.

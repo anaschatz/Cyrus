@@ -74,7 +74,11 @@ class RetrievalCorpusV1:
 class SearXNGSearchAdapter:
     def __init__(self, client: httpx.AsyncClient, *, endpoint: str = "http://searxng:8080/search") -> None:
         parsed = urlsplit(endpoint)
-        if (parsed.scheme, parsed.hostname, parsed.port, parsed.path) != ("http", "searxng", 8080, "/search"):
+        target = (parsed.scheme, parsed.hostname, parsed.port, parsed.path)
+        if target not in {
+            ("http", "searxng", 8080, "/search"),
+            ("http", "qualification-search", 8080, "/search"),
+        }:
             raise ValueError("SearXNG endpoint must be the fixed internal endpoint")
         self._client = client
         self._endpoint = endpoint

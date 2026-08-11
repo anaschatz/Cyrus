@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .errors import ProtocolError
+from .approval_arbiter import GlobalApprovalController
 
 
 CLOUD_APPROVAL_PROTOCOL = "jarvis.cloud-approval/1"
@@ -394,6 +395,25 @@ class CloudApprovalJournal:
                 expires_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS cloud_events_expiry ON cloud_events(expires_at);
+            CREATE TABLE IF NOT EXISTS approval_arbiter_local (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                protocol TEXT NOT NULL,
+                approval_id TEXT NOT NULL,
+                presentation_id TEXT NOT NULL,
+                requested_event_id TEXT NOT NULL,
+                state TEXT NOT NULL CHECK(state IN (
+                    'STAGED','ARMED','DISARMED_CAPTURE','DECISION_PENDING','CLOSED'
+                )),
+                arm_counter INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT OR IGNORE INTO approval_arbiter_local(
+                singleton,protocol,approval_id,presentation_id,requested_event_id,state,arm_counter,updated_at
+            )
+            SELECT 1,'jarvis.cloud-approval/1',approval_id,presentation_id,requested_event_id,
+                   'STAGED',0,sent_at
+            FROM cloud_events WHERE event_kind='requested' AND status='ARMED'
+            ORDER BY rowid DESC LIMIT 1;
             """
         )
         self.prune()
@@ -513,6 +533,51 @@ class CloudApprovalJournal:
                 "SELECT * FROM cloud_events WHERE event_kind='decision' AND status='PENDING' ORDER BY rowid"
             ).fetchall()]
 
+    def pending_presentation(self) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM cloud_events WHERE event_kind='requested' AND status='ARMED'
+                   ORDER BY rowid DESC LIMIT 1"""
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def close_presentation(self, approval_id: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                """UPDATE cloud_events SET status='CLOSED'
+                   WHERE event_kind='requested' AND approval_id=? AND status='ARMED'""",
+                (approval_id,),
+            )
+
+    def load_arbiter_presentation(self) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM approval_arbiter_local WHERE singleton=1 AND state!='CLOSED'"
+            ).fetchone()
+            return dict(row) if row is not None else None
+
+    def store_arbiter_presentation(self, *, protocol: str, approval_id: str,
+                                   presentation_id: str, requested_event_id: str,
+                                   state: str, arm_counter: int) -> None:
+        with self._lock:
+            self._connection.execute(
+                """INSERT INTO approval_arbiter_local(
+                   singleton,protocol,approval_id,presentation_id,requested_event_id,state,arm_counter,updated_at
+                   ) VALUES(1,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET
+                   protocol=excluded.protocol,approval_id=excluded.approval_id,
+                   presentation_id=excluded.presentation_id,requested_event_id=excluded.requested_event_id,
+                   state=excluded.state,arm_counter=excluded.arm_counter,updated_at=excluded.updated_at""",
+                (protocol, approval_id, presentation_id, requested_event_id, state, arm_counter,
+                 datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")),
+            )
+
+    def close_arbiter_presentation(self) -> None:
+        with self._lock:
+            self._connection.execute(
+                "UPDATE approval_arbiter_local SET state='CLOSED',updated_at=? WHERE singleton=1",
+                (datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),),
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class ArmedPresentation:
@@ -533,14 +598,29 @@ class CloudApprovalController:
         *,
         session_id: str,
         journal: CloudApprovalJournal,
+        approval_arbiter: GlobalApprovalController | None = None,
     ) -> None:
         self.factory = CloudApprovalEventFactory(session_id)
         self.journal = journal
-        self.presentation: ArmedPresentation | None = None
+        self.approval_arbiter = approval_arbiter or GlobalApprovalController(journal)
+        pending_decisions = self.journal.pending_decisions()
+        pending = self.journal.pending_presentation() if not pending_decisions else None
+        self.presentation: ArmedPresentation | None = (
+            ArmedPresentation(
+                approval_id=pending["approval_id"],
+                presentation_id=pending["presentation_id"],
+                requested_event_id=pending["requested_event_id"],
+                approval_binding_sha256=pending["approval_binding_sha256"],
+                decision_nonce=pending["decision_nonce"],
+                expires_at=pending["expires_at"],
+                arm_counter=(self.approval_arbiter.presentation.arm_counter
+                             if self.approval_arbiter.presentation is not None else 0),
+            ) if pending is not None else None
+        )
         self._next_server_seq = 1
         self._server_seen: dict[int, str] = {}
         self._decision_retry: dict[str, tuple[int, float]] = {
-            row["event_id"]: (0, 0.0) for row in self.journal.pending_decisions()
+            row["event_id"]: (0, 0.0) for row in pending_decisions
         }
 
     def begin_new_connection(self) -> None:
@@ -590,6 +670,14 @@ class CloudApprovalController:
         ]
         if event.type == "cloud.approval.requested" and not duplicate:
             self.journal.record(event, event_kind="requested", status="ARMED", expires_at=event.payload["expires_at"])
+            armed = self.approval_arbiter.stage(
+                protocol=CLOUD_APPROVAL_PROTOCOL,
+                approval_id=event.payload["approval_id"],
+                presentation_id=event.payload["presentation_id"],
+                requested_event_id=event.event_id,
+                key_counter=key_counter,
+                both_keys_up=both_keys_up,
+            )
             self.presentation = (
                 ArmedPresentation(
                     approval_id=event.payload["approval_id"],
@@ -600,16 +688,37 @@ class CloudApprovalController:
                     expires_at=event.payload["expires_at"],
                     arm_counter=key_counter,
                 )
-                if both_keys_up
+                if armed
                 else None
             )
         elif event.type in {"cloud.approval.decision_result", "cloud.approval.invalidated"}:
+            self.journal.close_presentation(event.payload["approval_id"])
+            self.approval_arbiter.close(
+                protocol=CLOUD_APPROVAL_PROTOCOL, approval_id=event.payload["approval_id"]
+            )
             if self.presentation is not None and self.presentation.approval_id == event.payload["approval_id"]:
                 self.presentation = None
         return outbound
 
     def disarm_for_ptt(self) -> None:
-        self.presentation = None
+        self.approval_arbiter.disarm_for_capture()
+
+    def rearm_after_capture(self, *, key_counter: int, both_keys_up: bool) -> bool:
+        if not self.approval_arbiter.capture_ended(
+            key_counter=key_counter, both_keys_up=both_keys_up
+        ) or self.presentation is None:
+            return False
+        value = self.presentation
+        self.presentation = ArmedPresentation(
+            approval_id=value.approval_id,
+            presentation_id=value.presentation_id,
+            requested_event_id=value.requested_event_id,
+            approval_binding_sha256=value.approval_binding_sha256,
+            decision_nonce=value.decision_nonce,
+            expires_at=value.expires_at,
+            arm_counter=key_counter,
+        )
+        return True
 
     def key_down(
         self,
@@ -626,6 +735,12 @@ class CloudApprovalController:
             or autorepeat
             or not capture_idle
             or key_counter <= presentation.arm_counter
+            or not self.approval_arbiter.begin_decision(
+                protocol=CLOUD_APPROVAL_PROTOCOL,
+                key_counter=key_counter,
+                capture_idle=capture_idle,
+                autorepeat=autorepeat,
+            )
         ):
             return None
         decision = "approve" if key == "F10" else "deny"

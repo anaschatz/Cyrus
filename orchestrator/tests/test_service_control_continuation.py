@@ -176,7 +176,7 @@ class ServiceAndControlTests(StoreCase, unittest.TestCase):
 
 class ContinuationAndRecoveryTests(StoreCase, unittest.TestCase):
     def test_continuation_is_versioned_and_fails_closed_on_digest_change(self) -> None:
-        store = self.make_store()
+        store = self.make_store(tool_authority_enabled=True)
         task = self.executing(store, self.admitted(store, event_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4())))
         arguments = {"target": "lamp"}
         store.create_approval(task.task_id, task.epoch, kind="tool", name="switch", arguments=arguments, now=NOW)
@@ -234,7 +234,7 @@ class ContinuationAndRecoveryTests(StoreCase, unittest.TestCase):
             )
 
     def test_capability_result_requires_second_epoch_cas(self) -> None:
-        store = self.make_store()
+        store = self.make_store(tool_authority_enabled=True)
         task = self.executing(store, self.admitted(store, event_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4())))
         reservation = store.reserve_capability(
             task.task_id, task.epoch, kind="tool", request_key="call-1", arguments={"x": 1}, now=NOW

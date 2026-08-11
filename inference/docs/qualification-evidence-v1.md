@@ -151,3 +151,11 @@ Mac `platform_gate` is exactly:
 
 All decimal metrics must be finite. Boolean values never satisfy integer or
 numeric gates.
+
+This evidence schema establishes appliance protocol, isolation, lifecycle, and
+platform behavior. It does not by itself establish model usefulness or
+production profile readiness. The additional, identity-bound bilingual quality,
+structured correctness, performance, eight-hour soak, and memory-headroom gates
+are frozen in [`model-profiles-v1.md`](model-profiles-v1.md). A legacy v1 pass
+that predates those gates remains technical evidence but MUST NOT activate a
+production model profile.

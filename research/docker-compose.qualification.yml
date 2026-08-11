@@ -35,6 +35,42 @@ services:
     healthcheck:
       disable: true
 
+  qualification-http-v6:
+    image: ${JARVIS_RESEARCH_IMAGE:?set an immutable image@sha256 digest}
+    profiles: ["qualification"]
+    entrypoint: ["jarvis-research-fixture", "http", "--bind", "::"]
+    read_only: true
+    restart: "no"
+    networks:
+      qualification_lab:
+        ipv6_address: 2606:4700:4700:100::10
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      disable: true
+
+  qualification-tunnel:
+    image: ${JARVIS_RESEARCH_IMAGE:?set an immutable image@sha256 digest}
+    profiles: ["qualification"]
+    entrypoint: ["jarvis-research-fixture", "tunnel"]
+    read_only: true
+    restart: "no"
+    networks:
+      qualification_lab:
+        ipv4_address: 93.184.216.11
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      disable: true
+
   qualification-dns:
     image: ${JARVIS_RESEARCH_IMAGE:?set an immutable image@sha256 digest}
     profiles: ["qualification"]
@@ -72,12 +108,14 @@ services:
 networks:
   qualification_lab:
     internal: true
+    enable_ipv6: true
     ipam:
       config:
         - subnet: 93.184.216.0/24
+        - subnet: 2606:4700:4700:100::/120
   qualification_search:
     internal: true
 
 configs:
   searxng_settings:
-    file: ${JARVIS_QUALIFICATION_SEARXNG_SETTINGS_SOURCE:-./searxng/settings.yml}
+    file: ${JARVIS_QUALIFICATION_SEARXNG_SETTINGS_SOURCE:-./searxng/qualification-settings.yml}

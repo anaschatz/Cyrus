@@ -598,10 +598,12 @@ def run_piper_f1_qualification(
     automated_pass = all(gates.values())
     return {
         "schema": "jarvis.voice.piper-f1-qualification/1",
-        "ready_for_promotion": automated_pass and human_voice_approved,
+        # Candidate metrics are necessary but never replace native acoustic,
+        # 200-turn, recovery, and soak evidence for production promotion.
+        "ready_for_promotion": False,
         "automated_pass": automated_pass,
         "code": (
-            "tts.piper_f1.qualification_passed"
+            "tts.piper_f1.native_qualification_required"
             if automated_pass and human_voice_approved
             else "tts.piper_f1.human_approval_required"
             if automated_pass
@@ -616,6 +618,7 @@ def run_piper_f1_qualification(
         },
         "gates": gates,
         "human_voice_approved": human_voice_approved,
+        "native_acceptance_required": True,
         "network_used": False,
         "installation_performed": False,
         "production_backend_changed": False,

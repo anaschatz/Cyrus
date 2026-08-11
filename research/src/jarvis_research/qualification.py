@@ -26,10 +26,14 @@ from .config import QUALIFICATION_FIELDS, load_json_object
 QUALIFICATION_SCHEMA_VERSION = 2
 MANDATORY_LIVE_CASES = frozenset(
     {
-        "robots_allow", "robots_disallow", "robots_404", "robots_410", "robots_fail_closed",
-        "redirect_revalidation", "ipv4_private_reserved", "ipv6_private_reserved", "mixed_dns_answers",
-        "dns_rebinding", "mime_limit", "compressed_body_limit", "decompressed_body_limit",
-        "single_transient_retry", "deadline", "cancellation",
+        "robots_allow", "robots_disallow", "robots_404", "robots_410", "robots_malformed",
+        "robots_oversized", "robots_timeout", "robots_401", "robots_403", "robots_429", "robots_5xx",
+        "redirect_valid", "redirect_forbidden", "ipv4_private_reserved", "ipv6_private_reserved",
+        "mixed_dns_answers", "dns_rebinding", "html_document", "xhtml_document", "plain_text_document",
+        "mime_forbidden", "compressed_body_limit", "decompressed_body_limit", "single_transient_retry",
+        "deadline", "cancellation", "language_greek", "language_english", "language_unsupported",
+        "language_insufficient", "duplicate_exact", "duplicate_syndicated_near", "date_conflict",
+        "date_jsonld", "date_article_meta",
     }
 )
 _SECRET = re.compile(
@@ -141,7 +145,9 @@ def verify_accepted_evidence(evidence: dict[str, object]) -> None:
         raise ValueError("qualification evidence record digest is invalid")
 
 
-def _run(command: list[str], *, cwd: Path, timeout: float = 15.0) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: list[str], *, cwd: Path, timeout: float = 15.0, input: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     executable = shutil.which(command[0], path=os.environ.get("PATH"))
     if executable is None:
         return subprocess.CompletedProcess(command, 127, "", "command_unavailable")
@@ -151,7 +157,7 @@ def _run(command: list[str], *, cwd: Path, timeout: float = 15.0) -> subprocess.
     )
     return subprocess.run(
         [executable, *command[1:]], cwd=cwd, text=True, capture_output=True, timeout=timeout, check=False,
-        env=environment,
+        env=environment, input=input,
     )
 
 
@@ -203,24 +209,34 @@ class LiveQualificationRunnerV1:
         base = str(self._manifest["api_base_url"]).rstrip("/")
         if not base.startswith(("http://127.0.0.1:", "http://[::1]:")) or not base.endswith("/v1"):
             raise ValueError("qualification API must be loopback /v1")
-        token = Path(str(self._manifest["bearer_token_file"])).read_text(encoding="utf-8").strip()
-        headers = {"Authorization": "Bearer " + token}
-        async with httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=50.0) as client:
-            results.append(await self._auth_case(client, base, headers))
-            try:
-                response = await client.get(base + "/qualification", headers=headers)
-                value = response.json()
-                if response.status_code != 200 or not isinstance(value, dict) or set(value) != QUALIFICATION_FIELDS:
-                    raise ValueError
-                qualification = value
-            except (httpx.HTTPError, ValueError, json.JSONDecodeError):
-                results.append(CaseResultV1("qualification_identity", "FAIL", "identity_invalid", 0, ""))
-            else:
-                results.append(CaseResultV1("qualification_identity", "PASS", "ok", 0, hashlib.sha256(response.content).hexdigest()))
-            for case in sorted(self._manifest["cases"], key=lambda item: item["case_id"]):  # type: ignore[index,union-attr]
-                results.append(await self._network_case(client, base, headers, case))  # type: ignore[arg-type]
-        results.extend(self._topology_cases(Path(str(self._manifest["compose_directory"]))))
-        results.append(self._sanitized_logs(Path(str(self._manifest["compose_directory"]))))
+        compose_dir = Path(str(self._manifest["compose_directory"]))
+        prepared = self._run(
+            self._compose + ["up", "-d", "--force-recreate", "research-api", "qualification-http"],
+            cwd=compose_dir, timeout=30,
+        )
+        time.sleep(1.0)
+        results.append(CaseResultV1(
+            "fresh_runtime", "PASS" if prepared.returncode == 0 else "FAIL",
+            "ok" if prepared.returncode == 0 else "runtime_reset_failed", 0, "",
+        ))
+        results.append(self._auth_case(compose_dir))
+        identity = self._run(
+            self._compose + ["exec", "-T", "research-api", "python", "-m", "jarvis_research.runtime_probe", "qualification-identity"],
+            cwd=compose_dir,
+        )
+        try:
+            value = json.loads(identity.stdout)
+            if identity.returncode or not isinstance(value, dict) or set(value) != QUALIFICATION_FIELDS:
+                raise ValueError
+            qualification = value
+        except (ValueError, json.JSONDecodeError):
+            results.append(CaseResultV1("qualification_identity", "FAIL", "identity_invalid", 0, ""))
+        else:
+            results.append(CaseResultV1("qualification_identity", "PASS", "ok", 0, hashlib.sha256(identity.stdout.encode()).hexdigest()))
+        for case in sorted(self._manifest["cases"], key=lambda item: item["case_id"]):  # type: ignore[index,union-attr]
+            results.append(self._network_case(compose_dir, case))  # type: ignore[arg-type]
+        results.extend(self._topology_cases(compose_dir))
+        results.append(self._sanitized_logs(compose_dir))
         browser_disabled = qualification.get("browser_qualification_sha256") == ""
         results.append(CaseResultV1("browser_disabled", "PASS" if browser_disabled else "FAIL", "ok" if browser_disabled else "browser_digest_present", 0, ""))
         artifacts = self._artifact_digests(Path(str(self._manifest["compose_directory"])))
@@ -249,23 +265,17 @@ class LiveQualificationRunnerV1:
         bound = {**body, "evidence_sha256": digest}
         return {**bound, "record_sha256": record_digest(bound)}
 
-    async def _auth_case(self, client: httpx.AsyncClient, base: str, headers: dict[str, str]) -> CaseResultV1:
+    def _auth_case(self, cwd: Path) -> CaseResultV1:
         started = time.monotonic()
-        try:
-            denied, allowed = await asyncio.gather(
-                client.get(base + "/qualification", headers={"Authorization": "Bearer invalid"}),
-                client.get(base + "/qualification", headers=headers),
-            )
-            passed = denied.status_code == 401 and allowed.status_code == 200
-            raw = denied.content + b"\n" + allowed.content
-            return CaseResultV1("authenticated_api", "PASS" if passed else "FAIL", "ok" if passed else "auth_boundary_failed", int((time.monotonic()-started)*1000), hashlib.sha256(raw).hexdigest())
-        except httpx.HTTPError:
-            return CaseResultV1("authenticated_api", "FAIL", "api_unavailable", int((time.monotonic()-started)*1000), "")
+        result = self._run(
+            self._compose + ["exec", "-T", "research-api", "python", "-m", "jarvis_research.runtime_probe", "api-auth-boundary"],
+            cwd=cwd,
+        )
+        passed = result.returncode == 0
+        return CaseResultV1("authenticated_api", "PASS" if passed else "FAIL", "ok" if passed else "auth_boundary_failed", int((time.monotonic()-started)*1000), "")
 
-    async def _network_case(
-        self, client: httpx.AsyncClient, base: str, headers: dict[str, str], case: dict[str, object]
-    ) -> CaseResultV1:
-        expected = {"case_id", "idempotency_key", "query", "expected_http", "expected_source_count", "cancel_after_ms"}
+    def _network_case(self, cwd: Path, case: dict[str, object]) -> CaseResultV1:
+        expected = {"case_id", "idempotency_key", "query", "expected", "cancel_after_ms"}
         case_id = str(case.get("case_id", "invalid"))
         started = time.monotonic()
         if set(case) != expected or not isinstance(case.get("query"), str):
@@ -281,27 +291,25 @@ class LiveQualificationRunnerV1:
             parse_research_request(raw)
         except Exception:
             return CaseResultV1(case_id, "FAIL", "request_contract_invalid", 0, "")
-        outgoing = {**headers, "Content-Type": "application/json", "Idempotency-Key": str(case["idempotency_key"])}
+        probe = canonical_json(
+            {
+                "request": request,
+                "idempotency_key": str(case["idempotency_key"]),
+                "expected": case["expected"],
+                "cancel_after_ms": case["cancel_after_ms"],
+            }
+        )
         try:
-            task = asyncio.create_task(client.post(base + "/research", headers=outgoing, content=raw))
-            cancel_ms = int(case["cancel_after_ms"])
-            if cancel_ms:
-                await asyncio.sleep(cancel_ms / 1000)
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                passed = case_id == "cancellation"
-                return CaseResultV1(case_id, "PASS" if passed else "FAIL", "cancelled", int((time.monotonic()-started)*1000), "")
-            response = await task
-            source_count = -1
-            if response.status_code == 200:
-                parsed = response.json()
-                source_count = len(parsed.get("corpus", {}).get("sources", []))
-            passed = response.status_code == int(case["expected_http"]) and source_count == int(case["expected_source_count"])
-            return CaseResultV1(case_id, "PASS" if passed else "FAIL", "ok" if passed else "unexpected_result", int((time.monotonic()-started)*1000), hashlib.sha256(response.content).hexdigest())
-        except (httpx.HTTPError, ValueError, json.JSONDecodeError):
+            result = self._run(
+                self._compose + ["exec", "-T", "research-api", "python", "-m", "jarvis_research.runtime_probe", "research-case"],
+                cwd=cwd, timeout=55, input=probe,
+            )
+            summary = json.loads(result.stdout) if result.stdout else {}
+            effect = summary.get("effect_sha256", "") if isinstance(summary, dict) else ""
+            passed = result.returncode == 0 and (not effect or re.fullmatch(r"[0-9a-f]{64}", str(effect))) is not None
+            code = "cancelled" if int(case["cancel_after_ms"]) and passed else ("ok" if passed else "unexpected_result")
+            return CaseResultV1(case_id, "PASS" if passed else "FAIL", code, int((time.monotonic()-started)*1000), str(effect) if passed else "")
+        except (subprocess.TimeoutExpired, ValueError, json.JSONDecodeError):
             return CaseResultV1(case_id, "FAIL", "network_case_failed", int((time.monotonic()-started)*1000), "")
 
     def _topology_cases(self, cwd: Path) -> list[CaseResultV1]:
@@ -315,6 +323,8 @@ class LiveQualificationRunnerV1:
         ):
             return [
                 CaseResultV1("searxng_isolation", "FAIL", "containers_unavailable", 0, ""),
+                CaseResultV1("searxng_live_search", "FAIL", "containers_unavailable", 0, ""),
+                CaseResultV1("loopback_publication", "FAIL", "containers_unavailable", 0, ""),
                 CaseResultV1("no_direct_route", "FAIL", "containers_unavailable", 0, ""),
                 CaseResultV1("late_completion_no_persistence", "FAIL", "containers_unavailable", 0, ""),
                 CaseResultV1("egress_nonroot_readonly", "FAIL", "containers_unavailable", 0, ""),
@@ -330,17 +340,66 @@ class LiveQualificationRunnerV1:
         except (KeyError, IndexError, TypeError, json.JSONDecodeError):
             isolated = False
         results.append(CaseResultV1("searxng_isolation", "PASS" if isolated else "FAIL", "ok" if isolated else "published_port_present", 0, hashlib.sha256(inspected.stdout.encode()).hexdigest() if inspected.stdout else ""))
+        live_search = self._run(
+            self._compose + ["exec", "-T", "research-api", "python", "-m", "jarvis_research.runtime_probe", "searxng-json-usable"],
+            cwd=cwd,
+        )
+        results.append(CaseResultV1(
+            "searxng_live_search", "PASS" if live_search.returncode == 0 else "FAIL",
+            "ok" if live_search.returncode == 0 else "searxng_live_search_failed", 0, "",
+        ))
         direct = self._run(self._compose + ["exec", "-T", "research-api", "python", "-m", "jarvis_research.runtime_probe", "direct-route-blocked"], cwd=cwd)
         results.append(CaseResultV1("no_direct_route", "PASS" if direct.returncode == 0 else "FAIL", "ok" if direct.returncode == 0 else "direct_route_present", 0, ""))
+        egress = self._run(
+            self._compose + ["exec", "-T", "research-api", "python", "-m", "jarvis_research.runtime_probe", "egress-matrix"],
+            cwd=cwd, timeout=30,
+        )
+        try:
+            matrix = json.loads(egress.stdout)
+        except json.JSONDecodeError:
+            matrix = {}
+        expected_matrix = {
+            "authenticated_http", "public_ipv4", "public_ipv6", "http_auth_rejected",
+            "private_ipv4_rejected", "private_ipv6_rejected", "mixed_dns_rejected",
+            "port_rejected", "environment_routes_disabled", "dns_rebinding_rejected",
+            "authenticated_connect", "connect_auth_rejected", "no_target_leakage",
+            "connect_byte_limit", "connect_idle_timeout",
+        }
+        for name in sorted(expected_matrix):
+            passed = set(matrix) == expected_matrix and matrix.get(name) is True
+            results.append(CaseResultV1(
+                "egress_" + name, "PASS" if passed else "FAIL", "ok" if passed else "egress_matrix_failed", 0, "",
+            ))
+        retry_reset = self._run(
+            self._compose + ["up", "-d", "--force-recreate", "qualification-http"],
+            cwd=cwd, timeout=30,
+        )
+        time.sleep(1.0)
+        retry_probe = self._run(
+            self._compose + ["exec", "-T", "research-api", "python", "-m", "jarvis_research.runtime_probe", "single-retry-token"],
+            cwd=cwd, timeout=15,
+        )
+        retry_passed = retry_reset.returncode == 0 and retry_probe.returncode == 0
+        results.append(CaseResultV1(
+            "run_level_transient_retry", "PASS" if retry_passed else "FAIL",
+            "ok" if retry_passed else "retry_token_failed", 0, "",
+        ))
         research_inspect = self._run(["docker", "inspect", research_id.stdout.strip()], cwd=cwd)
         try:
             research_info = json.loads(research_inspect.stdout)[0]
             mounts = research_info["Mounts"]
             durable = any(item.get("Type") == "volume" and item.get("RW") for item in mounts)
+            bindings = research_info["NetworkSettings"]["Ports"].get("8770/tcp")
+            loopback = bindings == [{"HostIp": "127.0.0.1", "HostPort": "8770"}]
             if isinstance(research_info.get("Image"), str) and research_info["Image"].startswith("sha256:"):
                 self._images["research-api"] = research_info["Image"].removeprefix("sha256:")
         except (KeyError, IndexError, TypeError, json.JSONDecodeError):
             durable = True
+            loopback = False
+        results.append(CaseResultV1(
+            "loopback_publication", "PASS" if loopback else "FAIL",
+            "ok" if loopback else "loopback_port_unpublished", 0, "",
+        ))
         results.append(CaseResultV1("late_completion_no_persistence", "PASS" if not durable else "FAIL", "ok" if not durable else "writable_volume_present", 0, hashlib.sha256(research_inspect.stdout.encode()).hexdigest() if research_inspect.stdout else ""))
         guard_inspect = self._run(["docker", "inspect", guard_id.stdout.strip()], cwd=cwd)
         try:

@@ -68,7 +68,13 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         self.assertAlmostEqual(report["cases"]["barge_in"]["metrics"]["ptt_down_to_backend_idle_ms"], 150.0)  # type: ignore[index]
         self.assertEqual(
             report["native"],
-            {"microphone_opened": True, "passive_ptt_started": True, "system_tts_exercised": True},
+            {
+                "microphone_opened": True,
+                "passive_ptt_started": True,
+                "system_tts_exercised": True,
+                "acoustic_silence_measured": False,
+                "satisfies_native_ready_gate": False,
+            },
         )
         encoded = json.dumps(report)
         for forbidden in ("event_id", "turn_id", "response_id", "/Users/", "user phrase", "audio_samples"):

@@ -105,10 +105,11 @@ PortAudio output first and then hard-stops that process, so a long ONNX sentence
 cannot trap cancellation in a Python thread. Without
 `--exercise-playback-cancel`, the cancellation gate is intentionally unmeasured
 and cannot pass. `RawOutputStream.abort()` latency is software evidence; the
-final Mac audio-device run and listening check still confirm actual silence and
-voice quality. Four fixed Greek fixtures are written as WAV files for listening.
-Even if every automated gate passes, promotion remains blocked until the user
-explicitly approves the voice. The command never switches the active backend.
+native acceptance run must separately measure acoustic silence through a real
+microphone, complete 200 physical turns and the eight-hour soak. Four fixed
+Greek fixtures are written as WAV files for listening. Even if every candidate
+metric passes, promotion remains blocked until both native evidence and explicit
+user voice approval exist. The command never switches the active backend.
 
 ## Pinned acquisition and extraction
 

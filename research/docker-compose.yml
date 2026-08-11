@@ -63,6 +63,8 @@ services:
       - /var/cache/searxng:size=16m,noexec,nosuid,nodev
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: "none"
 
   searx-egress-auth:
     image: ${JARVIS_RESEARCH_IMAGE:?set an immutable image@sha256 digest}

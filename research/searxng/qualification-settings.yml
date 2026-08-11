@@ -1,0 +1,40 @@
+use_default_settings:
+  engines:
+    keep_only: []
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  secret_key: "qualification-only-no-session-use"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 1
+  formats:
+    - json
+
+outgoing:
+  enable_http: true
+  request_timeout: 3.0
+  max_request_timeout: 3.0
+  pool_connections: 8
+  pool_maxsize: 8
+  enable_http2: false
+  retries: 0
+  proxies:
+    all://:
+      - http://searx-egress-auth:8081
+
+engines:
+  - name: qualification offline
+    engine: json_engine
+    shortcut: qf
+    disabled: false
+    enable_http: true
+    categories: general
+    search_url: http://searx-engine.fixture.test/searx?q={query}
+    results_query: results
+    url_query: url
+    title_query: title
+    content_query: content

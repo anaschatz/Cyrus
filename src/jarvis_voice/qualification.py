@@ -311,6 +311,7 @@ def build_release_report(
     distribution: str | Path,
     samples_path: str | Path,
     frozen_doctor_path: str | Path,
+    native_evidence_path: str | Path | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     host_probe: Callable[[], dict[str, object]] = host_qualification,
     doctor_runner: Callable[[VoiceConfig], dict[str, object]] = doctor_report_config,
@@ -332,7 +333,30 @@ def build_release_report(
         samples = evaluate_samples(load_samples(samples_path))
     except BackendError as exc:
         samples = _blocked(exc.code, samples_total=0, failed_total=0, cases={}, metrics={}, content_captured=False)
-    checks = {"host": host, "source_doctor": source_doctor, "distribution": distribution_gate, "authenticode": signatures, "frozen_doctor": frozen, "samples": samples}
+    if native_evidence_path is None:
+        native_acceptance = _blocked("qualification.native_evidence_required")
+    else:
+        try:
+            from .native_qualification import evaluate_native_evidence, load_native_evidence
+
+            native_report = evaluate_native_evidence(load_native_evidence(native_evidence_path))
+            if native_report.get("platform") != "windows":
+                native_acceptance = _blocked("qualification.native_windows_evidence_required")
+            elif native_report.get("ready") is True:
+                native_acceptance = _ready("qualification.native_acceptance_ready")
+            else:
+                native_acceptance = _blocked("qualification.native_acceptance_blocked")
+        except BackendError as exc:
+            native_acceptance = _blocked(exc.code)
+    checks = {
+        "host": host,
+        "source_doctor": source_doctor,
+        "distribution": distribution_gate,
+        "authenticode": signatures,
+        "frozen_doctor": frozen,
+        "samples": samples,
+        "native_acceptance": native_acceptance,
+    }
     ready = all(check.get("status") == "ready" for check in checks.values())
     return {
         "schema_version": QUALIFICATION_SCHEMA_VERSION,

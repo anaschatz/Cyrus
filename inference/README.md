@@ -114,6 +114,40 @@ opens only an ephemeral loopback test server. Native Windows llama.cpp and Mac
 MLX/Outlines qualification are separate hardware runs; no repository test may
 stand in for those gates.
 
+Run the short, sanitized Mac fallback preflight against an already-running
+qualified gateway without placing the bearer secret on the command line:
+
+```text
+PYTHONPATH=inference/src python inference/scripts/run_profile_preflight.py \
+  --orchestrator-config /absolute/private/path/orchestrator.local.json
+```
+
+The preflight performs fixed Greek/English streaming checks and reports warm
+TTFT, end-to-end latency, decode throughput, and deterministic instruction
+checks. It never emits response text or the bearer token. Its report always has
+`authoritative_qualification:false`; it is a fast development signal and never
+replaces the full profile quality corpus, memory gate, or eight-hour soak in
+[`docs/model-profiles-v1.md`](docs/model-profiles-v1.md).
+
+Run the frozen deterministic fallback quality corpus separately:
+
+```text
+PYTHONPATH=inference/src python inference/scripts/run_profile_quality.py \
+  --orchestrator-config /absolute/private/path/orchestrator.local.json \
+  --corpus inference/fixtures/local-fallback-quality-v1.json \
+  --summary-only
+```
+
+The corpus contains exactly 40 Greek and 40 English cases, balanced across
+instruction following, extraction, bounded summaries, basic reasoning, and
+simple knowledge. The runner requires at least 85% per language, at
+most a ten-percentage-point language gap, and zero critical-content failures. The
+corpus SHA-256 is frozen in code. Reports contain only metrics and individual
+booleans, never prompts, model responses, or secrets. This deterministic gate
+still has `authoritative_qualification:false`; human-rubric cases and the
+eight-hour soak remain separate gates. Tool/action/research routing remains a
+separate orchestrator test that must stop primary-only work before inference.
+
 ## Native runtime notes
 
 The manifest identifies every runtime artifact. On Windows it includes the
@@ -133,13 +167,19 @@ The same `JARVIS_GATEWAY_WHEEL` and the five `JARVIS_QUAL_GPU_*` /
 supplied to production `serve`; otherwise the pass identity does not match and
 readiness remains false.
 
-### Local Apple M3 profiles
+### Local Apple development profiles
 
-The local `native/macos-m3` bundle keeps model qualifications independent:
+The local `native/macos-m3` bundle keeps model qualifications independent, but
+its legacy reports do not satisfy the production model-profile gates in
+[`docs/model-profiles-v1.md`](docs/model-profiles-v1.md):
 
-- `manifest.json` / `qualification-report.json`: qualified 0.5B fallback.
+- `manifest.json` / `qualification-report.json`: 0.5B development/transport
+  probe; never a production fallback.
 - `manifest-qwen3-4b.json` / `qualification-report-qwen3-4b.json`: qualified
-  Qwen3 4B primary profile.
+  protocol/isolation candidate for the Qwen3 4B `local-fallback` role. The
+  existing report is correctly bound to this Apple M3 / 16 GB Mac, but it
+  predates the production quality, performance, headroom, and eight-hour soak
+  suite.
 
 Regenerate either manifest without changing the other profile:
 
@@ -148,10 +188,22 @@ native/macos-m3/python/bin/python3.11 native/macos-m3/build_manifest.py --profil
 native/macos-m3/python/bin/python3.11 native/macos-m3/build_manifest.py --profile qwen3-4b
 ```
 
-The 4B profile is capped at a qualified `32768`-token context window even
-though the upstream model advertises a larger architectural maximum. Serving
-always uses the chosen profile's manifest and its matching pass report; a pass
-from one profile is never accepted for the other.
+The existing 4B manifest is capped at a qualified `32768`-token context window
+even though the upstream model advertises a larger architectural maximum. The
+production fallback contract reduces that cap to `8192`, so it requires a new
+manifest and native report. Serving always uses the chosen profile's manifest
+and its matching pass report; a pass from one profile is never accepted for the
+other.
+
+The exact Qwen3 4B candidate completed the frozen 80-case deterministic corpus
+on this M3 / 16 GB Mac, but failed bilingual quality (`14/40` Greek and `26/40`
+English). It remains a fast protocol baseline, not a production fallback, and
+does not proceed to the eight-hour soak in this configuration.
+
+The Windows `local-primary` selection, Mac `local-fallback` scope, stable public
+`jarvis-local` alias, exact artifact decisions, and numerical activation gates
+are frozen in [`docs/model-profiles-v1.md`](docs/model-profiles-v1.md). Neither
+profile is advertised as production ready until that exact native suite passes.
 
 The example manifests in `examples/` deliberately contain `REPLACE_*` strings
 and negative sizes. They are documentation templates and are intentionally

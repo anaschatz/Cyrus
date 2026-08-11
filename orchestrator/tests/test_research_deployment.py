@@ -53,16 +53,20 @@ class ResearchDeploymentTests(unittest.TestCase):
 
     def test_qualification_fixtures_are_profile_only_internal_and_unpublished(self) -> None:
         override = (ROOT / "research" / "docker-compose.qualification.yml").read_text(encoding="utf-8")
-        self.assertEqual(override.count('profiles: ["qualification"]'), 3)
-        self.assertEqual(override.count("disable: true"), 3)
+        self.assertEqual(override.count('profiles: ["qualification"]'), 5)
+        self.assertEqual(override.count("disable: true"), 5)
         self.assertNotIn("ports:", override)
         self.assertRegex(override, r"(?m)^  qualification_lab:\n    internal: true$")
         self.assertRegex(override, r"(?m)^  qualification_search:\n    internal: true$")
         self.assertIn('profiles: ["production"]', override)
         self.assertIn("JARVIS_QUALIFICATION_SEARXNG_SETTINGS_SOURCE", override)
+        probe = (ROOT / "research" / "src" / "jarvis_research" / "runtime_probe.py").read_text(encoding="utf-8")
+        self.assertIn("searxng-json-usable", probe)
+        self.assertNotIn("print(", probe)
 
     def test_searx_proxy_secret_is_confined_to_repo_owned_bridge(self) -> None:
         compose = (ROOT / "research" / "docker-compose.yml").read_text(encoding="utf-8")
+        settings = (ROOT / "research" / "searxng" / "settings.yml").read_text(encoding="utf-8")
         searx = compose.split("  searxng:", 1)[1].split("  searx-egress-auth:", 1)[0]
         self.assertNotIn("egress_proxy_credentials", searx)
         self.assertIn("http://searx-egress-auth:8081", searx)
@@ -70,6 +74,8 @@ class ResearchDeploymentTests(unittest.TestCase):
         self.assertIn("JARVIS_EGRESS_PROXY_CREDENTIALS_FILE", bridge)
         self.assertNotIn("ports:", bridge)
         self.assertIn("disable: true", bridge)
+        self.assertIn("http://searx-egress-auth:8081", settings)
+        self.assertIn("retries: 0", settings)
 
 
 if __name__ == "__main__":

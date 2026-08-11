@@ -14,6 +14,8 @@ dependencies = [
 [project.scripts]
 jarvis-research-api = "jarvis_research.api:serve"
 jarvis-research-qualify = "jarvis_research.qualification:main"
+jarvis-research-online-qualify = "jarvis_research.online_qualification:main"
+jarvis-research-benchmark = "jarvis_research.benchmark_tool:main"
 jarvis-egress-guard = "jarvis_research.egress_guard:main"
 jarvis-research-fixture = "jarvis_research.qualification_fixtures:main"
 jarvis-searx-proxy-bridge = "jarvis_research.proxy_bridge:main"

@@ -35,7 +35,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(build_parser().parse_args(["qualification-template", "--output", "samples.json"]).command, "qualification-template")
         parsed = build_parser().parse_args(["qualification-record", "--samples", "samples.json", "--case", "no_speech", "--outcome", "pass"])
         self.assertEqual(parsed.metric, [])
-        parsed = build_parser().parse_args(["qualify-release", "--config", "voice.json", "--distribution", "dist", "--samples", "samples.json", "--frozen-doctor", "doctor.json", "--output", "report.json"])
+        parsed = build_parser().parse_args(["qualify-release", "--config", "voice.json", "--distribution", "dist", "--samples", "samples.json", "--frozen-doctor", "doctor.json", "--native-evidence", "native.json", "--output", "report.json"])
         self.assertEqual(parsed.command, "qualify-release")
 
 

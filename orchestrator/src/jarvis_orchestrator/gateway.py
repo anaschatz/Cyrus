@@ -19,6 +19,7 @@ class VoiceGateway:
         self._server: Any = None
         self._sweeper: asyncio.Task[Any] | None = None
         self._cloud_connections: dict[str, Any] = {}
+        self._action_connections: dict[str, Any] = {}
 
     def _lock(self, conversation_id: str) -> asyncio.Lock:
         return self._publication_locks.setdefault(conversation_id, asyncio.Lock())
@@ -104,35 +105,58 @@ class VoiceGateway:
         sent: set[str],
         *,
         cloud_factory: Any | None = None,
+        scheduler_factory: Any | None = None,
+        action_factory: Any | None = None,
     ) -> None:
         from jarvis_voice.protocol import Envelope
         from jarvis_voice.cloud_approval import CLOUD_APPROVAL_PROTOCOL, CloudApprovalEnvelope
+        from jarvis_voice.scheduler_protocol import SCHEDULER_PROTOCOL, SchedulerEnvelope
+        from jarvis_voice.action_approval import ACTION_APPROVAL_PROTOCOL, ActionApprovalEnvelope
 
         while True:
+            if scheduler_factory is not None and self.service.scheduler is not None:
+                self.service.scheduler.promote_next_approval(
+                    session_id, supported_protocols=(SCHEDULER_PROTOCOL,)
+                )
+            if cloud_factory is not None:
+                self.service.store.claim_cloud_presentation_owner(session_id)
+            if action_factory is not None and self.service.tool_store is not None:
+                self.service.tool_store.promote_next_action_approval(session_id)
             conversation = self.service.store.active_conversation()
-            if conversation is None:
-                await asyncio.sleep(0.02)
-                continue
-            events = self.service.store.claim_outbox(
-                conversation["conversation_id"],
-                connection_id,
-                exclude_event_ids=tuple(sent),
+            events = (
+                self.service.store.claim_outbox(
+                    conversation["conversation_id"], connection_id, exclude_event_ids=tuple(sent)
+                ) if conversation is not None else []
             )
             cloud_events = (
                 self.service.store.claim_cloud_extension_events(conversation["conversation_id"])
-                if cloud_factory is not None
+                if cloud_factory is not None and conversation is not None
+                else []
+            )
+            scheduler_events = (
+                self.service.scheduler.claim_outbox(connection_id)
+                if scheduler_factory is not None and self.service.scheduler is not None
+                else []
+            )
+            action_events = (
+                self.service.tool_store.claim_action_extension_events()
+                if action_factory is not None and self.service.tool_store is not None
                 else []
             )
             publications = [
                 (event.ordinal, "base", event) for event in events
             ] + [
                 (int(event["ordinal"]), "cloud", event) for event in cloud_events
+            ] + [
+                (index, "scheduler", event) for index, event in enumerate(scheduler_events)
+            ] + [
+                (int(event["ordinal"]), "action", event) for event in action_events
             ]
             publications.sort(key=lambda item: item[0])
             if not publications:
                 await asyncio.sleep(0.02)
                 continue
-            lock = self._lock(conversation["conversation_id"])
+            lock = self._lock(conversation["conversation_id"] if conversation is not None else f"scheduler:{session_id}")
             for _ordinal, protocol_kind, logical in publications:
                 if protocol_kind == "base":
                     envelope = Envelope(
@@ -145,13 +169,33 @@ class VoiceGateway:
                         response_id=logical.response_id,
                         payload=logical.payload,
                     )
-                else:
+                elif protocol_kind == "cloud":
                     envelope = CloudApprovalEnvelope(
                         protocol=CLOUD_APPROVAL_PROTOCOL,
                         type=logical["event_type"],
                         event_id=logical["event_id"],
                         session_id=session_id,
                         seq=cloud_factory.next_seq,
+                        sent_at=logical["original_sent_at"],
+                        payload=logical["payload"],
+                    )
+                elif protocol_kind == "action":
+                    envelope = ActionApprovalEnvelope(
+                        protocol=ACTION_APPROVAL_PROTOCOL,
+                        type=logical["event_type"],
+                        event_id=logical["event_id"],
+                        session_id=session_id,
+                        seq=action_factory.next_seq,
+                        sent_at=logical["original_sent_at"],
+                        payload=logical["payload"],
+                    )
+                else:
+                    envelope = SchedulerEnvelope(
+                        protocol=SCHEDULER_PROTOCOL,
+                        type=logical["event_type"],
+                        event_id=logical["event_id"],
+                        session_id=session_id,
+                        seq=scheduler_factory.next_seq,
                         sent_at=logical["original_sent_at"],
                         payload=logical["payload"],
                     )
@@ -163,7 +207,10 @@ class VoiceGateway:
                             current = (
                                 self.service.store.outbox_claim_is_current(logical.event_id, connection_id)
                                 if protocol_kind == "base"
-                                else self.service.store.cloud_extension_is_current(logical["event_id"])
+                                else (
+                                    self.service.store.cloud_extension_is_current(logical["event_id"])
+                                    if protocol_kind == "cloud" else True
+                                )
                             )
                             if current:
                                 await websocket.send(envelope.to_json())
@@ -172,15 +219,21 @@ class VoiceGateway:
                     if protocol_kind == "base":
                         factory.consume_sequence()
                         sent.add(logical.event_id)
-                    else:
+                    elif protocol_kind == "cloud":
                         cloud_factory.consume_sequence()
+                    elif protocol_kind == "action":
+                        action_factory.consume_sequence()
+                    else:
+                        scheduler_factory.consume_sequence()
                     complete = True
                 finally:
                     with suppress(OrchestratorError):
                         if protocol_kind == "base":
                             self.service.store.finish_outbox_attempt(logical.event_id, connection_id, complete=complete)
-                        else:
+                        elif protocol_kind == "cloud":
                             self.service.store.finish_cloud_extension_write(logical["event_id"], complete=complete)
+                        elif protocol_kind == "action" and self.service.tool_store is not None:
+                            self.service.tool_store.finish_action_extension_write(logical["event_id"], complete=complete)
                 if not complete:
                     return
 
@@ -213,6 +266,19 @@ class VoiceGateway:
             CloudApprovalEventFactory,
         )
         from jarvis_voice.errors import ProtocolError
+        from jarvis_voice.scheduler_protocol import (
+            APPROVAL_ARBITER_PROTOCOL,
+            CLIENT_SCHEDULER_EVENTS,
+            SCHEDULER_PROTOCOL,
+            SchedulerEnvelope,
+            SchedulerEventFactory,
+        )
+        from jarvis_voice.action_approval import (
+            ACTION_APPROVAL_PROTOCOL,
+            CLIENT_EVENTS as CLIENT_ACTION_EVENTS,
+            ActionApprovalEnvelope,
+            ActionApprovalEventFactory,
+        )
         from jarvis_voice.sequencing import SequenceResult, SequenceTracker
 
         peer = websocket.remote_address
@@ -222,6 +288,9 @@ class VoiceGateway:
         session_id: str | None = None
         writer: asyncio.Task[Any] | None = None
         cloud_negotiated = False
+        scheduler_negotiated = False
+        scheduler_speech_negotiated = False
+        action_negotiated = False
         capture_idle = True
         connection_id = new_uuid4()
         try:
@@ -235,12 +304,31 @@ class VoiceGateway:
             session_id = hello.session_id
             capabilities = hello.payload.get("capabilities", [])
             cloud_negotiated = isinstance(capabilities, list) and CLOUD_APPROVAL_PROTOCOL in capabilities
+            action_negotiated = (
+                self.service.tool_store is not None
+                and isinstance(capabilities, list)
+                and ACTION_APPROVAL_PROTOCOL in capabilities
+                and APPROVAL_ARBITER_PROTOCOL in capabilities
+            )
+            scheduler_negotiated = (
+                self.service.scheduler is not None
+                and self.service.scheduler.readiness()["state"] == "READY"
+                and bool(self.service.config.voice_scheduler_compatibility_sha256)
+                and isinstance(capabilities, list)
+                and SCHEDULER_PROTOCOL in capabilities
+                and APPROVAL_ARBITER_PROTOCOL in capabilities
+                and hello.payload.get("scheduler_manifest_sha256")
+                    == self.service.config.voice_scheduler_compatibility_sha256
+            )
+            scheduler_speech_negotiated = scheduler_negotiated and "scheduler_notification_speech" in capabilities
             factory = EventFactory(session_id=session_id)
             await asyncio.wait_for(
                 websocket.send(factory.create("server.ready", {"protocol": "jarvis.voice/1"}).to_json()),
                 timeout=1.0,
             )
             cloud_factory = CloudApprovalEventFactory(session_id) if cloud_negotiated else None
+            scheduler_factory = SchedulerEventFactory(session_id) if scheduler_negotiated else None
+            action_factory = ActionApprovalEventFactory(session_id) if action_negotiated else None
             if cloud_factory is not None:
                 await asyncio.wait_for(
                     websocket.send(
@@ -259,9 +347,35 @@ class VoiceGateway:
                 if old_socket is not None and old_socket is not websocket:
                     with suppress(Exception):
                         await old_socket.close(code=4001, reason="session_superseded")
+            if scheduler_factory is not None:
+                await asyncio.wait_for(
+                    websocket.send(scheduler_factory.create("scheduler.ready", {
+                        "protocol": SCHEDULER_PROTOCOL,
+                        "maximum_frame_bytes": 16 * 1024,
+                        "sequence_namespace": "protocol_direction_connection",
+                    }).to_json()), timeout=1.0,
+                )
+                self.service.scheduler.promote_next_approval(
+                    session_id,
+                    supported_protocols=(SCHEDULER_PROTOCOL,),
+                )
+            if action_factory is not None and self.service.tool_store is not None:
+                await asyncio.wait_for(
+                    websocket.send(
+                        action_factory.create(
+                            "action.approval.ready",
+                            {"protocol": ACTION_APPROVAL_PROTOCOL},
+                        ).to_json()
+                    ),
+                    timeout=1.0,
+                )
+                self._action_connections[session_id] = websocket
+                self.service.tool_store.reset_action_extension_replay()
+                self.service.tool_store.promote_next_action_approval(session_id)
             self.service.attach_client(
                 connection_id,
                 cloud_session_id=session_id if cloud_negotiated else None,
+                scheduler_session_id=session_id if scheduler_negotiated else None,
             )
             active_after_handshake = self.service.store.active_conversation()
             if cloud_negotiated and active_after_handshake is not None:
@@ -277,11 +391,17 @@ class VoiceGateway:
                     connection_id,
                     sent,
                     cloud_factory=cloud_factory,
+                    scheduler_factory=scheduler_factory,
+                    action_factory=action_factory,
                 ),
                 name=f"jarvis-publisher-{connection_id}",
             )
             extension_next_seq = 1
             extension_seen: dict[int, str] = {}
+            scheduler_next_seq = 1
+            scheduler_seen: dict[int, str] = {}
+            action_next_seq = 1
+            action_seen: dict[int, str] = {}
             async for raw in websocket:
                 try:
                     preview = json.loads(raw)
@@ -289,7 +409,116 @@ class VoiceGateway:
                     await websocket.close(code=1002, reason="invalid_json")
                     break
                 if isinstance(preview, dict) and "protocol" in preview:
-                    if not cloud_negotiated:
+                    protocol = preview.get("protocol")
+                    if protocol == ACTION_APPROVAL_PROTOCOL:
+                        if not action_negotiated or self.service.tool_store is None:
+                            await websocket.close(code=1002, reason="extension_not_negotiated")
+                            break
+                        event = ActionApprovalEnvelope.from_json(raw)
+                        if event.type not in CLIENT_ACTION_EVENTS or event.session_id != session_id:
+                            await websocket.close(code=1002, reason="invalid_extension_event")
+                            break
+                        fingerprint = event.to_json()
+                        if event.seq == action_next_seq:
+                            action_seen[event.seq] = fingerprint
+                            action_next_seq += 1
+                        elif event.seq < action_next_seq and action_seen.get(event.seq) == fingerprint:
+                            continue
+                        else:
+                            await websocket.close(code=1002, reason="extension_sequence")
+                            break
+                        if event.type == "action.approval.event_ack":
+                            self.service.tool_store.acknowledge_action_extension(
+                                event.payload["acked_event_id"]
+                            )
+                        elif event.type == "action.approval.decision":
+                            if not capture_idle:
+                                await websocket.close(code=1002, reason="capture_active")
+                                break
+                            outcome = self.service.tool_store.decide_action_transport(
+                                decision_event_id=event.event_id,
+                                semantic_sha256=event.semantic_sha256,
+                                approval_id=event.payload["approval_id"],
+                                presentation_id=event.payload["presentation_id"],
+                                requested_event_id=event.payload["requested_event_id"],
+                                approval_binding_sha256=event.payload["approval_binding_sha256"],
+                                decision_nonce=event.payload["decision_nonce"],
+                                decision=event.payload["decision"],
+                                session_id=session_id,
+                            )
+                            if not outcome.get("duplicate"):
+                                self._track_execution(outcome["task_id"])
+                            self.service.tool_store.promote_next_action_approval(session_id)
+                        continue
+                    if protocol == SCHEDULER_PROTOCOL:
+                        if not scheduler_negotiated or self.service.scheduler is None:
+                            await websocket.close(code=1002, reason="extension_not_negotiated")
+                            break
+                        event = SchedulerEnvelope.from_json(raw)
+                        if event.type not in CLIENT_SCHEDULER_EVENTS or event.session_id != session_id:
+                            await websocket.close(code=1002, reason="invalid_extension_event")
+                            break
+                        fingerprint = event.to_json()
+                        if event.seq == scheduler_next_seq:
+                            scheduler_seen[event.seq] = fingerprint
+                            scheduler_next_seq += 1
+                        elif event.seq < scheduler_next_seq and scheduler_seen.get(event.seq) == fingerprint:
+                            continue
+                        else:
+                            await websocket.close(code=1002, reason="extension_sequence")
+                            break
+                        if event.type == "scheduler.event_ack":
+                            self.service.scheduler.acknowledge_scheduler_event(
+                                event.payload["acked_event_id"], status=event.payload["status"],
+                                speech_supported=scheduler_speech_negotiated,
+                            )
+                        elif event.type == "scheduler.approval.decision":
+                            if not capture_idle:
+                                await websocket.close(code=1002, reason="capture_active")
+                                break
+                            self.service.scheduler.decide_approval(
+                                approval_id=event.payload["approval_id"],
+                                proposal_id=event.payload["proposal_id"],
+                                proposal_sha256=event.payload["proposal_sha256"],
+                                decision=event.payload["decision"],
+                                cause_event_id=event.event_id,
+                                owner_session_id=session_id,
+                                presentation_id=event.payload["presentation_id"],
+                                requested_event_id=event.payload["requested_event_id"],
+                                decision_nonce=event.payload["decision_nonce"],
+                            )
+                            self.service.scheduler.promote_next_approval(
+                                session_id, supported_protocols=(SCHEDULER_PROTOCOL,)
+                            )
+                            if cloud_negotiated:
+                                self.service.store.claim_cloud_presentation_owner(session_id)
+                        elif event.type == "scheduler.notification.receipt":
+                            self.service.scheduler.record_delivery_receipt(
+                                event_id=event.event_id,
+                                semantic_sha256=event.semantic_sha256,
+                                notification=event.payload["notification_id"],
+                                attempt_id=event.payload["attempt_id"],
+                                stage=event.payload["stage"],
+                                reason_code=event.payload["reason_code"],
+                                observed_at_utc=event.payload["observed_at_utc"],
+                            )
+                        elif event.type == "scheduler.notification.action":
+                            if event.payload["action"] == "CANCEL":
+                                self.service.scheduler.cancel_job(
+                                    event.payload["job_id"], event.payload["job_revision"],
+                                    cause_event_id=event.event_id,
+                                )
+                            else:
+                                self.service.scheduler.snooze_occurrence(
+                                    job_id=event.payload["job_id"],
+                                    job_revision=event.payload["job_revision"],
+                                    occurrence=event.payload["occurrence_id"],
+                                    expected_generation=event.payload["snooze_generation"],
+                                    snooze_until_at_utc=event.payload["requested_due_at_utc"],
+                                    cause_event_id=event.event_id,
+                                )
+                        continue
+                    if protocol != CLOUD_APPROVAL_PROTOCOL or not cloud_negotiated:
                         await websocket.close(code=1002, reason="extension_not_negotiated")
                         break
                     event = CloudApprovalEnvelope.from_json(raw)
@@ -323,6 +552,12 @@ class VoiceGateway:
                         if outcome["result"]["result"] == "applied":
                             task = self.service.store.resume_cloud_decision(event.payload["approval_id"])
                             self._track_execution(task.task_id)
+                            if scheduler_negotiated and self.service.scheduler is not None:
+                                self.service.scheduler.promote_next_approval(
+                                    session_id, supported_protocols=(SCHEDULER_PROTOCOL,)
+                                )
+                            if cloud_negotiated:
+                                self.service.store.claim_cloud_presentation_owner(session_id)
                     continue
                 event = Envelope.from_json(raw)
                 if event.session_id != session_id:
@@ -370,6 +605,10 @@ class VoiceGateway:
                 with suppress(asyncio.CancelledError, Exception):
                     await writer
             if session_id is not None:
+                if self.service.scheduler is not None:
+                    self.service.scheduler.mark_owner_disconnected(session_id)
                 self.service.detach_client(connection_id)
                 if self._cloud_connections.get(session_id) is websocket:
                     self._cloud_connections.pop(session_id, None)
+                if self._action_connections.get(session_id) is websocket:
+                    self._action_connections.pop(session_id, None)

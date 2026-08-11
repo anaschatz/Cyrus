@@ -10,11 +10,22 @@ from pathlib import Path
 import _bootstrap  # noqa: F401
 from helpers import StoreCase
 from jarvis_orchestrator.config import OrchestratorConfig
-from jarvis_orchestrator.domain import ModelChunk, ModelRequest, ModelUsage, TaskState
+from jarvis_orchestrator.domain import (
+    ModelChunk,
+    ModelRequest,
+    ModelUsage,
+    OrchestratorError,
+    TaskState,
+)
 from jarvis_orchestrator.memory import (
     MemoryObservation,
     MemoryOperation,
     MemoryProposal,
+)
+from jarvis_orchestrator.memory_release import (
+    MEMORY_RELEASE_POLICY_SHA256,
+    MEMORY_RELEASE_POLICY_VERSION,
+    shadow_safety_fields,
 )
 from jarvis_orchestrator.model import BudgetedModelPort
 from jarvis_orchestrator.service import OrchestratorService
@@ -123,6 +134,30 @@ class MemoryShadowTests(StoreCase, unittest.TestCase):
         )
         self.assertNotIn(text, str(audit))
         self.assertFalse(audit["payload"]["authoritative_state_changed"])
+        self.assertFalse(audit["payload"]["automatic_side_effect_requested"])
+        self.assertFalse(audit["payload"]["action_evidence_emitted"])
+        self.assertEqual(
+            audit["payload"]["release_policy_version"],
+            MEMORY_RELEASE_POLICY_VERSION,
+        )
+        self.assertEqual(
+            audit["payload"]["release_policy_sha256"],
+            MEMORY_RELEASE_POLICY_SHA256,
+        )
+        self.assertEqual(
+            audit["payload"]["authority_state_before_sha256"],
+            audit["payload"]["authority_state_after_sha256"],
+        )
+        self.assertEqual(
+            audit["payload"]["provenance"],
+            {
+                "current_source_event_id": memory.observations[0].source_event_id,
+                "source_text_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                "superseded_source_event_ids": [],
+                "writer_contract_sha256": CONTRACT_SHA256,
+                "proposal_sha256": audit["payload"]["proposal_sha256"],
+            },
+        )
 
     def test_shadow_provider_failure_never_changes_completed_response(self) -> None:
         store = self.make_store()
@@ -210,20 +245,91 @@ class MemoryShadowTests(StoreCase, unittest.TestCase):
             trailing_speech=[],
             last_unit_index=0,
         )
+        input_record = store.task_input(completed.task_id)
+        text_sha256 = hashlib.sha256(input_record["text"].encode()).hexdigest()
+        with self.assertRaisesRegex(ValueError, "source binding"):
+            store.begin_memory_shadow_audit(
+                completed.task_id,
+                completed.epoch,
+                source_event_id="wrong-source",
+                text_sha256=text_sha256,
+            )
+        self.assertIsNone(store.memory_shadow_audit(completed.task_id))
         first = store.begin_memory_shadow_audit(
             completed.task_id,
             completed.epoch,
-            source_event_id="source-1",
-            text_sha256="b" * 64,
+            source_event_id=input_record["event_id"],
+            text_sha256=text_sha256,
         )
         second = store.begin_memory_shadow_audit(
             completed.task_id,
             completed.epoch,
-            source_event_id="source-1",
-            text_sha256="b" * 64,
+            source_event_id=input_record["event_id"],
+            text_sha256=text_sha256,
         )
         self.assertTrue(first)
         self.assertFalse(second)
+
+    def test_store_rejects_unsafe_shadow_completion_and_leaves_pending_audit(
+        self,
+    ) -> None:
+        store = self.make_store()
+        task = self.admitted(
+            store, event_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4())
+        )
+        executing = self.executing(store, task)
+        store.start_response(executing.task_id, executing.epoch, "el-GR")
+        completed = store.complete_response(
+            executing.task_id,
+            executing.epoch,
+            "done",
+            chunk_count=0,
+            trailing_speech=[],
+            last_unit_index=0,
+        )
+        input_record = store.task_input(completed.task_id)
+        text_sha256 = hashlib.sha256(input_record["text"].encode()).hexdigest()
+        self.assertTrue(
+            store.begin_memory_shadow_audit(
+                completed.task_id,
+                completed.epoch,
+                source_event_id=input_record["event_id"],
+                text_sha256=text_sha256,
+            )
+        )
+        fingerprint = store.shadow_authority_fingerprint(completed.task_id)
+        payload = {
+            **shadow_safety_fields(),
+            "status": "failed",
+            "source_event_id": input_record["event_id"],
+            "text_sha256": text_sha256,
+            "error_code": "service_error",
+            "authority_state_before_sha256": fingerprint,
+            "authority_state_after_sha256": fingerprint,
+        }
+        payload["automatic_side_effect_requested"] = True
+        with self.assertRaisesRegex(ValueError, "automatic_side_effect_requested"):
+            store.finish_memory_shadow_audit(
+                completed.task_id,
+                completed.epoch,
+                event_type="memory.shadow.failed",
+                payload=payload,
+            )
+        safe_but_unbound = dict(payload)
+        safe_but_unbound["automatic_side_effect_requested"] = False
+        safe_but_unbound["source_event_id"] = "wrong-source"
+        with self.assertRaisesRegex(
+            OrchestratorError, "memory_shadow_audit_binding_invalid"
+        ):
+            store.finish_memory_shadow_audit(
+                completed.task_id,
+                completed.epoch,
+                event_type="memory.shadow.failed",
+                payload=safe_but_unbound,
+            )
+        audit = store.memory_shadow_audit(completed.task_id)
+        assert audit is not None
+        self.assertEqual(audit["event_type"], "memory.shadow.pending")
 
     def test_memory_proposal_contract_rejects_unsafe_shapes(self) -> None:
         with self.assertRaisesRegex(TypeError, "operation is invalid"):

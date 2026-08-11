@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     qualify.add_argument("--distribution", required=True)
     qualify.add_argument("--samples", required=True)
     qualify.add_argument("--frozen-doctor", required=True)
+    qualify.add_argument("--native-evidence", required=True)
     qualify.add_argument("--output", required=True)
     audit = commands.add_parser("artifact-audit", help="Discover already-local speech artifacts without loading them")
     audit.add_argument("--root", action="append", required=True)
@@ -121,7 +122,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0 if result.ok else 2
         if args.command == "qualify-release":
             from .qualification import build_release_report, write_report
-            report = build_release_report(load_voice_config(args.config), distribution=args.distribution, samples_path=args.samples, frozen_doctor_path=args.frozen_doctor)
+            report = build_release_report(
+                load_voice_config(args.config),
+                distribution=args.distribution,
+                samples_path=args.samples,
+                frozen_doctor_path=args.frozen_doctor,
+                native_evidence_path=args.native_evidence,
+            )
             write_report(args.output, report)
             return 0 if report["ready"] else 2
         if args.command == "artifact-audit":

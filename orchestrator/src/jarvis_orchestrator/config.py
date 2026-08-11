@@ -10,6 +10,8 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .memory_release import MEMORY_RELEASE_POLICY_VERSION
+
 
 @dataclass(frozen=True, slots=True)
 class OrchestratorConfig:
@@ -38,6 +40,7 @@ class OrchestratorConfig:
     memory_shadow_enabled: bool = False
     memory_shadow_mode: str = "structured_fallback"
     memory_shadow_timeout_seconds: float = 0.25
+    memory_release_policy: str = MEMORY_RELEASE_POLICY_VERSION
     research_enabled: bool = False
     research_base_url: str = "http://127.0.0.1:8770/v1"
     research_bearer_token: str = ""
@@ -54,8 +57,25 @@ class OrchestratorConfig:
     cloud_enabled: bool = False
     cloud_secret_file: Path | None = None
     cloud_qualification_file: Path | None = None
+    cloud_release_qualification_file: Path | None = None
+    cloud_release_qualification_sha256: str = ""
+    cloud_terra_enabled: bool = False
     cloud_timeout_seconds: float = 60.0
     cloud_monthly_cap_microusd: int = 5_000_000
+    scheduler_compiler_qualification_file: Path | None = None
+    scheduler_compiler_qualification_sha256: str = ""
+    voice_scheduler_compatibility_sha256: str = ""
+    tools_enabled: bool = False
+    tool_roots: Mapping[str, str] | None = None
+    tool_app_ids: tuple[str, ...] = ()
+    tool_policy_sha256: str = ""
+    scheduler_contract_sha256: str = ""
+    scheduler_qualification_manifest_sha256: str = ""
+    action_host_socket_path: Path | None = None
+    action_host_token_file: Path | None = None
+    max_model_requests_per_tool_task: int = 6
+    max_tool_calls_per_tool_task: int = 4
+    max_tool_continuations_per_tool_task: int = 4
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "OrchestratorConfig":
@@ -67,9 +87,27 @@ class OrchestratorConfig:
         if "database_path" not in data:
             raise ValueError("database_path is required")
         data["database_path"] = Path(str(data["database_path"])).expanduser()
-        for field in ("cloud_secret_file", "cloud_qualification_file"):
+        for field in (
+            "cloud_secret_file",
+            "cloud_qualification_file",
+            "cloud_release_qualification_file",
+            "scheduler_compiler_qualification_file",
+            "action_host_socket_path",
+            "action_host_token_file",
+        ):
             if data.get(field) is not None:
                 data[field] = Path(str(data[field])).expanduser()
+        if "tool_app_ids" in data:
+            if not isinstance(data["tool_app_ids"], list):
+                raise ValueError("tool_app_ids must be an array")
+            data["tool_app_ids"] = tuple(data["tool_app_ids"])
+        if data.get("tool_roots") is not None:
+            if not isinstance(data["tool_roots"], Mapping):
+                raise ValueError("tool_roots must be an object")
+            data["tool_roots"] = {
+                str(key): str(Path(str(path)).expanduser())
+                for key, path in data["tool_roots"].items()
+            }
         config = cls(**data)
         config.validate()
         return config
@@ -137,17 +175,91 @@ class OrchestratorConfig:
             raise ValueError("memory_shadow_mode is invalid")
         if not isinstance(self.memory_enabled, bool):
             raise ValueError("memory_enabled must be boolean")
+        if self.memory_release_policy != MEMORY_RELEASE_POLICY_VERSION:
+            raise ValueError("memory_release_policy is invalid")
         if not isinstance(self.research_enabled, bool) or not isinstance(self.research_browser_fallback, bool):
             raise ValueError("research feature flags must be boolean")
-        if not isinstance(self.cloud_enabled, bool):
-            raise ValueError("cloud_enabled must be boolean")
+        if not isinstance(self.cloud_enabled, bool) or not isinstance(self.cloud_terra_enabled, bool):
+            raise ValueError("cloud feature flags must be boolean")
+        if not isinstance(self.tools_enabled, bool):
+            raise ValueError("tools_enabled must be boolean")
+        if self.max_model_requests_per_tool_task != 6:
+            raise ValueError("max_model_requests_per_tool_task is frozen at 6")
+        if self.max_tool_calls_per_tool_task != 4 or self.max_tool_continuations_per_tool_task != 4:
+            raise ValueError("tool call and continuation limits are frozen at 4")
+        if self.tools_enabled:
+            if self.model_request_limit < self.max_model_requests_per_tool_task:
+                raise ValueError("tools require model_request_limit of at least 6")
+            if not isinstance(self.tool_roots, Mapping) or not 1 <= len(self.tool_roots) <= 4:
+                raise ValueError("tools require one to four configured roots")
+            for root_id, root_path in self.tool_roots.items():
+                if not isinstance(root_id, str) or not root_id.isascii() or not root_id:
+                    raise ValueError("tool root ids must be non-empty ASCII")
+                selected_root = Path(root_path)
+                if not selected_root.is_absolute() or selected_root == Path(selected_root.anchor):
+                    raise ValueError("tool roots must be absolute non-root paths")
+            qualified_apps = {
+                "finder", "preview", "textedit", "calendar", "reminders", "mail"
+            }
+            if not self.tool_app_ids or set(self.tool_app_ids) - qualified_apps or len(set(self.tool_app_ids)) != len(self.tool_app_ids):
+                raise ValueError("tool_app_ids must be a unique subset of qualified apps")
+            for field in ("tool_policy_sha256", "scheduler_contract_sha256"):
+                digest = getattr(self, field)
+                if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                    raise ValueError(f"{field} is invalid")
+            if self.scheduler_qualification_manifest_sha256 and (
+                len(self.scheduler_qualification_manifest_sha256) != 64
+                or any(character not in "0123456789abcdef" for character in self.scheduler_qualification_manifest_sha256)
+            ):
+                raise ValueError("scheduler_qualification_manifest_sha256 is invalid")
+            if self.action_host_socket_path is None or not self.action_host_socket_path.is_absolute():
+                raise ValueError("action_host_socket_path must be absolute")
+            if self.action_host_token_file is None or not self.action_host_token_file.is_absolute():
+                raise ValueError("action_host_token_file must be absolute")
+        elif any(
+            (
+                self.tool_roots,
+                self.tool_app_ids,
+                self.tool_policy_sha256,
+                self.scheduler_contract_sha256,
+                self.scheduler_qualification_manifest_sha256,
+                self.action_host_socket_path,
+                self.action_host_token_file,
+            )
+        ):
+            raise ValueError("tool configuration requires tools_enabled")
         if self.cloud_monthly_cap_microusd != 5_000_000:
             raise ValueError("cloud_monthly_cap_microusd is frozen at 5000000")
+        if self.scheduler_compiler_qualification_file is not None:
+            if not self.scheduler_compiler_qualification_file.is_absolute():
+                raise ValueError("scheduler_compiler_qualification_file must be absolute")
+            if len(self.scheduler_compiler_qualification_sha256) != 64 or any(
+                character not in "0123456789abcdef"
+                for character in self.scheduler_compiler_qualification_sha256
+            ):
+                raise ValueError("scheduler_compiler_qualification_sha256 is invalid")
+        elif self.scheduler_compiler_qualification_sha256:
+            raise ValueError("scheduler compiler qualification file is required")
+        if self.voice_scheduler_compatibility_sha256 and (
+            len(self.voice_scheduler_compatibility_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in self.voice_scheduler_compatibility_sha256)
+        ):
+            raise ValueError("voice_scheduler_compatibility_sha256 is invalid")
         if self.cloud_enabled:
             if self.cloud_secret_file is None or not self.cloud_secret_file.is_absolute():
                 raise ValueError("cloud_secret_file must be an absolute external secret reference")
             if self.cloud_qualification_file is None or not self.cloud_qualification_file.is_absolute():
                 raise ValueError("cloud_qualification_file must be absolute")
+            if (
+                self.cloud_release_qualification_file is None
+                or not self.cloud_release_qualification_file.is_absolute()
+            ):
+                raise ValueError("cloud_release_qualification_file must be absolute")
+            if len(self.cloud_release_qualification_sha256) != 64 or any(
+                character not in "0123456789abcdef"
+                for character in self.cloud_release_qualification_sha256
+            ):
+                raise ValueError("cloud_release_qualification_sha256 is invalid")
             repository_root = Path(__file__).resolve().parents[3]
             secret = self.cloud_secret_file.resolve(strict=False)
             if secret == repository_root or repository_root in secret.parents:

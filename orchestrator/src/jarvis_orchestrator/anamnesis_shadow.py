@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from .domain import canonical_json, canonical_sha256
 from .memory import MemoryObservation, MemoryOperation, MemoryProposal
+from .memory_release import validate_shadow_audit_payload
 
 try:  # Present in the pinned production environment.
     import httpx
@@ -1016,19 +1017,10 @@ def reconstruct_active_shadow_memories(
         payload = entry.get("payload")
         if not isinstance(payload, Mapping):
             raise ValueError("shadow audit payload is invalid")
-        if set(payload) != {
-            "status",
-            "source_event_id",
-            "text_sha256",
-            "proposal",
-            "proposal_sha256",
-            "authoritative_state_changed",
-        }:
-            raise ValueError("shadow audit shape is invalid")
+        validate_shadow_audit_payload("memory.shadow.proposed", payload)
         source_event_id = payload["source_event_id"]
         if (
             payload["status"] != "proposed"
-            or payload["authoritative_state_changed"] is not False
             or source_event_id != entry.get("canonical_source_event_id")
         ):
             raise ValueError("shadow audit identity is invalid")

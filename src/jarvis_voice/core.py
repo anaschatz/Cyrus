@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable
+import re
 
 from .backends import AsrBackend, AudioChunk, SpeechUnit, TranscriptResult, TtsBackend, VadBackend
 from .delivery_journal import DeliveryDedupJournal
@@ -27,6 +28,8 @@ class VoiceCore:
         tts: TtsBackend,
         session_id: str | None = None,
         delivery_journal: DeliveryDedupJournal | None = None,
+        scheduler_capabilities: tuple[str, ...] = (),
+        scheduler_manifest_sha256: str | None = None,
     ) -> None:
         self.state = VoiceStateMachine()
         self.asr = asr
@@ -35,6 +38,19 @@ class VoiceCore:
         self.server_sequence = SequenceTracker()
         self.pending_submission_event_id: str | None = None
         self.delivery_journal = delivery_journal
+        allowed_scheduler = {
+            "jarvis.scheduler/1", "jarvis.approval-arbiter/1", "scheduler_notification_speech"
+        }
+        if set(scheduler_capabilities) - allowed_scheduler:
+            raise ValueError("unknown scheduler capability")
+        if scheduler_capabilities and (
+            scheduler_manifest_sha256 is None
+            or not re.fullmatch(r"[0-9a-f]{64}", scheduler_manifest_sha256)
+            or not {"jarvis.scheduler/1", "jarvis.approval-arbiter/1"}.issubset(scheduler_capabilities)
+        ):
+            raise ValueError("qualified scheduler manifest is required")
+        self.scheduler_capabilities = scheduler_capabilities
+        self.scheduler_manifest_sha256 = scheduler_manifest_sha256
 
     @property
     def session_id(self) -> str:
@@ -58,17 +74,23 @@ class VoiceCore:
         )
 
     def client_hello(self) -> Envelope:
-        return self.client_events.create(
-            "client.hello",
-            {
+        payload = {
                 "protocol": "jarvis.voice/1",
                 "capabilities": [
                     "speech_commits",
                     "speech_done",
                     "output_epochs",
                     "jarvis.cloud-approval/1",
+                    "jarvis.action-approval/1",
+                    "jarvis.approval-arbiter/1",
+                    *(item for item in self.scheduler_capabilities if item != "jarvis.approval-arbiter/1"),
                 ],
-            },
+            }
+        if self.scheduler_manifest_sha256 is not None:
+            payload["scheduler_manifest_sha256"] = self.scheduler_manifest_sha256
+        return self.client_events.create(
+            "client.hello",
+            payload,
         )
 
     def ptt_down(self, turn_id: str | None = None) -> list[Envelope]:

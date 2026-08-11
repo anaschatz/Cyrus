@@ -63,6 +63,7 @@ class MacAudioTests(unittest.TestCase):
     def test_coreaudio_uses_native_rate_and_minimal_callback(self) -> None:
         streams: list[FakeRawInputStream] = []
         settings: list[dict[str, object]] = []
+        observed: list[tuple[bytes, int, float]] = []
 
         def stream(**kwargs: object) -> FakeRawInputStream:
             created = FakeRawInputStream(**kwargs)
@@ -75,7 +76,11 @@ class MacAudioTests(unittest.TestCase):
             RawInputStream=stream,
         )
         with mock.patch.dict(sys.modules, {"sounddevice": fake_sd}), mock.patch("jarvis_voice.macos.audio_capture.sys.platform", "darwin"):
-            capture = CoreAudioCapture(queue_capacity=4, maximum_utterance_seconds=1.0)
+            capture = CoreAudioCapture(
+                queue_capacity=4,
+                maximum_utterance_seconds=1.0,
+                frame_observer=lambda pcm, rate, timestamp: observed.append((pcm, rate, timestamp)),
+            )
             capture.start()
             capture.begin_turn()
             streams[0].kwargs["callback"](array("f", [0.25, -0.5]).tobytes(), 2, None, None)  # type: ignore[index,operator]
@@ -87,6 +92,8 @@ class MacAudioTests(unittest.TestCase):
         self.assertEqual(streams[0].kwargs["blocksize"], 0)
         self.assertEqual(streams[0].kwargs["latency"], "low")
         self.assertTrue(streams[0].stopped and streams[0].closed)
+        self.assertEqual(observed[0][1], 48_000)
+        self.assertEqual(observed[0][0], array("f", [0.25, -0.5]).tobytes())
 
 
 class FakeTapAdapter:

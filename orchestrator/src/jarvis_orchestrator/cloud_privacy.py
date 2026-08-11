@@ -47,15 +47,21 @@ def normalize_egress(text: str) -> str:
     return " ".join(unicodedata.normalize("NFC", text).casefold().split())
 
 
+def _rule(pattern: str) -> re.Pattern[str]:
+    """Compile literal-language rules under the same Unicode policy as input."""
+
+    return re.compile(unicodedata.normalize("NFC", pattern).casefold())
+
+
 _RULES: tuple[tuple[PrivacyClass, re.Pattern[str]], ...] = (
-    (PrivacyClass.SECRET_CREDENTIAL, re.compile(r"\b(?:api[_ -]?key|secret|password|passwd|bearer|private[_ -]?key|otp|pin)\b|\bsk-[a-z0-9_-]{8,}\b")),
-    (PrivacyClass.SENSITIVE_FINANCIAL, re.compile(r"\b(?:iban|swift|credit card|debit card|bank account|τραπεζ|πιστωτικ|χρεωστικ)\b|\b\d{13,19}\b")),
-    (PrivacyClass.SENSITIVE_HEALTH, re.compile(r"\b(?:diagnosis|disease|medication|patient|therapy|health record|διάγνωση|ασθεν|φάρμακ|θεραπε)\b")),
-    (PrivacyClass.SENSITIVE_LEGAL, re.compile(r"\b(?:lawsuit|criminal|attorney-client|legal case|δικογραφ|ποινικ|δικηγορ)\b")),
-    (PrivacyClass.BIOMETRIC, re.compile(r"\b(?:fingerprint|faceprint|retina|biometric|δακτυλικ|βιομετρ)\b")),
-    (PrivacyClass.SENSITIVE_INTIMATE_OR_MINOR, re.compile(r"\b(?:sexual|intimate|minor child|underage|ανήλικ|σεξουαλ)\b")),
-    (PrivacyClass.SENSITIVE_IDENTITY, re.compile(r"\b(?:passport|social security|national id|tax id|αφμ|αμκα|ταυτότητ|διαβατήρ)\b")),
-    (PrivacyClass.SENSITIVE_CONTACT_LOCATION, re.compile(r"\b(?:home address|postal address|phone number|gps|διεύθυνση κατοικίας|τηλέφωνο|τοποθεσία)\b|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b")),
+    (PrivacyClass.SECRET_CREDENTIAL, _rule(r"\b(?:api[_ -]?key|secret|password|passwd|bearer|private[_ -]?key|otp|pin)\b|\bsk-[a-z0-9_-]{8,}\b")),
+    (PrivacyClass.SENSITIVE_FINANCIAL, _rule(r"\b(?:iban|swift|credit card|debit card|bank account|τραπεζ|πιστωτικ|χρεωστικ)\b|\b\d{13,19}\b")),
+    (PrivacyClass.SENSITIVE_HEALTH, _rule(r"\b(?:diagnosis|disease|medication|patient|therapy|health record|διάγνωση|ασθεν|φάρμακ|θεραπε)\b")),
+    (PrivacyClass.SENSITIVE_LEGAL, _rule(r"\b(?:lawsuit|criminal|attorney-client|legal case|δικογραφ|ποινικ|δικηγορ)\b")),
+    (PrivacyClass.BIOMETRIC, _rule(r"\b(?:fingerprint|faceprint|retina|biometric|δακτυλικ|βιομετρ)\b")),
+    (PrivacyClass.SENSITIVE_INTIMATE_OR_MINOR, _rule(r"\b(?:sexual|intimate|minor child|underage|ανήλικ|σεξουαλ)\b")),
+    (PrivacyClass.SENSITIVE_IDENTITY, _rule(r"\b(?:passport|social security|national id|tax id|αφμ|αμκα|ταυτότητ|διαβατήρ)\b")),
+    (PrivacyClass.SENSITIVE_CONTACT_LOCATION, _rule(r"\b(?:home address|postal address|phone number|gps|διεύθυνση κατοικίας|τηλέφωνο|τοποθεσία)\b|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b")),
 )
 
 
@@ -68,7 +74,10 @@ class JarvisPrivacyClassifierV1:
             {
                 "eligible": sorted(item.value for item in CLOUD_ELIGIBLE_CLASSES),
                 "normalization": "NFC+casefold+whitespace",
-                "rules": [classification.value for classification, _ in _RULES],
+                "rules": [
+                    {"classification": classification.value, "pattern": pattern.pattern}
+                    for classification, pattern in _RULES
+                ],
                 "version": self.version,
             },
         )

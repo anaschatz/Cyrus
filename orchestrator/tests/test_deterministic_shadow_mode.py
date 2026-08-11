@@ -14,6 +14,7 @@ from jarvis_orchestrator.anamnesis_shadow import (
     LifecycleOperation,
 )
 from jarvis_orchestrator.config import OrchestratorConfig
+from jarvis_orchestrator.memory_release import MEMORY_RELEASE_POLICY_VERSION
 
 
 EXPECTED_CONTRACT_SHA256 = (
@@ -85,6 +86,14 @@ class DeterministicShadowModeTests(unittest.TestCase):
                     {**base, "memory_shadow_mode": "model_auto"}
                 )
             self.assertEqual(deterministic.final_response_output_tokens, 256)
+            self.assertEqual(
+                deterministic.memory_release_policy,
+                MEMORY_RELEASE_POLICY_VERSION,
+            )
+            with self.assertRaisesRegex(ValueError, "memory_release_policy"):
+                OrchestratorConfig.from_mapping(
+                    {**base, "memory_release_policy": "generative-production"}
+                )
             for invalid in (31, 1025, True):
                 with self.subTest(final_response_output_tokens=invalid):
                     with self.assertRaisesRegex(

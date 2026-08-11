@@ -73,6 +73,8 @@ class OpenRouterRevalidationV1:
     key_remaining_microusd: int
     usage_monthly_microusd: int
     limit_reset: str
+    key_limit_microusd: int = 5_000_000
+    key_policy_verified: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +172,19 @@ class OpenRouterCloudAdapter:
         if len(matches) != 1:
             raise OrchestratorError("endpoint_unhealthy", status=409)
         live = matches[0]
+        runtime_identity_matches = [
+            row
+            for row in rows
+            if isinstance(row, Mapping)
+            and row.get("model_id") == endpoint.model_canonical_id
+            and row.get("provider_name") == endpoint.runtime_provider_name
+            and str(row.get("quantization")) == endpoint.quantization
+        ]
+        if len(runtime_identity_matches) != 1 or runtime_identity_matches[0].get("tag") != endpoint.provider_endpoint_tag:
+            # The generation receipt exposes provider_name but not full tag or
+            # quantization. Qualification is therefore safe only when the live
+            # catalog makes that receipt identity unambiguous.
+            raise OrchestratorError("endpoint_identity_ambiguous", status=409)
         pricing = live.get("pricing")
         latency = live.get("latency_last_30m")
         if not isinstance(pricing, Mapping) or not isinstance(latency, Mapping):
@@ -184,6 +199,7 @@ class OpenRouterCloudAdapter:
             stable_equal = all(
                 (
                     str(live.get("quantization")) == endpoint.quantization,
+                    str(live.get("provider_name")) == endpoint.runtime_provider_name,
                     observed_parameters == tuple(sorted(endpoint.supported_parameters)),
                     int(live.get("context_length", 0)) == endpoint.context_limit,
                     int(live.get("max_completion_tokens", 0)) >= endpoint.output_limit,
@@ -210,6 +226,14 @@ class OpenRouterCloudAdapter:
         key_data = key.get("data") if isinstance(key, Mapping) else None
         if not isinstance(key_data, Mapping) or key_data.get("limit_reset") != "monthly":
             raise OrchestratorError("cloud_budget_unavailable", status=409)
+        key_limit = _decimal_microusd(key_data.get("limit"))
+        if (
+            key_limit != 5_000_000
+            or key_data.get("is_management_key") is not False
+            or key_data.get("is_provisioning_key") is not False
+            or key_data.get("include_byok_in_limit") is not False
+        ):
+            raise OrchestratorError("cloud_key_policy_mismatch", status=409)
         remaining = _decimal_microusd(key_data.get("limit_remaining"))
         usage = _decimal_microusd(key_data.get("usage_monthly"))
         self._store.store_endpoint_health(
@@ -226,7 +250,15 @@ class OpenRouterCloudAdapter:
             },
             observed_at=health.observed_at,
         )
-        return OpenRouterRevalidationV1(endpoint, health, remaining, usage, "monthly")
+        return OpenRouterRevalidationV1(
+            endpoint,
+            health,
+            remaining,
+            usage,
+            "monthly",
+            key_limit,
+            True,
+        )
 
     async def dispatch(
         self,

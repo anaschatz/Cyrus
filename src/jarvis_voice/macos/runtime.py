@@ -6,7 +6,7 @@ import queue
 import sys
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from ..audio import resample_audio
@@ -18,6 +18,12 @@ from ..cloud_approval import (
     CloudApprovalEnvelope,
     CloudApprovalJournal,
     default_cloud_approval_journal_path,
+)
+from ..action_approval import (
+    ActionApprovalController,
+    ActionApprovalEnvelope,
+    ActionApprovalJournal,
+    default_action_approval_journal_path,
 )
 from ..delivery_journal import DeliveryDedupJournal, default_delivery_journal_path
 from ..errors import BackendError
@@ -41,7 +47,12 @@ class BackendCallback:
 
 
 class MacVoiceRuntime:
-    def __init__(self, config: VoiceConfig) -> None:
+    def __init__(
+        self,
+        config: VoiceConfig,
+        *,
+        audio_frame_observer: Callable[[bytes, int, float], None] | None = None,
+    ) -> None:
         if sys.platform != "darwin":
             raise BackendError("runtime.macos_only", "The macOS runtime requires native macOS", subsystem="runtime")
         artifact = config.vad.artifact
@@ -62,6 +73,12 @@ class MacVoiceRuntime:
         self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
         self.cloud_journal = CloudApprovalJournal(default_cloud_approval_journal_path())
         self.cloud_approval = CloudApprovalController(session_id=self.core.session_id, journal=self.cloud_journal)
+        self.action_journal = ActionApprovalJournal(default_action_approval_journal_path())
+        self.action_approval = ActionApprovalController(
+            session_id=self.core.session_id,
+            journal=self.action_journal,
+            approval_arbiter=self.cloud_approval.approval_arbiter,
+        )
         self.transcription = AsyncTranscriptionCoordinator(self.asr)
         self.vad = SileroOnnxVad(
             artifact_path=artifact.path,
@@ -87,12 +104,27 @@ class MacVoiceRuntime:
             queue_capacity=config.audio_queue_capacity,
             maximum_utterance_seconds=config.maximum_utterance_seconds,
             device=config.audio_input_device,
+            frame_observer=audio_frame_observer,
         )
         self._running = False
         self._stop_requested = threading.Event()
         self._timings_lock = threading.Lock()
         self.timings: list[dict[str, float | str | int | bool]] = []
+        self._ptt_cycle = 0
+        self._turn_cycles: dict[str, int] = {}
+        self._response_tokens: dict[str, int] = {}
+        self._next_response_token = 1
         self.reliable = ReliableSubmissionManager(time.monotonic)
+
+    def _response_token(self, response_id: str | None) -> int:
+        if response_id is None:
+            return 0
+        token = self._response_tokens.get(response_id)
+        if token is None:
+            token = self._next_response_token
+            self._next_response_token += 1
+            self._response_tokens[response_id] = token
+        return token
 
     def _record_timing(self, event: str, timestamp: float | None = None, **details: object) -> None:
         entry: dict[str, float | str | int | bool] = {
@@ -117,7 +149,11 @@ class MacVoiceRuntime:
                 self.reliable.begin(event)
                 language = event.payload.get("language", {})
                 code = language.get("code", "unknown") if isinstance(language, Mapping) else "unknown"
-                self._record_timing("transcript_final_created", language=str(code))
+                self._record_timing(
+                    "transcript_final_created",
+                    language=str(code),
+                    ptt_cycle=self._turn_cycles.get(event.turn_id or "", self._ptt_cycle),
+                )
             elif event.type == "input.no_speech":
                 self._record_timing("input_no_speech_created")
             elif event.type == "response.cancel":
@@ -125,7 +161,10 @@ class MacVoiceRuntime:
             elif event.type == "playback.interrupted":
                 self._record_timing("playback_interrupted_created")
             elif event.type == "playback.completed":
-                self._record_timing("playback_completed_created")
+                self._record_timing(
+                    "playback_completed_created",
+                    response_token=self._response_token(event.response_id),
+                )
             self.transport.send(event)
 
     def _reconnect_pending(self) -> None:
@@ -135,14 +174,21 @@ class MacVoiceRuntime:
         self.delivery_journal.close()
         self.core.begin_new_connection()
         self.cloud_approval.begin_new_connection()
+        self.action_approval.begin_new_connection()
         self.transport.send(self.core.client_hello())
         self.transport.send(self.reliable.reconnect_event(self.core))
 
     def _handle_ptt(self, event: PttEvent) -> None:
         if event.transition == PttTransition.DOWN:
+            self._ptt_cycle += 1
             self.cloud_approval.disarm_for_ptt()
             output_active = not self.tts.is_idle
-            self._record_timing("ptt_down_received", event.received_at, output_active=output_active)
+            self._record_timing(
+                "ptt_down_received",
+                event.received_at,
+                output_active=output_active,
+                ptt_cycle=self._ptt_cycle,
+            )
             outbound = self.core.ptt_down()
             if any(item.type == "response.cancel" for item in outbound):
                 self._record_timing("tts_cancel_dispatched")
@@ -151,10 +197,18 @@ class MacVoiceRuntime:
             self._send_all(outbound)
             return
         try:
-            self._record_timing("ptt_up_received", event.received_at)
+            self._record_timing(
+                "ptt_up_received",
+                event.received_at,
+                ptt_cycle=self._ptt_cycle,
+                forced=event.transition == PttTransition.FORCED_UP,
+                reason=event.reason,
+            )
             captured = self.audio.end_turn()
             normalized = resample_audio(captured)
             prepared = self.core.prepare_transcription(normalized, self.vad)
+            if prepared.turn_id is not None:
+                self._turn_cycles[prepared.turn_id] = self._ptt_cycle
             if isinstance(prepared, Envelope):
                 self._send_all([prepared])
             else:
@@ -204,7 +258,12 @@ class MacVoiceRuntime:
                     except queue.Empty:
                         break
                     if key_event.is_down:
-                        decision = self.cloud_approval.key_down(
+                        decision = self.action_approval.key_down(
+                            key_event.key,
+                            key_counter=key_event.counter,
+                            capture_idle=self.core.state.input_state == InputState.IDLE,
+                            autorepeat=key_event.autorepeat,
+                        ) or self.cloud_approval.key_down(
                             key_event.key,
                             key_counter=key_event.counter,
                             capture_idle=self.core.state.input_state == InputState.IDLE,
@@ -212,7 +271,10 @@ class MacVoiceRuntime:
                         )
                         if decision is not None:
                             self.transport.send(decision)
-                            self.cloud_approval.mark_decision_sent(decision.event_id, now=now)
+                            if isinstance(decision, ActionApprovalEnvelope):
+                                self.action_journal.mark_sent(decision.event_id, now=now)
+                            else:
+                                self.cloud_approval.mark_decision_sent(decision.event_id, now=now)
                 self._poll_transcription()
                 while True:
                     try:
@@ -223,6 +285,7 @@ class MacVoiceRuntime:
                         "tts_unit_started" if callback.kind == "started" else "tts_unit_completed",
                         unit_index=callback.unit.unit_index,
                         locale=callback.unit.locale,
+                        response_token=self._response_token(callback.unit.response_id),
                     )
                     events = (
                         self.core.on_tts_unit_started(callback.unit)
@@ -234,6 +297,9 @@ class MacVoiceRuntime:
                     self.transport.send(retry)
                 for retry in self.cloud_approval.due_decision_retransmissions(now=now):
                     self.transport.send(retry)
+                for retry in self.action_approval.due_decision_retransmissions(now=now):
+                    self.transport.send(retry)
+                    self.action_journal.mark_sent(retry.event_id, now=now)
                 if self.reliable.consume_connected_timeout():
                     self._reconnect_pending()
                 while True:
@@ -248,16 +314,26 @@ class MacVoiceRuntime:
                         ):
                             self.transport.send(reply)
                         continue
+                    if isinstance(server_event, ActionApprovalEnvelope):
+                        for reply in self.action_approval.handle_server_event(
+                            server_event,
+                            key_counter=self.approval_keys.counter,
+                            both_keys_up=self.approval_keys.both_keys_up,
+                        ):
+                            self.transport.send(reply)
+                        continue
                     if server_event.type == "response.speech.commit":
                         self._record_timing(
                             "speech_commit_received",
                             unit_index=server_event.payload["unit_index"],
                             locale=server_event.payload["locale"],
+                            response_token=self._response_token(server_event.response_id),
                         )
                     elif server_event.type == "response.speech.done":
                         self._record_timing(
                             "speech_done_received",
                             last_unit_index=server_event.payload["last_unit_index"],
+                            response_token=self._response_token(server_event.response_id),
                         )
                     if server_event.type == "server.ack":
                         self.reliable.acknowledge(server_event)

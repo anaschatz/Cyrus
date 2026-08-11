@@ -19,6 +19,12 @@ from .cloud_approval import (
     CloudApprovalJournal,
     default_cloud_approval_journal_path,
 )
+from .action_approval import (
+    ActionApprovalController,
+    ActionApprovalEnvelope,
+    ActionApprovalJournal,
+    default_action_approval_journal_path,
+)
 from .delivery_journal import DeliveryDedupJournal, default_delivery_journal_path
 from .errors import BackendError
 from .ptt import ApprovalKeyPublisher, PttEvent, PttEventPublisher, PttTransition, function_key_vkey
@@ -59,6 +65,12 @@ class WindowsVoiceRuntime:
         self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
         self.cloud_journal = CloudApprovalJournal(default_cloud_approval_journal_path())
         self.cloud_approval = CloudApprovalController(session_id=self.core.session_id, journal=self.cloud_journal)
+        self.action_journal = ActionApprovalJournal(default_action_approval_journal_path())
+        self.action_approval = ActionApprovalController(
+            session_id=self.core.session_id,
+            journal=self.action_journal,
+            approval_arbiter=self.cloud_approval.approval_arbiter,
+        )
         self.transcription = AsyncTranscriptionCoordinator(self.asr) if config.asr.execution_profile == "cuda" else None
         self.vad = SileroOnnxVad(
             artifact_path=artifact.path,
@@ -98,6 +110,7 @@ class WindowsVoiceRuntime:
         self.delivery_journal.close()
         self.core.begin_new_connection()
         self.cloud_approval.begin_new_connection()
+        self.action_approval.begin_new_connection()
         self.transport.send(self.core.client_hello())
         self.transport.send(self.reliable.reconnect_event(self.core))
 
@@ -170,7 +183,12 @@ class WindowsVoiceRuntime:
                     except queue.Empty:
                         break
                     if key_event.is_down:
-                        decision = self.cloud_approval.key_down(
+                        decision = self.action_approval.key_down(
+                            key_event.key,
+                            key_counter=key_event.counter,
+                            capture_idle=self.core.state.input_state == InputState.IDLE,
+                            autorepeat=key_event.autorepeat,
+                        ) or self.cloud_approval.key_down(
                             key_event.key,
                             key_counter=key_event.counter,
                             capture_idle=self.core.state.input_state == InputState.IDLE,
@@ -178,7 +196,10 @@ class WindowsVoiceRuntime:
                         )
                         if decision is not None:
                             self.transport.send(decision)
-                            self.cloud_approval.mark_decision_sent(decision.event_id, now=now)
+                            if isinstance(decision, ActionApprovalEnvelope):
+                                self.action_journal.mark_sent(decision.event_id, now=now)
+                            else:
+                                self.cloud_approval.mark_decision_sent(decision.event_id, now=now)
                 self._poll_transcription()
                 while True:
                     try:
@@ -191,6 +212,9 @@ class WindowsVoiceRuntime:
                     self.transport.send(retry)
                 for retry in self.cloud_approval.due_decision_retransmissions(now=now):
                     self.transport.send(retry)
+                for retry in self.action_approval.due_decision_retransmissions(now=now):
+                    self.transport.send(retry)
+                    self.action_journal.mark_sent(retry.event_id, now=now)
                 if self.reliable.consume_connected_timeout():
                     self._reconnect_pending()
                 while True:
@@ -199,6 +223,14 @@ class WindowsVoiceRuntime:
                         break
                     if isinstance(server_event, CloudApprovalEnvelope):
                         for reply in self.cloud_approval.handle_server_event(
+                            server_event,
+                            key_counter=self.approval_keys.counter,
+                            both_keys_up=self.approval_keys.both_keys_up,
+                        ):
+                            self.transport.send(reply)
+                        continue
+                    if isinstance(server_event, ActionApprovalEnvelope):
+                        for reply in self.action_approval.handle_server_event(
                             server_event,
                             key_counter=self.approval_keys.counter,
                             both_keys_up=self.approval_keys.both_keys_up,

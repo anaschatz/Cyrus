@@ -209,6 +209,8 @@ class GuidedSmokeController:
                 "microphone_opened": self._microphone_opened,
                 "passive_ptt_started": self._ptt_started,
                 "system_tts_exercised": self._tts_exercised,
+                "acoustic_silence_measured": False,
+                "satisfies_native_ready_gate": False,
             },
             "privacy": {
                 "raw_audio_persisted": False,

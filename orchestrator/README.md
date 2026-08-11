@@ -49,6 +49,12 @@ Production starts local-only. Explicit retrospective memory, research and the
 M1C cloud router are independent, off-by-default adapters. Side-effect tools
 remain disabled until separately qualified and activated by policy.
 
+Operational background startup, content-free diagnostics, verified SQLite
+backup/restore, the 1,000-turn synthetic lifecycle gate, 100-turn live gate,
+restart gate and 24-hour bounded soak are defined in
+[`docs/operational-ready-gate-v1.md`](docs/operational-ready-gate-v1.md). Cloud,
+memory and research readiness never substitutes for this whole-system gate.
+
 ## M1C cloud router (off by default)
 
 M1C adds a negotiated `jarvis.cloud-approval/1` transport without adding any
@@ -76,6 +82,17 @@ Activation requires all of the following:
 - `cloud_enabled:true` and the two absolute file paths in local config;
 - the fixed `$5` UTC-month Orchestrator ledger. The external approximately
   `€10` account limit remains a separate billing envelope.
+- a hash-bound `cloud-release-qualification/1` bundle proving real F10/F11,
+  Greek/English/mixed privacy cases, exact endpoint receipts, cost
+  reconciliation, fault injection, no fallback and at least 30 days of
+  shadow operation. See
+  [`docs/cloud-operational-qualification-v1.md`](docs/cloud-operational-qualification-v1.md).
+
+At startup all persisted endpoint qualifications are disabled first. Only the
+exact DeepSeek tuple that passes both the release bundle and live key/ZDR probe
+is re-enabled. Terra additionally requires `cloud_terra_enabled:true` and its
+own passing tuple; otherwise the Terra route is absent. `cloud_enabled:true`
+alone never grants cloud authority.
 
 The ZDR catalog and current-key endpoint are rechecked immediately before the
 POST. They are health/budget oracles, not qualification authorities. Endpoint
@@ -131,6 +148,16 @@ action evidence. Its bounded result is stored idempotently in `task_events` as
 `memory.shadow.proposed` or `memory.shadow.failed`; the raw user text is not
 duplicated in the audit payload.
 
+The immutable `jarvis.memory-release-policy.v1` boundary limits production v1
+to explicit retrospective memory commands and explicit deterministic
+reminders. Generative prospective compilers remain unqualified and shadow-only:
+they cannot request automatic side effects, emit action evidence, or receive
+tool authority. Each audit result binds the source-text hash, selected and
+superseded source IDs, writer contract, proposal hash, release-policy hash and
+identical before/after fingerprints of the authoritative memory/approval/tool
+state. The production composition gives the shadow adapter only a defensive
+read-only history facade, never the `OrchestratorStore`.
+
 Shadow mode is off by default. Setting `memory_shadow_enabled` only activates
 the boundary; a separately qualified memory adapter must still be injected.
 `memory_shadow_mode: "structured_fallback"` retains the schema-constrained
@@ -143,17 +170,14 @@ Final voice responses default to a closed 256-token ceiling through
 model that misses its stop condition from consuming the former 1,024-token
 allowance.
 
-The first isolated live probe used the real loopback inference appliance for a
-three-turn create/replace/cancel conversation while authoritative memory was
-disabled. Lifecycle state was exact, audit coverage was 100%, and no
-authoritative record was written. The probe also exposed a missed model stop:
-one turn consumed the former full 1,024-token allowance and took 41.045
-seconds. Repeating the same engineering probe with the new 256-token ceiling
-reduced total output from 1,099 to 331 tokens, average latency from 19.101 to
-5.065 seconds, and maximum latency to 10.861 seconds. The third turn still hit
-the 256-token ceiling, so the cap is an effective safety bound but model stop
-behavior remains an open optimization. This three-turn probe is not the
-required 20-conversation/100-turn real-session trial.
+The first isolated live probes used the real loopback inference appliance for
+a three-turn create/replace/cancel conversation while authoritative memory was
+disabled. They first exposed a stale chat renderer that missed the model stop.
+After restarting with the qualified renderer, an exact `STOP_OK` canary ended
+naturally in three tokens and the final three-turn probe produced 12, 34 and 46
+tokens in 1.167, 1.570 and 2.067 seconds. Lifecycle state was exact, audit
+coverage was 100%, and no authoritative record was written. This engineering
+probe is not the required 20-conversation/100-turn real-session trial.
 Timeouts and provider failures are recorded with stable error codes and never
 change the completed JARVIS response. Automatic approval remains disabled.
 
@@ -226,7 +250,9 @@ content-free report from its SQLite database:
 
 The reporter opens SQLite in read-only mode and emits no user text, event IDs,
 conversation IDs or database path. It fails the integrity gate on pending or
-failed audits, invalid reconstructed histories, any authoritative-state flag,
-or any authoritative memory record. A minimum of 20 real conversations and
-100 audited turns is required before human correctness review. Even a clean
-report cannot automatically enable authoritative memory.
+failed audits, invalid reconstructed histories, release-policy drift, any
+side-effect/action-evidence flag, or unequal authoritative-state fingerprints.
+Explicit-command retrospective records are reported separately and do not
+count as shadow authority. A minimum of 20 real conversations and 100 audited
+turns is required before human correctness review. Even a clean report cannot
+automatically enable authoritative memory or prospective actions.

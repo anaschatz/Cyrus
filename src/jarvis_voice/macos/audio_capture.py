@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+import time
+from collections.abc import Callable
 from typing import Any
 
 from ..audio import BoundedCaptureBuffer
@@ -11,12 +13,21 @@ from ..errors import BackendError
 
 
 class CoreAudioCapture:
-    def __init__(self, *, queue_capacity: int, maximum_utterance_seconds: float, device: int | str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        queue_capacity: int,
+        maximum_utterance_seconds: float,
+        device: int | str | None = None,
+        frame_observer: Callable[[bytes, int, float], None] | None = None,
+    ) -> None:
         self.queue_capacity = queue_capacity
         self.maximum_utterance_seconds = maximum_utterance_seconds
         self.device = device
+        self.frame_observer = frame_observer
         self._stream: Any | None = None
         self._buffer: BoundedCaptureBuffer | None = None
+        self._sample_rate: int | None = None
 
     def start(self) -> None:
         if sys.platform != "darwin":
@@ -28,6 +39,7 @@ class CoreAudioCapture:
         try:
             device_info = sd.query_devices(self.device, "input")
             sample_rate = int(device_info["default_samplerate"])
+            self._sample_rate = sample_rate
             settings = sd.CoreAudioSettings(
                 change_device_parameters=False,
                 fail_if_conversion_required=False,
@@ -58,6 +70,12 @@ class CoreAudioCapture:
         del frames, time_info, status
         if self._buffer is not None:
             self._buffer.publish_from_callback(indata)
+        if self.frame_observer is not None and self._sample_rate is not None:
+            try:
+                self.frame_observer(bytes(indata), self._sample_rate, time.perf_counter())
+            except Exception:
+                # A qualification observer must never break the real-time callback.
+                pass
 
     def begin_turn(self) -> None:
         if self._buffer is None:
@@ -76,6 +94,7 @@ class CoreAudioCapture:
     def stop(self) -> None:
         stream, self._stream = self._stream, None
         self._buffer = None
+        self._sample_rate = None
         if stream is not None:
             try:
                 stream.stop()

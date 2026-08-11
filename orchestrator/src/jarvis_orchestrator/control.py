@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hmac
+import base64
+import hashlib
 import json
 import re
 import threading
@@ -10,19 +12,52 @@ import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from .config import OrchestratorConfig
-from .domain import OrchestratorError, require_uuid4
+from .domain import OrchestratorError, require_uuid4, utc_text
+from .scheduler_contract import (MINIMUM_INTERVAL_MS, MINIMUM_LEAD_MS, MAXIMUM_SNOOZE_GENERATIONS,
+                                 MANUAL_CANONICAL_API_SHA256)
+from .jcs import jcs_bytes
 from .service import OrchestratorService
+from .scheduler_contract import ScheduleContractError, compile_proposal
 
 
 APPROVAL_DECISION = re.compile(r"^/v1/approvals/([0-9a-f-]{36})/decision$")
+SCHEDULER_APPROVAL_DECISION = re.compile(r"^/v1/scheduler/approvals/([0-9a-f-]{36})/decision$")
 TASK_CANCEL = re.compile(r"^/v1/tasks/([0-9a-f-]{36})/cancel$")
 CONVERSATION_DELETE = re.compile(r"^/v1/conversations/([0-9a-f-]{36})$")
+ACTION_APPROVAL_PRESENTATION = re.compile(
+    r"^/v1/action-approvals/([0-9a-f-]{36})/presentation$"
+)
 MAX_BODY = 16 * 1024
 MAX_HEADERS = 32
 MAX_HEADER_BYTES = 8 * 1024
 MAX_FIELD_BYTES = 1024
+
+
+def _cursor_encode(kind: str, binding: dict[str, Any], key: list[Any]) -> str:
+    core = {"binding": binding, "key": key, "kind": kind, "version": "scheduler-cursor/1"}
+    value = {**core, "sha256": hashlib.sha256(jcs_bytes(core)).hexdigest()}
+    return base64.urlsafe_b64encode(jcs_bytes(value)).rstrip(b"=").decode("ascii")
+
+
+def _cursor_decode(token: str, *, kind: str, binding: dict[str, Any]) -> list[Any]:
+    if not isinstance(token, str) or len(token) > 2048 or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        raise OrchestratorError("invalid_cursor", status=400)
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        value = json.loads(raw)
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise OrchestratorError("invalid_cursor", status=400) from exc
+    if not isinstance(value, dict) or set(value) != {"binding", "key", "kind", "version", "sha256"}:
+        raise OrchestratorError("invalid_cursor", status=400)
+    core = {name: value[name] for name in ("binding", "key", "kind", "version")}
+    if (value["kind"] != kind or value["binding"] != binding or value["version"] != "scheduler-cursor/1"
+            or not hmac.compare_digest(value["sha256"], hashlib.sha256(jcs_bytes(core)).hexdigest())
+            or not isinstance(value["key"], list)):
+        raise OrchestratorError("cursor_binding_mismatch", status=400)
+    return value["key"]
 
 
 class ControlApplication:
@@ -39,21 +74,140 @@ class ControlApplication:
 
     @staticmethod
     def known_path(path: str) -> bool:
+        path = urlsplit(path).path
         return bool(
-            path in {"/readyz", "/v1/approvals", "/v1/conversations/active", "/v1/conversations"}
+            path in {
+                "/readyz", "/v1/approvals", "/v1/conversations/active", "/v1/conversations",
+                "/v1/readiness", "/v1/capabilities", "/v1/scheduler/proposals",
+                "/v1/scheduler/compile",
+                "/v1/scheduler/jobs", "/v1/scheduler/occurrences", "/v1/scheduler/ledger",
+            }
             or APPROVAL_DECISION.fullmatch(path)
+            or SCHEDULER_APPROVAL_DECISION.fullmatch(path)
             or TASK_CANCEL.fullmatch(path)
             or CONVERSATION_DELETE.fullmatch(path)
+            or ACTION_APPROVAL_PRESENTATION.fullmatch(path)
+        )
+
+    def action_presentation(
+        self,
+        path: str,
+        *,
+        presentation_id: str,
+        preview_nonce: str,
+        epoch: int,
+    ) -> tuple[int, Any]:
+        match = ACTION_APPROVAL_PRESENTATION.fullmatch(urlsplit(path).path)
+        if match is None or self.service.tool_store is None:
+            raise OrchestratorError("not_found", status=404)
+        return 200, self.service.tool_store.consume_preview(
+            approval_id=require_uuid4(match.group(1)),
+            presentation_id=require_uuid4(presentation_id),
+            preview_nonce=require_uuid4(preview_nonce),
+            epoch=epoch,
         )
 
     def get(self, path: str) -> tuple[int, Any]:
-        if path == "/readyz":
+        split = urlsplit(path)
+        route = split.path
+        query = parse_qs(split.query, strict_parsing=True, keep_blank_values=False)
+        if route == "/readyz":
             ready = self.service.ready()
             return (200 if ready else 503), {"ready": ready}
-        if path == "/v1/approvals":
+        if route == "/v1/readiness":
+            inference_ready = self.service.ready()
+            scheduler_ready = self.service.scheduler is not None and self.service.scheduler.readiness()["state"] == "READY"
+            capabilities = ["control"] + (["scheduler"] if scheduler_ready else [])
+            return 200, {
+                "core_ready": True,
+                "scheduler_ready": scheduler_ready,
+                "inference_ready": inference_ready,
+                "mode": "ready" if inference_ready else "degraded",
+                "capabilities": capabilities,
+            }
+        if route == "/v1/capabilities":
+            scheduler = self.service.scheduler
+            scheduler_state = scheduler.readiness() if scheduler is not None else {
+                "state": "BLOCKED", "reason_code": "scheduler_key_or_timezone_unavailable"
+            }
+            with self.service.store._lock:
+                schema = self.service.store._connection.execute(
+                    "SELECT value FROM schema_meta WHERE key='scheduler_schema_version'"
+                ).fetchone()
+            arbiter_ready = schema is not None and schema["value"] == "5"
+            return 200, {"capabilities": [
+                {"name": "approval_arbiter", "state": "READY" if arbiter_ready else "BLOCKED",
+                 "reason_code": "ready" if arbiter_ready else "scheduler_schema_mismatch",
+                 "qualification_sha256": None},
+                {"name": "scheduler_core", "state": scheduler_state["state"],
+                 "reason_code": scheduler_state["reason_code"], "qualification_sha256": None},
+                {"name": "schedule_compiler_local",
+                 "state": "READY" if self.service.schedule_compiler is not None else "BLOCKED",
+                 "reason_code": "ready" if self.service.schedule_compiler is not None else "compiler_qualification_missing",
+                 "qualification_sha256": (
+                     self.service.schedule_compiler.qualification.sha256
+                     if self.service.schedule_compiler is not None else None
+                 )},
+                {"name": "notification_delivery", "state": "BLOCKED",
+                 "reason_code": "native_qualification_missing", "qualification_sha256": None},
+                {"name": "reminder_tts", "state": "DISABLED",
+                 "reason_code": "disabled_by_policy", "qualification_sha256": None},
+            ]}
+        if route == "/v1/approvals":
             return 200, {"approvals": self.service.store.list_pending_approvals()}
-        if path == "/v1/conversations/active":
+        if route == "/v1/conversations/active":
             return 200, {"conversation": self.service.store.active_conversation()}
+        if route.startswith("/v1/scheduler/"):
+            scheduler = self.service.scheduler
+            if scheduler is None:
+                raise OrchestratorError("scheduler_unavailable", status=503)
+            if any(len(values) != 1 for values in query.values()):
+                raise OrchestratorError("invalid_request", status=400)
+            try:
+                limit = int(query.get("limit", ["50"])[0])
+            except ValueError as exc:
+                raise OrchestratorError("invalid_request", status=400) from exc
+            if route == "/v1/scheduler/jobs":
+                if set(query) - {"limit", "cursor"}:
+                    raise OrchestratorError("invalid_request", status=400)
+                binding = {"filter": "all"}
+                cursor = None
+                if "cursor" in query:
+                    key = _cursor_decode(query["cursor"][0], kind="jobs", binding=binding)
+                    if len(key) != 2:
+                        raise OrchestratorError("invalid_cursor", status=400)
+                    cursor = (key[0], key[1])
+                jobs = scheduler.list_jobs(limit=limit, cursor=cursor)
+                next_cursor = (_cursor_encode("jobs", binding, [jobs[-1]["created_at_utc"], jobs[-1]["job_id"]])
+                               if len(jobs) == limit else None)
+                return 200, {"jobs": jobs, "next_cursor": next_cursor}
+            if route == "/v1/scheduler/occurrences":
+                required = {"job_id", "start_at_utc", "end_at_utc"}
+                if not required.issubset(query) or set(query) - required - {"limit", "cursor"}:
+                    raise OrchestratorError("invalid_request", status=400)
+                binding = {name: query[name][0] for name in sorted(required)}
+                cursor = None
+                if "cursor" in query:
+                    key = _cursor_decode(query["cursor"][0], kind="occurrences", binding=binding)
+                    if len(key) != 2:
+                        raise OrchestratorError("invalid_cursor", status=400)
+                    cursor = (key[0], key[1])
+                occurrences = scheduler.list_occurrences(
+                    job_id=query["job_id"][0], start_at_utc=query["start_at_utc"][0],
+                    end_at_utc=query["end_at_utc"][0], limit=limit, cursor=cursor,
+                )
+                next_cursor = (_cursor_encode("occurrences", binding,
+                    [occurrences[-1]["scheduled_at_utc"], occurrences[-1]["occurrence_id"]])
+                    if len(occurrences) == limit else None)
+                return 200, {"occurrences": occurrences, "next_cursor": next_cursor}
+            if route == "/v1/scheduler/ledger":
+                if set(query) - {"limit", "after_seq"}:
+                    raise OrchestratorError("invalid_request", status=400)
+                try:
+                    after_seq = int(query.get("after_seq", ["0"])[0])
+                except ValueError as exc:
+                    raise OrchestratorError("invalid_request", status=400) from exc
+                return 200, {"ledger": scheduler.ledger(after_seq=after_seq, limit=limit)}
         if self.known_path(path):
             raise OrchestratorError("method_not_allowed", status=405)
         raise OrchestratorError("not_found", status=404)
@@ -100,6 +254,67 @@ class ControlApplication:
             response_json = None if result is None else json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             self.service.store.store_command(key, method, path, body, epoch, status, response_json)
             return status, result
+
+    def scheduler_mutate(self, method: str, path: str, body: Any, key: str) -> tuple[int, Any | None]:
+        scheduler = self.service.scheduler
+        if scheduler is None:
+            raise OrchestratorError("scheduler_unavailable", status=503)
+        with self._mutation_lock:
+            if method == "POST" and path == "/v1/scheduler/compile":
+                payload = self._exact_object(
+                    body, {"request_text", "selected_target", "default_timezone", "default_locale"}
+                )
+                if self.service.schedule_compiler is None:
+                    raise OrchestratorError("schedule_compiler_not_qualified", status=503)
+                model_input = {
+                    "schema_version": "schedule-proposal-input/1",
+                    "request_id": str(uuid.uuid4()),
+                    "request_text": payload["request_text"],
+                    "request_received_at_utc": utc_text(),
+                    "default_timezone": payload["default_timezone"],
+                    "default_locale": payload["default_locale"],
+                    "selected_target": payload["selected_target"],
+                    "policy": {
+                        "minimum_lead_ms": MINIMUM_LEAD_MS,
+                        "minimum_interval_ms": MINIMUM_INTERVAL_MS,
+                        "maximum_snooze_generations": MAXIMUM_SNOOZE_GENERATIONS,
+                    },
+                }
+                try:
+                    compiled = self.service.schedule_compiler.compile(model_input)
+                except ScheduleContractError as exc:
+                    raise OrchestratorError(exc.code, status=exc.status) from exc
+                if compiled.proposal.get("outcome") in {"NEEDS_CLARIFICATION", "UNSUPPORTED"}:
+                    return 200, {"proposal": dict(compiled.proposal), "persisted": False}
+                return 201, scheduler.create_proposal(compiled)
+            if method == "POST" and path == "/v1/scheduler/proposals":
+                payload = self._exact_object(
+                    body, {"input", "output"}
+                )
+                try:
+                    compiled = compile_proposal(
+                        payload["input"], payload["output"],
+                        compiler_qualification_sha256=MANUAL_CANONICAL_API_SHA256,
+                        zones=scheduler.zones,
+                    )
+                except ScheduleContractError as exc:
+                    raise OrchestratorError(exc.code, status=exc.status) from exc
+                if compiled.proposal.get("outcome") in {"NEEDS_CLARIFICATION", "UNSUPPORTED"}:
+                    return 200, {"proposal": dict(compiled.proposal), "persisted": False}
+                return 201, scheduler.create_proposal(compiled)
+            decision = SCHEDULER_APPROVAL_DECISION.fullmatch(path)
+            if method == "POST" and decision:
+                payload = self._exact_object(body, {"proposal_id", "proposal_sha256", "decision"})
+                result = scheduler.decide_approval(
+                    approval_id=require_uuid4(decision.group(1)),
+                    proposal_id=require_uuid4(payload["proposal_id"]),
+                    proposal_sha256=payload["proposal_sha256"],
+                    decision=payload["decision"],
+                    cause_event_id=key,
+                )
+                return 200, result
+        raise OrchestratorError("method_not_allowed" if self.known_path(path) else "not_found",
+                                status=405 if self.known_path(path) else 404)
 
 
 def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHandler]:
@@ -171,6 +386,18 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
                 raise OrchestratorError("invalid_request", status=400)
             return key.lower(), epoch
 
+        def _idempotency_header(self) -> str:
+            keys = self.headers.get_all("Idempotency-Key", failobj=[])
+            if len(keys) != 1:
+                raise OrchestratorError("precondition_required", status=428)
+            try:
+                parsed = uuid.UUID(keys[0])
+                if parsed.version != 4 or str(parsed) != keys[0].lower():
+                    raise ValueError
+            except (ValueError, TypeError) as exc:
+                raise OrchestratorError("invalid_request", status=400) from exc
+            return keys[0].lower()
+
         def _post_body(self) -> Any:
             lengths = self.headers.get_all("Content-Length", failobj=[])
             if not lengths:
@@ -195,7 +422,24 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
         def do_GET(self) -> None:
             try:
                 self._admit(authenticate=self.path != "/readyz")
-                status, result = application.get(self.path)
+                if ACTION_APPROVAL_PRESENTATION.fullmatch(urlsplit(self.path).path):
+                    presentation = self.headers.get_all("X-Presentation-Id", failobj=[])
+                    nonce = self.headers.get_all("X-Preview-Nonce", failobj=[])
+                    epochs = self.headers.get_all("If-Match-Epoch", failobj=[])
+                    if len(presentation) != 1 or len(nonce) != 1 or len(epochs) != 1:
+                        raise OrchestratorError("invalid_request", status=400)
+                    try:
+                        epoch = int(epochs[0])
+                    except ValueError as exc:
+                        raise OrchestratorError("invalid_request", status=400) from exc
+                    status, result = application.action_presentation(
+                        self.path,
+                        presentation_id=presentation[0],
+                        preview_nonce=nonce[0],
+                        epoch=epoch,
+                    )
+                else:
+                    status, result = application.get(self.path)
                 self._json(status, result)
             except OrchestratorError as exc:
                 self._error(exc)
@@ -205,9 +449,14 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
         def do_POST(self) -> None:
             try:
                 self._admit(authenticate=True)
-                key, epoch = self._mutation_headers()
                 body = self._post_body()
-                status, result = application.mutate("POST", self.path, body, key, epoch)
+                route = urlsplit(self.path).path
+                if route.startswith("/v1/scheduler/"):
+                    key = self._idempotency_header()
+                    status, result = application.scheduler_mutate("POST", route, body, key)
+                else:
+                    key, epoch = self._mutation_headers()
+                    status, result = application.mutate("POST", route, body, key, epoch)
                 self._json(status, result)
             except OrchestratorError as exc:
                 self._error(exc)
