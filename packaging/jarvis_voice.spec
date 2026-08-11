@@ -6,10 +6,13 @@ from PyInstaller.utils.hooks import collect_all
 
 root = Path(SPEC).resolve().parents[1]
 source = root / "src"
+orchestrator_source = root / "orchestrator" / "src"
 
 datas = []
 binaries = []
 hiddenimports = [
+    "jarvis_orchestrator.jcs",
+    "jarvis_orchestrator.scheduler_crypto",
     "multiprocessing.popen_spawn_win32",
     "pythoncom",
     "pywintypes",
@@ -30,6 +33,7 @@ for package in (
     "onnxruntime",
     "websockets",
     "win32com",
+    "cryptography",
 ):
     package_datas, package_binaries, package_hidden = collect_all(package)
     datas += package_datas
@@ -38,7 +42,7 @@ for package in (
 
 analysis = Analysis(
     [str(root / "packaging" / "windows_entry.py")],
-    pathex=[str(source)],
+    pathex=[str(source), str(orchestrator_source)],
     binaries=binaries,
     datas=datas,
     hiddenimports=sorted(set(hiddenimports)),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -56,6 +57,18 @@ class ApplicationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SchedulerClientConfig:
+    enabled: bool = False
+    compatibility_manifest_path: str | None = None
+    compatibility_manifest_sha256: str | None = None
+    native_qualification_path: str | None = None
+    native_qualification_sha256: str | None = None
+    tts_qualification_path: str | None = None
+    tts_qualification_sha256: str | None = None
+    full_body_when_locked: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class WhisperCppConfig:
     revision: str = "v1.9.2"
     executable: ArtifactConfig = field(default_factory=ArtifactConfig)
@@ -85,6 +98,7 @@ class VoiceConfig:
     whisper_model_directory: str | None = None
     asr: AsrConfig = field(default_factory=AsrConfig)
     application: ApplicationConfig = field(default_factory=ApplicationConfig)
+    scheduler: SchedulerClientConfig = field(default_factory=SchedulerClientConfig)
     vad: VadConfig = field(default_factory=VadConfig)
     orchestrator_url: str = "ws://127.0.0.1:8765"
     sapi_voices: Mapping[str, str] = field(default_factory=dict)
@@ -128,6 +142,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     vad_data = data.get("vad", {})
     asr_data = data.get("asr", {})
     application_data = data.get("application", {})
+    scheduler_data = data.get("scheduler", {})
     cuda_data = asr_data.get("cuda", {}) if isinstance(asr_data, Mapping) else None
     artifact_data = vad_data.get("artifact", {}) if isinstance(vad_data, Mapping) else None
     macos_data = data.get("macos", {})
@@ -140,6 +155,12 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "ASR configuration must be an object", subsystem="config", safe_context={"field": "asr"})
     if not isinstance(application_data, Mapping):
         raise BackendError("config.invalid_field", "Application configuration must be an object", subsystem="config", safe_context={"field": "application"})
+    if not isinstance(scheduler_data, Mapping) or set(scheduler_data) - {
+        "enabled", "compatibility_manifest_path", "compatibility_manifest_sha256",
+        "native_qualification_path", "native_qualification_sha256",
+        "tts_qualification_path", "tts_qualification_sha256", "full_body_when_locked",
+    }:
+        raise BackendError("config.invalid_field", "Scheduler configuration is invalid", subsystem="config", safe_context={"field": "scheduler"})
     if not isinstance(macos_data, Mapping) or set(macos_data) - {"asr_backend", "whisper_cpp", "system_voices"}:
         raise BackendError("config.invalid_field", "macOS configuration has unknown fields", subsystem="config", safe_context={"field": "macos"})
     if not isinstance(whisper_cpp_data, Mapping) or set(whisper_cpp_data) - {
@@ -187,6 +208,19 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
             shutdown_timeout_seconds=float(application_data.get("shutdown_timeout_seconds", 5.0)),
             log_maximum_bytes=_positive_int(application_data.get("log_maximum_bytes", 1_048_576), "application.log_maximum_bytes"),
             log_backup_count=_non_negative_int(application_data.get("log_backup_count", 3), "application.log_backup_count"),
+        ),
+        scheduler=SchedulerClientConfig(
+            enabled=_boolean(scheduler_data.get("enabled", False), "scheduler.enabled"),
+            compatibility_manifest_path=scheduler_data.get("compatibility_manifest_path"),
+            compatibility_manifest_sha256=scheduler_data.get("compatibility_manifest_sha256"),
+            native_qualification_path=scheduler_data.get("native_qualification_path"),
+            native_qualification_sha256=scheduler_data.get("native_qualification_sha256"),
+            tts_qualification_path=scheduler_data.get("tts_qualification_path"),
+            tts_qualification_sha256=scheduler_data.get("tts_qualification_sha256"),
+            full_body_when_locked=_boolean(
+                scheduler_data.get("full_body_when_locked", False),
+                "scheduler.full_body_when_locked",
+            ),
         ),
         vad=VadConfig(
             artifact=ArtifactConfig(artifact_data.get("path"), artifact_data.get("size"), artifact_data.get("sha256")),
@@ -247,6 +281,42 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "CUDA timeouts must be positive", subsystem="config", safe_context={"field": "asr.cuda.timeout"})
     if config.application.shutdown_timeout_seconds <= 0:
         raise BackendError("config.invalid_field", "Application shutdown timeout must be positive", subsystem="config", safe_context={"field": "application.shutdown_timeout_seconds"})
+    scheduler_values = (
+        config.scheduler.compatibility_manifest_path,
+        config.scheduler.compatibility_manifest_sha256,
+        config.scheduler.native_qualification_path,
+        config.scheduler.native_qualification_sha256,
+    )
+    scheduler_tts_values = (
+        config.scheduler.tts_qualification_path,
+        config.scheduler.tts_qualification_sha256,
+    )
+    if config.scheduler.enabled:
+        if any(value is None for value in scheduler_values):
+            raise BackendError("config.scheduler_qualification_required", "Scheduler qualification files and digests are required", subsystem="config")
+        for name in ("compatibility_manifest_path", "native_qualification_path"):
+            path = Path(str(getattr(config.scheduler, name))).expanduser()
+            if not path.is_absolute():
+                raise BackendError("config.scheduler_path_not_absolute", "Scheduler qualification paths must be absolute", subsystem="config", safe_context={"field": f"scheduler.{name}"})
+        for name in ("compatibility_manifest_sha256", "native_qualification_sha256"):
+            if not re.fullmatch(r"[0-9a-f]{64}", str(getattr(config.scheduler, name))):
+                raise BackendError("config.scheduler_digest_invalid", "Scheduler qualification digests must be lowercase SHA-256", subsystem="config", safe_context={"field": f"scheduler.{name}"})
+        if any(value is None for value in scheduler_tts_values) and any(
+            value is not None for value in scheduler_tts_values
+        ):
+            raise BackendError("config.scheduler_tts_qualification_incomplete", "Scheduler TTS qualification path and digest must be paired", subsystem="config")
+        if all(value is not None for value in scheduler_tts_values):
+            tts_path = Path(str(config.scheduler.tts_qualification_path)).expanduser()
+            if not tts_path.is_absolute():
+                raise BackendError("config.scheduler_path_not_absolute", "Scheduler qualification paths must be absolute", subsystem="config", safe_context={"field": "scheduler.tts_qualification_path"})
+            if not re.fullmatch(r"[0-9a-f]{64}", str(config.scheduler.tts_qualification_sha256)):
+                raise BackendError("config.scheduler_digest_invalid", "Scheduler qualification digests must be lowercase SHA-256", subsystem="config", safe_context={"field": "scheduler.tts_qualification_sha256"})
+    elif (
+        any(value is not None for value in scheduler_values)
+        or any(value is not None for value in scheduler_tts_values)
+        or config.scheduler.full_body_when_locked
+    ):
+        raise BackendError("config.scheduler_disabled_has_authority", "Disabled scheduler configuration cannot retain authority fields", subsystem="config")
     if config.macos.whisper_cpp.revision != "v1.9.2":
         raise BackendError("config.invalid_field", "whisper.cpp revision must match the approved runtime", subsystem="config", safe_context={"field": "macos.whisper_cpp.revision"})
     if config.macos.asr_backend not in {"whisper_cpp", "faster_whisper_cpu_smoke"}:
