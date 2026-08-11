@@ -91,6 +91,7 @@ from .research import (
 from .speech import SpeechSegmenterV1, resolve_locale
 from .store import OrchestratorStore
 from .scheduler_store import SchedulerStore
+from .schedule_admission import SCHEDULE_ADMISSION_CONTRACT, classify_schedule_request
 from .research_security import reject_sensitive_text
 from .tool_store import ToolStoreV1
 
@@ -501,6 +502,122 @@ class OrchestratorService:
             chunk_count=1,
             trailing_speech=trailing,
             last_unit_index=len(trailing),
+        )
+
+    async def _execute_schedule_admission(
+        self, task: TaskSnapshot, input_record: Mapping[str, str]
+    ) -> TaskSnapshot:
+        """Run the proposal-only compiler and publish a code-owned response."""
+
+        task = self.store.transition(
+            task.task_id,
+            task.epoch,
+            TaskState.ROUTING,
+            TaskState.LOADING_CONTEXT,
+            payload={"route": "scheduler_proposal"},
+        )
+        task = self.store.transition(
+            task.task_id, task.epoch, TaskState.LOADING_CONTEXT, TaskState.EXECUTING
+        )
+        locale = (
+            "en-US"
+            if input_record["language"] == "en"
+            else self.config.scheduler_default_locale
+        )
+        result_kind = "UNAVAILABLE"
+        if self.scheduler is not None and self.schedule_compiler is not None:
+            model_input = {
+                "schema_version": "schedule-proposal-input/1",
+                "request_id": task.task_id,
+                "request_text": input_record["text"],
+                "request_received_at_utc": task.admitted_at,
+                "default_timezone": self.config.scheduler_default_timezone,
+                "default_locale": locale,
+                "selected_target": {
+                    "job_id": None,
+                    "job_revision": None,
+                    "occurrence_id": None,
+                    "snooze_generation": None,
+                },
+                "policy": {
+                    "minimum_lead_ms": 10000,
+                    "minimum_interval_ms": 60000,
+                    "maximum_snooze_generations": 8,
+                },
+            }
+            semantic = domain_sha256(
+                SCHEDULE_ADMISSION_CONTRACT,
+                {
+                    "request_received_at_utc": task.admitted_at,
+                    "request_text": input_record["text"],
+                    "timezone": self.config.scheduler_default_timezone,
+                    "locale": locale,
+                },
+            )
+            try:
+                replay = self.scheduler.lookup_api_result(task.task_id, semantic)
+                if replay is None:
+                    compiled = await asyncio.to_thread(self.schedule_compiler.compile, model_input)
+                    if compiled.first_due_at_utc is not None:
+                        result_kind = "PROPOSAL"
+                        self.scheduler.create_proposal(
+                            compiled,
+                            api_event_id=task.task_id,
+                            api_semantic_sha256=semantic,
+                        )
+                    else:
+                        result_kind = str(
+                            compiled.proposal.get("outcome", "PROPOSAL_INVALID")
+                        )
+                        self.scheduler.store_api_result(
+                            event_id=task.task_id,
+                            semantic_sha256=semantic,
+                            event_type="scheduler.voice.admission_result",
+                            status=200,
+                            result={"outcome": result_kind},
+                        )
+                else:
+                    stored = replay.get("result", {})
+                    result_kind = (
+                        "PROPOSAL"
+                        if "proposal_id" in stored
+                        else str(stored.get("outcome", "PROPOSAL_INVALID"))
+                    )
+            except Exception:
+                # Explicit reminder intent must never fall through to a general
+                # model that could falsely claim the side effect occurred.
+                result_kind = "UNAVAILABLE"
+
+        greek = locale == "el-GR"
+        if result_kind == "PROPOSAL":
+            text = (
+                "Η πρόταση υπενθύμισης είναι έτοιμη. Πάτησε F10 για έγκριση ή F11 για απόρριψη."
+                if greek
+                else "The reminder proposal is ready. Press F10 to approve or F11 to deny."
+            )
+        elif result_kind == "NEEDS_CLARIFICATION":
+            text = (
+                "Χρειάζομαι ακριβέστερη ημερομηνία ή ώρα πριν δημιουργήσω την υπενθύμιση."
+                if greek
+                else "I need a more precise date or time before creating the reminder."
+            )
+        elif result_kind == "UNSUPPORTED":
+            text = (
+                "Αυτό το είδος προγραμματισμού δεν υποστηρίζεται ακόμη."
+                if greek
+                else "That kind of schedule is not supported yet."
+            )
+        else:
+            text = (
+                "Ο ασφαλής προγραμματισμός υπενθυμίσεων δεν είναι διαθέσιμος αυτή τη στιγμή."
+                if greek
+                else "Safe reminder scheduling is currently unavailable."
+            )
+        return self._publish_deterministic_research(
+            task,
+            text=text,
+            speech=((locale, text),),
+            default_locale=locale,
         )
 
     async def _execute_research(self, task: TaskSnapshot, input_record: Mapping[str, str]) -> TaskSnapshot:
@@ -1011,6 +1128,8 @@ class OrchestratorService:
             recall = MemoryRecall()
             if task.state == TaskState.ROUTING:
                 routing_input = self.store.task_input(task_id)
+                if classify_schedule_request(routing_input["text"]).admitted:
+                    return await self._execute_schedule_admission(task, routing_input)
                 research_plan = None
                 if self.config.research_enabled:
                     assert self.research_planner is not None

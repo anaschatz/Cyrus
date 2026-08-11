@@ -64,6 +64,8 @@ class OrchestratorConfig:
     cloud_monthly_cap_microusd: int = 5_000_000
     scheduler_compiler_qualification_file: Path | None = None
     scheduler_compiler_qualification_sha256: str = ""
+    scheduler_default_timezone: str = "Europe/Athens"
+    scheduler_default_locale: str = "el-GR"
     voice_scheduler_compatibility_sha256: str = ""
     tools_enabled: bool = False
     tool_roots: Mapping[str, str] | None = None
@@ -181,6 +183,12 @@ class OrchestratorConfig:
             raise ValueError("research feature flags must be boolean")
         if not isinstance(self.cloud_enabled, bool) or not isinstance(self.cloud_terra_enabled, bool):
             raise ValueError("cloud feature flags must be boolean")
+        if self.scheduler_default_locale not in {"el-GR", "en-US"}:
+            raise ValueError("scheduler_default_locale is invalid")
+        try:
+            ZoneInfo(self.scheduler_default_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("scheduler_default_timezone is invalid") from exc
         if not isinstance(self.tools_enabled, bool):
             raise ValueError("tools_enabled must be boolean")
         if self.max_model_requests_per_tool_task != 6:
