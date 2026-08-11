@@ -39,8 +39,15 @@ class ActionHostAuthKeyProvider(Protocol):
 @dataclass(frozen=True, slots=True)
 class NativeExecutionResultV2:
     result_event_id: str
+    request_id: str
     execution_id: str
+    tool_call_id: str
+    permit_id: str
     idempotency_key: str
+    tool_id: str
+    tool_version: int
+    result_schema_sha256: str
+    registry_sha256: str
     result_sha256: str
     outcome: ToolOutcomeV1
     result_payload: Mapping[str, Any]
@@ -187,8 +194,15 @@ class ActionHostV2Client:
             raise ActionHostProtocolError("host.protocol_mismatch") from exc
         return NativeExecutionResultV2(
             result_event_id=result["result_event_id"],
+            request_id=result["request_id"],
             execution_id=result["execution_id"],
+            tool_call_id=result["tool_call_id"],
+            permit_id=result["permit_id"],
             idempotency_key=result["idempotency_key"],
+            tool_id=result["tool_id"],
+            tool_version=result["tool_version"],
+            result_schema_sha256=result["result_schema_sha256"],
+            registry_sha256=result["registry_sha256"],
             result_sha256=result["result_sha256"],
             outcome=outcome,
             result_payload=dict(result["result_payload"]),
@@ -293,4 +307,3 @@ class ActionHostV2Client:
 
     async def acknowledge(self, result: NativeExecutionResultV2) -> None:
         await asyncio.to_thread(self._ack_sync, result)
-

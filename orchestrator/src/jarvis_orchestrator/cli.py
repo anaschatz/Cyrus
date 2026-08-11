@@ -433,13 +433,17 @@ async def _run_servers(
             cipher=ToolPayloadCipherV1(tool_key_provider),
             registry=tool_registry,
         )
+        action_host_auth_keys = platform_key_provider(
+            store_role="action-host-auth",
+            state_root=config.database_path.parent / "action-host-auth-keys",
+        )
         assert config.action_host_socket_path is not None
         assert config.action_host_token_file is not None
         tool_executor = ActionHostV2ToolExecutor(
             ActionHostV2Client(
                 socket_path=config.action_host_socket_path,
                 token_path=config.action_host_token_file,
-                auth_keys=tool_key_provider,
+                auth_keys=action_host_auth_keys,
                 timeout_seconds=min(config.model_timeout_seconds, 30.0),
             )
         )

@@ -182,7 +182,7 @@ class ActionHostResultJournalV2:
                 (_utc_text(),),
             )
 
-    def admit(self, execute: Mapping[str, Any], *, result_schema_sha256: str) -> str:
+    def admit(self, execute: Mapping[str, Any], *, result_schema_sha256: str) -> bool:
         request_digest = hashlib.sha256(jcs_bytes(execute)).hexdigest()
         stamp = _utc_text()
         with self._transaction() as connection:
@@ -193,7 +193,7 @@ class ActionHostResultJournalV2:
             if existing is not None:
                 if existing["request_sha256"] != request_digest:
                     raise ActionHostProtocolError("host.idempotency_conflict")
-                return existing["state"]
+                return False
             connection.execute(
                 """INSERT INTO executions(
                    execution_id,idempotency_key,request_sha256,request_id,tool_call_id,
@@ -214,7 +214,7 @@ class ActionHostResultJournalV2:
                     stamp,
                 ),
             )
-        return "HOST_RECEIVED"
+        return True
 
     def store_receipt(self, execution_id: str, payload: Mapping[str, Any]) -> None:
         encoded = jcs_text(payload)
@@ -433,10 +433,10 @@ class ActionHostV2Server:
             self._send_error(sender, connection, execute, "host.protocol_mismatch")
             return
         arguments = self.registry.validate(execute["tool_id"], execute["payload"])
-        prior_state = self.journal.admit(
+        admitted = self.journal.admit(
             execute, result_schema_sha256=definition.output_schema_sha256
         )
-        if prior_state != "HOST_RECEIVED":
+        if not admitted:
             receipts = self.journal.receipts(execute["execution_id"], execute["idempotency_key"])
             result = self.journal.result(execute["execution_id"], execute["idempotency_key"])
             connection.sendall(

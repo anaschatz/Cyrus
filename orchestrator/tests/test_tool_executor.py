@@ -39,13 +39,26 @@ class ActionHostV2ToolExecutorTests(unittest.TestCase):
     def test_exact_permit_binding_and_ack_after_result(self) -> None:
         execution_id = str(uuid.uuid4())
         idempotency_key = str(uuid.uuid4())
+        permit_id = str(uuid.uuid4())
+        tool_call_id = str(uuid.uuid4())
+        registry = ToolRegistryV1.build(
+            root_ids=("documents",), app_ids=("textedit",)
+        )
+        definition = registry.resolve("note.capture@1")
         outcome = ToolOutcomeV1(
             ToolStatus.VERIFIED, VerificationStatus.MATCHED, "ok"
         )
         result = NativeExecutionResultV2(
             result_event_id=str(uuid.uuid4()),
+            request_id=str(uuid.uuid4()),
             execution_id=execution_id,
+            tool_call_id=tool_call_id,
+            permit_id=permit_id,
             idempotency_key=idempotency_key,
+            tool_id=definition.tool_id,
+            tool_version=1,
+            result_schema_sha256=definition.output_schema_sha256,
+            registry_sha256=registry.digest,
             result_sha256="d" * 64,
             outcome=outcome,
             result_payload={"ok": True},
@@ -53,20 +66,17 @@ class ActionHostV2ToolExecutorTests(unittest.TestCase):
         )
         client = FakeActionHostV2Client(result)
         executor = ActionHostV2ToolExecutor(client)
-        definition = ToolRegistryV1.build(
-            root_ids=("documents",), app_ids=("textedit",)
-        ).resolve("note.capture@1")
 
         returned = asyncio.run(
             executor.execute_typed(
                 execution_id=execution_id,
-                permit_id=str(uuid.uuid4()),
-                tool_call_id=str(uuid.uuid4()),
+                permit_id=permit_id,
+                tool_call_id=tool_call_id,
                 definition=definition,
                 arguments={"title": "Idea", "body": "Coffee"},
                 arguments_sha256="a" * 64,
                 idempotency_key=idempotency_key,
-                registry_sha256="b" * 64,
+                registry_sha256=registry.digest,
                 policy_sha256="c" * 64,
                 scheduler_contract_sha256="e" * 64,
                 user_intent_binding_sha256="f" * 64,
@@ -89,8 +99,15 @@ class ActionHostV2ToolExecutorTests(unittest.TestCase):
     def test_restart_ack_queries_without_redispatch(self) -> None:
         result = NativeExecutionResultV2(
             result_event_id=str(uuid.uuid4()),
+            request_id=str(uuid.uuid4()),
             execution_id=str(uuid.uuid4()),
+            tool_call_id=str(uuid.uuid4()),
+            permit_id=str(uuid.uuid4()),
             idempotency_key=str(uuid.uuid4()),
+            tool_id="app.open@1",
+            tool_version=1,
+            result_schema_sha256="a" * 64,
+            registry_sha256="b" * 64,
             result_sha256="d" * 64,
             outcome=ToolOutcomeV1(
                 ToolStatus.ACCEPTED, VerificationStatus.UNAVAILABLE, "ok"

@@ -1,0 +1,21 @@
+{
+  "socket_path": "/absolute/private/path/action-host/action-host.sock",
+  "token_path": "/absolute/private/path/action-host/instance-token",
+  "journal_path": "/absolute/private/path/action-host/result-journal.sqlite3",
+  "reference_store_path": "/absolute/private/path/action-host/native-references.sqlite3",
+  "notes_path": "/absolute/private/path/action-host/private-notes",
+  "native_helper_path": "/Applications/JARVIS.app/Contents/Helpers/jarvis-action-native",
+  "native_helper_sha256": "replace-with-signed-helper-sha256",
+  "native_helper_code_identity_sha256": "replace-with-codesign-requirement-output-sha256",
+  "tool_roots": {
+    "documents": "/Users/replace/Documents"
+  },
+  "tool_app_ids": [
+    "finder",
+    "preview",
+    "textedit",
+    "calendar",
+    "reminders",
+    "mail"
+  ]
+}

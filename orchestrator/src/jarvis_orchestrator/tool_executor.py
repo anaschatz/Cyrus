@@ -55,7 +55,18 @@ class ActionHostV2ToolExecutor:
                 "deadline_utc": deadline_utc,
             }
         )
-        if result.execution_id != execution_id or result.idempotency_key != idempotency_key:
+        if any(
+            (
+                result.execution_id != execution_id,
+                result.tool_call_id != tool_call_id,
+                result.permit_id != permit_id,
+                result.idempotency_key != idempotency_key,
+                result.tool_id != definition.tool_id,
+                result.tool_version != 1,
+                result.result_schema_sha256 != definition.output_schema_sha256,
+                result.registry_sha256 != registry_sha256,
+            )
+        ):
             raise ActionHostProtocolError("host.result_conflict")
         async with self._lock:
             existing = self._pending.get(execution_id)
