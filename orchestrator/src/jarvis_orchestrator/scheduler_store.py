@@ -505,12 +505,141 @@ class SchedulerStore:
         )
         return selected_event_id
 
+    def _api_result_tx(
+        self, connection: sqlite3.Connection, event_id: str, semantic_sha256: str
+    ) -> dict[str, Any] | None:
+        row = connection.execute(
+            "SELECT semantic_sha256,content_record_id,state FROM scheduler_inbox WHERE event_id=?",
+            (event_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["semantic_sha256"] != semantic_sha256:
+            raise OrchestratorError("protocol.conflicting_duplicate", status=409)
+        if row["state"] == "QUARANTINED" or row["content_record_id"] is None:
+            raise OrchestratorError("protocol.conflicting_duplicate", status=409)
+        return self._get_content_tx(connection, row["content_record_id"])
+
+    def _existing_inbox(
+        self, event_id: str, semantic_sha256: str
+    ) -> tuple[bool, dict[str, Any] | None]:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT semantic_sha256,content_record_id,state FROM scheduler_inbox WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if row is None:
+                return False, None
+            conflict = row["semantic_sha256"] != semantic_sha256 or row["state"] == "QUARANTINED"
+            content_record_id = row["content_record_id"]
+        if conflict:
+            with self._transaction() as connection:
+                connection.execute(
+                    "UPDATE scheduler_inbox SET state='QUARANTINED' WHERE event_id=?", (event_id,)
+                )
+            raise OrchestratorError("protocol.conflicting_duplicate", status=409)
+        if content_record_id is None:
+            return True, None
+        with self._lock:
+            return True, self._get_content_tx(self._connection, content_record_id)
+
+    def lookup_api_result(self, event_id: str, semantic_sha256: str) -> dict[str, Any] | None:
+        require_uuid4(event_id)
+        self._sha(semantic_sha256)
+        exists, result = self._existing_inbox(event_id, semantic_sha256)
+        return result if exists else None
+
+    def _record_api_result_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        event_id: str,
+        semantic_sha256: str,
+        event_type: str,
+        status: int,
+        result: Mapping[str, Any],
+        now: datetime,
+    ) -> dict[str, Any]:
+        prior = self._api_result_tx(connection, event_id, semantic_sha256)
+        if prior is not None:
+            return prior
+        record_id = new_uuid4()
+        wrapper = {"result": dict(result), "status": status}
+        self._put_content_tx(
+            connection,
+            record_type="CONTROL_API_RESULT",
+            record_id=record_id,
+            job_id=None,
+            job_revision=0,
+            value=wrapper,
+            now=now,
+            purge_after=now + timedelta(milliseconds=CONTENT_RETENTION_MS),
+        )
+        connection.execute(
+            """INSERT INTO scheduler_inbox(
+               event_id,semantic_sha256,protocol,event_type,content_record_id,state,created_at,applied_at
+               ) VALUES(?,?,?,?,?,'APPLIED',?,?)""",
+            (
+                event_id,
+                semantic_sha256,
+                SCHEDULER_PROTOCOL,
+                event_type,
+                record_id,
+                utc_text(now),
+                utc_text(now),
+            ),
+        )
+        return wrapper
+
+    def store_api_result(
+        self,
+        *,
+        event_id: str,
+        semantic_sha256: str,
+        event_type: str,
+        status: int,
+        result: Mapping[str, Any],
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        require_uuid4(event_id)
+        self._sha(semantic_sha256)
+        replay_exists, replay = self._existing_inbox(event_id, semantic_sha256)
+        if replay_exists:
+            if replay is None:
+                raise OrchestratorError("scheduler_content_unavailable", status=503)
+            return replay
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            return self._record_api_result_tx(
+                connection,
+                event_id=event_id,
+                semantic_sha256=semantic_sha256,
+                event_type=event_type,
+                status=status,
+                result=result,
+                now=selected,
+            )
+
     def create_proposal(
         self,
         compiled: CompiledProposal,
         *,
         now: datetime | None = None,
+        api_event_id: str | None = None,
+        api_semantic_sha256: str | None = None,
     ) -> dict[str, Any]:
+        if (api_event_id is None) != (api_semantic_sha256 is None):
+            raise ValueError("api event id and semantic hash must be supplied together")
+        if api_event_id is not None:
+            require_uuid4(api_event_id)
+            self._sha(str(api_semantic_sha256))
+            replay_exists, replay = self._existing_inbox(
+                api_event_id, str(api_semantic_sha256)
+            )
+            if replay_exists:
+                if replay is None:
+                    raise OrchestratorError("scheduler_content_unavailable", status=503)
+                return dict(replay["result"])
         selected = now or utc_now()
         operation = str(compiled.proposal["operation"])
         if operation not in {"CREATE_JOB", "CANCEL_JOB", "SNOOZE_OCCURRENCE"}:
@@ -519,6 +648,10 @@ class SchedulerStore:
         approval_id = new_uuid4()
         expires = selected + timedelta(seconds=APPROVAL_TTL_SECONDS)
         with self._transaction() as connection:
+            if api_event_id is not None:
+                prior = self._api_result_tx(connection, api_event_id, str(api_semantic_sha256))
+                if prior is not None:
+                    return dict(prior["result"])
             queue_count = connection.execute(
                 """SELECT COUNT(*) FROM approval_arbiter_queue
                    WHERE state IN ('WAITING_FOR_CHANNEL','PRESENTING','PRESENTED','DECIDING','WAITING_FOR_OWNER')"""
@@ -585,13 +718,24 @@ class SchedulerStore:
                 now=selected,
                 metadata={"approval_id": approval_id, "proposal_sha256": compiled.proposal_sha256},
             )
-        return {
-            "approval_id": approval_id,
-            "approval_state": "WAITING_FOR_CHANNEL",
-            "expires_at_utc": utc_text(expires),
-            "proposal_id": proposal_id,
-            "proposal_sha256": compiled.proposal_sha256,
-        }
+            result = {
+                "approval_id": approval_id,
+                "approval_state": "WAITING_FOR_CHANNEL",
+                "expires_at_utc": utc_text(expires),
+                "proposal_id": proposal_id,
+                "proposal_sha256": compiled.proposal_sha256,
+            }
+            if api_event_id is not None:
+                self._record_api_result_tx(
+                    connection,
+                    event_id=api_event_id,
+                    semantic_sha256=str(api_semantic_sha256),
+                    event_type="scheduler.control.proposal_created",
+                    status=201,
+                    result=result,
+                    now=selected,
+                )
+            return result
 
     def _expire_waiting_tx(self, connection: sqlite3.Connection, now: datetime) -> None:
         rows = connection.execute(
@@ -853,6 +997,11 @@ class SchedulerStore:
             {"approval_id": approval_id, "proposal_id": proposal_id,
              "proposal_sha256": proposal_sha256, "decision": decision},
         )
+        replay_exists, replay = self._existing_inbox(cause_event_id, command_semantic)
+        if replay_exists:
+            if replay is None:
+                raise OrchestratorError("scheduler_content_unavailable", status=503)
+            return replay
         with self._lock:
             lead_row = self._connection.execute(
                 """SELECT first_due_at_utc,state,expires_at FROM scheduler_proposals
@@ -906,9 +1055,6 @@ class SchedulerStore:
             ).fetchone()
             if prior is not None:
                 if prior["semantic_sha256"] != command_semantic:
-                    connection.execute(
-                        "UPDATE scheduler_inbox SET state='QUARANTINED' WHERE event_id=?", (cause_event_id,)
-                    )
                     raise OrchestratorError("protocol.conflicting_duplicate", status=409)
                 return self._get_content_tx(connection, prior["content_record_id"])
             row = self._proposal_row_tx(connection, approval_id)
@@ -1485,6 +1631,20 @@ class SchedulerStore:
             raise OrchestratorError("snooze_limit_reached", status=409)
         if row["action_deadline_at"] and parse_utc(row["action_deadline_at"]) < now:
             raise OrchestratorError("snooze_window_expired", status=410)
+        prior_deliveries = connection.execute(
+            """SELECT notification_id,state FROM scheduler_deliveries
+               WHERE occurrence_id=? AND state NOT IN ('EXPIRED_UNDELIVERED','REVOKED')""",
+            (occurrence,),
+        ).fetchall()
+        for delivery in prior_deliveries:
+            if delivery["state"] != "SCHEDULED":
+                self._revoke_and_tombstone_tx(
+                    connection,
+                    notification=delivery["notification_id"],
+                    occurrence=occurrence,
+                    reason_code="occurrence_snoozed",
+                    now=now,
+                )
         connection.execute(
             """UPDATE scheduler_deliveries SET state='REVOKED',updated_at=?
                WHERE occurrence_id=? AND state NOT IN ('OS_ACCEPTED','EXPIRED_UNDELIVERED','REVOKED')""",
@@ -1556,6 +1716,48 @@ class SchedulerStore:
             )
         return {"delivery_generation": generation, "occurrence_id": occurrence, "snooze_until_at_utc": snooze_until_at_utc}
 
+    def _revoke_and_tombstone_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        notification: str,
+        occurrence: str,
+        reason_code: str,
+        now: datetime,
+    ) -> None:
+        connection.execute(
+            """UPDATE scheduler_outbox SET state='REVOKED',lease_owner=NULL,lease_expires_at=NULL
+               WHERE entity_id=? AND event_type IN (
+                 'scheduler.notification.requested','scheduler.notification.speech'
+               ) AND state IN ('PENDING','LEASED')""",
+            (notification,),
+        )
+        try:
+            self._append_outbox_tx(
+                connection,
+                event_type="scheduler.notification.tombstone",
+                entity_id=notification,
+                payload={
+                    "notification_id": notification,
+                    "occurrence_id": occurrence,
+                    "reason_code": reason_code,
+                    "created_at_utc": utc_text(now),
+                },
+                expires_at=now + timedelta(milliseconds=MISSED_GRACE_MS),
+                now=now,
+            )
+        except SchedulerCryptoError:
+            self._ledger_tx(
+                connection,
+                entity_type="delivery",
+                entity_id=notification,
+                event_type="scheduler.notification.tombstone_blocked",
+                from_state=None,
+                to_state=None,
+                now=now,
+                metadata={"reason_code": "scheduler_key_unavailable"},
+            )
+
     def _cancel_job_tx(
         self,
         connection: sqlite3.Connection,
@@ -1571,6 +1773,21 @@ class SchedulerStore:
             raise OrchestratorError("not_found", status=404)
         if row["state"] in _TERMINAL_JOB_STATES:
             raise OrchestratorError("invalid_state", status=409)
+        deliveries = connection.execute(
+            """SELECT d.notification_id,d.occurrence_id,d.state
+               FROM scheduler_deliveries d JOIN scheduler_occurrences o USING(occurrence_id)
+               WHERE o.job_id=? AND d.state NOT IN ('EXPIRED_UNDELIVERED','REVOKED')""",
+            (job_id,),
+        ).fetchall()
+        for delivery in deliveries:
+            if delivery["state"] != "SCHEDULED":
+                self._revoke_and_tombstone_tx(
+                    connection,
+                    notification=delivery["notification_id"],
+                    occurrence=delivery["occurrence_id"],
+                    reason_code="job_cancelled",
+                    now=now,
+                )
         connection.execute(
             """UPDATE scheduler_jobs SET state='CANCELLED',updated_at=?,terminal_at=?,content_purge_after=?
                WHERE job_id=? AND job_revision=?""",
@@ -1636,15 +1853,15 @@ class SchedulerStore:
         if stage not in allowed:
             raise OrchestratorError("invalid_request", status=400)
         selected = parse_utc(observed_at_utc)
+        replay_exists, _replay = self._existing_inbox(event_id, semantic_sha256)
+        if replay_exists:
+            return False
         with self._transaction() as connection:
             existing = connection.execute(
                 "SELECT semantic_sha256 FROM scheduler_inbox WHERE event_id=?", (event_id,)
             ).fetchone()
             if existing:
                 if existing["semantic_sha256"] != semantic_sha256:
-                    connection.execute(
-                        "UPDATE scheduler_inbox SET state='QUARANTINED' WHERE event_id=?", (event_id,)
-                    )
                     raise OrchestratorError("protocol.conflicting_duplicate", status=409)
                 return False
             delivery = connection.execute(
@@ -1658,6 +1875,20 @@ class SchedulerStore:
                    ) VALUES(?,?,?,'scheduler.notification.receipt','APPLIED',?,?)""",
                 (event_id, semantic_sha256, SCHEDULER_PROTOCOL, utc_text(selected), utc_text(selected)),
             )
+            if delivery["state"] in _TERMINAL_DELIVERY_STATES:
+                self._ledger_tx(
+                    connection,
+                    entity_type="delivery",
+                    entity_id=notification,
+                    event_type="scheduler.delivery.late_receipt_ignored",
+                    from_state=delivery["state"],
+                    to_state=delivery["state"],
+                    now=selected,
+                    cause_event_id=event_id,
+                    attempt_id=attempt_id,
+                    metadata={"reason_code": "terminal_delivery_precedence", "receipt_stage": stage},
+                )
+                return False
             attempt = connection.execute(
                 "SELECT * FROM scheduler_delivery_attempts WHERE attempt_id=?", (attempt_id,)
             ).fetchone()
@@ -1674,7 +1905,11 @@ class SchedulerStore:
                     (attempt_id, notification, ordinal, initial, reason_code, utc_text(selected)),
                 )
             if stage == "STAGED":
-                delivery_state = "STAGED"
+                delivery_state = (
+                    "RETRY_WAIT"
+                    if delivery["state"] == "BLOCKED_CAPABILITY" and reason_code == "capability_restored"
+                    else "STAGED"
+                )
             elif stage == "DISPATCHING":
                 delivery_state = "DISPATCHING"
             elif stage == "OS_ACCEPTED":

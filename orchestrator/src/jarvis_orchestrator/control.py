@@ -18,7 +18,7 @@ from .config import OrchestratorConfig
 from .domain import OrchestratorError, require_uuid4, utc_text
 from .scheduler_contract import (MINIMUM_INTERVAL_MS, MINIMUM_LEAD_MS, MAXIMUM_SNOOZE_GENERATIONS,
                                  MANUAL_CANONICAL_API_SHA256)
-from .jcs import jcs_bytes
+from .jcs import domain_sha256, jcs_bytes
 from .service import OrchestratorService
 from .scheduler_contract import ScheduleContractError, compile_proposal
 
@@ -260,6 +260,13 @@ class ControlApplication:
         if scheduler is None:
             raise OrchestratorError("scheduler_unavailable", status=503)
         with self._mutation_lock:
+            command_semantic = domain_sha256(
+                "scheduler-control-command/1", {"body": body, "method": method, "path": path}
+            )
+            if path in {"/v1/scheduler/compile", "/v1/scheduler/proposals"}:
+                replay = scheduler.lookup_api_result(key, command_semantic)
+                if replay is not None:
+                    return int(replay["status"]), replay["result"]
             if method == "POST" and path == "/v1/scheduler/compile":
                 payload = self._exact_object(
                     body, {"request_text", "selected_target", "default_timezone", "default_locale"}
@@ -285,8 +292,15 @@ class ControlApplication:
                 except ScheduleContractError as exc:
                     raise OrchestratorError(exc.code, status=exc.status) from exc
                 if compiled.proposal.get("outcome") in {"NEEDS_CLARIFICATION", "UNSUPPORTED"}:
-                    return 200, {"proposal": dict(compiled.proposal), "persisted": False}
-                return 201, scheduler.create_proposal(compiled)
+                    result = {"proposal": dict(compiled.proposal), "persisted": False}
+                    scheduler.store_api_result(
+                        event_id=key, semantic_sha256=command_semantic,
+                        event_type="scheduler.control.compile_result", status=200, result=result,
+                    )
+                    return 200, result
+                return 201, scheduler.create_proposal(
+                    compiled, api_event_id=key, api_semantic_sha256=command_semantic
+                )
             if method == "POST" and path == "/v1/scheduler/proposals":
                 payload = self._exact_object(
                     body, {"input", "output"}
@@ -300,8 +314,15 @@ class ControlApplication:
                 except ScheduleContractError as exc:
                     raise OrchestratorError(exc.code, status=exc.status) from exc
                 if compiled.proposal.get("outcome") in {"NEEDS_CLARIFICATION", "UNSUPPORTED"}:
-                    return 200, {"proposal": dict(compiled.proposal), "persisted": False}
-                return 201, scheduler.create_proposal(compiled)
+                    result = {"proposal": dict(compiled.proposal), "persisted": False}
+                    scheduler.store_api_result(
+                        event_id=key, semantic_sha256=command_semantic,
+                        event_type="scheduler.control.manual_result", status=200, result=result,
+                    )
+                    return 200, result
+                return 201, scheduler.create_proposal(
+                    compiled, api_event_id=key, api_semantic_sha256=command_semantic
+                )
             decision = SCHEDULER_APPROVAL_DECISION.fullmatch(path)
             if method == "POST" and decision:
                 payload = self._exact_object(body, {"proposal_id", "proposal_sha256", "decision"})

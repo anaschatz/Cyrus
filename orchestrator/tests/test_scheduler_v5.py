@@ -7,8 +7,10 @@ import unittest
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from jarvis_orchestrator.control import ControlApplication
 from jarvis_orchestrator.schedule_compiler import CompilerQualification, LocalScheduleCompiler
 from jarvis_orchestrator.scheduler_contract import (PackagedTimezoneProvider, ScheduleContractError,
                                                     compile_proposal)
@@ -116,6 +118,80 @@ class SchedulerV5Tests(unittest.TestCase):
         ).fetchall()]
         self.assertEqual(types, ["scheduler.approval.requested", "scheduler.approval.decision_result"])
         self.assertIsNotNone(result["job_id"])
+
+    def test_proposal_api_idempotency_replays_and_quarantines_conflicts(self) -> None:
+        event_id = str(uuid.uuid4())
+        semantic = "a" * 64
+        first = self.scheduler.create_proposal(
+            self.compile(minutes=20),
+            now=self.reference,
+            api_event_id=event_id,
+            api_semantic_sha256=semantic,
+        )
+        replay = self.scheduler.create_proposal(
+            self.compile(minutes=21),
+            now=self.reference + timedelta(seconds=1),
+            api_event_id=event_id,
+            api_semantic_sha256=semantic,
+        )
+        self.assertEqual(replay, first)
+        self.assertEqual(self.scheduler.lookup_api_result(event_id, semantic), {
+            "result": first,
+            "status": 201,
+        })
+        self.assertEqual(self.base._connection.execute(
+            "SELECT COUNT(*) FROM scheduler_proposals"
+        ).fetchone()[0], 1)
+        self.assertEqual(self.base._connection.execute(
+            "SELECT COUNT(*) FROM approval_arbiter_queue"
+        ).fetchone()[0], 1)
+
+        with self.assertRaisesRegex(OrchestratorError, "protocol.conflicting_duplicate"):
+            self.scheduler.lookup_api_result(event_id, "b" * 64)
+        self.assertEqual(self.base._connection.execute(
+            "SELECT state FROM scheduler_inbox WHERE event_id=?", (event_id,)
+        ).fetchone()[0], "QUARANTINED")
+
+    def test_compile_api_replay_does_not_call_model_twice(self) -> None:
+        compiled = self.compile(minutes=20)
+
+        class Compiler:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def compile(self, _model_input):
+                self.calls += 1
+                return compiled
+
+        compiler = Compiler()
+        application = ControlApplication(
+            SimpleNamespace(),
+            SimpleNamespace(scheduler=self.scheduler, schedule_compiler=compiler),
+        )
+        body = {
+            "request_text": "Θύμισέ μου να κάνω διάλειμμα σε είκοσι λεπτά",
+            "selected_target": {
+                "job_id": None,
+                "job_revision": None,
+                "occurrence_id": None,
+                "snooze_generation": None,
+            },
+            "default_timezone": "Europe/Athens",
+            "default_locale": "el-GR",
+        }
+        event_id = str(uuid.uuid4())
+        first = application.scheduler_mutate(
+            "POST", "/v1/scheduler/compile", body, event_id
+        )
+        replay = application.scheduler_mutate(
+            "POST", "/v1/scheduler/compile", body, event_id
+        )
+        self.assertEqual(replay, first)
+        self.assertEqual(first[0], 201)
+        self.assertEqual(compiler.calls, 1)
+        self.assertEqual(self.base._connection.execute(
+            "SELECT COUNT(*) FROM scheduler_proposals"
+        ).fetchone()[0], 1)
 
     def test_fire_is_one_logical_delivery_and_ciphertext_hides_body(self) -> None:
         created = self.scheduler.create_proposal(self.compile(), now=self.reference)
@@ -314,6 +390,11 @@ class SchedulerV5Tests(unittest.TestCase):
             cause_event_id=str(uuid.uuid4()), now=due,
         )
         self.assertEqual(snoozed["delivery_generation"], 1)
+        self.assertEqual(self.base._connection.execute(
+            """SELECT COUNT(*) FROM scheduler_outbox
+               WHERE event_type='scheduler.notification.tombstone' AND entity_id=?""",
+            (delivery,),
+        ).fetchone()[0], 1)
         self.scheduler.fire_due(now=utc("2030-01-10T13:00:00.000Z"))
         self.assertEqual(self.base._connection.execute(
             "SELECT COUNT(*) FROM scheduler_deliveries WHERE occurrence_id=?", (after["occurrence_id"],)
@@ -360,6 +441,52 @@ class SchedulerV5Tests(unittest.TestCase):
         self.assertEqual(self.base._connection.execute(
             "SELECT COUNT(*) FROM scheduler_delivery_attempts WHERE notification_id=?", (ambiguous_id,)
         ).fetchone()[0], 2)
+
+    def test_cancel_revokes_pending_notification_and_emits_tombstone(self) -> None:
+        activated = self.activate()
+        due = self.reference + timedelta(minutes=20)
+        self.scheduler.fire_due(now=due)
+        delivery = self.base._connection.execute(
+            "SELECT notification_id FROM scheduler_deliveries WHERE occurrence_id=?",
+            (activated["occurrence_id"],),
+        ).fetchone()[0]
+        self.scheduler.cancel_job(
+            activated["job_id"], 1, cause_event_id=str(uuid.uuid4()), now=due
+        )
+        rows = self.base._connection.execute(
+            "SELECT event_type,state FROM scheduler_outbox WHERE entity_id=? ORDER BY ordinal",
+            (delivery,),
+        ).fetchall()
+        self.assertEqual([tuple(row) for row in rows], [
+            ("scheduler.notification.requested", "REVOKED"),
+            ("scheduler.notification.tombstone", "PENDING"),
+        ])
+        self.assertEqual(self.base._connection.execute(
+            "SELECT state FROM scheduler_deliveries WHERE notification_id=?", (delivery,)
+        ).fetchone()[0], "REVOKED")
+
+    def test_terminal_delivery_and_tombstone_precedence_ignore_late_receipt(self) -> None:
+        activated = self.activate()
+        due = self.reference + timedelta(minutes=20)
+        self.scheduler.fire_due(now=due)
+        delivery = self.base._connection.execute(
+            "SELECT notification_id FROM scheduler_deliveries WHERE occurrence_id=?",
+            (activated["occurrence_id"],),
+        ).fetchone()[0]
+        attempt = str(uuid.uuid4())
+        self.scheduler.record_delivery_receipt(
+            event_id=str(uuid.uuid4()), semantic_sha256="6" * 64,
+            notification=delivery, attempt_id=attempt, stage="OS_ACCEPTED",
+            reason_code="native_api_accepted", observed_at_utc="2030-01-10T12:20:00.000Z",
+        )
+        self.assertFalse(self.scheduler.record_delivery_receipt(
+            event_id=str(uuid.uuid4()), semantic_sha256="7" * 64,
+            notification=delivery, attempt_id=attempt, stage="AMBIGUOUS_OS_DISPATCH",
+            reason_code="late_restart_receipt", observed_at_utc="2030-01-10T12:20:01.000Z",
+        ))
+        self.assertEqual(self.base._connection.execute(
+            "SELECT state FROM scheduler_deliveries WHERE notification_id=?", (delivery,)
+        ).fetchone()[0], "OS_ACCEPTED")
 
     def test_recovery_coalesces_to_exactly_one_latest_slot(self) -> None:
         created = self.scheduler.create_proposal(
