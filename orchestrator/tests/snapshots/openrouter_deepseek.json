@@ -1,0 +1,36 @@
+{
+  "max_tokens": 2048,
+  "messages": [
+    {
+      "content": "hello",
+      "role": "user"
+    }
+  ],
+  "model": "deepseek/deepseek-v4-flash",
+  "provider": {
+    "allow_fallbacks": false,
+    "data_collection": "deny",
+    "max_price": {
+      "completion": "0.18",
+      "prompt": "0.09",
+      "request": "0"
+    },
+    "only": [
+      "provider/full"
+    ],
+    "order": [
+      "provider/full"
+    ],
+    "quantizations": [
+      "fp8"
+    ],
+    "require_parameters": true,
+    "zdr": true
+  },
+  "reasoning": {
+    "enabled": false
+  },
+  "stream": false,
+  "temperature": 0,
+  "top_p": 1
+}

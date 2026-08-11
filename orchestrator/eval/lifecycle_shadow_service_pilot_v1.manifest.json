@@ -1,0 +1,20 @@
+{
+  "category_counts": {
+    "cancel": 3,
+    "create": 7,
+    "ignore": 17,
+    "replace": 3
+  },
+  "dataset_path": "orchestrator/eval/lifecycle_shadow_service_pilot_v1.jsonl",
+  "dataset_sha256": "320ea83b76bc91d302713846961d8e8b5ce5d47a9abda16698ed90f5f53942ae",
+  "fallback_turns": 2,
+  "gate_contract_sha256": "18d80ac7e750625cb22990979d64d868b799d4fce59eda6e09c72fa0f8644a33",
+  "language_counts": {
+    "el": 11,
+    "en": 19
+  },
+  "protocol_path": "orchestrator/eval/lifecycle_shadow_service_pilot_v1.protocol.json",
+  "protocol_sha256": "00669e1ff12b84475ad65d5af0bfff49f6152bef7c55309fe83e3747c9c5f012",
+  "scenario_count": 8,
+  "turn_count": 30
+}

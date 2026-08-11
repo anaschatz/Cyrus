@@ -45,9 +45,67 @@ PYTHONPATH=src:../src uv run --frozen python -m compileall -q src ../src/jarvis_
 
 The suite includes captured Pydantic AI 2.27.0 HTTP snapshots for text streaming, native structured routing and synthetic output-tool routing. The latter two are also passed through the inference appliance's own request/schema qualification code.
 
-Production v1 is local-only. Explicit retrospective memory has a qualified,
-off-by-default adapter; prospective memory, research, cloud and side-effect
-tools remain disabled until separately qualified and activated by policy.
+Production starts local-only. Explicit retrospective memory, research and the
+M1C cloud router are independent, off-by-default adapters. Side-effect tools
+remain disabled until separately qualified and activated by policy.
+
+## M1C cloud router (off by default)
+
+M1C adds a negotiated `jarvis.cloud-approval/1` transport without adding any
+event to the closed `jarvis.voice/1` enum. A local structured profiler feeds a
+pure deterministic router. Medium reasoning is eligible only for the qualified
+DeepSeek registry alias; exact advanced reasoning is eligible only for the
+qualified Terra alias. Anamnesis recalls, research evidence and tool results
+are never included in cloud egress.
+
+Every request is frozen before presentation and bound to the endpoint tag,
+quantization, exact dispatch body, stable catalog/pricing digest, privacy
+policy, token caps, maximum micro-USD and expiry. F10 approves that one binding;
+F11 denies it. The transport persists the decision before sending it and the
+server persists a one-shot dispatch permit before the OpenRouter POST. Output
+remains buffered until the generation receipt verifies the model/provider and
+usage. Timeout after a physical POST is never retried and consumes the full
+reservation once.
+
+Activation requires all of the following:
+
+- a real per-endpoint qualification registry based on
+  [`cloud-qualification.example.json`](cloud-qualification.example.json);
+- an owner-only OpenRouter key file outside the repository (never an
+  environment-derived credential);
+- `cloud_enabled:true` and the two absolute file paths in local config;
+- the fixed `$5` UTC-month Orchestrator ledger. The external approximately
+  `€10` account limit remains a separate billing envelope.
+
+The ZDR catalog and current-key endpoint are rechecked immediately before the
+POST. They are health/budget oracles, not qualification authorities. Endpoint
+failure never makes local `/readyz` unavailable and never promotes research to
+a cloud fallback.
+
+## Research System v1 contract
+
+The off-by-default Research milestone now has closed Python contracts for
+immutable search plans, full source metadata, normalized cited snapshots,
+absolute quote locators, extractive claims and exact facet/overall statuses.
+SQLite schema v3 binds each plan hash to approval, uses one research capability
+reservation for the entire run, stores only cited normalized documents, and
+checks the live epoch/tombstone again before committing the bundle and canonical
+effect. Conversation deletion removes both research tables transactionally.
+
+A research turn has exactly two generative operations: the qualified local
+structured route/search-plan request (384 output tokens) and the sidecar's
+span-selection request (768 output tokens). Publication invokes no model. It is
+rendered from code-owned Markdown and TTS templates, and denial or insufficient
+evidence never falls back to model knowledge. The production composition
+requires structured-output capability, an authenticated loopback Research API,
+a pinned offline language-detector record, and matching qualification digests.
+
+The sibling [`research/`](../research/README.md) deployment freezes the network
+topology: all workload networks are internal, SearXNG and Crawl4AI have no host
+ports, and only the authenticated egress guard is dual-homed. Browser support is
+a separate qualification profile. Keep `research_enabled:false` until the
+router, egress, direct-fetch and provider gates all pass with immutable image
+digests; enable browser fallback only after its additional security gate.
 
 ## Qualified Anamnesis recall
 
@@ -75,6 +133,27 @@ duplicated in the audit payload.
 
 Shadow mode is off by default. Setting `memory_shadow_enabled` only activates
 the boundary; a separately qualified memory adapter must still be injected.
+`memory_shadow_mode: "structured_fallback"` retains the schema-constrained
+local fallback. For local inference appliances without JSON Schema support,
+the conservative trial setting `memory_shadow_mode: "deterministic_only"`
+uses gate v3 for clear commands and resolves every ambiguous or hedged command
+to `ignore`; it never makes a lifecycle model call.
+Final voice responses default to a closed 256-token ceiling through
+`final_response_output_tokens` (valid range 32–1024), preventing a local
+model that misses its stop condition from consuming the former 1,024-token
+allowance.
+
+The first isolated live probe used the real loopback inference appliance for a
+three-turn create/replace/cancel conversation while authoritative memory was
+disabled. Lifecycle state was exact, audit coverage was 100%, and no
+authoritative record was written. The probe also exposed a missed model stop:
+one turn consumed the former full 1,024-token allowance and took 41.045
+seconds. Repeating the same engineering probe with the new 256-token ceiling
+reduced total output from 1,099 to 331 tokens, average latency from 19.101 to
+5.065 seconds, and maximum latency to 10.861 seconds. The third turn still hit
+the 256-token ceiling, so the cap is an effective safety bound but model stop
+behavior remains an open optimization. This three-turn probe is not the
+required 20-conversation/100-turn real-session trial.
 Timeouts and provider failures are recorded with stable error codes and never
 change the completed JARVIS response. Automatic approval remains disabled.
 
@@ -87,11 +166,67 @@ and never lets shadow output mutate canonical history or enter the answer
 prompt. This remains an evaluation seam; a separately qualified structured
 writer is required before enabling it in a production composition.
 
-The source-run composition now provides that local structured writer when
-shadow mode is enabled. It calls only the configured loopback `/v1/chat/completions`
+The source-run composition now uses a deterministic-first lifecycle writer.
+Explicit bilingual `remember`, `correction` and `forget` commands are resolved
+without a model when the target is unambiguous. Correction and cancellation
+select automatically only when exactly one shadow memory is active; multiple
+possible targets and incomplete lifecycle commands fall back to the local
+structured writer. Ordinary messages resolve to `ignore` without a lifecycle
+model call.
+
+The fallback calls only the configured loopback `/v1/chat/completions`
 endpoint, requires the appliance's `json_schema` capability, uses a closed
-two-field decision schema, deterministic sampling, no streaming, no tools and
-no retry. User text and active-memory text remain canonical JSON in a single
-user message; lifecycle rules remain in the system message. The example keeps
-the feature disabled and allocates a 30-second bound for an explicitly enabled
-local shadow call.
+single-decision enum schema, deterministic sampling, no streaming, no tools
+and no retry. User text and active-memory text remain canonical JSON in a
+single user message; lifecycle rules remain in the system message. Shadow
+memory remains disabled by default and non-authoritative.
+
+The first frozen natural-language shadow diagnostic contains 48 English and
+Greek cases. Gate v1 scored 37/48: all 10 ordinary, quoted or negated messages
+were safely ignored and all 6 ambiguity cases routed to fallback, but 11 clear
+memory commands using unsupported paraphrases were missed as `ignore`. Gate v1
+is therefore rejected for a JARVIS pilot. The dataset must remain frozen; a
+future gate revision requires a new evaluation set rather than tuning and
+claiming success on these same cases.
+
+Gate v2 was implemented as an additive contract and evaluated once on a new,
+balanced 64-case corpus. It improved to 59/64, including 32/32 English cases,
+16/16 safe ignores and 33/36 explicit memory commands. It still failed the
+preregistered fallback-routing requirement at 6/8 and scored 27/32 in Greek,
+so it was not wired into the source-run composition. All five failures point
+to incomplete normalization of Greek rule literals and markers. Any fix is a
+new gate revision and must use another evaluation corpus.
+
+Gate v3 changed only normalization: input, prefixes, markers and hedge words
+now share one accent-insensitive boundary. Its first frozen corpus passed
+48/48, split evenly between English and Greek, including 28/28 explicit
+commands, 12/12 safe ignores and 8/8 fallback routes. Gate v3 is therefore the
+deterministic gate used by the source-run shadow composition. This promotion
+applies only to the off-by-default, non-authoritative shadow pilot; it does not
+enable durable production memory.
+
+The first frozen service-level pilot runs gate v3 through the complete
+OrchestratorService boundary across 8 independent multi-turn conversations and
+30 English, Greek and mixed-language turns. It passed 8/8 conversations and
+30/30 turns, including create/replace/cancel chains, safe ignores, zero-active
+commands, two simultaneous shadow memories and two offline-observed fallback
+routes. Every canonical response completed, every shadow proposal remained
+content-free and non-authoritative, and the authoritative memory-record count
+remained exactly zero. The pilot used a static offline assistant and an
+ignore-only fallback stub, made no lifecycle model or provider API calls, and
+cost $0. It promotes gate v3 only to a larger real-service shadow trial; it does
+not qualify authoritative writes or durable production memory.
+
+For the next real-session stage, stop the local service and generate a
+content-free report from its SQLite database:
+
+    PYTHONPATH=orchestrator/src:inference/src orchestrator/.venv/bin/python \
+      orchestrator/scripts/report_lifecycle_shadow_sessions.py \
+      --database /absolute/path/to/orchestrator.sqlite3
+
+The reporter opens SQLite in read-only mode and emits no user text, event IDs,
+conversation IDs or database path. It fails the integrity gate on pending or
+failed audits, invalid reconstructed histories, any authoritative-state flag,
+or any authoritative memory record. A minimum of 20 real conversations and
+100 audited turns is required before human correctness review. Even a clean
+report cannot automatically enable authoritative memory.

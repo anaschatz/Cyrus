@@ -93,7 +93,7 @@ class FailingMemory:
 
 
 class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
-    def test_schema_v1_is_migrated_transactionally_to_memory_schema_v2(self) -> None:
+    def test_schema_v1_is_migrated_through_memory_to_current_schema_v4(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         path = Path(temporary.name) / "orchestrator.sqlite3"
@@ -111,8 +111,12 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
             table = store._connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='memory_records'"
             ).fetchone()
-        self.assertEqual(version, "2")
+            research_table = store._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='research_runs'"
+            ).fetchone()
+        self.assertEqual(version, "4")
         self.assertIsNotNone(table)
+        self.assertIsNotNone(research_table)
 
     def test_adapter_is_pinned_to_real_anamnesis_runtime_contract(self) -> None:
         store = self.make_store()

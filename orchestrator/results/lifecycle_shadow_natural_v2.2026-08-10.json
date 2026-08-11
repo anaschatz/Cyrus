@@ -1,0 +1,38 @@
+{
+  "authoritative_memory_enabled": false,
+  "category_scores": {
+    "cancel": {"passed": 10, "total": 12},
+    "create": {"passed": 16, "total": 16},
+    "fallback": {"passed": 6, "total": 8},
+    "ignore": {"passed": 16, "total": 16},
+    "replace": {"passed": 11, "total": 12}
+  },
+  "dataset_sha256": "c869d1ea3d52538dbb80673f632f585ee168aba7bebd1a1324fe0ca785c2651e",
+  "diagnostic": "jarvis.lifecycle-shadow-natural.v2",
+  "failures": [
+    {"actual":"ignore","category":"replace","expected":"replace_0","id":"v2_replace_el_05","language":"el","pass":false},
+    {"actual":"ignore","category":"cancel","expected":"cancel_0","id":"v2_cancel_el_03","language":"el","pass":false},
+    {"actual":"ignore","category":"cancel","expected":"cancel_0","id":"v2_cancel_el_04","language":"el","pass":false},
+    {"actual":"create","category":"fallback","expected":"fallback","id":"v2_fallback_el_01","language":"el","pass":false},
+    {"actual":"ignore","category":"fallback","expected":"fallback","id":"v2_fallback_el_04","language":"el","pass":false}
+  ],
+  "gate_contract_sha256": "a5f522a1107fee9089a06a65c70eaadbe0d95a26894312b93259f482f0518915",
+  "hypothesis_test_eligible": false,
+  "language_scores": {
+    "el": {"passed": 27, "total": 32},
+    "en": {"passed": 32, "total": 32}
+  },
+  "manifest_sha256": "92a19fb79cbecbc17da3001a08ac7eb9a121b260b414c9d6820da7eaa60e17a9",
+  "model_calls": 0,
+  "passed": 59,
+  "promotion_decision": "gate_v2_rejected",
+  "promotion_gates": {
+    "explicit_command_recall": {"passed": 33, "total": 36},
+    "fallback_routing": {"passed": 6, "total": 8},
+    "ignore_precision": {"passed": 16, "total": 16}
+  },
+  "protocol_sha256": "4b16ed22a8db5cf7496f14dc8e7c2e56cc83c295e5d8c19d57a676d3ec28f053",
+  "provider_api_cost_usd": 0.0,
+  "run_date": "2026-08-10",
+  "total": 64
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 from typing import Any
 
@@ -17,6 +18,7 @@ class VoiceGateway:
         self._execution_tasks: dict[str, asyncio.Task[Any]] = {}
         self._server: Any = None
         self._sweeper: asyncio.Task[Any] | None = None
+        self._cloud_connections: dict[str, Any] = {}
 
     def _lock(self, conversation_id: str) -> asyncio.Lock:
         return self._publication_locks.setdefault(conversation_id, asyncio.Lock())
@@ -93,8 +95,18 @@ class VoiceGateway:
             if task_id != current_task_id:
                 task.cancel()
 
-    async def _publish(self, websocket: Any, session_id: str, factory: Any, connection_id: str, sent: set[str]) -> None:
+    async def _publish(
+        self,
+        websocket: Any,
+        session_id: str,
+        factory: Any,
+        connection_id: str,
+        sent: set[str],
+        *,
+        cloud_factory: Any | None = None,
+    ) -> None:
         from jarvis_voice.protocol import Envelope
+        from jarvis_voice.cloud_approval import CLOUD_APPROVAL_PROTOCOL, CloudApprovalEnvelope
 
         while True:
             conversation = self.service.store.active_conversation()
@@ -106,39 +118,69 @@ class VoiceGateway:
                 connection_id,
                 exclude_event_ids=tuple(sent),
             )
-            if not events:
+            cloud_events = (
+                self.service.store.claim_cloud_extension_events(conversation["conversation_id"])
+                if cloud_factory is not None
+                else []
+            )
+            publications = [
+                (event.ordinal, "base", event) for event in events
+            ] + [
+                (int(event["ordinal"]), "cloud", event) for event in cloud_events
+            ]
+            publications.sort(key=lambda item: item[0])
+            if not publications:
                 await asyncio.sleep(0.02)
                 continue
             lock = self._lock(conversation["conversation_id"])
-            for logical in events:
-                envelope = Envelope(
-                    type=logical.event_type,
-                    event_id=logical.event_id,
-                    session_id=session_id,
-                    seq=factory.next_seq,
-                    sent_at=logical.original_sent_at,
-                    turn_id=logical.turn_id,
-                    response_id=logical.response_id,
-                    payload=logical.payload,
-                )
+            for _ordinal, protocol_kind, logical in publications:
+                if protocol_kind == "base":
+                    envelope = Envelope(
+                        type=logical.event_type,
+                        event_id=logical.event_id,
+                        session_id=session_id,
+                        seq=factory.next_seq,
+                        sent_at=logical.original_sent_at,
+                        turn_id=logical.turn_id,
+                        response_id=logical.response_id,
+                        payload=logical.payload,
+                    )
+                else:
+                    envelope = CloudApprovalEnvelope(
+                        protocol=CLOUD_APPROVAL_PROTOCOL,
+                        type=logical["event_type"],
+                        event_id=logical["event_id"],
+                        session_id=session_id,
+                        seq=cloud_factory.next_seq,
+                        sent_at=logical["original_sent_at"],
+                        payload=logical["payload"],
+                    )
                 complete = False
                 current = True
                 try:
                     async with asyncio.timeout(1.0):
                         async with lock:
-                            current = self.service.store.outbox_claim_is_current(
-                                logical.event_id, connection_id
+                            current = (
+                                self.service.store.outbox_claim_is_current(logical.event_id, connection_id)
+                                if protocol_kind == "base"
+                                else self.service.store.cloud_extension_is_current(logical["event_id"])
                             )
                             if current:
                                 await websocket.send(envelope.to_json())
                     if not current:
                         continue
-                    factory.consume_sequence()
-                    sent.add(logical.event_id)
+                    if protocol_kind == "base":
+                        factory.consume_sequence()
+                        sent.add(logical.event_id)
+                    else:
+                        cloud_factory.consume_sequence()
                     complete = True
                 finally:
                     with suppress(OrchestratorError):
-                        self.service.store.finish_outbox_attempt(logical.event_id, connection_id, complete=complete)
+                        if protocol_kind == "base":
+                            self.service.store.finish_outbox_attempt(logical.event_id, connection_id, complete=complete)
+                        else:
+                            self.service.store.finish_cloud_extension_write(logical["event_id"], complete=complete)
                 if not complete:
                     return
 
@@ -164,6 +206,13 @@ class VoiceGateway:
 
     async def handle(self, websocket: Any) -> None:
         from jarvis_voice.protocol import Envelope, EventFactory
+        from jarvis_voice.cloud_approval import (
+            CLIENT_EXTENSION_EVENTS,
+            CLOUD_APPROVAL_PROTOCOL,
+            CloudApprovalEnvelope,
+            CloudApprovalEventFactory,
+        )
+        from jarvis_voice.errors import ProtocolError
         from jarvis_voice.sequencing import SequenceResult, SequenceTracker
 
         peer = websocket.remote_address
@@ -172,6 +221,8 @@ class VoiceGateway:
             return
         session_id: str | None = None
         writer: asyncio.Task[Any] | None = None
+        cloud_negotiated = False
+        capture_idle = True
         connection_id = new_uuid4()
         try:
             raw_hello = await asyncio.wait_for(websocket.recv(), timeout=2.0)
@@ -182,15 +233,97 @@ class VoiceGateway:
             inbound_sequence = SequenceTracker()
             inbound_sequence.observe(hello)
             session_id = hello.session_id
-            self.service.attach_client(connection_id)
+            capabilities = hello.payload.get("capabilities", [])
+            cloud_negotiated = isinstance(capabilities, list) and CLOUD_APPROVAL_PROTOCOL in capabilities
             factory = EventFactory(session_id=session_id)
             await asyncio.wait_for(
                 websocket.send(factory.create("server.ready", {"protocol": "jarvis.voice/1"}).to_json()),
                 timeout=1.0,
             )
+            cloud_factory = CloudApprovalEventFactory(session_id) if cloud_negotiated else None
+            if cloud_factory is not None:
+                await asyncio.wait_for(
+                    websocket.send(
+                        cloud_factory.create(
+                            "cloud.approval.ready",
+                            {"protocol": CLOUD_APPROVAL_PROTOCOL},
+                        ).to_json()
+                    ),
+                    timeout=1.0,
+                )
+                ownership = self.service.store.claim_cloud_presentation_owner(session_id)
+                old_socket = None
+                if ownership is not None and ownership["old_session_id"]:
+                    old_socket = self._cloud_connections.get(ownership["old_session_id"])
+                self._cloud_connections[session_id] = websocket
+                if old_socket is not None and old_socket is not websocket:
+                    with suppress(Exception):
+                        await old_socket.close(code=4001, reason="session_superseded")
+            self.service.attach_client(
+                connection_id,
+                cloud_session_id=session_id if cloud_negotiated else None,
+            )
+            active_after_handshake = self.service.store.active_conversation()
+            if cloud_negotiated and active_after_handshake is not None:
+                self.service.store.reset_cloud_extension_replay(
+                    active_after_handshake["conversation_id"]
+                )
             sent: set[str] = set()
-            writer = asyncio.create_task(self._publish(websocket, session_id, factory, connection_id, sent), name=f"jarvis-publisher-{connection_id}")
+            writer = asyncio.create_task(
+                self._publish(
+                    websocket,
+                    session_id,
+                    factory,
+                    connection_id,
+                    sent,
+                    cloud_factory=cloud_factory,
+                ),
+                name=f"jarvis-publisher-{connection_id}",
+            )
+            extension_next_seq = 1
+            extension_seen: dict[int, str] = {}
             async for raw in websocket:
+                try:
+                    preview = json.loads(raw)
+                except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+                    await websocket.close(code=1002, reason="invalid_json")
+                    break
+                if isinstance(preview, dict) and "protocol" in preview:
+                    if not cloud_negotiated:
+                        await websocket.close(code=1002, reason="extension_not_negotiated")
+                        break
+                    event = CloudApprovalEnvelope.from_json(raw)
+                    if event.type not in CLIENT_EXTENSION_EVENTS or event.session_id != session_id:
+                        await websocket.close(code=1002, reason="invalid_extension_event")
+                        break
+                    fingerprint = event.to_json()
+                    if event.seq == extension_next_seq:
+                        extension_seen[event.seq] = fingerprint
+                        extension_next_seq += 1
+                    elif event.seq < extension_next_seq and extension_seen.get(event.seq) == fingerprint:
+                        continue
+                    else:
+                        await websocket.close(code=1002, reason="extension_sequence")
+                        break
+                    if event.type == "cloud.approval.event_ack":
+                        self.service.store.acknowledge_cloud_extension(event.payload["acked_event_id"])
+                    elif event.type == "cloud.approval.decision":
+                        outcome = self.service.store.decide_cloud_approval(
+                            decision_event_id=event.event_id,
+                            semantic_sha256=event.semantic_sha256,
+                            approval_id=event.payload["approval_id"],
+                            presentation_id=event.payload["presentation_id"],
+                            requested_event_id=event.payload["requested_event_id"],
+                            approval_binding_sha256=event.payload["approval_binding_sha256"],
+                            decision_nonce=event.payload["decision_nonce"],
+                            decision=event.payload["decision"],
+                            session_id=session_id,
+                            capture_idle=capture_idle,
+                        )
+                        if outcome["result"]["result"] == "applied":
+                            task = self.service.store.resume_cloud_decision(event.payload["approval_id"])
+                            self._track_execution(task.task_id)
+                    continue
                 event = Envelope.from_json(raw)
                 if event.session_id != session_id:
                     await websocket.close(code=1002, reason="session_changed")
@@ -198,6 +331,7 @@ class VoiceGateway:
                 if inbound_sequence.observe(event) == SequenceResult.DUPLICATE:
                     continue
                 if event.type == "input.transcript.final":
+                    capture_idle = True
                     admission = self.service.admit_envelope(event)
                     if admission.task is not None:
                         self._cancel_superseded_executions(admission.task.task_id)
@@ -215,10 +349,18 @@ class VoiceGateway:
                             conversation["epoch"],
                             conversation["conversation_id"],
                         )
+                elif event.type == "input.capture.started":
+                    capture_idle = False
+                elif event.type == "input.no_speech":
+                    capture_idle = True
                 elif event.type in {"playback.completed", "playback.interrupted"} and event.response_id:
                     self.service.handle_playback_terminal(event.response_id)
         except asyncio.CancelledError:
             raise
+        except ProtocolError as exc:
+            with suppress(Exception):
+                close_code = 1009 if exc.code == "protocol.frame_too_large" else 1002
+                await websocket.close(code=close_code, reason="protocol_error")
         except Exception:
             with suppress(Exception):
                 await websocket.close(code=1011, reason="service_error")
@@ -229,3 +371,5 @@ class VoiceGateway:
                     await writer
             if session_id is not None:
                 self.service.detach_client(connection_id)
+                if self._cloud_connections.get(session_id) is websocket:
+                    self._cloud_connections.pop(session_id, None)

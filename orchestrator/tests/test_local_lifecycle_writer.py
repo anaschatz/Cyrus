@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
 
 
 EXPECTED_WRITER_CONTRACT_SHA256 = (
-    "764756b556966dcab94a5175c6034ae854fba47b4f31bdd9485c4d9646b821b7"
+    "0cfe69fc4c86a533592f34de389859c9cc42fb0023696650bafbf491df694a25"
 )
 
 
@@ -111,7 +111,7 @@ class LocalLifecycleWriterTests(unittest.TestCase):
         self.assertNotIn(hostile, request["messages"][0]["content"])
 
     def test_writer_accepts_only_closed_semantic_decisions(self) -> None:
-        client = FakeCompletionClient('{"operation":"replace","active_index":0}')
+        client = FakeCompletionClient('{"decision":"replace_0"}')
         writer = LocalStructuredLifecycleWriter(client)
         decision = asyncio.run(
             writer.decide(
@@ -128,10 +128,10 @@ class LocalLifecycleWriterTests(unittest.TestCase):
         )
 
         invalid = (
-            '{"operation":"create","active_index":0}',
-            '{"operation":"replace"}',
-            '{"operation":"ignore","extra":true}',
-            '{"operation":"ignore","operation":"create"}',
+            '{"decision":"create_0"}',
+            '{"decision":"replace"}',
+            '{"decision":"ignore","extra":true}',
+            '{"decision":"ignore","decision":"create"}',
         )
         for content in invalid:
             with self.subTest(content=content), self.assertRaises(ValueError):
@@ -176,7 +176,7 @@ class LocalLifecycleWriterTests(unittest.TestCase):
                         "index": 0,
                         "message": {
                             "role": "assistant",
-                            "content": '{"operation":"create"}',
+                            "content": '{"decision":"create"}',
                         },
                         "logprobs": None,
                         "finish_reason": "stop",
@@ -206,7 +206,7 @@ class LocalLifecycleWriterTests(unittest.TestCase):
             model_alias="jarvis-local",
         )
         completion = asyncio.run(client.complete(request))
-        self.assertEqual(completion.content, '{"operation":"create"}')
+        self.assertEqual(completion.content, '{"decision":"create"}')
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0].url.path, "/v1/chat/completions")
         self.assertEqual(

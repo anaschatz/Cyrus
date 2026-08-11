@@ -1,0 +1,30 @@
+{
+  "artifact": "jarvis.deterministic-lifecycle-gate.v3.protocol",
+  "purpose": "development_candidate_preregistration",
+  "hypothesis_test_eligible": false,
+  "parent_gate_contract_sha256": "a5f522a1107fee9089a06a65c70eaadbe0d95a26894312b93259f482f0518915",
+  "source_diagnostic_dataset_sha256": "c869d1ea3d52538dbb80673f632f585ee168aba7bebd1a1324fe0ca785c2651e",
+  "intervention": [
+    "Retain the exact gate-v2 command families and target policy.",
+    "Normalize input, prefixes, substring markers and hedge words through one function.",
+    "Use NFKD decomposition, remove combining marks, casefold and collapse whitespace.",
+    "Do not add new lifecycle verbs, target heuristics or model behavior."
+  ],
+  "forbidden": [
+    "changes to gate-v1 or gate-v2 contracts",
+    "new semantic command families",
+    "fuzzy target selection",
+    "authoritative memory mutation",
+    "tuning on the future v3 evaluation cases"
+  ],
+  "evaluation": {
+    "dataset": "new lifecycle_shadow_natural_v3 corpus",
+    "languages": ["en", "el"],
+    "required_ignore_precision": 1.0,
+    "required_fallback_routing": 1.0,
+    "required_explicit_command_recall": 0.9,
+    "attempts": 1,
+    "provider_model_calls": 0
+  },
+  "promotion_scope": "shadow pilot candidate only; never authoritative memory"
+}

@@ -97,7 +97,7 @@ class ServiceAndControlTests(StoreCase, unittest.TestCase):
         replay = store.claim_outbox(completed.conversation_id, "connection-2")
         self.assertEqual([item.event_id for item in first], [item.event_id for item in replay])
         self.assertEqual(len(captured), 1)
-        self.assertEqual(captured[0]["max_completion_tokens"], 1024)
+        self.assertEqual(captured[0]["max_completion_tokens"], 256)
 
     def test_local_end_to_end_commits_text_and_early_speech(self) -> None:
         store = self.make_store()

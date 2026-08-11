@@ -1,0 +1,71 @@
+{
+  "authoritative_memory_enabled": false,
+  "contract_sha256": "51ff7b97ac3f8a04fcb584b88eb717f5de827e9dc4dde44a38564f505bda311c",
+  "diagnostic": "jarvis.deterministic-lifecycle-gate.v1",
+  "hypothesis_test_eligible": false,
+  "model_calls": 0,
+  "passed": 16,
+  "promotion_decision": "advance_to_larger_shadow_evaluation_not_production",
+  "provider_api_cost_usd": 0.0,
+  "results": [
+    {"actual": "ignore", "case": "en_ignore", "expected": "ignore", "pass": true},
+    {"actual": "create", "case": "en_create", "expected": "create", "pass": true},
+    {"actual": "replace_0", "case": "en_replace", "expected": "replace_0", "pass": true},
+    {"actual": "cancel_0", "case": "en_cancel", "expected": "cancel_0", "pass": true},
+    {"actual": "ignore", "case": "el_ignore", "expected": "ignore", "pass": true},
+    {"actual": "create", "case": "el_create", "expected": "create", "pass": true},
+    {"actual": "replace_0", "case": "el_replace", "expected": "replace_0", "pass": true},
+    {"actual": "cancel_0", "case": "el_cancel", "expected": "cancel_0", "pass": true},
+    {
+      "actual": "ignore",
+      "case": "en_quoted_command_is_data",
+      "expected": "ignore",
+      "pass": true
+    },
+    {
+      "actual": "ignore",
+      "case": "en_negated_forget_is_not_cancel",
+      "expected": "ignore",
+      "pass": true
+    },
+    {
+      "actual": "create",
+      "case": "el_unaccented_create",
+      "expected": "create",
+      "pass": true
+    },
+    {
+      "actual": "cancel_0",
+      "case": "el_unaccented_cancel",
+      "expected": "cancel_0",
+      "pass": true
+    },
+    {
+      "actual": "ignore",
+      "case": "en_replace_without_target",
+      "expected": "ignore",
+      "pass": true
+    },
+    {
+      "actual": "fallback",
+      "case": "en_replace_with_multiple_targets",
+      "expected": "fallback",
+      "pass": true
+    },
+    {
+      "actual": "fallback",
+      "case": "el_cancel_with_multiple_targets",
+      "expected": "fallback",
+      "pass": true
+    },
+    {
+      "actual": "fallback",
+      "case": "en_incomplete_command",
+      "expected": "fallback",
+      "pass": true
+    }
+  ],
+  "run_date": "2026-08-10",
+  "shadow_memory_enabled": false,
+  "total": 16
+}

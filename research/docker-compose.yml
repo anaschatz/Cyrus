@@ -1,0 +1,146 @@
+name: jarvis-research-v1
+
+services:
+  research-api:
+    image: ${JARVIS_RESEARCH_IMAGE:?set an immutable image@sha256 digest}
+    build:
+      context: ..
+      dockerfile: research/Dockerfile
+      args:
+        JARVIS_PYTHON_IMAGE: ${JARVIS_PYTHON_IMAGE:-python:3.11.9-slim-bookworm}
+        UV_VERSION: "0.9.18"
+    read_only: true
+    init: true
+    restart: "no"
+    ports:
+      - "127.0.0.1:8770:8770"
+    environment:
+      JARVIS_RESEARCH_BIND: "0.0.0.0:8770"
+      JARVIS_RESEARCH_SEARXNG_URL: "http://searxng:8080/search"
+      JARVIS_RESEARCH_EGRESS_PROXY_URL: "http://egress-guard:8080"
+      JARVIS_RESEARCH_BEARER_TOKEN_FILE: "/run/secrets/research_bearer_token"
+      JARVIS_EGRESS_PROXY_CREDENTIALS_FILE: "/run/secrets/egress_proxy_credentials"
+      JARVIS_RESEARCH_QUALIFICATION_FILE: "/run/config/research-qualification.json"
+    secrets:
+      - research_bearer_token
+      - egress_proxy_credentials
+    configs:
+      - source: research_qualification
+        target: /run/config/research-qualification.json
+        mode: 0444
+    networks:
+      - research_searx
+      - research_proxy
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8770/healthz', timeout=1); raise SystemExit(0 if r.status == 200 else 1)"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+      start_period: 5s
+
+  searxng:
+    image: ${SEARXNG_IMAGE:?set an immutable image@sha256 digest}
+    read_only: true
+    restart: "no"
+    expose: ["8080"]
+    environment:
+      HTTP_PROXY: "http://searx-egress-auth:8081"
+      HTTPS_PROXY: "http://searx-egress-auth:8081"
+      NO_PROXY: ""
+    configs:
+      - source: searxng_settings
+        target: /etc/searxng/settings.yml
+        mode: 0444
+    networks:
+      - research_searx
+      - searx_auth
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid,nodev
+      - /var/cache/searxng:size=16m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  searx-egress-auth:
+    image: ${JARVIS_RESEARCH_IMAGE:?set an immutable image@sha256 digest}
+    entrypoint: ["jarvis-searx-proxy-bridge"]
+    read_only: true
+    init: true
+    restart: "no"
+    expose: ["8081"]
+    environment:
+      JARVIS_EGRESS_PROXY_CREDENTIALS_FILE: "/run/secrets/egress_proxy_credentials"
+    secrets:
+      - egress_proxy_credentials
+    networks:
+      - searx_auth
+      - searx_proxy
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      disable: true
+
+  egress-guard:
+    image: ${JARVIS_EGRESS_GUARD_IMAGE:?set an immutable qualified image@sha256 digest}
+    build:
+      context: ..
+      dockerfile: research/Dockerfile
+    entrypoint: ["jarvis-egress-guard"]
+    read_only: true
+    init: true
+    restart: "no"
+    expose: ["8080"]
+    environment:
+      JARVIS_EGRESS_BIND: "0.0.0.0:8080"
+      JARVIS_EGRESS_ALLOWED_PORTS: "80,443"
+      JARVIS_EGRESS_REJECT_MIXED_DNS: "1"
+      JARVIS_EGRESS_PIN_VALIDATED_IP: "1"
+      JARVIS_EGRESS_DISABLE_PROXY_CHAINING: "1"
+      JARVIS_EGRESS_TUNNEL_MAX_BYTES: "4194304"
+      JARVIS_EGRESS_TUNNEL_IDLE_SECONDS: "10"
+      JARVIS_EGRESS_PROXY_CREDENTIALS_FILE: "/run/secrets/egress_proxy_credentials"
+      JARVIS_EGRESS_INTERNAL_NETWORKS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,fc00::/7"
+    secrets:
+      - egress_proxy_credentials
+    networks:
+      - research_proxy
+      - searx_proxy
+      - edge_external
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',8080),1); s.close()"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+
+networks:
+  research_searx:
+    internal: true
+  research_proxy:
+    internal: true
+  searx_proxy:
+    internal: true
+  searx_auth:
+    internal: true
+  edge_external:
+    internal: false
+
+configs:
+  searxng_settings:
+    file: ./searxng/settings.yml
+  research_qualification:
+    file: ${JARVIS_RESEARCH_QUALIFICATION_FILE:-./qualification.test.json}
+
+secrets:
+  research_bearer_token:
+    file: ${JARVIS_RESEARCH_BEARER_TOKEN_SOURCE:-./secrets/research_bearer_token}
+  egress_proxy_credentials:
+    file: ${JARVIS_EGRESS_PROXY_CREDENTIALS_SOURCE:-./secrets/egress_proxy_credentials}

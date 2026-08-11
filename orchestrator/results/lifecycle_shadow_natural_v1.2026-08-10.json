@@ -1,0 +1,38 @@
+{
+  "authoritative_memory_enabled": false,
+  "category_scores": {
+    "cancel": {"passed": 6, "total": 10},
+    "create": {"passed": 7, "total": 12},
+    "fallback": {"passed": 6, "total": 6},
+    "ignore": {"passed": 10, "total": 10},
+    "replace": {"passed": 8, "total": 10}
+  },
+  "dataset_sha256": "8e652f4dab5da5d5fa7f35eb8a7996f8bc32e72ecc5e471b0456b9e27ce760c9",
+  "diagnostic": "jarvis.lifecycle-shadow-natural.v1",
+  "failures": [
+    {"actual":"ignore","category":"create","expected":"create","id":"create_en_04","language":"en","pass":false},
+    {"actual":"ignore","category":"create","expected":"create","id":"create_en_05","language":"en","pass":false},
+    {"actual":"ignore","category":"create","expected":"create","id":"create_en_06","language":"en","pass":false},
+    {"actual":"ignore","category":"create","expected":"create","id":"create_el_05","language":"el","pass":false},
+    {"actual":"ignore","category":"create","expected":"create","id":"create_el_06","language":"el","pass":false},
+    {"actual":"ignore","category":"replace","expected":"replace_0","id":"replace_en_03","language":"en","pass":false},
+    {"actual":"ignore","category":"replace","expected":"replace_0","id":"replace_el_03","language":"el","pass":false},
+    {"actual":"ignore","category":"cancel","expected":"cancel_0","id":"cancel_en_03","language":"en","pass":false},
+    {"actual":"ignore","category":"cancel","expected":"cancel_0","id":"cancel_en_04","language":"en","pass":false},
+    {"actual":"ignore","category":"cancel","expected":"cancel_0","id":"cancel_el_02","language":"el","pass":false},
+    {"actual":"ignore","category":"cancel","expected":"cancel_0","id":"cancel_el_03","language":"el","pass":false}
+  ],
+  "gate_contract_sha256": "51ff7b97ac3f8a04fcb584b88eb717f5de827e9dc4dde44a38564f505bda311c",
+  "hypothesis_test_eligible": false,
+  "language_scores": {
+    "el": {"passed": 16, "total": 21},
+    "en": {"passed": 21, "total": 27}
+  },
+  "manifest_sha256": "7e0445bd3ea6c566d3ce9e74799d6e1d53a48ba6f3f1ca8bae9000ef40153ea3",
+  "model_calls": 0,
+  "passed": 37,
+  "promotion_decision": "gate_v1_rejected_for_pilot_due_to_command_recall",
+  "provider_api_cost_usd": 0.0,
+  "run_date": "2026-08-10",
+  "total": 48
+}

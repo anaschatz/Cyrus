@@ -1,0 +1,21 @@
+{
+  "authoritative_memory_enabled": false,
+  "diagnostic": "jarvis.lifecycle-shadow-service-pilot.v1",
+  "fallback_policy": "offline_ignore_stub_only_for_routing_observation",
+  "gate_contract_sha256": "18d80ac7e750625cb22990979d64d868b799d4fce59eda6e09c72fa0f8644a33",
+  "hypothesis_test_eligible": false,
+  "model_policy": "offline_static_response_model_no_provider_calls",
+  "promotion_scope": "off_by_default_non_authoritative_service_shadow",
+  "required_checks": [
+    "all_tasks_complete",
+    "all_shadow_operations_match",
+    "active_shadow_count_matches_after_every_turn",
+    "fallback_routing_matches",
+    "authoritative_state_changed_is_false",
+    "authoritative_memory_record_count_is_zero",
+    "shadow_data_never_enters_memory_recall_prompt",
+    "canonical_turn_count_matches"
+  ],
+  "retries": 0,
+  "version": 1
+}

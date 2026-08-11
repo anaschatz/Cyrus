@@ -10,6 +10,7 @@ for source in (
     ROOT / "src",
     ROOT / "inference" / "src",
     ROOT / "anamnesis" / "src",
+    ROOT / "research" / "src",
 ):
     value = str(source)
     if value not in sys.path:

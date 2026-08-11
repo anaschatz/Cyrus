@@ -1,0 +1,30 @@
+{
+  "artifact": "jarvis.lifecycle-shadow-natural.v3",
+  "purpose": "diagnostic_development_only",
+  "hypothesis_test_eligible": false,
+  "authoritative_memory_enabled": false,
+  "protocol": "orchestrator/eval/lifecycle_gate_v3.protocol.json",
+  "protocol_sha256": "a63936f8d91332b9d887ed4a9a4df0814e19a0865aee7eeeba72fc722f058ece",
+  "dataset": "orchestrator/eval/lifecycle_shadow_natural_v3.jsonl",
+  "dataset_sha256": "6bd4ec1643666335e3f5cbcaaf4cb44af6ab04006c26520274bc236db39812be",
+  "gate_contract_sha256": "18d80ac7e750625cb22990979d64d868b799d4fce59eda6e09c72fa0f8644a33",
+  "case_count": 48,
+  "category_counts": {
+    "create": 12,
+    "replace": 10,
+    "cancel": 10,
+    "ignore": 10,
+    "fallback": 6
+  },
+  "language_counts": {
+    "en": 24,
+    "el": 24
+  },
+  "promotion_thresholds": {
+    "ignore_precision": 1.0,
+    "fallback_routing": 1.0,
+    "explicit_command_recall": 0.9
+  },
+  "freeze_note": "Gate v3 and dataset bytes were frozen before the first complete evaluation.",
+  "stopping_rule": "Report the first complete result; do not tune gate v3 on these 48 cases."
+}

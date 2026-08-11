@@ -1,0 +1,50 @@
+{
+  "authoritative_memory_enabled": false,
+  "authoritative_memory_records": 0,
+  "audit_coverage": 1.0,
+  "audit_projection_sha256": "66dc3b96e644eb0d904f8f4b9e9b21987154d10afd2c2b5d2e3aa6b1d88fce55",
+  "contains_user_content": false,
+  "database_published": false,
+  "database_sha256": "089e12e374d0c7542021f633773a0fc14f8da6bc93486277688c43da431c5eb2",
+  "diagnostic": "jarvis.live-shadow-probe.v3",
+  "hypothesis_test_eligible": false,
+  "inference_boundary": {
+    "legacy_transcript_loop_observed": false,
+    "renderer": "qwen3_chatml_non_thinking",
+    "stop_canary_completion_tokens": 3,
+    "stop_canary_exact_text": true,
+    "stop_canary_finish_reason": "stop"
+  },
+  "integrity_passed": true,
+  "lifecycle_model_calls": 0,
+  "local_assistant_model_calls": 3,
+  "operation_counts": {
+    "cancel": 1,
+    "ignore": 0,
+    "upsert": 2
+  },
+  "provider_api_cost_usd": 0.0,
+  "response_budget_tokens": 256,
+  "response_metrics": {
+    "average_latency_seconds": 1.601,
+    "maximum_latency_seconds": 2.067,
+    "per_turn_output_tokens": [12, 34, 46],
+    "per_turn_seconds": [1.167, 1.57, 2.067],
+    "total_output_tokens": 92
+  },
+  "run_date": "2026-08-10",
+  "sample_sufficient": false,
+  "source_commit": "3420fbeec3ace417d029b5d0d26818517118a0bb",
+  "source_worktree_clean": false,
+  "turns_completed": 3,
+  "v2_to_v3_comparison": {
+    "average_latency_reduction_percent": 68.39,
+    "maximum_latency_reduction_percent": 80.97,
+    "output_token_reduction_percent": 72.21,
+    "v2_average_latency_seconds": 5.065,
+    "v2_maximum_latency_seconds": 10.861,
+    "v2_total_output_tokens": 331
+  },
+  "verdict": "safe_live_probe_pass_natural_stop_and_lifecycle_integrity",
+  "writer_contract_sha256": "140e894a9f36c73c2d76deed7bd76729da88b2c81f350c9fb92472225959d717"
+}

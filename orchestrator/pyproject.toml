@@ -10,6 +10,7 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
   "pydantic-ai-slim[openai]==2.27.0",
   "websockets>=15,<16",
+  "httpx>=0.27,<1",
 ]
 
 [project.scripts]

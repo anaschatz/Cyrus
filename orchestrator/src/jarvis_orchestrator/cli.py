@@ -16,6 +16,9 @@ from typing import Any
 from .anamnesis_adapter import AnamnesisMemoryAdapter
 from .anamnesis_shadow import (
     AnamnesisShadowAdapter,
+    DeterministicFirstLifecycleWriter,
+    DeterministicLifecycleGateV3,
+    DeterministicOnlyLifecycleWriterV3,
     LocalLifecycleCompletionClient,
     LocalStructuredLifecycleWriter,
 )
@@ -26,6 +29,12 @@ from .inference import InferenceControlClient
 from .pydantic_adapter import build_local_pydantic_port
 from .service import OrchestratorService
 from .store import OrchestratorStore
+from .research_adapter import LoopbackResearchAdapter
+from .cloud_provider import (
+    OpenRouterCloudAdapter,
+    load_endpoint_registry,
+    load_openrouter_secret,
+)
 
 
 def _print(value: Any) -> None:
@@ -67,6 +76,10 @@ async def _serve(config: OrchestratorConfig) -> None:
         timeout_seconds=min(2.0, config.model_timeout_seconds),
     )
     capabilities = await asyncio.to_thread(inference_control.capabilities)
+    if config.research_enabled and not (capabilities.json_schema or capabilities.tools):
+        raise RuntimeError("research requires qualified structured local inference")
+    if config.cloud_enabled and not (capabilities.json_schema or capabilities.tools):
+        raise RuntimeError("cloud routing requires qualified structured local inference")
     model = build_local_pydantic_port(
         store,
         base_url=config.inference_base_url,
@@ -78,19 +91,67 @@ async def _serve(config: OrchestratorConfig) -> None:
     active_memory = AnamnesisMemoryAdapter(store) if config.memory_enabled else None
     shadow_memory = None
     if config.memory_shadow_enabled:
-        if not capabilities.json_schema:
-            raise RuntimeError("memory shadow mode requires JSON Schema capability")
-        shadow_client = LocalLifecycleCompletionClient(
-            base_url=config.inference_base_url,
-            bearer_token=config.inference_bearer_token,
-            timeout_seconds=config.memory_shadow_timeout_seconds,
+        if config.memory_shadow_mode == "deterministic_only":
+            shadow_memory = AnamnesisShadowAdapter(
+                store,
+                DeterministicOnlyLifecycleWriterV3(),
+            )
+        else:
+            if not capabilities.json_schema:
+                raise RuntimeError(
+                    "structured shadow fallback requires JSON Schema capability"
+                )
+            shadow_client = LocalLifecycleCompletionClient(
+                base_url=config.inference_base_url,
+                bearer_token=config.inference_bearer_token,
+                timeout_seconds=config.memory_shadow_timeout_seconds,
+            )
+            shadow_memory = AnamnesisShadowAdapter(
+                store,
+                DeterministicFirstLifecycleWriter(
+                    LocalStructuredLifecycleWriter(
+                        shadow_client,
+                        model_alias=config.model_alias,
+                    ),
+                    gate=DeterministicLifecycleGateV3(),
+                ),
+            )
+    research_adapter = None
+    cloud_adapter = None
+    cloud_endpoints = ()
+    if config.research_enabled:
+        research_adapter = LoopbackResearchAdapter(
+            base_url=config.research_base_url,
+            bearer_token=config.research_bearer_token,
+            timeout_seconds=config.research_timeout_seconds,
         )
-        shadow_memory = AnamnesisShadowAdapter(
+        await asyncio.to_thread(
+            research_adapter.qualify,
+            {
+                "contract_version": "research-corpus/1",
+                "model_sha256": config.research_model_sha256,
+                "profile_sha256": config.research_profile_sha256,
+                "qualification_sha256": config.research_qualification_sha256,
+                "language_detector_version": config.research_language_detector_version,
+                "language_detector_sha256": config.research_language_detector_sha256,
+                "authority_registry_version": config.research_authority_registry_version,
+                "browser_qualification_sha256": (
+                    config.research_browser_qualification_sha256
+                    if config.research_browser_fallback
+                    else ""
+                ),
+            },
+        )
+    if config.cloud_enabled:
+        assert config.cloud_secret_file is not None
+        assert config.cloud_qualification_file is not None
+        cloud_endpoints = load_endpoint_registry(config.cloud_qualification_file)
+        for endpoint in cloud_endpoints:
+            store.register_endpoint_qualification(endpoint, enabled=True)
+        cloud_adapter = OpenRouterCloudAdapter(
             store,
-            LocalStructuredLifecycleWriter(
-                shadow_client,
-                model_alias=config.model_alias,
-            ),
+            bearer_token=load_openrouter_secret(config.cloud_secret_file),
+            timeout_seconds=config.cloud_timeout_seconds,
         )
     service = OrchestratorService(
         config,
@@ -99,6 +160,11 @@ async def _serve(config: OrchestratorConfig) -> None:
         inference_control,
         memory=shadow_memory,
         active_memory=active_memory,
+        research_planner=model if config.research_enabled else None,
+        research=research_adapter,
+        task_profiler=model if config.cloud_enabled else None,
+        cloud_model=cloud_adapter,
+        cloud_endpoints=cloud_endpoints,
     )
     service.startup_recovery()
     control = ControlServer(ControlApplication(config, service))
@@ -112,6 +178,8 @@ async def _serve(config: OrchestratorConfig) -> None:
         await gateway.stop()
         control.shutdown()
         control_thread.join(timeout=2)
+        if cloud_adapter is not None:
+            await cloud_adapter.aclose()
         store.close()
 
 

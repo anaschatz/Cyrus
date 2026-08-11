@@ -1,0 +1,48 @@
+{"id":"v3_create_en_01","category":"create","language":"en","text":"Can you remember that my workweek begins on Monday?","active":[],"expected":"create"}
+{"id":"v3_create_en_02","category":"create","language":"en","text":"Would you remember that I live in Patras?","active":[],"expected":"create"}
+{"id":"v3_create_en_03","category":"create","language":"en","text":"Could you please remember that I export reports as PDF?","active":[],"expected":"create"}
+{"id":"v3_create_en_04","category":"create","language":"en","text":"Keep in memory that the workshop key is in drawer four.","active":[],"expected":"create"}
+{"id":"v3_create_en_05","category":"create","language":"en","text":"I want you to remember that I avoid meetings before eight.","active":[],"expected":"create"}
+{"id":"v3_create_en_06","category":"create","language":"en","text":"Please remember that my preferred currency is euros.","active":[],"expected":"create"}
+{"id":"v3_create_el_01","category":"create","language":"el","text":"Μπορείς να θυμάσαι ότι η εβδομάδα εργασίας μου αρχίζει τη Δευτέρα;","active":[],"expected":"create"}
+{"id":"v3_create_el_02","category":"create","language":"el","text":"Θα ήθελα να θυμάσαι ότι μένω στην Πάτρα.","active":[],"expected":"create"}
+{"id":"v3_create_el_03","category":"create","language":"el","text":"Αποθήκευσε στη μνήμη ότι εξάγω τις αναφορές σε PDF.","active":[],"expected":"create"}
+{"id":"v3_create_el_04","category":"create","language":"el","text":"Κρατα στη μνημη σου οτι το κλειδι του εργαστηριου ειναι στο τεταρτο συρταρι.","active":[],"expected":"create"}
+{"id":"v3_create_el_05","category":"create","language":"el","text":"Θέλω να θυμάσαι ότι αποφεύγω συναντήσεις πριν τις οκτώ.","active":[],"expected":"create"}
+{"id":"v3_create_el_06","category":"create","language":"el","text":"Να θυμασαι οτι το προτιμωμενο μου νομισμα ειναι το ευρω.","active":[],"expected":"create"}
+{"id":"v3_replace_en_01","category":"replace","language":"en","text":"Correction: my workweek now begins on Tuesday.","active":["Remember that my workweek begins on Monday."],"expected":"replace_0"}
+{"id":"v3_replace_en_02","category":"replace","language":"en","text":"Update my stored city to Larissa.","active":["Remember that I live in Patras."],"expected":"replace_0"}
+{"id":"v3_replace_en_03","category":"replace","language":"en","text":"Change my remembered report format to DOCX.","active":["Remember that I export reports as PDF."],"expected":"replace_0"}
+{"id":"v3_replace_en_04","category":"replace","language":"en","text":"Correct my memory about the workshop key to drawer six.","active":["Remember that the workshop key is in drawer four."],"expected":"replace_0"}
+{"id":"v3_replace_en_05","category":"replace","language":"en","text":"Correction: my preferred currency is dollars.","active":[],"expected":"ignore"}
+{"id":"v3_replace_el_01","category":"replace","language":"el","text":"Διόρθωση: η εβδομάδα εργασίας μου αρχίζει πλέον την Τρίτη.","active":["Να θυμάσαι ότι η εβδομάδα εργασίας μου αρχίζει τη Δευτέρα."],"expected":"replace_0"}
+{"id":"v3_replace_el_02","category":"replace","language":"el","text":"Ενημέρωσε την αποθηκευμένη πόλη σε Λάρισα.","active":["Να θυμάσαι ότι μένω στην Πάτρα."],"expected":"replace_0"}
+{"id":"v3_replace_el_03","category":"replace","language":"el","text":"Αλλαξε τη μνημη για τη μορφη αναφορας σε DOCX.","active":["Να θυμάσαι ότι εξάγω αναφορές σε PDF."],"expected":"replace_0"}
+{"id":"v3_replace_el_04","category":"replace","language":"el","text":"Διόρθωσε την αποθηκευμένη θέση του κλειδιού στο έκτο συρτάρι.","active":["Να θυμάσαι ότι το κλειδί είναι στο τέταρτο συρτάρι."],"expected":"replace_0"}
+{"id":"v3_replace_el_05","category":"replace","language":"el","text":"Διόρθωση: το νόμισμά μου είναι δολάρια.","active":["Να θυμάσαι ότι προτιμώ ευρώ.","Να θυμάσαι ότι μένω στην Πάτρα."],"expected":"fallback"}
+{"id":"v3_cancel_en_01","category":"cancel","language":"en","text":"Forget my stored city.","active":["Remember that I live in Larissa."],"expected":"cancel_0"}
+{"id":"v3_cancel_en_02","category":"cancel","language":"en","text":"Please forget my report format.","active":["Remember that I export reports as DOCX."],"expected":"cancel_0"}
+{"id":"v3_cancel_en_03","category":"cancel","language":"en","text":"Remove the workshop-key location from memory.","active":["Remember that the workshop key is in drawer six."],"expected":"cancel_0"}
+{"id":"v3_cancel_en_04","category":"cancel","language":"en","text":"Erase my currency preference from your memory.","active":["Remember that my preferred currency is euros."],"expected":"cancel_0"}
+{"id":"v3_cancel_en_05","category":"cancel","language":"en","text":"Forget my meeting-hours preference.","active":[],"expected":"ignore"}
+{"id":"v3_cancel_el_01","category":"cancel","language":"el","text":"Ξέχασε την αποθηκευμένη πόλη μου.","active":["Να θυμάσαι ότι μένω στη Λάρισα."],"expected":"cancel_0"}
+{"id":"v3_cancel_el_02","category":"cancel","language":"el","text":"Να ξεχάσεις τη μορφή των αναφορών μου.","active":["Να θυμάσαι ότι εξάγω αναφορές σε DOCX."],"expected":"cancel_0"}
+{"id":"v3_cancel_el_03","category":"cancel","language":"el","text":"Διέγραψε τη θέση του κλειδιού από τη μνήμη.","active":["Να θυμάσαι ότι το κλειδί είναι στο έκτο συρτάρι."],"expected":"cancel_0"}
+{"id":"v3_cancel_el_04","category":"cancel","language":"el","text":"Αφαιρεσε την προτιμηση νομισματος απο τη μνημη.","active":["Να θυμάσαι ότι προτιμώ ευρώ."],"expected":"cancel_0"}
+{"id":"v3_cancel_el_05","category":"cancel","language":"el","text":"Σβήσε αυτή τη μνήμη.","active":["Να θυμάσαι ότι προτιμώ ευρώ.","Να θυμάσαι ότι μένω στην Πάτρα."],"expected":"fallback"}
+{"id":"v3_ignore_en_01","category":"ignore","language":"en","text":"Do you remember which weekday comes after Monday?","active":["Remember that my workweek begins on Monday."],"expected":"ignore"}
+{"id":"v3_ignore_en_02","category":"ignore","language":"en","text":"I forgot to export the report yesterday.","active":["Remember that I export reports as PDF."],"expected":"ignore"}
+{"id":"v3_ignore_en_03","category":"ignore","language":"en","text":"This device has sixteen gigabytes of memory.","active":["Remember that I live in Patras."],"expected":"ignore"}
+{"id":"v3_ignore_en_04","category":"ignore","language":"en","text":"Quote the sentence \"remove the key from memory\".","active":["Remember that the workshop key is in drawer four."],"expected":"ignore"}
+{"id":"v3_ignore_en_05","category":"ignore","language":"en","text":"The editor issued a correction to the report.","active":["Remember that I export reports as PDF."],"expected":"ignore"}
+{"id":"v3_ignore_el_01","category":"ignore","language":"el","text":"Θυμάσαι ποια ημέρα ακολουθεί τη Δευτέρα;","active":["Να θυμάσαι ότι η εβδομάδα μου αρχίζει τη Δευτέρα."],"expected":"ignore"}
+{"id":"v3_ignore_el_02","category":"ignore","language":"el","text":"Ξέχασα να εξαγάγω την αναφορά χθες.","active":["Να θυμάσαι ότι εξάγω αναφορές σε PDF."],"expected":"ignore"}
+{"id":"v3_ignore_el_03","category":"ignore","language":"el","text":"Αυτή η συσκευή έχει δεκαέξι gigabyte μνήμης.","active":["Να θυμάσαι ότι μένω στην Πάτρα."],"expected":"ignore"}
+{"id":"v3_ignore_el_04","category":"ignore","language":"el","text":"Παράθεσε τη φράση «διέγραψε το κλειδί από τη μνήμη».","active":["Να θυμάσαι ότι το κλειδί είναι στο τέταρτο συρτάρι."],"expected":"ignore"}
+{"id":"v3_ignore_el_05","category":"ignore","language":"el","text":"Ο επιμελητής έκανε μια διόρθωση στην αναφορά.","active":["Να θυμάσαι ότι εξάγω αναφορές σε PDF."],"expected":"ignore"}
+{"id":"v3_fallback_en_01","category":"fallback","language":"en","text":"Remember that maybe my office city will change.","active":[],"expected":"fallback"}
+{"id":"v3_fallback_en_02","category":"fallback","language":"en","text":"Correction, perhaps the key moved.","active":["Remember that the key is in drawer four."],"expected":"fallback"}
+{"id":"v3_fallback_en_03","category":"fallback","language":"en","text":"Actually, my report settings may be different.","active":["Remember that I export PDF reports."],"expected":"fallback"}
+{"id":"v3_fallback_el_01","category":"fallback","language":"el","text":"Να θυμάσαι ότι ίσως αλλάξει η πόλη του γραφείου μου.","active":[],"expected":"fallback"}
+{"id":"v3_fallback_el_02","category":"fallback","language":"el","text":"Διορθωση, μαλλον μετακινηθηκε το κλειδι.","active":["Να θυμάσαι ότι το κλειδί είναι στο τέταρτο συρτάρι."],"expected":"fallback"}
+{"id":"v3_fallback_el_03","category":"fallback","language":"el","text":"Στην πραγματικότητα, ίσως άλλαξαν οι ρυθμίσεις αναφοράς.","active":["Να θυμάσαι ότι εξάγω αναφορές σε PDF."],"expected":"fallback"}

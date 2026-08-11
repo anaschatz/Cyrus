@@ -1,0 +1,22 @@
+{
+  "assistant_stub_calls": 30,
+  "authoritative_memory_enabled": false,
+  "authoritative_memory_records": 0,
+  "dataset_sha256": "320ea83b76bc91d302713846961d8e8b5ce5d47a9abda16698ed90f5f53942ae",
+  "diagnostic": "jarvis.lifecycle-shadow-service-pilot.v1",
+  "failures": [],
+  "gate_contract_sha256": "18d80ac7e750625cb22990979d64d868b799d4fce59eda6e09c72fa0f8644a33",
+  "hypothesis_test_eligible": false,
+  "lifecycle_model_calls": 0,
+  "manifest_sha256": "c5a24b801b75cae24274a43f6014e3d4538711fa6eabfeabcf012e6dab878de5",
+  "offline_fallback_calls": 2,
+  "promotion_decision": "service_shadow_pilot_pass",
+  "protocol_sha256": "00669e1ff12b84475ad65d5af0bfff49f6152bef7c55309fe83e3747c9c5f012",
+  "provider_api_cost_usd": 0.0,
+  "run_date": "2026-08-10",
+  "scenario_passed": 8,
+  "scenario_total": 8,
+  "turn_passed": 30,
+  "turn_total": 30,
+  "writer_contract_sha256": "fddfab1bccd089b941ae0e8cc2f28a2b65567525cee82c9e55751818deac2b1b"
+}

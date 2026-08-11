@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-research"
+version = "1.0.0"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "httpx==0.28.1",
+  "publicsuffixlist==1.0.2.20260726",
+]
+
+[project.scripts]
+jarvis-research-api = "jarvis_research.api:serve"
+jarvis-research-qualify = "jarvis_research.qualification:main"
+jarvis-egress-guard = "jarvis_research.egress_guard:main"
+jarvis-research-fixture = "jarvis_research.qualification_fixtures:main"
+jarvis-searx-proxy-bridge = "jarvis_research.proxy_bridge:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+jarvis_research = ["assets/*.json"]

@@ -1,0 +1,32 @@
+{
+  "authoritative_memory_enabled": false,
+  "category_scores": {
+    "cancel": {"passed": 10, "total": 10},
+    "create": {"passed": 12, "total": 12},
+    "fallback": {"passed": 6, "total": 6},
+    "ignore": {"passed": 10, "total": 10},
+    "replace": {"passed": 10, "total": 10}
+  },
+  "dataset_sha256": "6bd4ec1643666335e3f5cbcaaf4cb44af6ab04006c26520274bc236db39812be",
+  "diagnostic": "jarvis.lifecycle-shadow-natural.v3",
+  "failures": [],
+  "gate_contract_sha256": "18d80ac7e750625cb22990979d64d868b799d4fce59eda6e09c72fa0f8644a33",
+  "hypothesis_test_eligible": false,
+  "language_scores": {
+    "el": {"passed": 24, "total": 24},
+    "en": {"passed": 24, "total": 24}
+  },
+  "manifest_sha256": "2fb02eea130eaf76eb26e3b60931464e45033aa7bce0fe6942bfc1c4b7d77e99",
+  "model_calls": 0,
+  "passed": 48,
+  "promotion_decision": "shadow_pilot_candidate",
+  "promotion_gates": {
+    "explicit_command_recall": {"passed": 28, "total": 28},
+    "fallback_routing": {"passed": 8, "total": 8},
+    "ignore_precision": {"passed": 12, "total": 12}
+  },
+  "protocol_sha256": "a63936f8d91332b9d887ed4a9a4df0814e19a0865aee7eeeba72fc722f058ece",
+  "provider_api_cost_usd": 0.0,
+  "run_date": "2026-08-10",
+  "total": 48
+}

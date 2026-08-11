@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,11 +31,31 @@ class OrchestratorConfig:
     delivery_ttl_seconds: float = 30.0
     model_request_limit: int = 4
     output_token_limit: int = 2048
+    final_response_output_tokens: int = 256
     memory_enabled: bool = False
     memory_timeout_seconds: float = 0.25
     memory_recall_limit: int = 5
     memory_shadow_enabled: bool = False
+    memory_shadow_mode: str = "structured_fallback"
     memory_shadow_timeout_seconds: float = 0.25
+    research_enabled: bool = False
+    research_base_url: str = "http://127.0.0.1:8770/v1"
+    research_bearer_token: str = ""
+    research_timeout_seconds: float = 45.0
+    research_browser_fallback: bool = False
+    research_language_detector_version: str = "disabled"
+    research_language_detector_sha256: str = ""
+    research_authority_registry_version: str = "authority-registry/1"
+    research_timezone: str = "Europe/Athens"
+    research_model_sha256: str = ""
+    research_profile_sha256: str = ""
+    research_qualification_sha256: str = ""
+    research_browser_qualification_sha256: str = ""
+    cloud_enabled: bool = False
+    cloud_secret_file: Path | None = None
+    cloud_qualification_file: Path | None = None
+    cloud_timeout_seconds: float = 60.0
+    cloud_monthly_cap_microusd: int = 5_000_000
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "OrchestratorConfig":
@@ -46,6 +67,9 @@ class OrchestratorConfig:
         if "database_path" not in data:
             raise ValueError("database_path is required")
         data["database_path"] = Path(str(data["database_path"])).expanduser()
+        for field in ("cloud_secret_file", "cloud_qualification_file"):
+            if data.get(field) is not None:
+                data[field] = Path(str(data[field])).expanduser()
         config = cls(**data)
         config.validate()
         return config
@@ -91,13 +115,91 @@ class OrchestratorConfig:
             self.memory_timeout_seconds,
             self.memory_recall_limit,
             self.memory_shadow_timeout_seconds,
+            self.research_timeout_seconds,
+            self.cloud_timeout_seconds,
         )
         if any(isinstance(item, bool) or item <= 0 for item in positive):
             raise ValueError("numeric configuration values must be positive")
+        if (
+            isinstance(self.final_response_output_tokens, bool)
+            or not isinstance(self.final_response_output_tokens, int)
+            or not 32 <= self.final_response_output_tokens <= 1024
+        ):
+            raise ValueError(
+                "final_response_output_tokens must be an integer from 32 to 1024"
+            )
         if not isinstance(self.memory_shadow_enabled, bool):
             raise ValueError("memory_shadow_enabled must be boolean")
+        if self.memory_shadow_mode not in {
+            "structured_fallback",
+            "deterministic_only",
+        }:
+            raise ValueError("memory_shadow_mode is invalid")
         if not isinstance(self.memory_enabled, bool):
             raise ValueError("memory_enabled must be boolean")
+        if not isinstance(self.research_enabled, bool) or not isinstance(self.research_browser_fallback, bool):
+            raise ValueError("research feature flags must be boolean")
+        if not isinstance(self.cloud_enabled, bool):
+            raise ValueError("cloud_enabled must be boolean")
+        if self.cloud_monthly_cap_microusd != 5_000_000:
+            raise ValueError("cloud_monthly_cap_microusd is frozen at 5000000")
+        if self.cloud_enabled:
+            if self.cloud_secret_file is None or not self.cloud_secret_file.is_absolute():
+                raise ValueError("cloud_secret_file must be an absolute external secret reference")
+            if self.cloud_qualification_file is None or not self.cloud_qualification_file.is_absolute():
+                raise ValueError("cloud_qualification_file must be absolute")
+            repository_root = Path(__file__).resolve().parents[3]
+            secret = self.cloud_secret_file.resolve(strict=False)
+            if secret == repository_root or repository_root in secret.parents:
+                raise ValueError("cloud secret must not be stored in the repository")
+            if self.research_enabled:
+                # Research evidence is never a cloud fallback in M1C. Both
+                # features may be enabled, but the service routes these flows
+                # through disjoint ports and projections.
+                pass
+        research_url = urlparse(self.research_base_url)
+        if (
+            research_url.scheme != "http"
+            or research_url.hostname is None
+            or not ipaddress.ip_address(research_url.hostname).is_loopback
+            or research_url.path.rstrip("/") != "/v1"
+            or research_url.params
+            or research_url.query
+            or research_url.fragment
+            or research_url.username is not None
+        ):
+            raise ValueError("research_base_url must be the fixed loopback /v1 endpoint")
+        if self.research_timeout_seconds != 45.0:
+            raise ValueError("research_timeout_seconds must be 45")
+        if self.research_enabled:
+            if self.model_request_limit < 2 or self.output_token_limit < 1152:
+                raise ValueError("research requires two requests and 1152 output tokens")
+            if not self.research_bearer_token or len(self.research_bearer_token.encode()) > 512:
+                raise ValueError("bounded research bearer token is required")
+            if self.research_language_detector_version == "disabled":
+                raise ValueError("qualified research language detector is required")
+            if len(self.research_language_detector_sha256) != 64 or any(
+                character not in "0123456789abcdef" for character in self.research_language_detector_sha256
+            ):
+                raise ValueError("research language detector digest is invalid")
+            for field in (
+                "research_model_sha256",
+                "research_profile_sha256",
+                "research_qualification_sha256",
+            ):
+                digest = getattr(self, field)
+                if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                    raise ValueError(f"{field} is invalid")
+        if self.research_browser_fallback:
+            if not self.research_enabled:
+                raise ValueError("browser fallback requires research_enabled")
+            digest = self.research_browser_qualification_sha256
+            if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+                raise ValueError("research browser qualification digest is invalid")
+        try:
+            ZoneInfo(self.research_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("research_timezone is invalid") from exc
         if (
             isinstance(self.memory_recall_limit, bool)
             or not isinstance(self.memory_recall_limit, int)

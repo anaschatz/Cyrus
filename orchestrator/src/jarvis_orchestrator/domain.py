@@ -226,6 +226,14 @@ class RouteDecision:
             raise OrchestratorError("route_validation_failed", status=409)
         if self.response_language not in {"el", "en", "default"}:
             raise OrchestratorError("route_validation_failed", status=409)
+        for query in (self.memory_query, self.research_query):
+            if (
+                not isinstance(query, str)
+                or len(query) > 4096
+                or query != nfc(query)
+                or any((ord(character) < 32 and character not in "\n\t") for character in query)
+            ):
+                raise OrchestratorError("route_validation_failed", status=409)
         valid_tool = self.tool_name == "none" or self.tool_name in registered_tools
         relationships = (
             (self.route == "memory_local") == bool(self.memory_query),

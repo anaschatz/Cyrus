@@ -1,0 +1,122 @@
+{
+  "diagnostic": "jarvis_local_lifecycle_memory",
+  "date": "2026-08-10",
+  "hypothesis_test_eligible": false,
+  "authoritative_memory_enabled": false,
+  "shadow_memory_enabled": false,
+  "provider_api_cost_usd": 0.0,
+  "contracts": {
+    "lifecycle_adapter_sha256": "792494544c50b16dddccf9250c428f59a576b9d5ee4a50f158922f20f6efcbf6",
+    "lifecycle_writer_sha256": "0cfe69fc4c86a533592f34de389859c9cc42fb0023696650bafbf491df694a25"
+  },
+  "mlx_qwen2_5_0_5b": {
+    "candidate_manifest_digest": "1a5b7e9629b37487ede0209a9a552e415e22de5e414ccbd68dee32facff44647",
+    "qualification_status": "failed",
+    "failed_stage": "json_schema",
+    "failure_code": "fixture_runner_failed",
+    "schema_transport_valid": true,
+    "semantic_canary": {
+      "expected": "ignore",
+      "actual": "replace_0",
+      "passed": false
+    }
+  },
+  "ollama_qwen3_5_9b": {
+    "model": "qwen3.5:9b-q4_K_M",
+    "model_id": "6488c96fa5fa",
+    "ollama_version": "0.31.1",
+    "route": "http://127.0.0.1:11434",
+    "cloud_disabled": true,
+    "temperature": 0,
+    "top_p": 1,
+    "context_length": 4096,
+    "max_output_tokens": 32,
+    "retries": 0,
+    "passed": 3,
+    "total": 8,
+    "results": [
+      {
+        "case": "en_ignore",
+        "expected": "ignore",
+        "actual": null,
+        "content_bytes": 6,
+        "done_reason": "stop",
+        "prompt_tokens": 151,
+        "output_tokens": 2,
+        "passed": false
+      },
+      {
+        "case": "en_create",
+        "expected": "create",
+        "actual": "create",
+        "content_bytes": 26,
+        "done_reason": "stop",
+        "prompt_tokens": 152,
+        "output_tokens": 12,
+        "passed": true
+      },
+      {
+        "case": "en_replace",
+        "expected": "replace_0",
+        "actual": null,
+        "content_bytes": 9,
+        "done_reason": "stop",
+        "prompt_tokens": 170,
+        "output_tokens": 4,
+        "passed": false
+      },
+      {
+        "case": "en_cancel",
+        "expected": "cancel_0",
+        "actual": null,
+        "content_bytes": 8,
+        "done_reason": "stop",
+        "prompt_tokens": 168,
+        "output_tokens": 4,
+        "passed": false
+      },
+      {
+        "case": "el_ignore",
+        "expected": "ignore",
+        "actual": "ignore",
+        "content_bytes": 26,
+        "done_reason": "stop",
+        "prompt_tokens": 151,
+        "output_tokens": 12,
+        "passed": true
+      },
+      {
+        "case": "el_create",
+        "expected": "create",
+        "actual": "create_1",
+        "content_bytes": 28,
+        "done_reason": "stop",
+        "prompt_tokens": 161,
+        "output_tokens": 14,
+        "passed": false
+      },
+      {
+        "case": "el_replace",
+        "expected": "replace_0",
+        "actual": null,
+        "content_bytes": 9,
+        "done_reason": "stop",
+        "prompt_tokens": 185,
+        "output_tokens": 4,
+        "passed": false
+      },
+      {
+        "case": "el_cancel",
+        "expected": "cancel_0",
+        "actual": "cancel_0",
+        "content_bytes": 23,
+        "done_reason": "stop",
+        "prompt_tokens": 188,
+        "output_tokens": 8,
+        "passed": true
+      }
+    ],
+    "attempt_note": "The first operational batch stopped on an invalid empty-content response. The reporting code was changed only to record invalid content and continue; model, prompt, schema, cases, and generation parameters were unchanged."
+  },
+  "promotion_decision": "rejected_for_live_shadow_memory"
+}

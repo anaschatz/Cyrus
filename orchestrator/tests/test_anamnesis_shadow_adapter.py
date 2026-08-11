@@ -30,7 +30,7 @@ from jarvis_orchestrator.model import BudgetedModelPort
 from jarvis_orchestrator.service import OrchestratorService
 
 EXPECTED_CONTRACT_SHA256 = (
-    "fb2efe42452f6c8225e8571387e1f2e2a7bec96c11e6f637090b64afba664a46"
+    "792494544c50b16dddccf9250c428f59a576b9d5ee4a50f158922f20f6efcbf6"
 )
 
 

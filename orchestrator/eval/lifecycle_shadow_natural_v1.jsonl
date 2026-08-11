@@ -1,0 +1,48 @@
+{"id":"create_en_01","category":"create","language":"en","text":"Remember that I prefer tea.","active":[],"expected":"create"}
+{"id":"create_en_02","category":"create","language":"en","text":"Please remember that my timezone is Europe/Athens.","active":[],"expected":"create"}
+{"id":"create_en_03","category":"create","language":"en","text":"  REMEMBER   THAT   the Atlas project is private.  ","active":[],"expected":"create"}
+{"id":"create_en_04","category":"create","language":"en","text":"Could you remember that I take coffee without sugar?","active":[],"expected":"create"}
+{"id":"create_en_05","category":"create","language":"en","text":"I want you to remember that my preferred language is Greek.","active":[],"expected":"create"}
+{"id":"create_en_06","category":"create","language":"en","text":"Please keep in memory that the garage code changes monthly.","active":[],"expected":"create"}
+{"id":"create_el_01","category":"create","language":"el","text":"Να θυμάσαι ότι προτιμώ τσάι.","active":[],"expected":"create"}
+{"id":"create_el_02","category":"create","language":"el","text":"Θυμήσου ότι η ζώνη ώρας μου είναι Europe/Athens.","active":[],"expected":"create"}
+{"id":"create_el_03","category":"create","language":"el","text":"ΘΕΛΩ ΝΑ ΘΥΜΑΣΑΙ ΟΤΙ το Atlas είναι ιδιωτικό.","active":[],"expected":"create"}
+{"id":"create_el_04","category":"create","language":"el","text":"Να θυμασαι οτι πινω τον καφε χωρις ζαχαρη.","active":[],"expected":"create"}
+{"id":"create_el_05","category":"create","language":"el","text":"Μπορείς να θυμάσαι ότι η προτιμώμενη γλώσσα μου είναι τα Ελληνικά;","active":[],"expected":"create"}
+{"id":"create_el_06","category":"create","language":"el","text":"Κράτα στη μνήμη σου ότι ο κωδικός του γκαράζ αλλάζει κάθε μήνα.","active":[],"expected":"create"}
+{"id":"replace_en_01","category":"replace","language":"en","text":"Correction: I prefer coffee instead.","active":["Remember that I prefer tea."],"expected":"replace_0"}
+{"id":"replace_en_02","category":"replace","language":"en","text":"CORRECTION: my timezone is UTC.","active":["Remember that my timezone is Europe/Athens."],"expected":"replace_0"}
+{"id":"replace_en_03","category":"replace","language":"en","text":"Update my remembered drink preference to coffee.","active":["Remember that I prefer tea."],"expected":"replace_0"}
+{"id":"replace_en_04","category":"replace","language":"en","text":"Correction: I prefer coffee.","active":[],"expected":"ignore"}
+{"id":"replace_en_05","category":"replace","language":"en","text":"Correction: I prefer coffee.","active":["Remember that I prefer tea.","Remember that my timezone is UTC."],"expected":"fallback"}
+{"id":"replace_en_06","category":"replace","language":"en","text":"Actually, coffee is better for me.","active":["Remember that I prefer tea."],"expected":"fallback"}
+{"id":"replace_el_01","category":"replace","language":"el","text":"Διόρθωση: προτιμώ καφέ.","active":["Να θυμάσαι ότι προτιμώ τσάι."],"expected":"replace_0"}
+{"id":"replace_el_02","category":"replace","language":"el","text":"ΔΙΟΡΘΩΣΗ: η ζώνη ώρας μου είναι UTC.","active":["Να θυμάσαι ότι η ζώνη ώρας μου είναι Europe/Athens."],"expected":"replace_0"}
+{"id":"replace_el_03","category":"replace","language":"el","text":"Άλλαξε την αποθηκευμένη προτίμησή μου από τσάι σε καφέ.","active":["Να θυμάσαι ότι προτιμώ τσάι."],"expected":"replace_0"}
+{"id":"replace_el_04","category":"replace","language":"el","text":"Στην πραγματικότητα, προτιμώ καφέ.","active":["Να θυμάσαι ότι προτιμώ τσάι."],"expected":"fallback"}
+{"id":"cancel_en_01","category":"cancel","language":"en","text":"Forget my drink preference.","active":["Remember that I prefer coffee."],"expected":"cancel_0"}
+{"id":"cancel_en_02","category":"cancel","language":"en","text":"Please forget my timezone.","active":["Remember that my timezone is UTC."],"expected":"cancel_0"}
+{"id":"cancel_en_03","category":"cancel","language":"en","text":"Remove my drink preference from memory.","active":["Remember that I prefer coffee."],"expected":"cancel_0"}
+{"id":"cancel_en_04","category":"cancel","language":"en","text":"Delete the stored timezone from memory.","active":["Remember that my timezone is UTC."],"expected":"cancel_0"}
+{"id":"cancel_en_05","category":"cancel","language":"en","text":"Forget my drink preference.","active":[],"expected":"ignore"}
+{"id":"cancel_en_06","category":"cancel","language":"en","text":"Forget that preference.","active":["Remember that I prefer coffee.","Remember that I prefer quiet rooms."],"expected":"fallback"}
+{"id":"cancel_el_01","category":"cancel","language":"el","text":"Ξέχασε την προτίμησή μου για καφέ.","active":["Να θυμάσαι ότι προτιμώ καφέ."],"expected":"cancel_0"}
+{"id":"cancel_el_02","category":"cancel","language":"el","text":"Θέλω να ξεχάσεις τη ζώνη ώρας μου.","active":["Να θυμάσαι ότι η ζώνη ώρας μου είναι UTC."],"expected":"cancel_0"}
+{"id":"cancel_el_03","category":"cancel","language":"el","text":"Διέγραψε από τη μνήμη την προτίμησή μου για καφέ.","active":["Να θυμάσαι ότι προτιμώ καφέ."],"expected":"cancel_0"}
+{"id":"cancel_el_04","category":"cancel","language":"el","text":"Ξεχνα την προτιμηση μου.","active":["Να θυμασαι οτι προτιμω καφε."],"expected":"cancel_0"}
+{"id":"ignore_en_01","category":"ignore","language":"en","text":"What time is it?","active":[],"expected":"ignore"}
+{"id":"ignore_en_02","category":"ignore","language":"en","text":"Translate the phrase \"remember that I prefer tea\".","active":["Remember that I prefer coffee."],"expected":"ignore"}
+{"id":"ignore_en_03","category":"ignore","language":"en","text":"I did not ask you to forget anything.","active":["Remember that I prefer coffee."],"expected":"ignore"}
+{"id":"ignore_en_04","category":"ignore","language":"en","text":"The note says correction: coffee.","active":["Remember that I prefer tea."],"expected":"ignore"}
+{"id":"ignore_en_05","category":"ignore","language":"en","text":"Memory is an interesting research topic.","active":["Remember that I prefer tea."],"expected":"ignore"}
+{"id":"ignore_en_06","category":"ignore","language":"en","text":"Forget-me-not flowers are blue.","active":["Remember that I prefer tea."],"expected":"ignore"}
+{"id":"ignore_el_01","category":"ignore","language":"el","text":"Τι ώρα είναι;","active":[],"expected":"ignore"}
+{"id":"ignore_el_02","category":"ignore","language":"el","text":"Μετάφρασε τη φράση «να θυμάσαι ότι προτιμώ τσάι».","active":["Να θυμάσαι ότι προτιμώ καφέ."],"expected":"ignore"}
+{"id":"ignore_el_03","category":"ignore","language":"el","text":"Δεν σου ζήτησα να ξεχάσεις τίποτα.","active":["Να θυμάσαι ότι προτιμώ καφέ."],"expected":"ignore"}
+{"id":"ignore_el_04","category":"ignore","language":"el","text":"Το σημείωμα γράφει διόρθωση: καφές.","active":["Να θυμάσαι ότι προτιμώ τσάι."],"expected":"ignore"}
+{"id":"fallback_en_01","category":"fallback","language":"en","text":"Remember that ...","active":[],"expected":"fallback"}
+{"id":"fallback_en_02","category":"fallback","language":"en","text":"Correction, coffee might be better.","active":["Remember that I prefer tea."],"expected":"fallback"}
+{"id":"fallback_en_03","category":"fallback","language":"en","text":"Actually, my preference may have changed.","active":["Remember that I prefer tea."],"expected":"fallback"}
+{"id":"fallback_el_01","category":"fallback","language":"el","text":"Να θυμάσαι ότι ...","active":[],"expected":"fallback"}
+{"id":"fallback_el_02","category":"fallback","language":"el","text":"Διόρθωση, ίσως προτιμώ καφέ.","active":["Να θυμάσαι ότι προτιμώ τσάι."],"expected":"fallback"}
+{"id":"fallback_el_03","category":"fallback","language":"el","text":"Στην πραγματικότητα, ίσως άλλαξε η προτίμησή μου.","active":["Να θυμάσαι ότι προτιμώ τσάι."],"expected":"fallback"}

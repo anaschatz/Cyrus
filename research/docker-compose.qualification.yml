@@ -1,0 +1,83 @@
+services:
+  research-api:
+    environment:
+      JARVIS_RESEARCH_QUALIFICATION_MODE: "1"
+      JARVIS_RESEARCH_SEARXNG_URL: "http://qualification-search:8080/search"
+    networks:
+      - qualification_search
+
+  searxng:
+    profiles: ["production"]
+
+  egress-guard:
+    environment:
+      JARVIS_EGRESS_INTERNAL_NETWORKS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,fc00::/7"
+    dns:
+      - 93.184.216.53
+    networks:
+      qualification_lab:
+
+  qualification-http:
+    image: ${JARVIS_RESEARCH_IMAGE:?set an immutable image@sha256 digest}
+    profiles: ["qualification"]
+    entrypoint: ["jarvis-research-fixture", "http"]
+    read_only: true
+    restart: "no"
+    networks:
+      qualification_lab:
+        ipv4_address: 93.184.216.10
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      disable: true
+
+  qualification-dns:
+    image: ${JARVIS_RESEARCH_IMAGE:?set an immutable image@sha256 digest}
+    profiles: ["qualification"]
+    entrypoint: ["jarvis-research-fixture", "dns"]
+    read_only: true
+    restart: "no"
+    networks:
+      qualification_lab:
+        ipv4_address: 93.184.216.53
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      disable: true
+
+  qualification-search:
+    image: ${JARVIS_RESEARCH_IMAGE:?set an immutable image@sha256 digest}
+    profiles: ["qualification"]
+    entrypoint: ["jarvis-research-fixture", "search"]
+    read_only: true
+    restart: "no"
+    expose: ["8080"]
+    networks:
+      - qualification_search
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      disable: true
+
+networks:
+  qualification_lab:
+    internal: true
+    ipam:
+      config:
+        - subnet: 93.184.216.0/24
+  qualification_search:
+    internal: true
+
+configs:
+  searxng_settings:
+    file: ${JARVIS_QUALIFICATION_SEARXNG_SETTINGS_SOURCE:-./searxng/settings.yml}

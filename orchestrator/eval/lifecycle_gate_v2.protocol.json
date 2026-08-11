@@ -1,0 +1,33 @@
+{
+  "artifact": "jarvis.deterministic-lifecycle-gate.v2.protocol",
+  "purpose": "development_candidate_preregistration",
+  "hypothesis_test_eligible": false,
+  "parent_gate_contract_sha256": "51ff7b97ac3f8a04fcb584b88eb717f5de827e9dc4dde44a38564f505bda311c",
+  "source_diagnostic_dataset_sha256": "8e652f4dab5da5d5fa7f35eb8a7996f8bc32e72ecc5e471b0456b9e27ce760c9",
+  "intervention": [
+    "Normalize both input and rule literals with NFKC, casefold and collapsed whitespace.",
+    "Recognize closed English and Greek families for explicit remember requests.",
+    "Recognize closed English and Greek families for explicit stored-memory updates.",
+    "Recognize closed English and Greek families for explicit deletion from memory.",
+    "Keep correction and cancellation deterministic only with exactly one active memory.",
+    "Route incomplete, hedged or multi-target lifecycle syntax to the local fallback.",
+    "Keep quoted, negated, descriptive and mid-sentence lifecycle words as ignore."
+  ],
+  "forbidden": [
+    "substring-only mutation",
+    "fuzzy target selection",
+    "model-generated durable identity",
+    "authoritative memory mutation",
+    "tuning on the future v2 evaluation cases"
+  ],
+  "evaluation": {
+    "dataset": "new lifecycle_shadow_natural_v2 corpus",
+    "languages": ["en", "el"],
+    "required_ignore_precision": 1.0,
+    "required_fallback_routing": 1.0,
+    "required_explicit_command_recall": 0.9,
+    "attempts": 1,
+    "provider_model_calls": 0
+  },
+  "promotion_scope": "shadow pilot candidate only; never authoritative memory"
+}

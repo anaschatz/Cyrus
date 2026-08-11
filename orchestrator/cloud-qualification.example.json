@@ -1,0 +1,33 @@
+{
+  "version": "endpoint-registry/1",
+  "endpoints": [
+    {
+      "model_canonical_id": "deepseek/deepseek-v4-flash",
+      "provider_endpoint_tag": "replace-with-qualified-full-endpoint-tag",
+      "quantization": "replace-with-qualified-quantization",
+      "supported_parameters": ["max_tokens", "reasoning", "temperature", "top_p"],
+      "qualification_version": "m1c-qualification/1",
+      "qualification_sha256": "replace-with-64-lowercase-hex-digest",
+      "context_limit": 128000,
+      "output_limit": 2048,
+      "prompt_rate_per_m": "replace-with-qualified-rate-per-million",
+      "completion_rate_per_m": "replace-with-qualified-rate-per-million",
+      "request_rate": "0",
+      "runtime_provider_name": "replace-with-generation-receipt-provider-name"
+    },
+    {
+      "model_canonical_id": "openai/gpt-5.6-terra",
+      "provider_endpoint_tag": "replace-with-qualified-full-endpoint-tag",
+      "quantization": "replace-with-qualified-quantization",
+      "supported_parameters": ["max_completion_tokens", "reasoning"],
+      "qualification_version": "m1c-qualification/1",
+      "qualification_sha256": "replace-with-64-lowercase-hex-digest",
+      "context_limit": 60000,
+      "output_limit": 2000,
+      "prompt_rate_per_m": "2.50",
+      "completion_rate_per_m": "15",
+      "request_rate": "0",
+      "runtime_provider_name": "replace-with-generation-receipt-provider-name"
+    }
+  ]
+}

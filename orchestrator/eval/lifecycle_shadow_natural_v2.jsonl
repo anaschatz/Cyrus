@@ -1,0 +1,64 @@
+{"id":"v2_create_en_01","category":"create","language":"en","text":"Can you remember that I use Celsius for temperatures?","active":[],"expected":"create"}
+{"id":"v2_create_en_02","category":"create","language":"en","text":"Would you remember that my favorite color is navy blue?","active":[],"expected":"create"}
+{"id":"v2_create_en_03","category":"create","language":"en","text":"Could you please remember that I am unavailable on Tuesday mornings?","active":[],"expected":"create"}
+{"id":"v2_create_en_04","category":"create","language":"en","text":"Keep in memory that invoices go in the Finance folder.","active":[],"expected":"create"}
+{"id":"v2_create_en_05","category":"create","language":"en","text":"I want you to remember that my dog's name is Luna.","active":[],"expected":"create"}
+{"id":"v2_create_en_06","category":"create","language":"en","text":"Remember that notifications should be quiet after ten.","active":[],"expected":"create"}
+{"id":"v2_create_en_07","category":"create","language":"en","text":"Please keep in memory that the bicycle serial is ZX-41.","active":[],"expected":"create"}
+{"id":"v2_create_en_08","category":"create","language":"en","text":"Please remember that I choose aisle seats.","active":[],"expected":"create"}
+{"id":"v2_create_el_01","category":"create","language":"el","text":"Μπορείς να θυμάσαι ότι χρησιμοποιώ βαθμούς Κελσίου;","active":[],"expected":"create"}
+{"id":"v2_create_el_02","category":"create","language":"el","text":"Θα ήθελα να θυμάσαι ότι το αγαπημένο μου χρώμα είναι το μπλε.","active":[],"expected":"create"}
+{"id":"v2_create_el_03","category":"create","language":"el","text":"Αποθήκευσε στη μνήμη ότι δεν είμαι διαθέσιμος τα πρωινά της Τρίτης.","active":[],"expected":"create"}
+{"id":"v2_create_el_04","category":"create","language":"el","text":"Κράτα στη μνήμη σου ότι τα τιμολόγια μπαίνουν στον φάκελο Finance.","active":[],"expected":"create"}
+{"id":"v2_create_el_05","category":"create","language":"el","text":"Θυμήσου ότι ο σκύλος μου λέγεται Λούνα.","active":[],"expected":"create"}
+{"id":"v2_create_el_06","category":"create","language":"el","text":"Θέλω να θυμάσαι ότι οι ειδοποιήσεις πρέπει να είναι αθόρυβες μετά τις δέκα.","active":[],"expected":"create"}
+{"id":"v2_create_el_07","category":"create","language":"el","text":"Να θυμάσαι ότι ο σειριακός αριθμός του ποδηλάτου είναι ZX-41.","active":[],"expected":"create"}
+{"id":"v2_create_el_08","category":"create","language":"el","text":"Μπορεις να θυμασαι οτι επιλεγω θεσεις στον διαδρομο;","active":[],"expected":"create"}
+{"id":"v2_replace_en_01","category":"replace","language":"en","text":"Correction: I now use Fahrenheit.","active":["Remember that I use Celsius."],"expected":"replace_0"}
+{"id":"v2_replace_en_02","category":"replace","language":"en","text":"Update my stored temperature preference to Fahrenheit.","active":["Remember that I use Celsius."],"expected":"replace_0"}
+{"id":"v2_replace_en_03","category":"replace","language":"en","text":"Change my remembered seat preference to a window seat.","active":["Remember that I choose aisle seats."],"expected":"replace_0"}
+{"id":"v2_replace_en_04","category":"replace","language":"en","text":"Correct my memory about the delivery address to Dock 7.","active":["Remember that deliveries go to Dock 4."],"expected":"replace_0"}
+{"id":"v2_replace_en_05","category":"replace","language":"en","text":"Update the memory about my quiet hours to start at nine.","active":["Remember that quiet hours start at ten."],"expected":"replace_0"}
+{"id":"v2_replace_en_06","category":"replace","language":"en","text":"Correction: I now prefer green.","active":[],"expected":"ignore"}
+{"id":"v2_replace_el_01","category":"replace","language":"el","text":"Διόρθωση: τώρα χρησιμοποιώ Φαρενάιτ.","active":["Να θυμάσαι ότι χρησιμοποιώ Κελσίου."],"expected":"replace_0"}
+{"id":"v2_replace_el_02","category":"replace","language":"el","text":"Ενημέρωσε την αποθηκευμένη προτίμηση θερμοκρασίας σε Φαρενάιτ.","active":["Να θυμάσαι ότι χρησιμοποιώ Κελσίου."],"expected":"replace_0"}
+{"id":"v2_replace_el_03","category":"replace","language":"el","text":"Άλλαξε τη μνήμη για τη θέση μου σε θέση παραθύρου.","active":["Να θυμάσαι ότι επιλέγω θέση διαδρόμου."],"expected":"replace_0"}
+{"id":"v2_replace_el_04","category":"replace","language":"el","text":"Διόρθωσε την αποθηκευμένη διεύθυνση παράδοσης σε Αποβάθρα 7.","active":["Να θυμάσαι ότι οι παραδόσεις πάνε στην Αποβάθρα 4."],"expected":"replace_0"}
+{"id":"v2_replace_el_05","category":"replace","language":"el","text":"Ενημερωσε τη μνημη για τις ωρες ησυχιας να αρχιζουν στις εννεα.","active":["Να θυμάσαι ότι οι ώρες ησυχίας αρχίζουν στις δέκα."],"expected":"replace_0"}
+{"id":"v2_replace_el_06","category":"replace","language":"el","text":"Διόρθωση: τώρα προτιμώ πράσινο.","active":["Να θυμάσαι ότι προτιμώ μπλε.","Να θυμάσαι ότι επιλέγω θέση διαδρόμου."],"expected":"fallback"}
+{"id":"v2_cancel_en_01","category":"cancel","language":"en","text":"Forget my bicycle serial number.","active":["Remember that the bicycle serial is ZX-41."],"expected":"cancel_0"}
+{"id":"v2_cancel_en_02","category":"cancel","language":"en","text":"Please forget my quiet-hours preference.","active":["Remember that quiet hours start at ten."],"expected":"cancel_0"}
+{"id":"v2_cancel_en_03","category":"cancel","language":"en","text":"Remove my delivery address from memory.","active":["Remember that deliveries go to Dock 7."],"expected":"cancel_0"}
+{"id":"v2_cancel_en_04","category":"cancel","language":"en","text":"Please delete my seat preference from memory.","active":["Remember that I choose a window seat."],"expected":"cancel_0"}
+{"id":"v2_cancel_en_05","category":"cancel","language":"en","text":"Erase the bicycle details from your memory.","active":["Remember that the bicycle serial is ZX-41."],"expected":"cancel_0"}
+{"id":"v2_cancel_en_06","category":"cancel","language":"en","text":"Forget my color preference.","active":[],"expected":"ignore"}
+{"id":"v2_cancel_el_01","category":"cancel","language":"el","text":"Ξέχνα τον σειριακό αριθμό του ποδηλάτου.","active":["Να θυμάσαι ότι ο σειριακός αριθμός είναι ZX-41."],"expected":"cancel_0"}
+{"id":"v2_cancel_el_02","category":"cancel","language":"el","text":"Να ξεχάσεις την προτίμηση για ώρες ησυχίας.","active":["Να θυμάσαι ότι οι ώρες ησυχίας αρχίζουν στις δέκα."],"expected":"cancel_0"}
+{"id":"v2_cancel_el_03","category":"cancel","language":"el","text":"Διέγραψε τη διεύθυνση παράδοσης από τη μνήμη.","active":["Να θυμάσαι ότι οι παραδόσεις πάνε στην Αποβάθρα 7."],"expected":"cancel_0"}
+{"id":"v2_cancel_el_04","category":"cancel","language":"el","text":"Αφαίρεσε την προτίμηση θέσης από τη μνήμη.","active":["Να θυμάσαι ότι επιλέγω θέση παραθύρου."],"expected":"cancel_0"}
+{"id":"v2_cancel_el_05","category":"cancel","language":"el","text":"Σβησε τα στοιχεια του ποδηλατου απο τη μνημη.","active":["Να θυμάσαι ότι ο σειριακός αριθμός είναι ZX-41."],"expected":"cancel_0"}
+{"id":"v2_cancel_el_06","category":"cancel","language":"el","text":"Ξέχασε αυτή την προτίμηση.","active":["Να θυμάσαι ότι προτιμώ μπλε.","Να θυμάσαι ότι επιλέγω θέση διαδρόμου."],"expected":"fallback"}
+{"id":"v2_ignore_en_01","category":"ignore","language":"en","text":"Do you remember where the bicycle is parked?","active":["Remember that the bicycle serial is ZX-41."],"expected":"ignore"}
+{"id":"v2_ignore_en_02","category":"ignore","language":"en","text":"I forgot my umbrella at the office.","active":["Remember that I prefer aisle seats."],"expected":"ignore"}
+{"id":"v2_ignore_en_03","category":"ignore","language":"en","text":"Memory usage is high on this laptop.","active":["Remember that I use Celsius."],"expected":"ignore"}
+{"id":"v2_ignore_en_04","category":"ignore","language":"en","text":"Explain what the command \"erase this from memory\" means.","active":["Remember that I prefer blue."],"expected":"ignore"}
+{"id":"v2_ignore_en_05","category":"ignore","language":"en","text":"Please explain how deleting data from memory works.","active":["Remember that I prefer blue."],"expected":"ignore"}
+{"id":"v2_ignore_en_06","category":"ignore","language":"en","text":"The report contains a correction about delivery times.","active":["Remember that deliveries go to Dock 7."],"expected":"ignore"}
+{"id":"v2_ignore_en_07","category":"ignore","language":"en","text":"I never asked you to remember my seat number.","active":["Remember that I prefer a window seat."],"expected":"ignore"}
+{"id":"v2_ignore_en_08","category":"ignore","language":"en","text":"Could you describe why people forget names?","active":["Remember that my dog's name is Luna."],"expected":"ignore"}
+{"id":"v2_ignore_el_01","category":"ignore","language":"el","text":"Θυμάσαι πού είναι παρκαρισμένο το ποδήλατο;","active":["Να θυμάσαι ότι ο σειριακός αριθμός είναι ZX-41."],"expected":"ignore"}
+{"id":"v2_ignore_el_02","category":"ignore","language":"el","text":"Ξέχασα την ομπρέλα μου στο γραφείο.","active":["Να θυμάσαι ότι επιλέγω θέση διαδρόμου."],"expected":"ignore"}
+{"id":"v2_ignore_el_03","category":"ignore","language":"el","text":"Η χρήση μνήμης του υπολογιστή είναι υψηλή.","active":["Να θυμάσαι ότι χρησιμοποιώ Κελσίου."],"expected":"ignore"}
+{"id":"v2_ignore_el_04","category":"ignore","language":"el","text":"Εξήγησε τι σημαίνει η φράση «σβήσε το από τη μνήμη».","active":["Να θυμάσαι ότι προτιμώ μπλε."],"expected":"ignore"}
+{"id":"v2_ignore_el_05","category":"ignore","language":"el","text":"Πες μου πώς λειτουργεί η διαγραφή δεδομένων από τη μνήμη.","active":["Να θυμάσαι ότι προτιμώ μπλε."],"expected":"ignore"}
+{"id":"v2_ignore_el_06","category":"ignore","language":"el","text":"Η αναφορά περιέχει μια διόρθωση για τις ώρες παράδοσης.","active":["Να θυμάσαι ότι οι παραδόσεις πάνε στην Αποβάθρα 7."],"expected":"ignore"}
+{"id":"v2_ignore_el_07","category":"ignore","language":"el","text":"Δεν σου ζήτησα ποτέ να θυμάσαι τον αριθμό θέσης μου.","active":["Να θυμάσαι ότι επιλέγω θέση παραθύρου."],"expected":"ignore"}
+{"id":"v2_ignore_el_08","category":"ignore","language":"el","text":"Μπορείς να εξηγήσεις γιατί οι άνθρωποι ξεχνούν ονόματα;","active":["Να θυμάσαι ότι ο σκύλος μου λέγεται Λούνα."],"expected":"ignore"}
+{"id":"v2_fallback_en_01","category":"fallback","language":"en","text":"Remember that perhaps my schedule changed.","active":[],"expected":"fallback"}
+{"id":"v2_fallback_en_02","category":"fallback","language":"en","text":"Correction, I might prefer a window seat.","active":["Remember that I prefer aisle seats."],"expected":"fallback"}
+{"id":"v2_fallback_en_03","category":"fallback","language":"en","text":"Actually, my delivery details may be different.","active":["Remember that deliveries go to Dock 7."],"expected":"fallback"}
+{"id":"v2_fallback_en_04","category":"fallback","language":"en","text":"Delete the stored preference from memory.","active":["Remember that I prefer blue.","Remember that I prefer quiet notifications."],"expected":"fallback"}
+{"id":"v2_fallback_el_01","category":"fallback","language":"el","text":"Να θυμάσαι ότι ίσως άλλαξε το πρόγραμμά μου.","active":[],"expected":"fallback"}
+{"id":"v2_fallback_el_02","category":"fallback","language":"el","text":"Διόρθωση, μάλλον προτιμώ θέση παραθύρου.","active":["Να θυμάσαι ότι επιλέγω θέση διαδρόμου."],"expected":"fallback"}
+{"id":"v2_fallback_el_03","category":"fallback","language":"el","text":"Στην πραγματικότητα, ίσως άλλαξαν τα στοιχεία παράδοσης.","active":["Να θυμάσαι ότι οι παραδόσεις πάνε στην Αποβάθρα 7."],"expected":"fallback"}
+{"id":"v2_fallback_el_04","category":"fallback","language":"el","text":"Διέγραψε την αποθηκευμένη προτίμηση από τη μνήμη.","active":["Να θυμάσαι ότι προτιμώ μπλε.","Να θυμάσαι ότι θέλω ήσυχες ειδοποιήσεις."],"expected":"fallback"}

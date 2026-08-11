@@ -1,0 +1,41 @@
+{
+  "authoritative_memory_enabled": false,
+  "authoritative_memory_records": 0,
+  "audit_coverage": 1.0,
+  "audit_projection_sha256": "ada62895815faec4a33aeccc277155e78cfd51daa4f09ef9508482650c35111f",
+  "contains_user_content": false,
+  "database_published": false,
+  "database_sha256": "506a548ecf33223f17200aa18965a29096df92b47533d605f92b049572fc790d",
+  "diagnostic": "jarvis.live-shadow-probe.v2",
+  "hypothesis_test_eligible": false,
+  "integrity_passed": true,
+  "lifecycle_model_calls": 0,
+  "local_assistant_model_calls": 3,
+  "operation_counts": {
+    "cancel": 1,
+    "ignore": 0,
+    "upsert": 2
+  },
+  "provider_api_cost_usd": 0.0,
+  "response_budget_tokens": 256,
+  "response_metrics": {
+    "average_latency_seconds": 5.065,
+    "maximum_latency_seconds": 10.861,
+    "per_turn_output_tokens": [35, 40, 256],
+    "per_turn_seconds": [2.018, 2.316, 10.861],
+    "total_output_tokens": 331
+  },
+  "run_date": "2026-08-10",
+  "sample_sufficient": false,
+  "turns_completed": 3,
+  "v1_to_v2_comparison": {
+    "average_latency_reduction_percent": 73.48,
+    "maximum_latency_reduction_percent": 73.54,
+    "output_token_reduction_percent": 69.88,
+    "v1_average_latency_seconds": 19.101,
+    "v1_maximum_latency_seconds": 41.045,
+    "v1_total_output_tokens": 1099
+  },
+  "verdict": "safe_live_probe_pass_stop_behavior_still_bounded_at_limit",
+  "writer_contract_sha256": "140e894a9f36c73c2d76deed7bd76729da88b2c81f350c9fb92472225959d717"
+}

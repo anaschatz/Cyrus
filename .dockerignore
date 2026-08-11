@@ -1,0 +1,10 @@
+**
+!research/
+!research/pyproject.toml
+!research/uv.lock
+!research/src/
+!research/src/**
+!orchestrator/
+!orchestrator/src/
+!orchestrator/src/jarvis_orchestrator/
+!orchestrator/src/jarvis_orchestrator/**
