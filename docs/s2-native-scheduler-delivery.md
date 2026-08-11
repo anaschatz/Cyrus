@@ -57,8 +57,16 @@ arguments or a plaintext temporary file.
 
 At dispatch, `unknown` lock state always becomes `private`; `locked` becomes at
 most `title_only` unless the manifest-qualified global full-body opt-in and the
-job policy both allow full content. Scheduler TTS is never advertised by this
-runtime and cannot fall back to normal response playback.
+job policy both allow full content.
+
+Scheduler TTS remains off unless the compatibility manifest includes
+`scheduler_notification_speech` and its `tts_adapter_qualification_sha256`
+matches an additional strict native Voice qualification file configured as
+`tts_qualification_path`/`tts_qualification_sha256`. That report must pass the
+200-turn, acoustic barge-in, recovery and soak gates, and its runtime-profile
+fingerprint must equal the currently running macOS profile. Scheduler speech
+uses its isolated encrypted journal and receipts; it cannot fall back to normal
+response playback.
 
 ## Deliberate remaining gate
 

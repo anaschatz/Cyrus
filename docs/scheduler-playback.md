@@ -25,3 +25,9 @@ state or resurrect a tombstoned notification.
 Speech payloads are NFC, limited to 4096 UTF-8 bytes and carry a positive
 `unit_index`. Playback receipt state and reason codes are strict tokens; free
 form text is forbidden.
+
+Enablement additionally requires absolute `scheduler.tts_qualification_path`
+and matching `scheduler.tts_qualification_sha256` configuration values. The
+report digest must be the one bound by the compatibility manifest and the
+report's runtime-profile fingerprint must match the active macOS source or
+packaged profile.

@@ -38,6 +38,7 @@ from ..scheduler_runtime import SchedulerNativeRuntime
 from ..vad import SileroOnnxVad
 from .audio_capture import CoreAudioCapture
 from .asr_selection import create_macos_asr_backend
+from .native_collector import mac_runtime_profile_fingerprint
 from .ptt import MacEventTapPttSource, mac_ptt_keycode, mac_ptt_vkey
 from .recovery import MacRecoveryRequest, MacRecoverySupervisor
 from .system_tts import MacSystemTtsBackend
@@ -88,6 +89,9 @@ class MacVoiceRuntime:
                 config.scheduler,
                 session_id=self.core.session_id,
                 approval_arbiter=self.cloud_approval.approval_arbiter,
+                tts=self.tts,
+                reserve_epoch=self.core.state.reserve_output_epoch,
+                runtime_profile_sha256=mac_runtime_profile_fingerprint(config),
             )
             self.core.configure_scheduler_extension(
                 self.scheduler_runtime.capabilities,
@@ -199,9 +203,14 @@ class MacVoiceRuntime:
         if event.transition == PttTransition.DOWN:
             self._ptt_cycle += 1
             self.cloud_approval.disarm_for_ptt()
+            output_active = not self.tts.is_idle
             if self.scheduler_runtime is not None:
                 self.scheduler_runtime.disarm_for_ptt()
-            output_active = not self.tts.is_idle
+                for receipt in self.scheduler_runtime.cancel_playback(
+                    cancellation_epoch=self.core.state.output_epoch + 1,
+                    reason_code="ptt_down",
+                ):
+                    self.transport.send(receipt)
             self._record_timing(
                 "ptt_down_received",
                 event.received_at,
@@ -351,6 +360,14 @@ class MacVoiceRuntime:
                         callback = self.callbacks.get_nowait()
                     except queue.Empty:
                         break
+                    if self.scheduler_runtime is not None:
+                        handled, scheduler_receipts = self.scheduler_runtime.handle_tts_callback(
+                            callback.kind, callback.unit
+                        )
+                        for receipt in scheduler_receipts:
+                            self.transport.send(receipt)
+                        if handled:
+                            continue
                     self._record_timing(
                         "tts_unit_started" if callback.kind == "started" else "tts_unit_completed",
                         unit_index=callback.unit.unit_index,
@@ -406,6 +423,12 @@ class MacVoiceRuntime:
                             send=self.transport.send,
                         )
                         continue
+                    if server_event.type == "response.started" and self.scheduler_runtime is not None:
+                        for receipt in self.scheduler_runtime.cancel_playback(
+                            cancellation_epoch=self.core.state.output_epoch,
+                            reason_code="voice_response_started",
+                        ):
+                            self.transport.send(receipt)
                     if server_event.type == "response.speech.commit":
                         self._record_timing(
                             "speech_commit_received",
@@ -422,6 +445,20 @@ class MacVoiceRuntime:
                     if server_event.type == "server.ack":
                         self.reliable.acknowledge(server_event)
                     self._send_all(self.core.handle_server_event(server_event))
+                if self.scheduler_runtime is not None:
+                    response = self.core.state.response
+                    scheduler_allowed = (
+                        self.core.state.input_state == InputState.IDLE
+                        and (
+                            response is None
+                            or response.tombstoned
+                            or response.playback_completed_emitted
+                        )
+                    )
+                    for receipt in self.scheduler_runtime.pump_playback(
+                        allowed=scheduler_allowed
+                    ):
+                        self.transport.send(receipt)
         finally:
             self.close()
 

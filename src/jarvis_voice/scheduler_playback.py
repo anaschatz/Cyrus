@@ -24,6 +24,7 @@ class SchedulerPlaybackJournal(Protocol):
     def next_staged_playback(self) -> SchedulerPlaybackRecord | None: ...
     def set_playback_state(self, notification_id: str, unit_index: int, state: str) -> bool: ...
     def recover_interrupted_playback(self) -> Sequence[tuple[str, int]]: ...
+    def cancel_notification_playback(self, notification_id: str) -> Sequence[int]: ...
 
 
 @dataclass(slots=True)
@@ -134,11 +135,20 @@ class SchedulerPlaybackController:
             return []
         self.active = None
         self.tts.cancel(cancellation_epoch, reason_code)
-        if not self.journal.set_playback_state(
-            active.record.notification_id, active.record.unit_index, "CANCELLED"
-        ):
-            return []
-        return [self._receipt(active.record, "CANCELLED", reason_code)]
+        cancelled = self.journal.cancel_notification_playback(active.record.notification_id)
+        return [
+            self._receipt(
+                SchedulerPlaybackRecord(
+                    active.record.notification_id,
+                    unit_index,
+                    active.record.locale,
+                    "",
+                ),
+                "CANCELLED",
+                reason_code,
+            )
+            for unit_index in cancelled
+        ]
 
     def cancel_tombstoned(self, notification_id: str, *, cancellation_epoch: int) -> list[SchedulerEnvelope]:
         active = self.active

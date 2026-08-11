@@ -27,6 +27,16 @@
       "vram_poll_interval_ms": 100
     }
   },
+  "scheduler": {
+    "enabled": false,
+    "compatibility_manifest_path": null,
+    "compatibility_manifest_sha256": null,
+    "native_qualification_path": null,
+    "native_qualification_sha256": null,
+    "tts_qualification_path": null,
+    "tts_qualification_sha256": null,
+    "full_body_when_locked": false
+  },
   "vad": {
     "artifact": {"path": null, "size": null, "sha256": null},
     "threshold": 0.5,
