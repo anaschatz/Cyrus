@@ -5,6 +5,7 @@ from __future__ import annotations
 from array import array
 from collections import deque
 from dataclasses import dataclass
+from math import ceil
 from typing import Callable
 
 from .backends import AudioChunk
@@ -27,7 +28,10 @@ class BoundedCaptureBuffer:
         self.capacity = capacity
         self.sample_rate = sample_rate
         self.maximum_samples = maximum_samples
-        self._frames: deque[bytes] = deque()
+        self._frames: deque[bytearray] = deque()
+        self._chunk_samples = (
+            ceil(maximum_samples / capacity) if maximum_samples is not None else None
+        )
         self._capturing = False
         self._overflowed = False
         self._accepted = 0
@@ -46,16 +50,36 @@ class BoundedCaptureBuffer:
             self._discarded += 1
             return False
         incoming_samples = len(frames) // 4
-        if (
-            self._overflowed
-            or len(self._frames) >= self.capacity
-            or (self.maximum_samples is not None and self._sample_count + incoming_samples > self.maximum_samples)
+        if self._overflowed or (
+            self.maximum_samples is not None
+            and self._sample_count + incoming_samples > self.maximum_samples
         ):
             self._overflowed = True
             self._capturing = False
             self._frames.clear()
             return False
-        self._frames.append(bytes(frames))
+        if self._chunk_samples is None:
+            if len(self._frames) >= self.capacity:
+                self._overflowed = True
+                self._capturing = False
+                self._frames.clear()
+                return False
+            self._frames.append(bytearray(frames))
+        else:
+            chunk_bytes = self._chunk_samples * 4
+            remaining = memoryview(frames)
+            while remaining:
+                if not self._frames or len(self._frames[-1]) >= chunk_bytes:
+                    if len(self._frames) >= self.capacity:
+                        self._overflowed = True
+                        self._capturing = False
+                        self._frames.clear()
+                        return False
+                    self._frames.append(bytearray())
+                target = self._frames[-1]
+                take = min(chunk_bytes - len(target), len(remaining))
+                target.extend(remaining[:take])
+                remaining = remaining[take:]
         self._sample_count += incoming_samples
         self._accepted += 1
         return True

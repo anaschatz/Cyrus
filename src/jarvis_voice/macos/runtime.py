@@ -169,9 +169,15 @@ class MacVoiceRuntime:
                 self.reliable.begin(event)
                 language = event.payload.get("language", {})
                 code = language.get("code", "unknown") if isinstance(language, Mapping) else "unknown"
+                score = language.get("score", 0.0) if isinstance(language, Mapping) else 0.0
                 self._record_timing(
                     "transcript_final_created",
                     language=str(code),
+                    language_score=(
+                        float(score)
+                        if isinstance(score, (int, float)) and not isinstance(score, bool)
+                        else 0.0
+                    ),
                     ptt_cycle=self._turn_cycles.get(event.turn_id or "", self._ptt_cycle),
                 )
             elif event.type == "input.no_speech":

@@ -39,6 +39,17 @@ class AudioVadTests(unittest.TestCase):
         with self.assertRaises(BackendError):
             capture.end_turn()
 
+    def test_tiny_native_callbacks_are_coalesced_within_duration_bound(self) -> None:
+        capture = BoundedCaptureBuffer(capacity=2, sample_rate=8, maximum_samples=8)
+        capture.begin_turn()
+        for value in range(8):
+            self.assertTrue(
+                capture.publish_from_callback(array("f", [float(value)]).tobytes())
+            )
+        audio = capture.end_turn()
+        self.assertEqual(list(audio.samples), [float(value) for value in range(8)])
+        self.assertEqual(capture.stats.accepted_frames, 8)
+
     def test_resampling_runs_through_injected_worker_function(self) -> None:
         calls: list[tuple[int, int]] = []
         def fake(samples: array, source: int, target: int) -> array:

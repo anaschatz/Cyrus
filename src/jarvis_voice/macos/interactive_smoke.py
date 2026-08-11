@@ -117,6 +117,13 @@ class GuidedSmokeController:
             expected = "el" if self.stage == "greek_turn" else "en"
             if entry.get("language") != expected:
                 self._fail("smoke.language_mismatch")
+                self.cases[self.stage]["expected_language"] = expected
+                self.cases[self.stage]["detected_language"] = str(
+                    entry.get("language", "unknown")
+                )
+                score = entry.get("language_score")
+                if isinstance(score, (int, float)) and not isinstance(score, bool):
+                    self.cases[self.stage]["language_score"] = round(float(score), 6)
                 return
             self._markers["transcript_final"] = timestamp
             self._markers["language_verified"] = timestamp
@@ -378,11 +385,15 @@ def run_interactive_macos_smoke(
                 event_name = entry.get("event")
                 if stage_sink is not None and isinstance(event_name, str) and event_name in TRACEABLE_STAGE_EVENTS:
                     runtime_code = entry.get("code")
-                    stage_sink(
-                        f"{event_name}:{runtime_code}"
-                        if event_name == "client_error_created" and isinstance(runtime_code, str)
-                        else event_name
-                    )
+                    if event_name == "client_error_created" and isinstance(runtime_code, str):
+                        stage_sink(f"{event_name}:{runtime_code}")
+                    elif event_name == "transcript_final_created":
+                        stage_sink(
+                            f"{event_name}:{entry.get('language', 'unknown')}:"
+                            f"{entry.get('language_score', 0.0)}"
+                        )
+                    else:
+                        stage_sink(event_name)
                 controller.feed(entry)
             cursor = len(snapshot)
             controller.tick(backend_idle=runtime.tts.is_idle, now=time.perf_counter())

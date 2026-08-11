@@ -86,8 +86,10 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         mismatch = GuidedSmokeController(ptt_key="F9")
         mismatch.take_prompts()
         mismatch.feed(event("ptt_up_received", 1.0))
-        mismatch.feed(event("transcript_final_created", 2.0, language="en"))
+        mismatch.feed(event("transcript_final_created", 2.0, language="en", language_score=0.75))
         self.assertEqual(mismatch.report()["code"], "smoke.language_mismatch")
+        self.assertEqual(mismatch.report()["cases"]["greek_turn"]["detected_language"], "en")
+        self.assertEqual(mismatch.report()["cases"]["greek_turn"]["language_score"], 0.75)
         self.assertFalse(mismatch.report()["ready"])
 
         timed_out = GuidedSmokeController(ptt_key="F12")
