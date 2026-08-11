@@ -14,6 +14,10 @@ PYTHONPATH=src \
 
 Το default PTT είναι `F9`. Σε πληκτρολόγιο όπου τα function keys ελέγχουν media features μπορεί να χρειάζεται `fn+F9`. Το event tap είναι listen-only: το F9 εξακολουθεί να φτάνει στην foreground εφαρμογή.
 
+Για qualification σε Mac όπου το function row δεν εκπέμπει αξιόπιστα F-key,
+χρησιμοποίησε `--ptt-key CONTROL_OPTION`. Το override ισχύει μόνο για το
+συγκεκριμένο smoke process και δεν μεταβάλλει το ιδιωτικό production config.
+
 ## Guided sequence
 
 1. Κράτησε το PTT, πες μία σύντομη ελληνική πρόταση και άφησέ το.

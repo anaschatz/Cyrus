@@ -118,10 +118,22 @@ class InteractiveSmokeScriptTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         parsed = module.build_parser().parse_args(
-            ["--config", "/private/voice.json", "--model-dir", "/private/model", "--output", "/private/evidence.json", "--timeout-seconds", "90"]
+            [
+                "--config",
+                "/private/voice.json",
+                "--model-dir",
+                "/private/model",
+                "--output",
+                "/private/evidence.json",
+                "--timeout-seconds",
+                "90",
+                "--ptt-key",
+                "CONTROL_OPTION",
+            ]
         )
         self.assertEqual(parsed.timeout_seconds, 90.0)
         self.assertEqual(parsed.model_dir, "/private/model")
+        self.assertEqual(parsed.ptt_key, "CONTROL_OPTION")
 
 
 if __name__ == "__main__":

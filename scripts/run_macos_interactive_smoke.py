@@ -22,6 +22,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True)
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
     parser.add_argument("--orchestrator-url")
+    parser.add_argument(
+        "--ptt-key",
+        choices=[*(f"F{index}" for index in range(1, 21)), "CONTROL_OPTION"],
+        help="Qualification-only PTT override; the private production config is not modified.",
+    )
     return parser
 
 
@@ -31,6 +36,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = with_faster_whisper_cpu_smoke(load_voice_config(args.config), args.model_dir)
         if args.orchestrator_url is not None:
             config = replace(config, orchestrator_url=args.orchestrator_url)
+        if args.ptt_key is not None:
+            config = replace(config, ptt_key=args.ptt_key)
         report = run_interactive_macos_smoke(
             config,
             output=args.output,
