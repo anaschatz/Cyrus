@@ -135,19 +135,6 @@ class ControlApplication:
                     "SELECT value FROM schema_meta WHERE key='scheduler_schema_version'"
                 ).fetchone()
             arbiter_ready = schema is not None and schema["value"] == "5"
-            native_delivery_ready = (
-                bool(self.service.config.voice_scheduler_compatibility_sha256)
-                and self.service.has_scheduler_client()
-            )
-            compiler_ready = self.service.schedule_compiler is not None
-            notification_actions_ready = False
-            reminders_ready = (
-                arbiter_ready
-                and scheduler_state["state"] == "READY"
-                and compiler_ready
-                and native_delivery_ready
-                and notification_actions_ready
-            )
             return 200, {"capabilities": [
                 {"name": "approval_arbiter", "state": "READY" if arbiter_ready else "BLOCKED",
                  "reason_code": "ready" if arbiter_ready else "scheduler_schema_mismatch",
@@ -155,28 +142,14 @@ class ControlApplication:
                 {"name": "scheduler_core", "state": scheduler_state["state"],
                  "reason_code": scheduler_state["reason_code"], "qualification_sha256": None},
                 {"name": "schedule_compiler_local",
-                 "state": "READY" if compiler_ready else "BLOCKED",
-                 "reason_code": "ready" if compiler_ready else "compiler_qualification_missing",
+                 "state": "READY" if self.service.schedule_compiler is not None else "BLOCKED",
+                 "reason_code": "ready" if self.service.schedule_compiler is not None else "compiler_qualification_missing",
                  "qualification_sha256": (
                      self.service.schedule_compiler.qualification.sha256
                      if self.service.schedule_compiler is not None else None
                  )},
-                {"name": "notification_delivery",
-                 "state": "READY" if native_delivery_ready else "BLOCKED",
-                 "reason_code": "ready" if native_delivery_ready else "qualified_scheduler_client_unavailable",
-                 "qualification_sha256": (
-                     self.service.config.voice_scheduler_compatibility_sha256 or None
-                 )},
-                {"name": "notification_actions", "state": "BLOCKED",
-                 "reason_code": "native_action_callback_not_qualified",
-                 "qualification_sha256": None},
-                {"name": "reminders_overall",
-                 "state": "READY" if reminders_ready else "BLOCKED",
-                 "reason_code": "ready" if reminders_ready else "required_capability_unavailable",
-                 "qualification_sha256": (
-                     self.service.config.voice_scheduler_compatibility_sha256
-                     if reminders_ready else None
-                 )},
+                {"name": "notification_delivery", "state": "BLOCKED",
+                 "reason_code": "native_qualification_missing", "qualification_sha256": None},
                 {"name": "reminder_tts", "state": "DISABLED",
                  "reason_code": "disabled_by_policy", "qualification_sha256": None},
             ]}

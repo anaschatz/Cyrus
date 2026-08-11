@@ -33,12 +33,9 @@ from ..reliable import ReliableSubmissionManager
 from ..transcription import AsyncTranscriptionCoordinator
 from ..transport import LoopbackWebSocketTransport
 from ..state import InputState
-from ..scheduler_protocol import SchedulerEnvelope
-from ..scheduler_runtime import SchedulerNativeRuntime
 from ..vad import SileroOnnxVad
 from .audio_capture import CoreAudioCapture
 from .asr_selection import create_macos_asr_backend
-from .native_collector import mac_runtime_profile_fingerprint
 from .ptt import MacEventTapPttSource, mac_ptt_keycode, mac_ptt_vkey
 from .recovery import MacRecoveryRequest, MacRecoverySupervisor
 from .system_tts import MacSystemTtsBackend
@@ -83,20 +80,6 @@ class MacVoiceRuntime:
             journal=self.action_journal,
             approval_arbiter=self.cloud_approval.approval_arbiter,
         )
-        self.scheduler_runtime: SchedulerNativeRuntime | None = None
-        if config.scheduler.enabled:
-            self.scheduler_runtime = SchedulerNativeRuntime.from_config(
-                config.scheduler,
-                session_id=self.core.session_id,
-                approval_arbiter=self.cloud_approval.approval_arbiter,
-                tts=self.tts,
-                reserve_epoch=self.core.state.reserve_output_epoch,
-                runtime_profile_sha256=mac_runtime_profile_fingerprint(config),
-            )
-            self.core.configure_scheduler_extension(
-                self.scheduler_runtime.capabilities,
-                self.scheduler_runtime.manifest_sha256,
-            )
         self.transcription = AsyncTranscriptionCoordinator(self.asr)
         self.vad = SileroOnnxVad(
             artifact_path=artifact.path,
@@ -194,8 +177,6 @@ class MacVoiceRuntime:
         self.core.begin_new_connection()
         self.cloud_approval.begin_new_connection()
         self.action_approval.begin_new_connection()
-        if self.scheduler_runtime is not None:
-            self.scheduler_runtime.begin_new_connection()
         self.transport.send(self.core.client_hello())
         self.transport.send(self.reliable.reconnect_event(self.core))
 
@@ -204,13 +185,6 @@ class MacVoiceRuntime:
             self._ptt_cycle += 1
             self.cloud_approval.disarm_for_ptt()
             output_active = not self.tts.is_idle
-            if self.scheduler_runtime is not None:
-                self.scheduler_runtime.disarm_for_ptt()
-                for receipt in self.scheduler_runtime.cancel_playback(
-                    cancellation_epoch=self.core.state.output_epoch + 1,
-                    reason_code="ptt_down",
-                ):
-                    self.transport.send(receipt)
             self._record_timing(
                 "ptt_down_received",
                 event.received_at,
@@ -334,14 +308,6 @@ class MacVoiceRuntime:
                             key_counter=key_event.counter,
                             capture_idle=self.core.state.input_state == InputState.IDLE,
                             autorepeat=key_event.autorepeat,
-                        ) or (
-                            self.scheduler_runtime.key_down(
-                                key_event.key,
-                                key_counter=key_event.counter,
-                                capture_idle=self.core.state.input_state == InputState.IDLE,
-                                autorepeat=key_event.autorepeat,
-                            )
-                            if self.scheduler_runtime is not None else None
                         ) or self.cloud_approval.key_down(
                             key_event.key,
                             key_counter=key_event.counter,
@@ -360,14 +326,6 @@ class MacVoiceRuntime:
                         callback = self.callbacks.get_nowait()
                     except queue.Empty:
                         break
-                    if self.scheduler_runtime is not None:
-                        handled, scheduler_receipts = self.scheduler_runtime.handle_tts_callback(
-                            callback.kind, callback.unit
-                        )
-                        for receipt in scheduler_receipts:
-                            self.transport.send(receipt)
-                        if handled:
-                            continue
                     self._record_timing(
                         "tts_unit_started" if callback.kind == "started" else "tts_unit_completed",
                         unit_index=callback.unit.unit_index,
@@ -409,26 +367,6 @@ class MacVoiceRuntime:
                         ):
                             self.transport.send(reply)
                         continue
-                    if isinstance(server_event, SchedulerEnvelope):
-                        if self.scheduler_runtime is None:
-                            raise BackendError(
-                                "scheduler.extension_not_negotiated",
-                                "Scheduler event received without a qualified runtime",
-                                subsystem="scheduler",
-                            )
-                        self.scheduler_runtime.handle_server_event(
-                            server_event,
-                            key_counter=self.approval_keys.counter,
-                            both_keys_up=self.approval_keys.both_keys_up,
-                            send=self.transport.send,
-                        )
-                        continue
-                    if server_event.type == "response.started" and self.scheduler_runtime is not None:
-                        for receipt in self.scheduler_runtime.cancel_playback(
-                            cancellation_epoch=self.core.state.output_epoch,
-                            reason_code="voice_response_started",
-                        ):
-                            self.transport.send(receipt)
                     if server_event.type == "response.speech.commit":
                         self._record_timing(
                             "speech_commit_received",
@@ -445,20 +383,6 @@ class MacVoiceRuntime:
                     if server_event.type == "server.ack":
                         self.reliable.acknowledge(server_event)
                     self._send_all(self.core.handle_server_event(server_event))
-                if self.scheduler_runtime is not None:
-                    response = self.core.state.response
-                    scheduler_allowed = (
-                        self.core.state.input_state == InputState.IDLE
-                        and (
-                            response is None
-                            or response.tombstoned
-                            or response.playback_completed_emitted
-                        )
-                    )
-                    for receipt in self.scheduler_runtime.pump_playback(
-                        allowed=scheduler_allowed
-                    ):
-                        self.transport.send(receipt)
         finally:
             self.close()
 
@@ -479,6 +403,3 @@ class MacVoiceRuntime:
         self.tts.close()
         self.transport.close()
         self.cloud_journal.close()
-        self.action_journal.close()
-        if self.scheduler_runtime is not None:
-            self.scheduler_runtime.close()

@@ -13,7 +13,6 @@ from .fakes import FakeOrchestrator
 from .protocol import Envelope
 from .cloud_approval import CloudApprovalEnvelope
 from .action_approval import ACTION_APPROVAL_PROTOCOL, ActionApprovalEnvelope
-from .scheduler_protocol import SCHEDULER_PROTOCOL, SchedulerEnvelope
 
 
 class SyncConnection(Protocol):
@@ -42,7 +41,7 @@ class LoopbackWebSocketTransport:
             factory = connect
         self._connection = factory(self.url)
 
-    def send(self, event: Envelope | CloudApprovalEnvelope | ActionApprovalEnvelope | SchedulerEnvelope) -> None:
+    def send(self, event: Envelope | CloudApprovalEnvelope | ActionApprovalEnvelope) -> None:
         try:
             self.connect()
             assert self._connection is not None
@@ -52,7 +51,7 @@ class LoopbackWebSocketTransport:
         except Exception as exc:
             raise BackendError("transport.send_failed", "WebSocket send failed", subsystem="transport", retryable=True) from exc
 
-    def receive(self) -> Envelope | CloudApprovalEnvelope | ActionApprovalEnvelope | SchedulerEnvelope | None:
+    def receive(self) -> Envelope | CloudApprovalEnvelope | ActionApprovalEnvelope | None:
         try:
             self.connect()
             assert self._connection is not None
@@ -69,8 +68,6 @@ class LoopbackWebSocketTransport:
             raise BackendError("transport.invalid_json", "WebSocket frame is invalid", subsystem="transport") from exc
         if isinstance(preview, dict) and preview.get("protocol") == ACTION_APPROVAL_PROTOCOL:
             return ActionApprovalEnvelope.from_json(raw)
-        if isinstance(preview, dict) and preview.get("protocol") == SCHEDULER_PROTOCOL:
-            return SchedulerEnvelope.from_json(raw)
         if isinstance(preview, dict) and "protocol" in preview:
             return CloudApprovalEnvelope.from_json(raw)
         return Envelope.from_json(raw)

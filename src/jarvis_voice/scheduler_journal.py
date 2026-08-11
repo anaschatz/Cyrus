@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
-
-from .errors import ProtocolError
-from .scheduler_playback import SchedulerPlaybackRecord
 
 
 SCHEMA = """
@@ -57,20 +53,6 @@ CREATE TABLE IF NOT EXISTS scheduler_delivery_attempts(
   UNIQUE(notification_id,attempt_ordinal)
 );
 """
-
-
-def default_scheduler_journal_path() -> Path:
-    import sys
-
-    if sys.platform == "win32":
-        root = os.environ.get("LOCALAPPDATA", "").strip()
-        if not root:
-            raise ValueError("scheduler journal state root missing")
-        return Path(root) / "JARVIS Voice" / "state" / "scheduler.sqlite3"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "JARVIS Voice" / "state" / "scheduler.sqlite3"
-    root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
-    return root / "jarvis-voice" / "scheduler.sqlite3"
 
 
 class SchedulerClientJournal:
@@ -155,94 +137,13 @@ class SchedulerClientJournal:
                 "SELECT 1 FROM scheduler_tombstones WHERE notification_id=?", (notification_id,)
             ).fetchone():
                 return False
-            existing = self._db.execute(
-                """SELECT frame_event_id FROM scheduler_playback
-                   WHERE notification_id=? AND unit_index=?""",
-                (notification_id, unit_index),
-            ).fetchone()
-            if existing is not None:
-                previous = self.read(existing["frame_event_id"])
-                current = self.read(frame_event_id)
-                fields = ("occurrence_id", "notification_id", "unit_index", "locale", "speakable_text")
-                if all(previous.get(name) == current.get(name) for name in fields):
-                    return False
-                raise ProtocolError(
-                    "protocol.conflicting_scheduler_speech",
-                    "Scheduler speech unit index was reused with different content",
-                )
-            maximum = self._db.execute(
-                "SELECT COALESCE(MAX(unit_index),0) FROM scheduler_playback WHERE notification_id=?",
-                (notification_id,),
-            ).fetchone()[0]
-            if unit_index != int(maximum) + 1:
-                raise ProtocolError(
-                    "protocol.scheduler_speech_gap",
-                    "Scheduler speech unit index is not contiguous",
-                )
             self._db.execute(
-                """INSERT INTO scheduler_playback(
+                """INSERT OR IGNORE INTO scheduler_playback(
                    notification_id,unit_index,frame_event_id,state,updated_at_utc
                    ) VALUES(?,?,?,'STAGED',?)""",
                 (notification_id, unit_index, frame_event_id, self._now()),
             )
             return True
-
-    def next_staged_playback(self) -> SchedulerPlaybackRecord | None:
-        with self._lock:
-            row = self._db.execute(
-                """SELECT notification_id,unit_index,frame_event_id
-                   FROM scheduler_playback WHERE state='STAGED'
-                   ORDER BY updated_at_utc,notification_id,unit_index LIMIT 1"""
-            ).fetchone()
-        if row is None:
-            return None
-        payload = self.read(row["frame_event_id"])
-        return SchedulerPlaybackRecord(
-            notification_id=row["notification_id"],
-            unit_index=int(row["unit_index"]),
-            locale=payload["locale"],
-            speakable_text=payload["speakable_text"],
-        )
-
-    def recover_interrupted_playback(self) -> list[tuple[str, int]]:
-        with self._lock:
-            self._db.execute("BEGIN IMMEDIATE")
-            try:
-                rows = self._db.execute(
-                    """SELECT notification_id,unit_index FROM scheduler_playback
-                       WHERE state='PLAYING' ORDER BY notification_id,unit_index"""
-                ).fetchall()
-                self._db.execute(
-                    """UPDATE scheduler_playback SET state='CANCELLED',updated_at_utc=?
-                       WHERE state='PLAYING'""",
-                    (self._now(),),
-                )
-                self._db.execute("COMMIT")
-                return [(row["notification_id"], int(row["unit_index"])) for row in rows]
-            except BaseException:
-                self._db.execute("ROLLBACK")
-                raise
-
-    def cancel_notification_playback(self, notification_id: str) -> list[int]:
-        with self._lock:
-            self._db.execute("BEGIN IMMEDIATE")
-            try:
-                rows = self._db.execute(
-                    """SELECT unit_index FROM scheduler_playback
-                       WHERE notification_id=? AND state IN ('STAGED','PLAYING')
-                       ORDER BY unit_index""",
-                    (notification_id,),
-                ).fetchall()
-                self._db.execute(
-                    """UPDATE scheduler_playback SET state='CANCELLED',updated_at_utc=?
-                       WHERE notification_id=? AND state IN ('STAGED','PLAYING')""",
-                    (self._now(), notification_id),
-                )
-                self._db.execute("COMMIT")
-                return [int(row["unit_index"]) for row in rows]
-            except BaseException:
-                self._db.execute("ROLLBACK")
-                raise
 
     def begin_native_dispatch(self, notification_id: str) -> str:
         import uuid
@@ -267,7 +168,7 @@ class SchedulerClientJournal:
                 raise
 
     def finish_native_dispatch(self, attempt_id: str, *, state: str, reason_code: str) -> bool:
-        if state not in {"OS_ACCEPTED", "OS_REJECTED", "AMBIGUOUS_OS_DISPATCH"}:
+        if state not in {"OS_ACCEPTED", "OS_REJECTED"}:
             raise ValueError("invalid native dispatch terminal state")
         with self._lock:
             return self._db.execute(
@@ -297,40 +198,6 @@ class SchedulerClientJournal:
                 self._db.execute("ROLLBACK")
                 raise
 
-    def notification_dispatch_needed(self, notification_id: str) -> bool:
-        with self._lock:
-            if self._db.execute(
-                "SELECT 1 FROM scheduler_tombstones WHERE notification_id=?", (notification_id,)
-            ).fetchone():
-                return False
-            accepted = self._db.execute(
-                """SELECT 1 FROM scheduler_delivery_attempts
-                   WHERE notification_id=? AND state='OS_ACCEPTED'""",
-                (notification_id,),
-            ).fetchone()
-            dispatching = self._db.execute(
-                """SELECT 1 FROM scheduler_delivery_attempts
-                   WHERE notification_id=? AND state='DISPATCHING'""",
-                (notification_id,),
-            ).fetchone()
-            return accepted is None and dispatching is None
-
-    def pending_notification_payloads(self) -> list[dict[str, Any]]:
-        with self._lock:
-            rows = self._db.execute(
-                """SELECT event_id FROM encrypted_frames f
-                   WHERE f.record_type='scheduler.notification.requested'
-                   AND f.state<>'QUARANTINED'
-                   ORDER BY f.created_at_utc,f.event_id"""
-            ).fetchall()
-        payloads: list[dict[str, Any]] = []
-        for row in rows:
-            payload = self.read(row["event_id"])
-            notification_id = payload.get("notification_id")
-            if isinstance(notification_id, str) and self.notification_dispatch_needed(notification_id):
-                payloads.append(payload)
-        return payloads
-
     def tombstone(self, notification_id: str, reason_code: str) -> None:
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
@@ -357,18 +224,10 @@ class SchedulerClientJournal:
                 "SELECT 1 FROM scheduler_tombstones WHERE notification_id=?", (notification_id,)
             ).fetchone():
                 return False
-            allowed_previous = {
-                "PLAYING": ("STAGED",),
-                "COMPLETED": ("PLAYING",),
-                "CANCELLED": ("STAGED", "PLAYING"),
-                "SKIPPED": ("STAGED", "PLAYING"),
-            }[state]
-            placeholders = ",".join("?" for _item in allowed_previous)
             return self._db.execute(
                 """UPDATE scheduler_playback SET state=?,updated_at_utc=?
-                   WHERE notification_id=? AND unit_index=?
-                   AND state IN (""" + placeholders + ")",
-                (state, self._now(), notification_id, unit_index, *allowed_previous),
+                   WHERE notification_id=? AND unit_index=?""",
+                (state, self._now(), notification_id, unit_index),
             ).rowcount == 1
 
     def close(self) -> None:
