@@ -121,7 +121,16 @@ def _write(path: Path, value: dict[str, Any]) -> None:
         raise
 
 
-def build(root: Path, model_dir: Path, output: Path, context_window: int) -> dict[str, Any]:
+def build(
+    root: Path,
+    model_dir: Path,
+    output: Path,
+    context_window: int,
+    *,
+    enable_tools: bool = False,
+    enable_structured: bool = False,
+    qualification_report: str = "qualification-report.json",
+) -> dict[str, Any]:
     root = root.absolute()
     model_dir = model_dir.absolute()
     output = output.absolute()
@@ -135,6 +144,15 @@ def build(root: Path, model_dir: Path, output: Path, context_window: int) -> dic
         raise ValueError("model directory must be one dedicated models child")
     if isinstance(context_window, bool) or not 1024 <= context_window <= 262_144:
         raise ValueError("context window is invalid")
+    report_path = Path(qualification_report)
+    if (
+        report_path.is_absolute()
+        or len(report_path.parts) != 1
+        or report_path.name != qualification_report
+        or not qualification_report.startswith("qualification-report")
+        or report_path.suffix != ".json"
+    ):
+        raise ValueError("qualification report path is invalid")
 
     executable = root / "python/bin/python3.11"
     site = root / "python/lib/python3.11/site-packages"
@@ -198,11 +216,11 @@ def build(root: Path, model_dir: Path, output: Path, context_window: int) -> dic
         "capabilities": {
             "text": True,
             "stream": True,
-            "tools": False,
-            "json_object": False,
-            "json_schema": False,
+            "tools": enable_tools,
+            "json_object": enable_structured,
+            "json_schema": enable_structured,
         },
-        "qualification_report": "qualification-report.json",
+        "qualification_report": qualification_report,
     }
     _write(output, manifest)
     return {
@@ -221,9 +239,20 @@ def main() -> int:
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--context-window", type=int, default=32768)
+    parser.add_argument("--enable-tools", action="store_true")
+    parser.add_argument("--enable-structured", action="store_true")
+    parser.add_argument("--qualification-report", default="qualification-report.json")
     args = parser.parse_args()
     try:
-        result = build(args.root, args.model_dir, args.output, args.context_window)
+        result = build(
+            args.root,
+            args.model_dir,
+            args.output,
+            args.context_window,
+            enable_tools=args.enable_tools,
+            enable_structured=args.enable_structured,
+            qualification_report=args.qualification_report,
+        )
     except (OSError, ValueError, zipfile.BadZipFile, csv.Error, json.JSONDecodeError):
         print(json.dumps({"ready": False, "code": "materialization.macos_inference_manifest_failed"}, separators=(",", ":")))
         return 2

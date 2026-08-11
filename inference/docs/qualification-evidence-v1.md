@@ -8,6 +8,7 @@ evidence path. It creates a fresh output directory and exposes only:
 JARVIS_QUAL_CHALLENGE=<64 lowercase hex>
 JARVIS_QUAL_IDENTITY_DIGEST=<64 lowercase hex>
 JARVIS_QUAL_OUTPUT=<fresh non-existing output path>
+JARVIS_QUAL_DIAGNOSTIC=<fresh non-existing diagnostic path>
 JARVIS_QUAL_MANIFEST=<absolute manifest path>
 JARVIS_QUAL_BASE_URL=<ephemeral http://127.0.0.1:port/v1>
 JARVIS_QUAL_API_KEY=<boot-scoped bearer secret>
@@ -16,6 +17,12 @@ JARVIS_QUAL_API_KEY=<boot-scoped bearer secret>
 The SDK bootstrap and native fixture runner use this same managed engine and
 ephemeral gateway. The bearer secret exists only in the child environment and
 is never placed in command-line arguments or the final report.
+
+On failure the runner MAY write exactly `{"stage":...,"kind":...}` to the
+diagnostic path. Both values come from fixed allowlists and contain no request,
+schema, model output, exception text, filesystem value, or secret. The
+qualifier uses them only to produce a content-free failure code; the temporary
+diagnostic is never accepted as evidence and is deleted with the run directory.
 
 The runner writes exactly one strict JSON object to `JARVIS_QUAL_OUTPUT` and
 exits zero. Its top-level object includes the numerical fields below plus:
@@ -57,8 +64,10 @@ sync/async OpenAI SDK bootstrap, and then applies these exact gates:
   hangs.
 - Windows: the exact 100-utterance ASR fixture, at least 80 overlaps, no lost
   final transcript/throttle/OOM/crash, and p95 degradation no greater than 15%.
-- Mac: 20 warmups and 200 normal requests, final median drift and Theil-Sen
-  projected growth each no greater than 5%, and no OOM/crash/stale state.
+- Mac: 20 warmups and 200 normal requests. After each cleanup the runner waits
+  500 ms and samples native `phys_footprint`; the median of the last 20 versus
+  the first 20 and the Theil-Sen projected growth must each be no greater than
+  5%, with no OOM/crash/stale state.
 
 The authoritative report is overwritten durably with `in_progress` before any
 native work. Any failure durably replaces it with `failed`; only all successful

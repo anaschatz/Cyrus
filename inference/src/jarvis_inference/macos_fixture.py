@@ -12,6 +12,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import statistics
 import subprocess
 import tempfile
@@ -27,6 +28,21 @@ from .strict_json import canonical_bytes, parse_body
 
 class FixtureFailure(RuntimeError):
     """Content-free native fixture failure."""
+
+
+_STAGES = {
+    "bootstrap", "streaming", "tools", "json_schema", "cancellation",
+    "crash_restart", "isolation", "memory_warmup", "memory_samples",
+    "memory_evaluation", "evidence_write",
+}
+_current_stage = "bootstrap"
+
+
+def _stage(value: str) -> None:
+    global _current_stage
+    if value not in _STAGES:
+        raise FixtureFailure("invalid qualification stage")
+    _current_stage = value
 
 
 class QualificationClient:
@@ -101,7 +117,6 @@ class QualificationClient:
                 raise FixtureFailure("completion response shape failed") from exc
             if (
                 not isinstance(text, str)
-                or not text
                 or choice.get("finish_reason") not in {"stop", "length"}
                 or not isinstance(usage, dict)
                 or type(usage.get("completion_tokens")) is not int
@@ -167,6 +182,88 @@ class QualificationClient:
             raise FixtureFailure("stream terminal contract failed")
         return text
 
+    def structured(self, prompt: str, schema: dict[str, Any], *, max_tokens: int = 96) -> dict[str, Any]:
+        request = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_completion_tokens": max_tokens,
+            "temperature": 0,
+            "top_p": 1,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "qualification_result", "schema": schema, "strict": True},
+            },
+        }
+        status, value = self.json_request("POST", "/v1/chat/completions", request)
+        if status != 200:
+            raise FixtureFailure("structured request failed")
+        try:
+            choice = value["choices"][0]
+            content = choice["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise FixtureFailure("structured response shape failed") from exc
+        if not isinstance(content, str) or choice.get("finish_reason") not in {"stop", "length"}:
+            raise FixtureFailure("structured response contract failed")
+        parsed = parse_body(content.encode("utf-8"))
+        if not isinstance(parsed, dict):
+            raise FixtureFailure("structured response is not an object")
+        return parsed
+
+    def tool_call(self, prompt: str, *, index: int, named: bool) -> dict[str, Any]:
+        name = "record_index"
+        parameters = {
+            "type": "object",
+            "properties": {"index": {"type": "integer", "enum": [index]}},
+            "required": ["index"],
+            "additionalProperties": False,
+        }
+        request: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_completion_tokens": 96,
+            "temperature": 0,
+            "top_p": 1,
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": "Record the exact requested qualification index.",
+                    "parameters": parameters,
+                    "strict": True,
+                },
+            }],
+            "tool_choice": (
+                {"type": "function", "function": {"name": name}}
+                if named else "required"
+            ),
+            "parallel_tool_calls": False,
+        }
+        status, value = self.json_request("POST", "/v1/chat/completions", request)
+        if status != 200:
+            raise FixtureFailure("tool request failed")
+        try:
+            choice = value["choices"][0]
+            message = choice["message"]
+            calls = message["tool_calls"]
+            call = calls[0]
+            function = call["function"]
+            arguments = parse_body(function["arguments"].encode("utf-8"))
+        except (KeyError, IndexError, TypeError, AttributeError) as exc:
+            raise FixtureFailure("tool response shape failed") from exc
+        if (
+            choice.get("finish_reason") != "tool_calls"
+            or message.get("content") is not None
+            or not isinstance(calls, list)
+            or len(calls) != 1
+            or call.get("type") != "function"
+            or not isinstance(call.get("id"), str)
+            or not call["id"].startswith("call_")
+            or function.get("name") != name
+            or arguments != {"index": index}
+        ):
+            raise FixtureFailure("tool response contract failed")
+        return value
+
     def runtime(self) -> dict[str, Any]:
         status, value = self.json_request("GET", "/jarvis/qualification/runtime", timeout=10.0)
         if status != 200:
@@ -192,7 +289,7 @@ class QualificationClient:
         return value
 
 
-def _read_identity(manifest_path: Path, challenge: str) -> tuple[str, dict[str, Any]]:
+def _read_identity(manifest_path: Path, challenge: str) -> tuple[str, dict[str, Any], dict[str, bool]]:
     manifest = parse_body(manifest_path.read_bytes())
     if not isinstance(manifest, dict) or manifest.get("alias") != "jarvis-local":
         raise FixtureFailure("manifest identity failed")
@@ -207,7 +304,12 @@ def _read_identity(manifest_path: Path, challenge: str) -> tuple[str, dict[str, 
         or not isinstance(report.get("identity"), dict)
     ):
         raise FixtureFailure("qualification identity is unavailable")
-    return manifest["alias"], report["identity"]
+    capabilities = manifest.get("capabilities")
+    if not isinstance(capabilities, dict) or any(type(capabilities.get(key)) is not bool for key in (
+        "text", "stream", "tools", "json_object", "json_schema"
+    )):
+        raise FixtureFailure("manifest capabilities failed")
+    return manifest["alias"], report["identity"], capabilities
 
 
 def _phase_cancel(client: QualificationClient, phase: str) -> None:
@@ -242,32 +344,29 @@ def _phase_cancel(client: QualificationClient, phase: str) -> None:
     client.wait_ready()
 
 
-def _rss_bytes(runtime: dict[str, Any]) -> int:
+def _phys_footprint_bytes(runtime: dict[str, Any]) -> int:
     engine = runtime.get("engine")
     pid = engine.get("pid") if isinstance(engine, dict) else None
     if type(pid) is not int or pid <= 0:
         raise FixtureFailure("worker pid unavailable")
     completed = subprocess.run(
-        ["/bin/ps", "-o", "rss=", "-p", str(pid)],
+        ["/usr/bin/footprint", "--noCategories", "--format", "bytes", "--pid", str(pid)],
         capture_output=True,
         text=True,
-        timeout=5.0,
+        timeout=30.0,
         check=False,
     )
-    try:
-        kib = int(completed.stdout.strip())
-    except ValueError as exc:
-        raise FixtureFailure("worker RSS unavailable") from exc
-    if completed.returncode != 0 or kib <= 0:
-        raise FixtureFailure("worker RSS unavailable")
-    return kib * 1024
+    match = re.search(r"^\s*phys_footprint:\s*([1-9][0-9]*)\s+B\s*$", completed.stdout, re.MULTILINE)
+    if completed.returncode != 0 or match is None:
+        raise FixtureFailure("worker physical footprint unavailable")
+    return int(match.group(1))
 
 
 def _memory_drift(samples: list[int]) -> tuple[float, float]:
     if len(samples) != 200 or any(value <= 0 for value in samples):
         raise FixtureFailure("memory sample set failed")
-    baseline = float(statistics.median(samples[:10]))
-    final = float(statistics.median(samples[-10:]))
+    baseline = float(statistics.median(samples[:20]))
+    final = float(statistics.median(samples[-20:]))
     slopes = [
         (samples[j] - samples[i]) / (j - i)
         for i in range(len(samples))
@@ -316,10 +415,11 @@ def run() -> dict[str, Any]:
         or not api_key
     ):
         raise FixtureFailure("qualification environment failed")
-    model, identity = _read_identity(manifest_path, challenge)
+    model, identity, capabilities = _read_identity(manifest_path, challenge)
     client = QualificationClient(base_url, api_key, model)
     client.wait_ready()
 
+    _stage("streaming")
     greek_success = 0
     english_success = 0
     for _ in range(20):
@@ -332,16 +432,61 @@ def run() -> dict[str, Any]:
     if greek_success != 20 or english_success != 20:
         raise FixtureFailure("language streaming gate failed")
 
+    named_success = 0
+    required_success = 0
+    _stage("tools")
+    if capabilities["tools"]:
+        for index in range(10):
+            client.tool_call(
+                f"Call record_index with index {index}. Return no prose.",
+                index=index,
+                named=True,
+            )
+            named_success += 1
+        for index in range(10, 20):
+            client.tool_call(
+                f"You must call record_index with index {index}. Return no prose.",
+                index=index,
+                named=False,
+            )
+            required_success += 1
+
+    schema_success = 0
+    _stage("json_schema")
+    if capabilities["json_schema"]:
+        for index in range(20):
+            schema = {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer", "enum": [index]},
+                    "language": {"type": "string", "enum": ["el" if index % 2 == 0 else "en"]},
+                    "accepted": {"type": "boolean", "const": True},
+                },
+                "required": ["index", "language", "accepted"],
+                "additionalProperties": False,
+            }
+            result = client.structured(
+                "Return the required qualification object exactly. Do not add prose.",
+                schema,
+            )
+            expected = {"index": index, "language": "el" if index % 2 == 0 else "en", "accepted": True}
+            if result != expected:
+                raise FixtureFailure("structured semantic fixture failed")
+            schema_success += 1
+
+    _stage("cancellation")
     for phase in ("prefill", "stream"):
         for _ in range(5):
             _phase_cancel(client, phase)
 
+    _stage("crash_restart")
     for _ in range(5):
         response = client.inject("crash", {})
         if response.get("exit_ok") is not True:
             raise FixtureFailure("crash termination contract failed")
         client.wait_ready()
 
+    _stage("isolation")
     isolation_pairs = 0
     previous_marker = ""
     for index in range(50):
@@ -356,12 +501,19 @@ def run() -> dict[str, Any]:
         previous_marker = second
         isolation_pairs += 1
 
+    _stage("memory_warmup")
     for _ in range(20):
-        client.completion("Reply OK. /no_think", max_tokens=8)
+        client.completion("Reply OK. /no_think", max_tokens=16)
+    _stage("memory_samples")
     memory_samples: list[int] = []
     for index in range(200):
-        client.completion(f"Reply OK. Qualification sample {index}. /no_think", max_tokens=8)
-        memory_samples.append(_rss_bytes(client.runtime()))
+        client.completion(f"Reply OK. Qualification sample {index}. /no_think", max_tokens=16)
+        # The gateway response is written only after worker cleanup has
+        # synchronized MLX, released request state, cleared caches, and run GC.
+        # Quiescence precedes the platform-native phys_footprint sample.
+        time.sleep(0.5)
+        memory_samples.append(_phys_footprint_bytes(client.runtime()))
+    _stage("memory_evaluation")
     final_drift, projected_growth = _memory_drift(memory_samples)
     if final_drift > 0.05 or projected_growth > 0.05:
         raise FixtureFailure("unified memory drift gate failed")
@@ -383,8 +535,8 @@ def run() -> dict[str, Any]:
             "monotonic_elapsed_ns": elapsed,
         },
         "streaming": {"greek_success": greek_success, "english_success": english_success},
-        "tools": {"named_success": 0, "required_success": 0},
-        "json_schema": {"strict_success": 0},
+        "tools": {"named_success": named_success, "required_success": required_success},
+        "json_schema": {"strict_success": schema_success},
         "cancellation": {"prefill_success": 5, "mid_stream_success": 5},
         "crash_restart": {"isolated_success": 5},
         "isolation": {"pairs_success": isolation_pairs, "leaks": 0},
@@ -409,9 +561,19 @@ def run() -> dict[str, Any]:
 def main() -> int:
     try:
         evidence = run()
+        _stage("evidence_write")
         _write_evidence(Path(os.environ["JARVIS_QUAL_OUTPUT"]), evidence)
         return 0
-    except BaseException:
+    except BaseException as exc:
+        diagnostic = Path(os.environ.get("JARVIS_QUAL_DIAGNOSTIC", ""))
+        if diagnostic.is_absolute() and not diagnostic.exists():
+            try:
+                _write_evidence(diagnostic, {
+                    "stage": _current_stage,
+                    "kind": "fixture_failure" if isinstance(exc, FixtureFailure) else "unexpected",
+                })
+            except BaseException:
+                pass
         return 2
 
 

@@ -16,6 +16,7 @@ produce a matching `pass` report.
 |---|---|---|---|---|---|
 | `local-primary` | Daily bilingual conversation, strict structured output, and tool planning | `google/gemma-4-12B-it-qat-q4_0-gguf`, text-only `gemma-4-12b-it-qat-q4_0.gguf` | Pinned `llama-server` on Windows x86-64 / RTX 5080 | `text`, `stream`, `tools`, `json_object`, `json_schema` | selected, not qualified |
 | `local-fallback` | Useful degraded bilingual conversation when the PC is unavailable | `mlx-community/Qwen3-4B-Instruct-2507-4bit` candidate | Pinned MLX-LM worker on the exact MacBook Air M3 / 16 GB identity | `text`, `stream` only | deterministic bilingual quality failed; not production ready |
+| `local-mac-capable` | Mac-local strict JSON and bounded single-tool planning when explicitly selected | Same pinned Qwen3 4B artifacts, appliance-owned Qwen renderer, pinned Outlines grammar | Pinned MLX-LM worker on the exact MacBook Air M3 / 16 GB identity | `text`, `stream`, `tools`, `json_object`, `json_schema` | native appliance qualification passed; profile quality/soak not passed |
 
 The primary artifact is the official Google QAT Q4_0 GGUF at repository commit
 `29d097773436b69ff9feafd636ab4cf873786537`:
@@ -68,8 +69,9 @@ protocol report says `pass`.
 
 ## Profile ID and public model boundary
 
-`local-primary` and `local-fallback` are operator profile IDs, not OpenAI model
-names. Exactly one profile is selected when an appliance process starts.
+`local-primary`, `local-fallback`, and `local-mac-capable` are operator profile
+IDs, not OpenAI model names. Exactly one profile is selected when an appliance
+process starts.
 
 The public API continues to accept and emit exactly the logical model alias
 `jarvis-local`. `/v1/models` exposes only that alias. A request containing a
@@ -116,10 +118,11 @@ resolution or network-download attempts.
 
 ## Functional scope
 
-`local-primary` is the only v1 profile allowed to plan tool calls or produce
-strict structured output. Tool execution remains entirely in the orchestrator.
-Its target manifest capabilities become true only after the exact model/runtime
-combination passes every capability-specific gate.
+`local-primary` remains the intended production planner. `local-mac-capable`
+is a separately selected Mac capability profile that may emit one strict tool
+call or strict structured output; it never executes tools and is not an
+automatic fallback for primary work. Its manifest capabilities are true only
+for the exact locally qualified model/runtime/renderer/Outlines identity.
 
 `local-fallback` is useful for short Greek/English conversation,
 clarification, bounded summarization, rewriting, intent restatement, and simple
@@ -236,6 +239,22 @@ tokens/s), but deterministic quality failed: Greek `14/40`, English `26/40`,
 with a 30-percentage-point gap. This candidate MUST NOT proceed to the
 eight-hour soak unless a new frozen configuration independently clears the
 quality gate.
+
+On the same exact M3 / 16 GB machine, `local-mac-capable` completed a fresh
+native appliance qualification with manifest digest
+`175217e22550c260c6fadccea357968fb9b21805a819d6b6108a329017b4ebb4`.
+The hash-pinned runner passed `20/20` Greek and `20/20` English streams,
+`10/10` named and `10/10` required tool calls, `20/20` strict JSON schemas,
+all ten cancellations, all five crash/restarts, and `50/50` isolation pairs
+with zero leaks. The 200-request native `phys_footprint` gate reported final
+drift `0.00002500435149581421` and Theil–Sen projected growth `0`, both below
+`0.05`. Its evidence digest is
+`7a3efc154db6400a21cc283446e5e8b29165a4aa7ad19d66e93585c2124498ca`.
+
+That pass proves the frozen appliance capability, lifecycle, isolation, and
+Mac memory gates. It does not erase the failed bilingual quality result, does
+not constitute the eight-hour profile soak, and therefore does not promote
+Qwen3 4B to the production conversational fallback or primary planner.
 
 ## First native qualification order
 

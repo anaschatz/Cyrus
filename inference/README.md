@@ -180,6 +180,13 @@ its legacy reports do not satisfy the production model-profile gates in
   existing report is correctly bound to this Apple M3 / 16 GB Mac, but it
   predates the production quality, performance, headroom, and eight-hour soak
   suite.
+- `manifest-qwen3-4b-capable.json` /
+  `qualification-report-qwen3-4b-capable.json`: exact M3 / 16 GB capability
+  profile with `tools`, `json_object`, and `json_schema` enabled. Its fresh
+  native appliance report passed on 2026-08-11. These local identity files are
+  intentionally not bundled in source control and remain valid only while all
+  recorded artifact, runtime, OS, driver, hardware, runner, and manifest hashes
+  match.
 
 Regenerate either manifest without changing the other profile:
 
@@ -187,6 +194,35 @@ Regenerate either manifest without changing the other profile:
 native/macos-m3/python/bin/python3.11 native/macos-m3/build_manifest.py --profile qwen2.5-0.5b
 native/macos-m3/python/bin/python3.11 native/macos-m3/build_manifest.py --profile qwen3-4b
 ```
+
+Build the capability manifest from the sealed local bundle and use the
+package-owned hash-pinned runner:
+
+```text
+python inference/scripts/build_macos_manifest.py \
+  --root inference/native/macos-m3 \
+  --model-dir inference/native/macos-m3/models/qwen3-4b-instruct-2507-4bit \
+  --output inference/native/macos-m3/manifest-qwen3-4b-capable.json \
+  --context-window 32768 \
+  --enable-tools \
+  --enable-structured \
+  --qualification-report qualification-report-qwen3-4b-capable.json
+
+cp inference/scripts/macos_fixture_runner.py \
+  inference/native/macos-m3/fixture-runner-capable
+chmod 700 inference/native/macos-m3/fixture-runner-capable
+```
+
+The qualifier records and rechecks the runner hash. The 2026-08-11 pass used
+runner SHA-256
+`7cc5884165be054d8c793e23c0a5cb2d017e57bec8f91aae785e433a96720943`
+and manifest digest
+`175217e22550c260c6fadccea357968fb9b21805a819d6b6108a329017b4ebb4`.
+It passed all 40 streaming cases, all 20 tool cases, all 20 schema cases, all
+cancellation/restart/isolation gates, and the 20-warmup/200-request
+`phys_footprint` gate. It remains an appliance-capability pass, not a production
+model-profile pass: the same Qwen3 4B weights failed the frozen bilingual
+quality corpus and have not completed the required eight-hour soak.
 
 The existing 4B manifest is capped at a qualified `32768`-token context window
 even though the upstream model advertises a larger architectural maximum. The

@@ -15,11 +15,13 @@
 | Monotonic circuit breaker and bounded engine termination | `circuit.py`, engine adapters | `test_circuit.py`, `test_gateway_lifecycle.py` |
 | llama.cpp frozen flags, environment secret, slot erase | `llama_engine.py` | `test_llama_engine.py` |
 | MLX inherited pipes and per-request parser/KV state | `mlx_engine.py`, `mlx_worker_runtime.py` | compile/import suite; native qualification is mandatory |
+| Pinned Qwen3 text/tool/history/structured rendering | `rendering.py` | `test_mlx_rendering.py`; native named/required/schema fixtures |
 | Strict manifest, artifacts, DLL allowlist, wheel RECORD | `manifest.py` | `test_manifest.py`; native platform qualification |
 | Durable report replacement and fail-closed readiness | `durable.py`, `gateway.py`, `qualification.py` | `test_qualification.py`, `test_gateway_lifecycle.py` |
 | Challenge-bound same-session native evidence | `qualification.py` | `test_qualification.py`; native fixture runner |
 | Official sync/async OpenAI SDK subset | `qualification.py` | `sdk_conformance.py`; repeated during native qualification |
 | Numerical streaming/tool/schema/cancel/crash/isolation/platform gates | `qualification.py` | `test_qualification.py`; exact native fixtures |
+| Mac post-cleanup quiescence and native `phys_footprint` drift | `macos_fixture.py` | `test_macos_fixture.py`; 20-warmup/200-request native gate |
 
 Native qualification remains authoritative for model-specific token accounting,
 chat-template/tool encoding, Outlines integration, GPU/ASR coexistence, and

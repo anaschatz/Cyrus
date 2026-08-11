@@ -241,6 +241,7 @@ def _run_fixture_runner(
     runner_digest = hashlib.sha256(runner.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix="jarvis-qualification-", dir=manifest.root) as temporary:
         output = Path(temporary) / "evidence.json"
+        diagnostic = Path(temporary) / "diagnostic.json"
         not_before_wall = time.time_ns()
         started_mono = time.monotonic_ns()
         environment = {
@@ -252,6 +253,7 @@ def _run_fixture_runner(
             "JARVIS_QUAL_CHALLENGE": challenge,
             "JARVIS_QUAL_IDENTITY_DIGEST": identity_digest,
             "JARVIS_QUAL_OUTPUT": str(output),
+            "JARVIS_QUAL_DIAGNOSTIC": str(diagnostic),
             "JARVIS_QUAL_MANIFEST": str(manifest.path),
             "JARVIS_QUAL_BASE_URL": base_url,
             "JARVIS_QUAL_API_KEY": api_key,
@@ -276,7 +278,25 @@ def _run_fixture_runner(
         not_after_wall = time.time_ns()
         elapsed = time.monotonic_ns() - started_mono
         if result.returncode != 0 or not output.is_file() or output.is_symlink():
-            raise ApplianceError(503, "fixture_runner_failed", "The native fixture runner did not produce fresh evidence.")
+            code = "fixture_runner_failed"
+            if diagnostic.is_file() and not diagnostic.is_symlink() and diagnostic.stat().st_size <= 1024:
+                try:
+                    detail = parse_body(diagnostic.read_bytes())
+                except ApplianceError:
+                    detail = None
+                stages = {
+                    "bootstrap", "streaming", "tools", "json_schema", "cancellation",
+                    "crash_restart", "isolation", "memory_warmup", "memory_samples",
+                    "memory_evaluation", "evidence_write",
+                }
+                if (
+                    isinstance(detail, dict)
+                    and set(detail) == {"stage", "kind"}
+                    and detail["stage"] in stages
+                    and detail["kind"] in {"fixture_failure", "unexpected"}
+                ):
+                    code = "fixture_runner_" + detail["stage"] + "_" + detail["kind"]
+            raise ApplianceError(503, code, "The native fixture runner did not produce fresh evidence.")
         evidence, evidence_digest = load_evidence(output)
         if runner.stat().st_size != runner_size or hashlib.sha256(runner.read_bytes()).hexdigest() != runner_digest:
             raise ApplianceError(503, "fixture_runner_identity_changed", "The native fixture runner changed during qualification.")

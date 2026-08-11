@@ -64,23 +64,80 @@ def render_prompt(request: NormalizedRequest) -> str:
 
 
 def render_mlx_qwen3_prompt(request: NormalizedRequest) -> str:
-    """Render the qualified Qwen3 MLX text profile with thinking disabled.
+    """Render the pinned Qwen3 MLX profile without executing model Jinja.
 
-    The production macOS manifest exposes text/stream only. Keeping this
-    renderer explicit avoids executing a mutable tokenizer Jinja template at
-    runtime while preserving its exact Qwen3 generation boundary.
+    This is an appliance-owned transcription of the qualified Qwen3 ChatML
+    boundary. Tool definitions and structured-output constraints are rendered
+    deterministically, while Outlines independently constrains the generated
+    token sequence. A renderer change changes the gateway wheel hash and thus
+    invalidates native qualification.
     """
 
-    if request.tools or request.response_format.type != "text":
-        raise ValueError("the qualified MLX Qwen3 profile supports text output only")
-    parts: list[str] = []
-    for message in request.messages:
-        if message.role not in {"system", "user", "assistant"}:
-            raise ValueError("the qualified MLX Qwen3 profile received an unsupported role")
-        if message.tool_calls or message.tool_call_id is not None or message.content is None:
-            raise ValueError("the qualified MLX Qwen3 profile received unsupported history")
-        parts.append(
-            f"<|im_start|>{message.role}\n{message.content}<|im_end|>\n"
+    system_parts: list[str] = []
+    message_start = 0
+    if request.messages and request.messages[0].role == "system":
+        system_parts.append(request.messages[0].content or "")
+        message_start = 1
+
+    if request.tools:
+        definitions = [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    **({"description": tool.description} if tool.description is not None else {}),
+                    "parameters": tool.schema,
+                    "strict": True,
+                },
+            }
+            for tool in request.tools
+        ]
+        choice = request.tool_choice[1] if isinstance(request.tool_choice, tuple) else request.tool_choice
+        system_parts.append(
+            "# Tools\n\nAvailable strict function definitions:\n<tools>\n"
+            + "\n".join(canonical_text(tool) for tool in definitions)
+            + "\n</tools>\n\n"
+            + "Tool policy: " + choice + ". When calling a tool, output only one JSON object "
+            + 'with exactly the keys "name" and "arguments". Do not add XML, Markdown, or prose.'
         )
-    parts.append("<|im_start|>assistant\n<think>\n\n</think>\n\n")
+    elif request.response_format.type == "json_object":
+        system_parts.append("Output only one valid JSON object. Do not add Markdown or prose.")
+    elif request.response_format.type == "json_schema":
+        system_parts.append(
+            "Output only one JSON object conforming exactly to this schema. Do not add Markdown or prose.\n"
+            + canonical_text(request.response_format.schema)
+        )
+
+    parts: list[str] = []
+    if system_parts:
+        parts.append("<|im_start|>system\n" + "\n\n".join(system_parts) + "<|im_end|>\n")
+
+    for message in request.messages[message_start:]:
+        if message.role in {"system", "user"}:
+            if message.content is None or message.tool_calls or message.tool_call_id is not None:
+                raise ValueError("the qualified MLX Qwen3 profile received invalid message history")
+            parts.append(f"<|im_start|>{message.role}\n{message.content}<|im_end|>\n")
+        elif message.role == "assistant":
+            if message.tool_calls:
+                call = message.tool_calls[0]
+                payload = canonical_text({"name": call.name, "arguments": call.value})
+                parts.append(f"<|im_start|>assistant\n<tool_call>\n{payload}\n</tool_call><|im_end|>\n")
+            elif message.content is not None and message.tool_call_id is None:
+                parts.append(f"<|im_start|>assistant\n{message.content}<|im_end|>\n")
+            else:
+                raise ValueError("the qualified MLX Qwen3 profile received invalid assistant history")
+        elif message.role == "tool":
+            if message.content is None or message.tool_call_id is None or message.tool_calls:
+                raise ValueError("the qualified MLX Qwen3 profile received invalid tool history")
+            parts.append(
+                "<|im_start|>user\n<tool_response>\n"
+                + message.content
+                + "\n</tool_response><|im_end|>\n"
+            )
+        else:
+            raise ValueError("the qualified MLX Qwen3 profile received an unsupported role")
+
+    parts.append("<|im_start|>assistant\n")
+    if not request.tools and request.response_format.type == "text":
+        parts.append("<think>\n\n</think>\n\n")
     return "".join(parts)
