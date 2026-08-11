@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -172,6 +174,29 @@ class SchedulerEnvelope:
             raise ProtocolError("protocol.invalid_field", "invalid delivery stage")
         elif self.type == "scheduler.notification.action" and p["action"] not in {"SNOOZE", "CANCEL"}:
             raise ProtocolError("protocol.invalid_field", "invalid notification action")
+        elif self.type == "scheduler.notification.speech":
+            if (
+                not isinstance(p["unit_index"], int)
+                or isinstance(p["unit_index"], bool)
+                or p["unit_index"] < 1
+                or not isinstance(p["locale"], str)
+                or re.fullmatch(r"[a-z]{2,3}(?:-[A-Z]{2})?", p["locale"]) is None
+                or not isinstance(p["speakable_text"], str)
+                or not p["speakable_text"]
+                or len(p["speakable_text"].encode("utf-8")) > 4096
+                or unicodedata.normalize("NFC", p["speakable_text"]) != p["speakable_text"]
+            ):
+                raise ProtocolError("protocol.invalid_field", "invalid scheduler speech unit")
+        elif self.type == "scheduler.playback.receipt":
+            if (
+                not isinstance(p["unit_index"], int)
+                or isinstance(p["unit_index"], bool)
+                or p["unit_index"] < 1
+                or p["state"] not in {"PLAYING", "COMPLETED", "CANCELLED", "SKIPPED"}
+                or not isinstance(p["reason_code"], str)
+                or re.fullmatch(r"[a-z0-9_]{1,64}", p["reason_code"]) is None
+            ):
+                raise ProtocolError("protocol.invalid_field", "invalid scheduler playback receipt")
 
     def to_dict(self) -> dict[str, Any]:
         return {"protocol": self.protocol, "type": self.type, "event_id": self.event_id,

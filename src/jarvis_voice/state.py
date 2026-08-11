@@ -166,6 +166,12 @@ class VoiceStateMachine:
         self.output_epoch = 0
         self.response: ResponseSession | None = None
 
+    def reserve_output_epoch(self) -> int:
+        """Reserve the shared backend cancellation fence for isolated output."""
+
+        self.output_epoch += 1
+        return self.output_epoch
+
     def ptt_down(self, turn_id: str) -> PttDownResult:
         if self.input_state == InputState.CAPTURING:
             return PttDownResult(
