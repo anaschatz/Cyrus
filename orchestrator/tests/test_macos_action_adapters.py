@@ -149,6 +149,21 @@ class MacOSActionAdapterTests(unittest.TestCase):
         with self.assertRaises(MacOSAdapterError):
             config.validate()
 
+    def test_native_file_search_uses_spotlight_metadata_only(self) -> None:
+        source_path = (
+            Path(__file__).resolve().parents[2]
+            / "native"
+            / "macos_action_host"
+            / "Sources"
+            / "JarvisActionNative"
+            / "main.swift"
+        )
+        source = source_path.read_text(encoding="utf-8")
+        self.assertIn("NSMetadataQuery()", source)
+        self.assertIn("NSMetadataItemFSNameKey", source)
+        self.assertIn("NSMetadataItemPathKey", source)
+        self.assertNotIn("FileManager.default.enumerator", source)
+
 
 if __name__ == "__main__":
     unittest.main()

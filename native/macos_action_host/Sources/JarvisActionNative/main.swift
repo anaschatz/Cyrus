@@ -12,6 +12,10 @@ final class OpenResultBox: @unchecked Sendable {
     var error: Error?
 }
 
+final class MetadataQueryBox: @unchecked Sendable {
+    var finished = false
+}
+
 let utcFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -393,34 +397,59 @@ func fileSearch(arguments: [String: Any], context: [String: Any]) throws -> ([St
     let limit = try integer(arguments, "limit")
     var matches: [(path: String, root: String, values: URLResourceValues)] = []
     let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey, .contentTypeKey, .fileResourceIdentifierKey, .volumeIdentifierKey]
+    var scopedRoots: [(id: String, url: URL)] = []
     for rootID in selectedRoots {
         guard let rootPath = roots[rootID] else { throw NativeError.safe("file.root_unavailable") }
         let rootURL = URL(fileURLWithPath: rootPath).standardizedFileURL.resolvingSymlinksInPath()
-        guard let enumerator = FileManager.default.enumerator(
-            at: rootURL,
-            includingPropertiesForKeys: Array(keys),
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { throw NativeError.safe("file.root_unavailable") }
-        for case let url as URL in enumerator {
-            let preliminary = try url.resourceValues(forKeys: [.isSymbolicLinkKey])
-            if preliminary.isSymbolicLink == true { enumerator.skipDescendants(); continue }
-            let candidate = url.standardizedFileURL.resolvingSymlinksInPath()
-            guard candidate.path.hasPrefix(rootURL.path + "/") else { continue }
-            let values = try candidate.resourceValues(forKeys: keys)
-            let kind = values.isDirectory == true ? "DIRECTORY" : "FILE"
-            if !kinds.contains(kind) { continue }
-            let relative = String(candidate.path.dropFirst(rootURL.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            let folded = relative.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
-            if folded.contains(query) { matches.append((relative, rootID, values)) }
-            if matches.count > 10_000 { throw NativeError.safe("tool.payload_too_large") }
-        }
+        guard FileManager.default.fileExists(atPath: rootURL.path) else { throw NativeError.safe("file.root_unavailable") }
+        scopedRoots.append((rootID, rootURL))
+    }
+    let metadata = NSMetadataQuery()
+    metadata.searchScopes = scopedRoots.map { $0.url.path }
+    metadata.predicate = NSPredicate(
+        format: "(%K CONTAINS[cd] %@) OR (%K CONTAINS[cd] %@)",
+        NSMetadataItemFSNameKey, query, NSMetadataItemPathKey, query
+    )
+    let queryBox = MetadataQueryBox()
+    let observer = NotificationCenter.default.addObserver(
+        forName: .NSMetadataQueryDidFinishGathering,
+        object: metadata,
+        queue: nil
+    ) { _ in queryBox.finished = true }
+    defer { NotificationCenter.default.removeObserver(observer); metadata.stop() }
+    guard metadata.start() else { throw NativeError.safe("file.root_unavailable") }
+    let gatheringDeadline = Date().addingTimeInterval(5)
+    while !queryBox.finished && Date() < gatheringDeadline {
+        _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+    }
+    guard queryBox.finished else { throw NativeError.safe("host.deadline_expired") }
+    metadata.disableUpdates()
+    for case let item as NSMetadataItem in metadata.results {
+        guard let rawPath = item.value(forAttribute: NSMetadataItemPathKey) as? String else { continue }
+        let rawURL = URL(fileURLWithPath: rawPath).standardizedFileURL
+        let preliminary = try rawURL.resourceValues(forKeys: [.isSymbolicLinkKey])
+        if preliminary.isSymbolicLink == true { continue }
+        let candidate = rawURL.resolvingSymlinksInPath()
+        guard let selectedRoot = scopedRoots.first(where: { candidate.path.hasPrefix($0.url.path + "/") }) else { continue }
+        let values = try candidate.resourceValues(forKeys: keys)
+        let kind = values.isDirectory == true ? "DIRECTORY" : "FILE"
+        if !kinds.contains(kind) { continue }
+        let relative = String(candidate.path.dropFirst(selectedRoot.url.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let folded = relative.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        if folded.contains(query) { matches.append((relative, selectedRoot.id, values)) }
+        if matches.count > 10_000 { throw NativeError.safe("tool.payload_too_large") }
     }
     matches.sort {
-        let l = $0.path.lowercased()
-        let r = $1.path.lowercased()
+        let l = $0.path.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        let r = $1.path.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
         if l != r { return l < r }
-        if $0.path != $1.path { return $0.path < $1.path }
-        return $0.root < $1.root
+        let leftBytes = Array($0.path.utf8)
+        let rightBytes = Array($1.path.utf8)
+        if leftBytes != rightBytes { return leftBytes.lexicographicallyPrecedes(rightBytes) }
+        if $0.root != $1.root { return $0.root < $1.root }
+        let leftIdentity = $0.values.fileResourceIdentifier.map { String(describing: $0) } ?? ""
+        let rightIdentity = $1.values.fileResourceIdentifier.map { String(describing: $0) } ?? ""
+        return leftIdentity < rightIdentity
     }
     let page = Array(matches.dropFirst(offset).prefix(limit))
     var bindings: [[String: Any]] = []
