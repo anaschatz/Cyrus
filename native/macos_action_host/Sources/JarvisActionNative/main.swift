@@ -172,7 +172,8 @@ func calendarCreate(arguments: [String: Any]) throws -> ([String: Any], [[String
               readback.startDate == event.startDate,
               readback.endDate == event.endDate,
               (readback.location ?? "") == (event.location ?? ""),
-              (readback.notes ?? "") == (event.notes ?? "") else {
+              (readback.notes ?? "") == (event.notes ?? ""),
+              readback.availability == event.availability else {
             throw NativeError.safe("calendar.event_missing_after_write")
         }
         verification = "EXACT_READBACK"
@@ -310,7 +311,9 @@ func reminderCreate(arguments: [String: Any]) throws -> ([String: Any], [[String
     let identifier = reminder.calendarItemIdentifier
     guard let readback = store.calendarItem(withIdentifier: identifier) as? EKReminder,
           readback.title == reminder.title,
-          (readback.notes ?? "") == (reminder.notes ?? "") else {
+          (readback.notes ?? "") == (reminder.notes ?? ""),
+          readback.priority == reminder.priority,
+          readback.dueDateComponents?.date == reminder.dueDateComponents?.date else {
         throw NativeError.safe("reminder.not_found")
     }
     let reference = stableReference("reminder", identifier)
@@ -521,15 +524,37 @@ func emailDraft(arguments: [String: Any]) throws -> ([String: Any], [[String: An
         \(recipientCommands)
       end tell
       save m
-      return (id of m) as string
+      set actualRecipients to {}
+      repeat with r in (to recipients of m)
+        set end of actualRecipients to (address of r) as string
+      end repeat
+      return {(id of m) as string, (subject of m) as string, (content of m) as string, actualRecipients}
     end tell
     """
     var error: NSDictionary?
     guard let descriptor = NSAppleScript(source: source)?.executeAndReturnError(&error), error == nil else {
         throw NativeError.safe("email.permission_revoked")
     }
-    let identifier = descriptor.stringValue ?? ""
-    guard !identifier.isEmpty else { throw NativeError.safe("email.draft_receipt_missing") }
+    guard descriptor.numberOfItems == 4,
+          let identifier = descriptor.atIndex(1)?.stringValue,
+          let readbackSubject = descriptor.atIndex(2)?.stringValue,
+          let readbackBody = descriptor.atIndex(3)?.stringValue,
+          let recipientDescriptor = descriptor.atIndex(4),
+          !identifier.isEmpty else { throw NativeError.safe("email.draft_receipt_missing") }
+    var readbackRecipients: [String] = []
+    if recipientDescriptor.numberOfItems > 0 {
+        for index in 1...recipientDescriptor.numberOfItems {
+            guard let address = recipientDescriptor.atIndex(index)?.stringValue else {
+                throw NativeError.safe("email.draft_receipt_missing")
+            }
+            readbackRecipients.append(address)
+        }
+    }
+    guard readbackSubject == subject,
+          readbackBody == body,
+          readbackRecipients == recipients else {
+        throw NativeError.safe("email.draft_receipt_missing")
+    }
     let reference = stableReference("mail-draft", identifier)
     return ([
         "draft_ref": reference,
@@ -555,9 +580,13 @@ func run() throws -> [String: Any] {
     var verification = "EXACT_READBACK"
     var reason = "ok"
     switch toolID {
-    case "app.open@1": result = try appOpen(arguments: arguments)
+    case "app.open@1":
+        result = try appOpen(arguments: arguments)
+        status = "ACCEPTED"; verification = "UNAVAILABLE"; reason = "tool.verification_unavailable"
     case "file.search@1": (result, bindings) = try fileSearch(arguments: arguments, context: context)
-    case "file.open@1": result = try fileOpen(arguments: arguments, context: context)
+    case "file.open@1":
+        result = try fileOpen(arguments: arguments, context: context)
+        status = "ACCEPTED"; verification = "UNAVAILABLE"; reason = "tool.verification_unavailable"
     case "calendar.read@1": (result, bindings) = try calendarRead(arguments: arguments)
     case "calendar.create@1":
         let created = try calendarCreate(arguments: arguments)
