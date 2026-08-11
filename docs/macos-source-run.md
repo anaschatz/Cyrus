@@ -51,6 +51,14 @@ The runtime starts the owned `whisper-server` lazily on first speech turn. It bi
 
 The PTT event tap is listen-only and does not suppress the configured F1–F20 key. `PTT_DOWN` tombstones stale output, terminates active `say` or ASR work and begins the next capture. Ambient speech without PTT does not interrupt in v1.
 
-## Deferred native evidence
+## Native qualification
 
-Before M5 can be called native-complete, exercise Greek/English turns, silence, first/last-unit barge-in, permission denial, event-tap disable, sidecar crash/timeout and sleep/resume on the explicit Mac profile. Packaging, Developer ID signing, notarization, hardened runtime entitlements and packaged-app TCC testing belong to the next milestone.
+Use `scripts/run_macos_native_collection.py calibrate` first, then run the
+collector with the emitted threshold and `--threshold-calibrated`. The runtime
+automatically reopens a dead CoreAudio stream and refreshes CoreAudio plus the
+event tap after a wake-sized heartbeat gap. The strict gate still requires a
+real disconnect, a real sleep/resume, 200 physical turns, 20 acoustic samples
+below 200 ms and the full eight-hour soak; unit tests cannot satisfy it.
+
+Packaging, Developer ID signing, notarization, hardened runtime entitlements
+and packaged-app TCC testing remain a separate qualification profile.

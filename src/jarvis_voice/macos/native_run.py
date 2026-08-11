@@ -7,17 +7,99 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import asdict
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
+from ..backends import SpeechUnit
 from ..config import VoiceConfig
 from ..errors import BackendError
 from ..native_qualification import evaluate_native_evidence
 from ..qualification import write_report
 from .doctor import macos_doctor_report
 from .interactive_smoke import MacSmokeLoopbackServer
-from .native_collector import AcousticSilenceMonitor, MacNativeTelemetryCollector, mac_runtime_profile_fingerprint
+from .audio_capture import CoreAudioCapture
+from .native_collector import (
+    AcousticCalibrationSampler,
+    AcousticSilenceMonitor,
+    MacNativeTelemetryCollector,
+    derive_acoustic_threshold,
+    mac_runtime_profile_fingerprint,
+)
 from .runtime import MacVoiceRuntime
+from .system_tts import MacSystemTtsBackend
+
+
+def calibrate_macos_acoustic_threshold(
+    config: VoiceConfig,
+    *,
+    audio_path: str,
+    ambient_seconds: float = 3.0,
+    playback_timeout_seconds: float = 20.0,
+    capture_factory: Callable[..., Any] = CoreAudioCapture,
+    tts_factory: Callable[..., Any] = MacSystemTtsBackend,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> dict[str, object]:
+    """Measure ambient/playback separation through the real microphone path."""
+
+    if sys.platform != "darwin":
+        raise BackendError("qualification.native_macos_required", "Acoustic calibration requires macOS", subsystem="qualification")
+    if audio_path not in {"wired", "built_in"} or not 1.0 <= ambient_seconds <= 15.0:
+        raise BackendError("qualification.native_collector_config_invalid", "Acoustic calibration settings are invalid", subsystem="qualification")
+    sampler = AcousticCalibrationSampler()
+    started = threading.Event()
+    completed = threading.Event()
+    capture = capture_factory(
+        queue_capacity=config.audio_queue_capacity,
+        maximum_utterance_seconds=config.maximum_utterance_seconds,
+        device=config.audio_input_device,
+        frame_observer=sampler.publish_audio,
+    )
+    tts = tts_factory(
+        voice_mapping=config.macos.system_voices,
+        on_started=lambda _unit: started.set(),
+        on_completed=lambda _unit: completed.set(),
+    )
+    try:
+        capture.start()
+        sampler.begin("ambient")
+        sleeper(ambient_seconds)
+        sampler.end()
+        sampler.begin("playback")
+        tts.enqueue(
+            SpeechUnit(
+                response_id="acoustic-calibration",
+                epoch=1,
+                unit_index=1,
+                locale="el-GR",
+                text="Η βαθμονόμηση της φωνής ολοκληρώνεται με καθαρή και σταθερή ομιλία.",
+            )
+        )
+        if not started.wait(timeout=playback_timeout_seconds):
+            raise BackendError("qualification.acoustic_calibration_tts_start", "Calibration playback did not start", subsystem="qualification")
+        if not completed.wait(timeout=playback_timeout_seconds):
+            raise BackendError("qualification.acoustic_calibration_tts_timeout", "Calibration playback did not complete", subsystem="qualification")
+        sampler.end()
+    finally:
+        sampler.end()
+        capture.stop()
+        tts.close()
+    levels = sampler.levels()
+    calibration = derive_acoustic_threshold(levels["ambient"], levels["playback"])
+    return {
+        "ready": True,
+        "code": "qualification.acoustic_calibration_completed",
+        "profile_fingerprint_sha256": mac_runtime_profile_fingerprint(config),
+        "audio_path": audio_path,
+        "threshold_calibrated": True,
+        "calibration": asdict(calibration),
+        "microphone_opened": True,
+        "physical_playback": True,
+        "raw_audio_persisted": False,
+        "network_used": False,
+        "installation_performed": False,
+    }
 
 
 def current_process_rss_bytes(

@@ -37,6 +37,7 @@ from ..vad import SileroOnnxVad
 from .audio_capture import CoreAudioCapture
 from .asr_selection import create_macos_asr_backend
 from .ptt import MacEventTapPttSource, mac_ptt_keycode, mac_ptt_vkey
+from .recovery import MacRecoveryRequest, MacRecoverySupervisor
 from .system_tts import MacSystemTtsBackend
 
 
@@ -115,6 +116,7 @@ class MacVoiceRuntime:
         self._response_tokens: dict[str, int] = {}
         self._next_response_token = 1
         self.reliable = ReliableSubmissionManager(time.monotonic)
+        self.recovery = MacRecoverySupervisor()
 
     def _response_token(self, response_id: str | None) -> int:
         if response_id is None:
@@ -231,6 +233,41 @@ class MacVoiceRuntime:
         if event is not None:
             self._send_all([event])
 
+    def _discard_ptt_events(self) -> None:
+        while True:
+            try:
+                self.publisher.events.get_nowait()
+            except queue.Empty:
+                return
+
+    def _recover_native_io(self, request: MacRecoveryRequest, *, now: float) -> None:
+        """Abort any partial turn, then atomically reopen native input paths."""
+
+        self._record_timing(f"{request.kind}_detected", now)
+        self.publisher.force_release(now, request.kind)
+        self._discard_ptt_events()
+        self.audio.abort_turn()
+        self.transcription.cancel_current()
+        if self.core.state.input_state != InputState.IDLE:
+            self._send_all([self.core.input_failed("audio.native_recovery_interrupted_turn")])
+        try:
+            if request.kind == "sleep_resume":
+                self.ptt.stop()
+                self._discard_ptt_events()
+            self.audio.restart()
+            if request.kind == "sleep_resume":
+                self.ptt.start()
+            self.recovery.succeeded()
+            recovered_event = (
+                "sleep_resume_recovered"
+                if request.kind == "sleep_resume"
+                else "microphone_disconnect_recovered"
+            )
+            self._record_timing(recovered_event)
+        except Exception:
+            self.recovery.failed(request.kind, monotonic_now=time.perf_counter())
+            self._record_timing("native_io_recovery_failed", recovery_kind=request.kind)
+
     def run(self) -> None:  # pragma: no cover - native hardware/TCC loop
         if self._stop_requested.is_set():
             self.close()
@@ -244,6 +281,14 @@ class MacVoiceRuntime:
             self.transport.send(self.core.client_hello())
             while self._running and not self._stop_requested.is_set():
                 now = time.perf_counter()
+                recovery = self.recovery.poll(
+                    audio_healthy=self.audio.is_healthy,
+                    monotonic_now=now,
+                    wall_now=time.time(),
+                )
+                if recovery is not None:
+                    self._recover_native_io(recovery, now=now)
+                    continue
                 self.publisher.watchdog(now)
                 try:
                     self._handle_ptt(self.publisher.events.get(timeout=0.01))

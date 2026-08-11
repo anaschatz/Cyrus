@@ -49,6 +49,88 @@ class AcousticResult:
     code: str
 
 
+@dataclass(frozen=True, slots=True)
+class AcousticCalibration:
+    silence_threshold_dbfs: float
+    ambient_p95_dbfs: float
+    playback_p20_dbfs: float
+    separation_db: float
+    ambient_samples: int
+    playback_samples: int
+
+
+def _percentile(values: Sequence[float], fraction: float) -> float:
+    ordered = sorted(float(value) for value in values)
+    if not ordered:
+        raise BackendError("qualification.acoustic_calibration_empty", "Acoustic calibration had no samples", subsystem="qualification")
+    position = max(0, min(len(ordered) - 1, round((len(ordered) - 1) * fraction)))
+    return ordered[position]
+
+
+def derive_acoustic_threshold(
+    ambient_levels_dbfs: Sequence[float],
+    playback_levels_dbfs: Sequence[float],
+) -> AcousticCalibration:
+    """Derive a conservative silence threshold from microphone observations."""
+
+    if len(ambient_levels_dbfs) < 10 or len(playback_levels_dbfs) < 10:
+        raise BackendError("qualification.acoustic_calibration_samples", "Acoustic calibration needs more samples", subsystem="qualification")
+    ambient_p95 = _percentile(ambient_levels_dbfs, 0.95)
+    playback_p20 = _percentile(playback_levels_dbfs, 0.20)
+    separation = playback_p20 - ambient_p95
+    if separation < 12.0:
+        raise BackendError("qualification.acoustic_calibration_separation", "Playback was not sufficiently audible at the microphone", subsystem="qualification")
+    threshold = min(ambient_p95 + 6.0, playback_p20 - 6.0)
+    threshold = max(-90.0, min(-10.0, threshold))
+    return AcousticCalibration(
+        silence_threshold_dbfs=round(threshold, 3),
+        ambient_p95_dbfs=round(ambient_p95, 3),
+        playback_p20_dbfs=round(playback_p20, 3),
+        separation_db=round(separation, 3),
+        ambient_samples=len(ambient_levels_dbfs),
+        playback_samples=len(playback_levels_dbfs),
+    )
+
+
+class AcousticCalibrationSampler:
+    """Bounded callback sink whose report retains levels, never PCM or text."""
+
+    def __init__(self, *, capacity: int = 4096) -> None:
+        self._frames: queue.Queue[tuple[str, bytes]] = queue.Queue(maxsize=capacity)
+        self._phase: str | None = None
+        self._overflow = False
+
+    def begin(self, phase: str) -> None:
+        if phase not in {"ambient", "playback"}:
+            raise BackendError("qualification.acoustic_calibration_phase", "Acoustic calibration phase is invalid", subsystem="qualification")
+        self._phase = phase
+
+    def end(self) -> None:
+        self._phase = None
+
+    def publish_audio(self, pcm_float32: bytes, sample_rate: int, received_at: float) -> None:
+        del sample_rate, received_at
+        phase = self._phase
+        if phase is None or not pcm_float32 or len(pcm_float32) % 4:
+            return
+        try:
+            self._frames.put_nowait((phase, bytes(pcm_float32)))
+        except queue.Full:
+            self._overflow = True
+
+    def levels(self) -> dict[str, list[float]]:
+        if self._overflow:
+            raise BackendError("qualification.acoustic_calibration_overflow", "Acoustic calibration queue overflowed", subsystem="qualification")
+        result: dict[str, list[float]] = {"ambient": [], "playback": []}
+        while True:
+            try:
+                phase, pcm = self._frames.get_nowait()
+            except queue.Empty:
+                return result
+            level, _sample_count = AcousticSilenceMonitor._level_dbfs(pcm)
+            result[phase].append(level)
+
+
 class AcousticSilenceMonitor:
     """Measure microphone-observed silence after physical PTT_DOWN.
 
@@ -292,6 +374,16 @@ class MacNativeTelemetryCollector:
                 self.duplicate_playbacks += 1
             else:
                 self.completed_responses.add(response)
+        elif name == "microphone_disconnect_recovered":
+            self.record_microphone_recovery(passed=True)
+        elif name == "sleep_resume_recovered":
+            self.record_sleep_recovery(passed=True)
+        elif name == "native_io_recovery_failed":
+            recovery_kind = entry.get("recovery_kind")
+            if recovery_kind == "microphone_disconnect":
+                self.record_microphone_recovery(passed=False)
+            elif recovery_kind == "sleep_resume":
+                self.record_sleep_recovery(passed=False)
 
     def feed_many(self, entries: Sequence[Mapping[str, object]]) -> None:
         for entry in entries:

@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
 from jarvis_voice.config import load_voice_config  # noqa: E402
 from jarvis_voice.errors import BackendError  # noqa: E402
 from jarvis_voice.macos.native_run import (  # noqa: E402
+    calibrate_macos_acoustic_threshold,
     macos_native_collection_preflight,
     run_macos_native_collection,
 )
@@ -38,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--duration-seconds", type=float, default=28_800.0)
     run.add_argument("--rss-interval-seconds", type=float, default=300.0)
+    calibrate = commands.add_parser("calibrate")
+    calibrate.add_argument("--config", type=Path, required=True)
+    calibrate.add_argument("--audio-path", choices=("wired", "built_in"), required=True)
+    calibrate.add_argument("--output", type=Path, required=True)
+    calibrate.add_argument("--ambient-seconds", type=float, default=3.0)
     return parser
 
 
@@ -45,7 +51,15 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         config = load_voice_config(args.config)
-        if args.command == "preflight":
+        if args.command == "calibrate":
+            print("Acoustic calibration started. Keep the room quiet until the test phrase plays.", flush=True)
+            report = calibrate_macos_acoustic_threshold(
+                config,
+                audio_path=args.audio_path,
+                ambient_seconds=args.ambient_seconds,
+            )
+            write_report(args.output.resolve(), report)
+        elif args.command == "preflight":
             report = macos_native_collection_preflight(
                 config,
                 silence_threshold_dbfs=args.silence_threshold_dbfs,

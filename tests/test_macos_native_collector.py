@@ -11,9 +11,11 @@ import _bootstrap  # noqa: F401
 from jarvis_voice.config import voice_config_from_mapping
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.native_collector import (
+    AcousticCalibrationSampler,
     AcousticResult,
     AcousticSilenceMonitor,
     MacNativeTelemetryCollector,
+    derive_acoustic_threshold,
     mac_runtime_profile_fingerprint,
 )
 from jarvis_voice.macos.native_run import (
@@ -82,6 +84,22 @@ class AcousticSilenceMonitorTests(unittest.TestCase):
         self.assertFalse(results[0].valid)
         self.assertEqual(results[0].code, "qualification.acoustic_preroll_not_audible")
 
+    def test_calibration_keeps_only_levels_and_derives_separated_threshold(self) -> None:
+        sampler = AcousticCalibrationSampler()
+        sampler.begin("ambient")
+        for _ in range(10):
+            sampler.publish_audio(array("f", [0.001] * 480).tobytes(), 48_000, 1.0)
+        sampler.begin("playback")
+        for _ in range(10):
+            sampler.publish_audio(array("f", [0.1] * 480).tobytes(), 48_000, 2.0)
+        sampler.end()
+        levels = sampler.levels()
+        calibration = derive_acoustic_threshold(levels["ambient"], levels["playback"])
+        self.assertEqual(calibration.ambient_samples, 10)
+        self.assertEqual(calibration.playback_samples, 10)
+        self.assertGreaterEqual(calibration.separation_db, 39.0)
+        self.assertLess(calibration.silence_threshold_dbfs, calibration.playback_p20_dbfs)
+
 
 class MacNativeTelemetryCollectorTests(unittest.TestCase):
     def test_real_event_aggregation_can_satisfy_strict_gate(self) -> None:
@@ -113,6 +131,21 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
         self.assertEqual(acoustic.armed, [0.3])
         self.assertEqual(evidence["counters"]["real_voice_turns"], 200)
         self.assertEqual(evidence["acoustic_barge_in"]["samples"], 20)
+
+    def test_runtime_recovery_events_update_native_gate_without_manual_marking(self) -> None:
+        collector = MacNativeTelemetryCollector(
+            profile_fingerprint="c" * 64,
+            audio_path="built_in",
+            platform_name="darwin",
+            clock=lambda: 0.0,
+        )
+        collector.feed(_event("microphone_disconnect_recovered", 1.0))
+        collector.feed(_event("sleep_resume_recovered", 2.0))
+        evidence = collector.evidence(now=3.0)
+        self.assertEqual(evidence["counters"]["microphone_disconnect_recoveries"], 1)
+        self.assertEqual(evidence["counters"]["sleep_resume_recoveries"], 1)
+        self.assertEqual(evidence["cases"]["microphone_disconnect_recovery"]["status"], "pass")
+        self.assertEqual(evidence["cases"]["sleep_resume_recovery"]["status"], "pass")
 
     def test_duplicate_and_stuck_state_are_counted_without_ids_in_evidence(self) -> None:
         collector = MacNativeTelemetryCollector(

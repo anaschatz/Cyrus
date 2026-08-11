@@ -84,7 +84,26 @@ python scripts/run_macos_native_collection.py preflight \
 
 Η τιμή `-40` είναι μόνο παράδειγμα και δεν επιτρέπεται σε πραγματικό run μέχρι
 να βαθμονομηθεί στο συγκεκριμένο μικρόφωνο, output device, volume και δωμάτιο.
+Η native βαθμονόμηση ανοίγει το πραγματικό CoreAudio input, μετρά πρώτα το
+ambient επίπεδο και έπειτα παίζει μία τοπική φράση με την επιλεγμένη macOS
+φωνή. Αποθηκεύει μόνο συγκεντρωτικά dBFS στοιχεία και ποτέ PCM:
+
+```sh
+python scripts/run_macos_native_collection.py calibrate \
+  --config "/absolute/private/voice.json" \
+  --audio-path built_in \
+  --output "/absolute/private/evidence/acoustic-calibration.json"
+```
+
+Η παραγόμενη `calibration.silence_threshold_dbfs` μεταφέρεται αυτούσια στα
+`preflight` και `run`. Η βαθμονόμηση αποτυγχάνει κλειστά αν η έξοδος δεν είναι
+τουλάχιστον 12 dB πάνω από το ambient επίπεδο στο μικρόφωνο.
+
 Το `run` απαιτεί ρητό `--threshold-calibrated` και γράφει atomic partial evidence
 κάθε λεπτό, ώστε ένα crash ή `Ctrl-C` να μην εξαφανίζει αποτυχημένη προσπάθεια.
 Το CoreAudio callback κάνει μόνο bounded `put_nowait`· RMS και sustained-silence
-ανάλυση γίνονται σε ξεχωριστό thread. Δεν αποθηκεύεται raw audio.
+ανάλυση γίνονται σε ξεχωριστό thread. Δεν αποθηκεύεται raw audio. Κατά το run,
+νεκρό PortAudio stream προκαλεί αυτόματο reopen του CoreAudio device. Wake-sized
+heartbeat gap προκαλεί ασφαλές abort του ενεργού turn και επανεκκίνηση τόσο του
+CoreAudio stream όσο και του listen-only event tap. Οι πραγματικές επιτυχίες ή
+αποτυχίες αυτών των recoveries γράφονται αυτόματα στο native evidence.

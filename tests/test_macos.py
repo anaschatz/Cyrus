@@ -32,6 +32,7 @@ from jarvis_voice.macos.ptt import (
     mac_ptt_keycode,
     mac_ptt_vkey,
 )
+from jarvis_voice.macos.recovery import MacRecoverySupervisor
 from jarvis_voice.macos.system_tts import MacSystemTtsBackend
 from jarvis_voice.macos.whisper_cpp import WhisperCppSidecarBackend, parse_whisper_response
 from jarvis_voice.ptt import PttEventPublisher, PttTransition, function_key_vkey
@@ -57,6 +58,10 @@ class FakeRawInputStream:
 
     def close(self) -> None:
         self.closed = True
+
+    @property
+    def active(self) -> bool:
+        return self.started and not self.stopped and not self.closed
 
 
 class MacAudioTests(unittest.TestCase):
@@ -85,6 +90,7 @@ class MacAudioTests(unittest.TestCase):
             capture.begin_turn()
             streams[0].kwargs["callback"](array("f", [0.25, -0.5]).tobytes(), 2, None, None)  # type: ignore[index,operator]
             result = capture.end_turn()
+            self.assertTrue(capture.is_healthy)
             capture.stop()
         self.assertEqual(result.sample_rate, 48_000)
         self.assertEqual(list(result.samples), [0.25, -0.5])
@@ -94,6 +100,42 @@ class MacAudioTests(unittest.TestCase):
         self.assertTrue(streams[0].stopped and streams[0].closed)
         self.assertEqual(observed[0][1], 48_000)
         self.assertEqual(observed[0][0], array("f", [0.25, -0.5]).tobytes())
+
+    def test_coreaudio_restart_reopens_after_dead_stream(self) -> None:
+        streams: list[FakeRawInputStream] = []
+        fake_sd = SimpleNamespace(
+            query_devices=lambda device, kind: {"default_samplerate": 48_000},
+            CoreAudioSettings=lambda **kwargs: kwargs,
+            RawInputStream=lambda **kwargs: streams.append(FakeRawInputStream(**kwargs)) or streams[-1],
+        )
+        with mock.patch.dict(sys.modules, {"sounddevice": fake_sd}), mock.patch("jarvis_voice.macos.audio_capture.sys.platform", "darwin"):
+            capture = CoreAudioCapture(queue_capacity=4, maximum_utterance_seconds=1.0)
+            capture.start()
+            streams[0].stopped = True
+            self.assertFalse(capture.is_healthy)
+            capture.restart()
+            self.assertTrue(capture.is_healthy)
+            capture.stop()
+        self.assertEqual(len(streams), 2)
+
+
+class MacRecoveryTests(unittest.TestCase):
+    def test_detects_dead_audio_and_retries_same_recovery_until_success(self) -> None:
+        supervisor = MacRecoverySupervisor(initial_retry_seconds=0.25)
+        request = supervisor.poll(audio_healthy=False, monotonic_now=1.0, wall_now=10.0)
+        self.assertEqual(request.kind if request else None, "microphone_disconnect")
+        supervisor.failed("microphone_disconnect", monotonic_now=1.0)
+        self.assertIsNone(supervisor.poll(audio_healthy=True, monotonic_now=1.1, wall_now=10.1))
+        retry = supervisor.poll(audio_healthy=True, monotonic_now=1.3, wall_now=10.3)
+        self.assertEqual(retry.kind if retry else None, "microphone_disconnect")
+        supervisor.succeeded()
+        self.assertIsNone(supervisor.poll(audio_healthy=True, monotonic_now=1.4, wall_now=10.4))
+
+    def test_detects_wake_sized_heartbeat_gap(self) -> None:
+        supervisor = MacRecoverySupervisor(sleep_gap_seconds=5.0)
+        self.assertIsNone(supervisor.poll(audio_healthy=True, monotonic_now=1.0, wall_now=10.0))
+        request = supervisor.poll(audio_healthy=True, monotonic_now=1.1, wall_now=20.0)
+        self.assertEqual(request.kind if request else None, "sleep_resume")
 
 
 class FakeTapAdapter:

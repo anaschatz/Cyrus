@@ -91,6 +91,25 @@ class CoreAudioCapture:
         if self._buffer is not None:
             self._buffer.abort_turn()
 
+    @property
+    def is_healthy(self) -> bool:
+        """Return whether PortAudio still reports the input stream as active."""
+
+        stream = self._stream
+        if stream is None:
+            return False
+        try:
+            return bool(stream.active)
+        except Exception:
+            return False
+
+    def restart(self) -> None:
+        """Re-open the configured/default device after disconnect or wake."""
+
+        self.abort_turn()
+        self.stop()
+        self.start()
+
     def stop(self) -> None:
         stream, self._stream = self._stream, None
         self._buffer = None
@@ -98,5 +117,9 @@ class CoreAudioCapture:
         if stream is not None:
             try:
                 stream.stop()
-            finally:
+            except Exception:
+                pass
+            try:
                 stream.close()
+            except Exception:
+                pass
