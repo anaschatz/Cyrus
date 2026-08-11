@@ -27,6 +27,7 @@ TRACEABLE_STAGE_EVENTS = frozenset(
         "ptt_down_received",
         "ptt_up_received",
         "input_no_speech_created",
+        "client_error_created",
         "transcript_final_created",
         "speech_commit_received",
         "tts_unit_started",
@@ -106,6 +107,12 @@ class GuidedSmokeController:
             self._markers["ptt_up"] = timestamp
         elif name == "input_no_speech_created":
             self._fail("smoke.expected_speech")
+        elif name == "client_error_created":
+            runtime_code = entry.get("code")
+            self._fail("smoke.client_error")
+            self.cases[self.stage]["runtime_code"] = (
+                runtime_code if isinstance(runtime_code, str) else "client.error"
+            )
         elif name == "transcript_final_created":
             expected = "el" if self.stage == "greek_turn" else "en"
             if entry.get("language") != expected:
@@ -370,7 +377,12 @@ def run_interactive_macos_smoke(
             for entry in snapshot[cursor:]:
                 event_name = entry.get("event")
                 if stage_sink is not None and isinstance(event_name, str) and event_name in TRACEABLE_STAGE_EVENTS:
-                    stage_sink(event_name)
+                    runtime_code = entry.get("code")
+                    stage_sink(
+                        f"{event_name}:{runtime_code}"
+                        if event_name == "client_error_created" and isinstance(runtime_code, str)
+                        else event_name
+                    )
                 controller.feed(entry)
             cursor = len(snapshot)
             controller.tick(backend_idle=runtime.tts.is_idle, now=time.perf_counter())

@@ -105,6 +105,14 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         controller.feed(event("playback_completed_created", 1.3))
         self.assertEqual(controller.report()["code"], "smoke.tombstoned_response_completed")
 
+    def test_client_error_fails_fast_with_content_free_runtime_code(self) -> None:
+        controller = GuidedSmokeController(ptt_key="CONTROL_OPTION")
+        controller.take_prompts()
+        controller.feed(event("client_error_created", 1.0, code="audio.capture_overflow"))
+        report = controller.report()
+        self.assertEqual(report["code"], "smoke.client_error")
+        self.assertEqual(report["cases"]["greek_turn"]["runtime_code"], "audio.capture_overflow")
+
     def test_server_rejects_non_loopback_url(self) -> None:
         with self.assertRaisesRegex(BackendError, "smoke.non_loopback_server"):
             MacSmokeLoopbackServer("ws://192.0.2.1:8765")

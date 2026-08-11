@@ -176,6 +176,9 @@ class MacVoiceRuntime:
                 )
             elif event.type == "input.no_speech":
                 self._record_timing("input_no_speech_created")
+            elif event.type == "client.error":
+                code = event.payload.get("code", "client.error")
+                self._record_timing("client_error_created", code=str(code))
             elif event.type == "response.cancel":
                 self._record_timing("response_cancel_created")
             elif event.type == "playback.interrupted":
