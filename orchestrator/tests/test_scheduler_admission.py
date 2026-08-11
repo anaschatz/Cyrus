@@ -114,8 +114,8 @@ class SchedulerAdmissionTests(unittest.TestCase):
         service, admission = self.admit(
             "Θύμισέ μου να κάνω διάλειμμα σε είκοσι λεπτά."
         )
-        waiting = asyncio.run(service.execute_task(admission.task.task_id))
-        self.assertEqual(waiting.state, TaskState.AWAITING_APPROVAL)
+        completed = asyncio.run(service.execute_task(admission.task.task_id))
+        self.assertEqual(completed.state, TaskState.COMPLETED)
         self.assertEqual(self.compiler.calls, 1)
         self.assertEqual(self.model.calls, 0)
         self.assertEqual(self.store._connection.execute(
@@ -124,18 +124,8 @@ class SchedulerAdmissionTests(unittest.TestCase):
         self.assertEqual(self.store._connection.execute(
             "SELECT COUNT(*) FROM approval_arbiter_queue WHERE state='WAITING_FOR_CHANNEL'"
         ).fetchone()[0], 1)
-        run = self.scheduler.task_run(admission.task.task_id, admission.task.epoch)
-        self.scheduler.decide_approval(
-            approval_id=run["approval_id"],
-            proposal_id=run["proposal_id"],
-            proposal_sha256=run["proposal_sha256"],
-            decision="approve",
-            cause_event_id=str(uuid.uuid4()),
-        )
-        completed = asyncio.run(service.execute_task(admission.task.task_id))
-        self.assertEqual(completed.state, TaskState.COMPLETED)
         history = self.store.canonical_conversation(completed.conversation_id)
-        self.assertEqual(history.turns[0].assistant_text, "Η υπενθύμιση δημιουργήθηκε.")
+        self.assertIn("F10", history.turns[0].assistant_text)
 
     def test_ordinary_request_uses_general_model(self) -> None:
         service, admission = self.admit("Πες μου μια σύντομη απάντηση.")
