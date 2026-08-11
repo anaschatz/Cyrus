@@ -9,6 +9,8 @@ import unittest
 import uuid
 import plistlib
 import re
+import os
+import queue
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
@@ -24,6 +26,7 @@ from jarvis_voice.scheduler_native import (
     MACOS_NOTIFICATION_ADAPTER_SHA256,
     MacOSLockStateProvider,
     MacOSNotificationAdapter,
+    MacOSSchedulerHostAdapter,
     NativeDispatchResult,
     QualifiedNativeSchedulerDelivery,
     WindowsLockStateProvider,
@@ -70,6 +73,97 @@ class UnknownLock:
 
 
 class SchedulerNativeTests(unittest.TestCase):
+    def test_signed_macos_scheduler_host_initializes_and_keeps_content_off_argv(self) -> None:
+        class Stdout:
+            def __init__(self):
+                self.lines = queue.Queue()
+
+            def readline(self, _limit):
+                return self.lines.get(timeout=2)
+
+        class Stdin:
+            def __init__(self, stdout):
+                self.stdout = stdout
+                self.buffer = bytearray()
+                self.messages = []
+
+            def write(self, raw):
+                self.buffer.extend(raw)
+                while b"\n" in self.buffer:
+                    line, _, remaining = self.buffer.partition(b"\n")
+                    self.buffer = bytearray(remaining)
+                    message = json.loads(line)
+                    self.messages.append(message)
+                    receipt = {
+                        "type": "command.receipt",
+                        "request_id": message["request_id"],
+                        "accepted": True,
+                        "ambiguous": False,
+                        "reason_code": "initialized" if message["type"] == "initialize" else "native_api_accepted",
+                    }
+                    self.stdout.lines.put(json.dumps(receipt).encode() + b"\n")
+                return len(raw)
+
+            def flush(self):
+                return None
+
+            def close(self):
+                return None
+
+        class Process:
+            def __init__(self):
+                self.stdout = Stdout()
+                self.stdin = Stdin(self.stdout)
+                self.returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def terminate(self):
+                self.returncode = 0
+                self.stdout.lines.put(b"")
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+            def kill(self):
+                self.returncode = -9
+
+        with tempfile.TemporaryDirectory() as directory:
+            helper = Path(directory) / "jarvis-scheduler-native"
+            helper.write_bytes(b"signed-helper")
+            helper.chmod(0o700)
+            process = Process()
+            requirements = b"designated => identifier com.jarvis.voice\n"
+
+            def run(command, **_kwargs):
+                output = requirements if "--requirements" in command else b""
+                return subprocess.CompletedProcess(command, 0, output, b"")
+
+            observed = []
+
+            def popen(command, **_kwargs):
+                observed.append(command)
+                return process
+
+            adapter = MacOSSchedulerHostAdapter(
+                helper_path=os.fspath(helper),
+                helper_sha256=hashlib.sha256(helper.read_bytes()).hexdigest(),
+                helper_code_identity_sha256=hashlib.sha256(requirements).hexdigest(),
+                popen=popen,
+                run=run,
+            )
+            title = "Ιδιωτικός τίτλος"
+            body = "Μυστικό σώμα"
+            self.assertTrue(adapter.post(
+                notification_id="f" * 64, title=title, body=body, silent=True
+            ).accepted)
+            self.assertEqual(observed, [[os.fspath(helper)]])
+            self.assertNotIn(title, observed[0])
+            self.assertNotIn(body, observed[0])
+            self.assertEqual(process.stdin.messages[-1]["body"], body)
+            adapter.close()
+
     def test_transport_decodes_scheduler_protocol_in_its_own_namespace(self) -> None:
         session_id = str(uuid.uuid4())
         event = SchedulerEventFactory(session_id).create("scheduler.ready", {

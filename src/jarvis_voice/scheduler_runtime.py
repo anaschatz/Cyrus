@@ -218,6 +218,12 @@ class SchedulerNativeRuntime:
         )
 
     def pump_native_callbacks(self) -> list[SchedulerEnvelope]:
+        adapter = getattr(self.delivery, "adapter", self.delivery)
+        drain = getattr(adapter, "drain_callbacks", None)
+        callback_key = getattr(adapter, "callback_key", None)
+        if drain is not None and isinstance(callback_key, bytes):
+            for raw in drain():
+                self.ingest_native_callback(raw, key=callback_key)
         outbound: list[SchedulerEnvelope] = []
         for callback in self.controller.journal.pending_native_callbacks():
             notification = self.controller.journal.notification_payload(callback["notification_id"])
@@ -239,4 +245,8 @@ class SchedulerNativeRuntime:
         return outbound
 
     def close(self) -> None:
+        adapter = getattr(self.delivery, "adapter", self.delivery)
+        close_adapter = getattr(adapter, "close", None)
+        if close_adapter is not None:
+            close_adapter()
         self.controller.journal.close()

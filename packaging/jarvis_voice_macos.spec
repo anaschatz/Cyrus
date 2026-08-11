@@ -14,11 +14,12 @@ source = root / "src"
 orchestrator_source = root / "orchestrator" / "src"
 helper = Path(os.environ["JARVIS_MACOS_WHISPER_SERVER"]).resolve(strict=True)
 action_helper = Path(os.environ["JARVIS_MACOS_ACTION_HELPER"]).resolve(strict=True)
+scheduler_helper = Path(os.environ["JARVIS_MACOS_SCHEDULER_HELPER"]).resolve(strict=True)
 profile = Path(os.environ["JARVIS_MACOS_BUILD_PROFILE"]).resolve(strict=True)
 identity = os.environ["JARVIS_MACOS_CODESIGN_IDENTITY"]
 
 datas = [(str(profile), ".")]
-binaries = [(str(helper), "helpers"), (str(action_helper), "helpers")]
+binaries = [(str(helper), "helpers"), (str(action_helper), "helpers"), (str(scheduler_helper), "helpers")]
 hiddenimports = [
     "jarvis_orchestrator.jcs",
     "jarvis_orchestrator.scheduler_crypto",

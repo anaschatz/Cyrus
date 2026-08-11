@@ -66,6 +66,9 @@ class SchedulerClientConfig:
     tts_qualification_path: str | None = None
     tts_qualification_sha256: str | None = None
     full_body_when_locked: bool = False
+    native_helper_path: str | None = None
+    native_helper_sha256: str | None = None
+    native_helper_code_identity_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +162,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         "enabled", "compatibility_manifest_path", "compatibility_manifest_sha256",
         "native_qualification_path", "native_qualification_sha256",
         "tts_qualification_path", "tts_qualification_sha256", "full_body_when_locked",
+        "native_helper_path", "native_helper_sha256", "native_helper_code_identity_sha256",
     }:
         raise BackendError("config.invalid_field", "Scheduler configuration is invalid", subsystem="config", safe_context={"field": "scheduler"})
     if not isinstance(macos_data, Mapping) or set(macos_data) - {"asr_backend", "whisper_cpp", "system_voices"}:
@@ -220,6 +224,11 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
             full_body_when_locked=_boolean(
                 scheduler_data.get("full_body_when_locked", False),
                 "scheduler.full_body_when_locked",
+            ),
+            native_helper_path=scheduler_data.get("native_helper_path"),
+            native_helper_sha256=scheduler_data.get("native_helper_sha256"),
+            native_helper_code_identity_sha256=scheduler_data.get(
+                "native_helper_code_identity_sha256"
             ),
         ),
         vad=VadConfig(
@@ -291,6 +300,11 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         config.scheduler.tts_qualification_path,
         config.scheduler.tts_qualification_sha256,
     )
+    scheduler_helper_values = (
+        config.scheduler.native_helper_path,
+        config.scheduler.native_helper_sha256,
+        config.scheduler.native_helper_code_identity_sha256,
+    )
     if config.scheduler.enabled:
         if any(value is None for value in scheduler_values):
             raise BackendError("config.scheduler_qualification_required", "Scheduler qualification files and digests are required", subsystem="config")
@@ -311,9 +325,35 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 raise BackendError("config.scheduler_path_not_absolute", "Scheduler qualification paths must be absolute", subsystem="config", safe_context={"field": "scheduler.tts_qualification_path"})
             if not re.fullmatch(r"[0-9a-f]{64}", str(config.scheduler.tts_qualification_sha256)):
                 raise BackendError("config.scheduler_digest_invalid", "Scheduler qualification digests must be lowercase SHA-256", subsystem="config", safe_context={"field": "scheduler.tts_qualification_sha256"})
+        if any(value is None for value in scheduler_helper_values) and any(
+            value is not None for value in scheduler_helper_values
+        ):
+            raise BackendError(
+                "config.scheduler_native_helper_incomplete",
+                "Scheduler native helper path and digests must be complete",
+                subsystem="config",
+            )
+        if all(value is not None for value in scheduler_helper_values):
+            helper_path = Path(str(config.scheduler.native_helper_path)).expanduser()
+            if not helper_path.is_absolute():
+                raise BackendError(
+                    "config.scheduler_path_not_absolute",
+                    "Scheduler native helper path must be absolute",
+                    subsystem="config",
+                    safe_context={"field": "scheduler.native_helper_path"},
+                )
+            for name in ("native_helper_sha256", "native_helper_code_identity_sha256"):
+                if not re.fullmatch(r"[0-9a-f]{64}", str(getattr(config.scheduler, name))):
+                    raise BackendError(
+                        "config.scheduler_digest_invalid",
+                        "Scheduler native helper digests must be lowercase SHA-256",
+                        subsystem="config",
+                        safe_context={"field": f"scheduler.{name}"},
+                    )
     elif (
         any(value is not None for value in scheduler_values)
         or any(value is not None for value in scheduler_tts_values)
+        or any(value is not None for value in scheduler_helper_values)
         or config.scheduler.full_body_when_locked
     ):
         raise BackendError("config.scheduler_disabled_has_authority", "Disabled scheduler configuration cannot retain authority fields", subsystem="config")

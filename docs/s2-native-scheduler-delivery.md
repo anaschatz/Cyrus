@@ -85,8 +85,18 @@ outbox frame closes the Voice callback. If a connection is lost before that
 result, Voice retransmits the same action `event_id` on reconnect and the
 Orchestrator returns `DUPLICATE` without repeating the mutation.
 
-The signed macOS helper and its Keychain/peer-identity binding are deliberately
-the next milestone. Until that artifact is qualified, `/v1/capabilities`
+The signed macOS callback boundary is implemented as the separate
+`jarvis-scheduler-native` process. Voice starts the
+exact digest- and code-identity-pinned executable directly with `shell=False`;
+notification content travels only over inherited pipes and never through argv
+or environment values. The helper owns `UNUserNotificationCenter`, registers
+fixed Snooze-10-minutes and Cancel actions, and signs ASCII-only callback cores
+with an ephemeral 256-bit launch key transferred through the private stdin
+pipe. Voice still verifies the HMAC and persists the callback before emitting
+an action. The helper never receives job IDs, revisions, occurrence IDs or
+Scheduler authority.
+
+Until the Developer-ID-signed artifact is physically qualified, `/v1/capabilities`
 continues to report `notification_actions=BLOCKED` with
 `native_action_callback_not_qualified`, and `reminders_overall` remains
 blocked. Exact authenticated scheduler APIs remain the authority for snooze and
