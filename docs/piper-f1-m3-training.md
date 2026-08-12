@@ -96,10 +96,28 @@ The Metal tensor probe reported `mps:0`, and the final offline
 - Lightning stopped at exactly `max_steps=1`, without invoking UTMOS or another
   network-backed metric.
 
-The bounded 25-epoch run has not started. The post-smoke readiness report had
-13,636,022,272 free bytes, below the fail-closed 21,474,836,480-byte full-run
-threshold. The generated training cache is retained because it is required by
-the full run.
+The initial full-run attempt remained blocked while free disk was below the
+fail-closed 21,474,836,480-byte threshold. After local space was recovered, the
+bounded run completed all 25 epochs on the same M3. The best retained checkpoint
+was epoch 22 with `val_mel=0.4752`, 845,857,554 bytes and SHA-256
+`88015f28184de746d9a4e2ff3a069657bfeb996584557555bf5a8324764452e4`.
+
+That checkpoint was exported offline through the repository's fail-closed
+legacy ONNX wrapper. The wrapper requires an empty weights-only unsafe-global
+set, exports to a same-directory partial, validates the graph with ONNX, adds
+canonical Greek discovery metadata to Piper's generated config, and publishes
+the model atomically. No package was installed for export. The resulting model
+is 63,516,051 bytes with SHA-256
+`d1fd62b6ee8c2018abc0a030c786de8cd35a2520f7d9304fa893a3c7f0503f11`;
+its 5,213-byte config has SHA-256
+`08c0eadfc6f6eacb66f1effc2ace3447ef39d5e83994e05566899b174cf83cec`.
+
+The first offline epoch-22 fixture run generated all four required WAV files.
+Its maximum warm first-audio latency was 125.081 ms and peak worker RSS was
+312,229,888 bytes, so the model-size, memory, latency, fixture and offline gates
+passed. Real-output cancellation and human voice approval were deliberately not
+claimed by that run. The production TTS backend remains unchanged until those
+native gates and the wider qualification profile pass.
 
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
