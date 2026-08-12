@@ -306,6 +306,8 @@ def piper_mps_training_commands(
         str(data / "audio"),
         "--model.sample_rate",
         str(PIPER_TARGET_SAMPLE_RATE),
+        "--model.mos_metric",
+        "none",
         "--data.espeak_voice",
         "el",
         "--data.batch_size",

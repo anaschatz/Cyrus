@@ -74,3 +74,8 @@ SHA-256 and statically requires its complete weights-only unsafe-global set to
 be exactly `pathlib.PosixPath`. That single type is allow-listed only for the
 scoped Piper invocation, and the wrapper forces `weights_only=True` only for
 that exact verified checkpoint even though Piper requests otherwise.
+
+The bounded M3 profile sets `model.mos_metric=none`. Piper's optional UTMOS
+validator uses `torch.hub` and otherwise attempts a network download during the
+first validation batch; perceptual scoring belongs in the later offline
+qualification stage, not in training or its smoke gate.
