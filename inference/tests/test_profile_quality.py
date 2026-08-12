@@ -12,9 +12,15 @@ CORPUS = Path(__file__).parents[1] / "fixtures/local-fallback-quality-v1.json"
 
 
 class FakeClient:
-    def __init__(self, failed: set[str] | None = None, unsafe: set[str] | None = None):
+    def __init__(
+        self,
+        failed: set[str] | None = None,
+        unsafe: set[str] | None = None,
+        protocol_failed: set[str] | None = None,
+    ):
         self.failed = failed or set()
         self.unsafe = unsafe or set()
+        self.protocol_failed = protocol_failed or set()
 
     def readiness(self) -> None:
         pass
@@ -23,6 +29,8 @@ class FakeClient:
         pass
 
     def stream(self, fixture: Fixture) -> dict:
+        if fixture.case_id in self.protocol_failed:
+            raise RuntimeError("content must not enter the report")
         passed = fixture.case_id not in self.failed
         return {
             "case_id": fixture.case_id,
@@ -77,6 +85,26 @@ class ProfileQualityTests(unittest.TestCase):
         unsafe = run_quality_gate(FakeClient(unsafe={"en_knowledge_01"}), fixtures, digest, warmups=1)  # type: ignore[arg-type]
         self.assertEqual(unsafe["critical_failures"], 1)
         self.assertFalse(unsafe["thresholds"]["critical_failures_zero"])
+
+    def test_protocol_failure_is_sanitized_and_remaining_cases_continue(self) -> None:
+        fixtures, digest = load_corpus(CORPUS)
+
+        class ProtocolClient(FakeClient):
+            def stream(self, fixture: Fixture) -> dict:
+                if fixture.case_id == "en_extraction_05":
+                    from jarvis_inference.profile_preflight import PreflightFailure
+
+                    raise PreflightFailure("private backend detail")
+                return super().stream(fixture)
+
+        report = run_quality_gate(ProtocolClient(), fixtures, digest, warmups=1)  # type: ignore[arg-type]
+        self.assertEqual(report["sample_count"], 80)
+        self.assertEqual(report["protocol_failures"], 1)
+        self.assertEqual(report["status"], "deterministic_quality_failed")
+        failed = next(item for item in report["cases"] if item["case_id"] == "en_extraction_05")
+        self.assertFalse(failed["protocol_pass"])
+        self.assertIsNone(failed["ttft_seconds"])
+        self.assertNotIn("private", str(report).lower())
 
 
 if __name__ == "__main__":

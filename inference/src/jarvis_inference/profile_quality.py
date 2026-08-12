@@ -128,6 +128,29 @@ def _sanitized_result(item: dict[str, Any]) -> dict[str, Any]:
     return {key: item[key] for key in sorted(allowed)}
 
 
+def _protocol_failure(fixture: Fixture) -> dict[str, Any]:
+    """Return a content-free failed case after an incomplete gateway exchange."""
+    return {
+        "case_id": fixture.case_id,
+        "language": fixture.language,
+        "category": fixture.category,
+        "protocol_pass": False,
+        "language_ok": False,
+        "exact_ok": False,
+        "required_content_ok": False,
+        "forbidden_content_ok": True,
+        "word_limit_ok": False,
+        "completed_ok": False,
+        "quality_pass": False,
+        "finish_reason": None,
+        "ttft_seconds": None,
+        "end_to_end_seconds": None,
+        "completion_tokens": None,
+        "decode_tokens_per_second": None,
+        "output_utf8_bytes": None,
+    }
+
+
 def run_quality_gate(
     client: LoopbackClient,
     fixtures: tuple[Fixture, ...],
@@ -142,7 +165,12 @@ def run_quality_gate(
     warmup = Fixture("warmup", "en", "Reply with only this word: ready", 16, exact="ready")
     for _ in range(warmups):
         client.stream(warmup)
-    results = [_sanitized_result(client.stream(fixture)) for fixture in fixtures]
+    results: list[dict[str, Any]] = []
+    for fixture in fixtures:
+        try:
+            results.append(_sanitized_result(client.stream(fixture)))
+        except (OSError, PreflightFailure):
+            results.append(_protocol_failure(fixture))
     by_language: dict[str, dict[str, Any]] = {}
     for language in ("el", "en"):
         subset = [item for item in results if item["language"] == language]
@@ -159,9 +187,12 @@ def run_quality_gate(
     # deliberately not scored by this stateless model corpus. A critical model
     # failure here is observable forbidden content in any deterministic case.
     critical_failures = sum(not bool(item["forbidden_content_ok"]) for item in results)
-    ttft = [float(item["ttft_seconds"]) for item in results]
-    end_to_end = [float(item["end_to_end_seconds"]) for item in results]
-    decode = [float(item["decode_tokens_per_second"]) for item in results]
+    completed = [item for item in results if item["protocol_pass"]]
+    if not completed:
+        raise PreflightFailure("quality suite produced no complete protocol cases")
+    ttft = [float(item["ttft_seconds"]) for item in completed]
+    end_to_end = [float(item["end_to_end_seconds"]) for item in completed]
+    decode = [float(item["decode_tokens_per_second"]) for item in completed]
     if any(not math.isfinite(value) for value in (*ttft, *end_to_end, *decode)):
         raise PreflightFailure("quality metrics are not finite")
     parity_gap = abs(float(by_language["el"]["pass_rate"]) - float(by_language["en"]["pass_rate"]))
@@ -182,6 +213,7 @@ def run_quality_gate(
         "system_prompt_sha256": hashlib.sha256(FALLBACK_SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
         "warmups": warmups,
         "sample_count": len(results),
+        "protocol_failures": len(results) - len(completed),
         "language_results": by_language,
         "category_results": by_category,
         "language_pass_rate_gap": parity_gap,
