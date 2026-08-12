@@ -95,8 +95,14 @@ class PiperMpsTrainingTests(unittest.TestCase):
             for name in ("data", "artifacts", "work"):
                 (root / name).mkdir()
             python = root / "python"
+            entrypoint = root / "run_piper_mps_fit.py"
+            entrypoint.write_bytes(b"")
             commands = piper_mps_training_commands(
-                python, root / "data", root / "artifacts", root / "work"
+                python,
+                entrypoint,
+                root / "data",
+                root / "artifacts",
+                root / "work",
             )
         smoke = commands["smoke_argv"]
         initial = commands["initial_training_argv"]
@@ -115,13 +121,17 @@ class PiperMpsTrainingTests(unittest.TestCase):
             environment_python = root / "environment/bin/python"
             environment_python.parent.mkdir(parents=True)
             environment_python.symlink_to(base_python)
+            entrypoint = root / "run_piper_mps_fit.py"
+            entrypoint.write_bytes(b"")
             commands = piper_mps_training_commands(
                 environment_python,
+                entrypoint,
                 root / "data",
                 root / "artifacts",
                 root / "work",
             )
         self.assertEqual(commands["smoke_argv"][0], str(environment_python))
+        self.assertEqual(commands["smoke_argv"][1], str(entrypoint.resolve()))
 
 
 if __name__ == "__main__":

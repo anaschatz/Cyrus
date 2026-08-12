@@ -258,6 +258,7 @@ def piper_mps_training_readiness(
 
 def piper_mps_training_commands(
     python_executable: str | Path,
+    training_entrypoint: str | Path,
     data_directory: str | Path,
     artifact_root: str | Path,
     work_directory: str | Path,
@@ -266,19 +267,30 @@ def piper_mps_training_commands(
 
     raw_paths = tuple(
         Path(value).expanduser()
-        for value in (python_executable, data_directory, artifact_root, work_directory)
+        for value in (
+            python_executable,
+            training_entrypoint,
+            data_directory,
+            artifact_root,
+            work_directory,
+        )
     )
     if not all(path.is_absolute() for path in raw_paths):
         raise _error("tts.f1_mps.training_path_invalid", "MPS training paths must be absolute")
     python = raw_paths[0].absolute()
+    entrypoint = raw_paths[1].resolve(strict=False)
+    if not entrypoint.is_file() or entrypoint.is_symlink():
+        raise _error(
+            "tts.f1_mps.training_entrypoint_invalid",
+            "MPS training entrypoint is invalid",
+        )
     data, artifacts, work = (
-        path.resolve(strict=False) for path in raw_paths[1:]
+        path.resolve(strict=False) for path in raw_paths[2:]
     )
     checkpoint = artifacts / "checkpoint" / PIPER_CHECKPOINT_DIRECTORY / "epoch=1999-step=485528.ckpt"
     shared: list[str] = [
         str(python),
-        "-m",
-        "piper.train",
+        str(entrypoint),
         "fit",
         "--trainer.accelerator",
         "mps",

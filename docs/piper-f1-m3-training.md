@@ -65,3 +65,9 @@ builds in a temporary directory, writes a source/binary provenance manifest,
 refuses to overwrite an unmanaged or different extension, and performs an
 import probe. Repeated runs validate the manifest without rebuilding. It does
 not use the network or start training.
+
+The training command runs through `scripts/run_piper_mps_fit.py`. Before Piper
+or Lightning loads the warm-start checkpoint, the wrapper verifies its pinned
+size and SHA-256 and statically requires its complete weights-only unsafe-global
+set to be exactly `pathlib.PosixPath`. That single type is allow-listed only for
+the scoped Piper invocation; `weights_only=True` is not disabled.

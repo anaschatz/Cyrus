@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             report = piper_mps_training_commands(
                 args.python.absolute(),
+                ROOT / "scripts/run_piper_mps_fit.py",
                 args.data_dir.resolve(),
                 args.artifact_root.resolve(),
                 args.work_dir.resolve(),
