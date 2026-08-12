@@ -41,6 +41,23 @@ class ProfilePreflightTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             percentile([], 0.95)
 
+    def test_loopback_client_accepts_an_explicit_capability_contract(self) -> None:
+        from jarvis_inference.profile_preflight import LoopbackClient
+
+        expected = {
+            "text": True,
+            "stream": True,
+            "tools": True,
+            "json_object": True,
+            "json_schema": True,
+        }
+        client = LoopbackClient(
+            "http://127.0.0.1:8766/v1",
+            "x" * 32,
+            expected_capabilities=expected,
+        )
+        self.assertEqual(client.expected_capabilities, expected)
+
     def test_report_is_sanitized_and_non_authoritative(self) -> None:
         class Client:
             def readiness(self) -> None:

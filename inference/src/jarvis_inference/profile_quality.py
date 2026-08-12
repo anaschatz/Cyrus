@@ -218,7 +218,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         fixtures, digest = load_corpus(args.corpus)
         report = run_quality_gate(
-            LoopbackClient(args.base_url, _bearer_from_config(args.orchestrator_config)),
+            LoopbackClient(
+                args.base_url,
+                _bearer_from_config(args.orchestrator_config),
+                expected_capabilities={
+                    "text": True,
+                    "stream": True,
+                    "tools": True,
+                    "json_object": True,
+                    "json_schema": True,
+                },
+            ),
             fixtures,
             digest,
             warmups=args.warmups,

@@ -121,7 +121,13 @@ def percentile(values: list[float], fraction: float) -> float:
 
 
 class LoopbackClient:
-    def __init__(self, base_url: str, bearer: str):
+    def __init__(
+        self,
+        base_url: str,
+        bearer: str,
+        *,
+        expected_capabilities: dict[str, bool] | None = None,
+    ):
         parsed = urlparse(base_url)
         if (
             parsed.scheme != "http"
@@ -138,6 +144,13 @@ class LoopbackClient:
         self.host = parsed.hostname
         self.port = parsed.port
         self.bearer = bearer
+        self.expected_capabilities = expected_capabilities or {
+            "text": True,
+            "stream": True,
+            "tools": False,
+            "json_object": False,
+            "json_schema": False,
+        }
 
     def _connection(self) -> http.client.HTTPConnection:
         return http.client.HTTPConnection(self.host, self.port, timeout=180.0)
@@ -165,14 +178,12 @@ class LoopbackClient:
             connection.request("GET", "/jarvis/v1/capabilities", headers=self._headers())
             response = connection.getresponse()
             value = parse_body(response.read())
-            expected = {
-                "text": True,
-                "stream": True,
-                "tools": False,
-                "json_object": False,
-                "json_schema": False,
-            }
-            if response.status != 200 or not isinstance(value, dict) or value.get("model") != "jarvis-local" or value.get("capabilities") != expected:
+            if (
+                response.status != 200
+                or not isinstance(value, dict)
+                or value.get("model") != "jarvis-local"
+                or value.get("capabilities") != self.expected_capabilities
+            ):
                 raise PreflightFailure("gateway capabilities do not match local-fallback")
         finally:
             connection.close()
