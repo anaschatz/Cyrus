@@ -106,4 +106,6 @@ the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local
 `lightning_logs/version_N/checkpoints/last.ckpt` with bounded size and an empty
 weights-only unsafe-global set; warm-start and resume arguments are mutually
-exclusive.
+exclusive. Resume also passes `model.warmstart_ckpt=null` explicitly so
+LightningCLI cannot restore the original warm-start path from checkpoint
+hyperparameters and overwrite the resumed model weights.

@@ -103,11 +103,11 @@ def validate_piper_mps_resume_checkpoint(
     resume_indices = [
         index for index, value in enumerate(piper_argv) if value == RESUME_ARGUMENT
     ]
-    warm_indices = [
-        index for index, value in enumerate(piper_argv) if value == WARM_START_ARGUMENT
-    ]
-    if warm_indices or len(resume_indices) != 1 or resume_indices[0] + 1 >= len(
-        piper_argv
+    warm_value = _single_value(piper_argv, WARM_START_ARGUMENT)
+    if (
+        warm_value not in (None, "null")
+        or len(resume_indices) != 1
+        or resume_indices[0] + 1 >= len(piper_argv)
     ):
         raise _error(
             "tts.f1_mps.resume_argument_invalid",
@@ -194,12 +194,14 @@ def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
     torch = importlib.import_module("torch")
     warm_start = _single_value(piper_argv, WARM_START_ARGUMENT)
     resume = _single_value(piper_argv, RESUME_ARGUMENT)
-    if (warm_start is None) == (resume is None):
+    warm_start_mode = warm_start not in (None, "null")
+    resume_mode = resume is not None
+    if warm_start_mode == resume_mode:
         raise _error(
             "tts.f1_mps.training_checkpoint_mode_invalid",
             "Training requires exactly one warm-start or resume checkpoint",
         )
-    if warm_start is not None:
+    if warm_start_mode:
         checkpoint = validate_piper_mps_checkpoint(
             piper_argv,
             torch.serialization.get_unsafe_globals_in_checkpoint,
@@ -216,7 +218,7 @@ def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
             candidate = Path(os.fspath(source)).expanduser().absolute()
         except TypeError:
             candidate = None
-        if warm_start is not None and candidate == checkpoint.absolute():
+        if warm_start_mode and candidate == checkpoint.absolute():
             kwargs["weights_only"] = True
         return original_torch_load(source, *args, **kwargs)
 

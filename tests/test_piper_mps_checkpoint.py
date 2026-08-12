@@ -182,7 +182,13 @@ class PiperMpsCheckpointTests(unittest.TestCase):
             checkpoint.parent.mkdir(parents=True)
             checkpoint.write_bytes(b"resume")
             result = validate_piper_mps_resume_checkpoint(
-                ["fit", "--ckpt_path", str(checkpoint)],
+                [
+                    "fit",
+                    "--ckpt_path",
+                    str(checkpoint),
+                    "--model.warmstart_ckpt",
+                    "null",
+                ],
                 lambda _path: [],
                 minimum_size=1,
                 maximum_size=1024,
@@ -221,6 +227,47 @@ class PiperMpsCheckpointTests(unittest.TestCase):
                     minimum_size=1,
                     maximum_size=1024,
                 )
+
+    def test_runner_treats_explicit_null_warmstart_as_resume(self) -> None:
+        checkpoint = Path("/tmp/lightning_logs/version_0/checkpoints/last.ckpt")
+        fake_torch = SimpleNamespace(
+            serialization=SimpleNamespace(
+                get_unsafe_globals_in_checkpoint=lambda _path: [],
+                safe_globals=lambda _values: mock.MagicMock(),
+            ),
+            load=lambda *_args, **_kwargs: {},
+        )
+        training_module = SimpleNamespace(
+            _DEFAULT_CALLBACKS=[
+                SimpleNamespace(monitor="val_mel"),
+                SimpleNamespace(monitor="val_mos"),
+            ],
+            main=lambda: None,
+        )
+        with (
+            mock.patch(
+                "jarvis_voice.piper_mps_checkpoint.validate_piper_mps_resume_checkpoint",
+                return_value=checkpoint,
+            ) as resume_probe,
+            mock.patch(
+                "jarvis_voice.piper_mps_checkpoint.importlib.import_module",
+                side_effect=lambda name: (
+                    fake_torch if name == "torch" else training_module
+                ),
+            ),
+        ):
+            run_piper_mps_fit(
+                [
+                    "fit",
+                    "--model.mos_metric",
+                    "none",
+                    "--model.warmstart_ckpt",
+                    "null",
+                    "--ckpt_path",
+                    str(checkpoint),
+                ]
+            )
+        resume_probe.assert_called_once()
 
 
 if __name__ == "__main__":
