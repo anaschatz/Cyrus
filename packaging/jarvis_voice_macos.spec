@@ -83,6 +83,7 @@ app = BUNDLE(
         "NSHighResolutionCapable": True,
         "NSMicrophoneUsageDescription": "JARVIS Voice uses the microphone only while push-to-talk is held.",
         "NSCalendarsFullAccessUsageDescription": "JARVIS uses Calendar only for actions you explicitly approve.",
+        "NSCalendarsWriteOnlyAccessUsageDescription": "JARVIS creates Calendar events only after your explicit approval.",
         "NSRemindersFullAccessUsageDescription": "JARVIS uses Reminders only for actions you explicitly approve.",
     },
 )

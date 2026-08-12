@@ -1,0 +1,17 @@
+{
+  "contract": "jarvis.action-host-native-tests/1",
+  "baseline_commit": "replace-with-40-character-commit-sha",
+  "completed_at_utc": "2026-08-13T00:00:00.000Z",
+  "results": [
+    {"tool_id": "app.open@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"},
+    {"tool_id": "calendar.create@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"},
+    {"tool_id": "calendar.read@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"},
+    {"tool_id": "email.draft@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"},
+    {"tool_id": "file.open@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"},
+    {"tool_id": "file.search@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"},
+    {"tool_id": "note.capture@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"},
+    {"tool_id": "reminder.complete@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"},
+    {"tool_id": "reminder.create@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"},
+    {"tool_id": "reminder.list@1", "status": "PASS", "evidence_sha256": "replace-with-64-character-evidence-digest"}
+  ]
+}

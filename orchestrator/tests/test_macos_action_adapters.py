@@ -164,6 +164,43 @@ class MacOSActionAdapterTests(unittest.TestCase):
         self.assertIn("NSMetadataItemPathKey", source)
         self.assertNotIn("FileManager.default.enumerator", source)
 
+    def test_passive_readiness_never_requests_permissions(self) -> None:
+        response = {
+            "status": "VERIFIED",
+            "verification": "EXACT_READBACK",
+            "reason_code": "ok",
+            "result_payload": {
+                "contract": "jarvis.action-host-native-readiness/1",
+                "observed_at_utc": "2026-08-13T12:00:00.000Z",
+                "calendar": "FULL_ACCESS",
+                "reminders": "FULL_ACCESS",
+                "mail_automation": "AUTHORIZED",
+                "spotlight": "READY",
+                "workspace": "READY",
+                "private_notes": "READY",
+            },
+            "reference_bindings": [],
+            "os_receipt_sha256": "f" * 64,
+        }
+        completed = subprocess.CompletedProcess(
+            [str(self.helper)], 0, stdout=jcs_bytes(response), stderr=b""
+        )
+        with patch(
+            "jarvis_orchestrator.macos_action_adapters.subprocess.run",
+            return_value=completed,
+        ) as runner:
+            readiness = self.adapter.readiness()
+        self.assertEqual(readiness.calendar, "FULL_ACCESS")
+        request = __import__("json").loads(runner.call_args.kwargs["input"])
+        self.assertEqual(request["tool_id"], "host.readiness@1")
+        self.assertEqual(request["arguments"], {})
+        swift_source = (
+            Path(__file__).resolve().parents[2]
+            / "native/macos_action_host/Sources/JarvisActionNative/main.swift"
+        ).read_text(encoding="utf-8")
+        self.assertIn("AEDeterminePermissionToAutomateTarget", swift_source)
+        self.assertIn("typeWildCard, typeWildCard, false", swift_source)
+
 
 if __name__ == "__main__":
     unittest.main()

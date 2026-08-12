@@ -76,6 +76,8 @@ class OrchestratorConfig:
     scheduler_qualification_manifest_sha256: str = ""
     action_host_socket_path: Path | None = None
     action_host_token_file: Path | None = None
+    action_host_qualification_file: Path | None = None
+    action_host_qualification_sha256: str = ""
     max_model_requests_per_tool_task: int = 6
     max_tool_calls_per_tool_task: int = 4
     max_tool_continuations_per_tool_task: int = 4
@@ -97,6 +99,7 @@ class OrchestratorConfig:
             "scheduler_compiler_qualification_file",
             "action_host_socket_path",
             "action_host_token_file",
+            "action_host_qualification_file",
         ):
             if data.get(field) is not None:
                 data[field] = Path(str(data[field])).expanduser()
@@ -225,6 +228,16 @@ class OrchestratorConfig:
                 raise ValueError("action_host_socket_path must be absolute")
             if self.action_host_token_file is None or not self.action_host_token_file.is_absolute():
                 raise ValueError("action_host_token_file must be absolute")
+            if (
+                self.action_host_qualification_file is None
+                or not self.action_host_qualification_file.is_absolute()
+            ):
+                raise ValueError("tools require an absolute action host qualification file")
+            if len(self.action_host_qualification_sha256) != 64 or any(
+                character not in "0123456789abcdef"
+                for character in self.action_host_qualification_sha256
+            ):
+                raise ValueError("action_host_qualification_sha256 is invalid")
         elif any(
             (
                 self.tool_roots,
@@ -234,6 +247,8 @@ class OrchestratorConfig:
                 self.scheduler_qualification_manifest_sha256,
                 self.action_host_socket_path,
                 self.action_host_token_file,
+                self.action_host_qualification_file,
+                self.action_host_qualification_sha256,
             )
         ):
             raise ValueError("tool configuration requires tools_enabled")

@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from jarvis_orchestrator.macos_code_identity import code_identity_sha256
+
 
 def inspect_helper(path: Path) -> dict[str, object]:
     if not path.is_absolute() or path.is_symlink():
@@ -56,7 +58,7 @@ def inspect_helper(path: Path) -> dict[str, object]:
     return {
         "schema_version": "jarvis-macos-helper-artifact/1",
         "binary_sha256": hashlib.sha256(raw).hexdigest(),
-        "code_identity_sha256": hashlib.sha256(requirements.stdout).hexdigest(),
+        "code_identity_sha256": code_identity_sha256(requirements.stdout),
         "size_bytes": len(raw),
     }
 

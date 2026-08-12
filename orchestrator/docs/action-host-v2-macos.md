@@ -4,6 +4,8 @@
 There is no downgrade to the receipt-only v1 protocol. If the host, exact
 registry, output schema, Keychain key, token, helper digest, or code identity is
 unavailable, tool capability is blocked while the basic assistant remains live.
+Both the Orchestrator and Action Host examples ship with actions disabled. Merely
+installing or signing the helper does not enable any tool authority.
 
 ## Process boundary
 
@@ -43,13 +45,17 @@ against the frozen registry before delivery.
 separately with the Hardened Runtime, embeds it in the signed JARVIS application,
 and verifies the embedded copy before notarization. The inspection step rejects
 unsigned and ad-hoc signatures, requires a Developer ID Application authority
-and Team ID, and records both the binary SHA-256 and SHA-256 of:
+and Team ID, and records both the binary SHA-256 and SHA-256 of the single
+canonical `designated => ...` requirement line returned by:
 
 ```text
 /usr/bin/codesign --display --requirements - <helper>
 ```
 
-in the host configuration. Ad-hoc or unsigned helpers fail closed.
+Path-bearing `Executable=...` diagnostics are excluded, so installing the same
+signed bytes at a different absolute application path does not change their
+identity. The digest is stored in the host configuration. Ad-hoc or unsigned
+helpers fail closed.
 
 ## Permissions
 
@@ -62,7 +68,72 @@ inspect the current authorization state:
 - Reminders require full EventKit access.
 - Mail drafts require Apple Events permission for the signed helper.
 - Revocation is checked on every action and is never treated as a remembered
-  one-time readiness result.
+one-time readiness result.
+
+The native readiness probe is code-owned and is not registered as a tool. It
+uses only `EKEventStore.authorizationStatus`,
+`AEDeterminePermissionToAutomateTarget(..., askUserIfNeeded: false)`, an
+`NSMetadataQuery` availability probe, and fixed `NSWorkspace` lookups. It must
+never display a TCC prompt. Permission requests belong to a separate, explicit
+setup UI and are not part of preview, planning, startup, or qualification.
+
+After installing the signed helper, the operator may deliberately enter the
+only prompt-capable setup path:
+
+```text
+PYTHONPATH=orchestrator/src python3.11 -m jarvis_orchestrator.action_host_daemon \
+  --config /absolute/private/action-host.json --request-permissions
+```
+
+The flag is mutually exclusive with serving the host. It requests EventKit full
+Calendar and Reminders access and Mail Automation consent, then prints only the
+closed readiness states. No filenames, events, reminders, recipients, or
+message content are read or emitted. Running the daemon normally never calls
+this path.
+
+## Native qualification and activation
+
+Qualification is content-addressed and expires after at most 30 days. It binds:
+
+- the exact `jarvis.action-host/2` contract digest and frozen registry digest;
+- the signed helper binary SHA-256 and designated-requirement SHA-256;
+- the exact macOS build;
+- the current passive Calendar, Reminders, Mail Automation, Spotlight,
+  NSWorkspace and private-notes readiness states; and
+- an immutable external test manifest with one `PASS` evidence digest for every
+  registered tool.
+
+Start from `action-host-native-tests.template.json`. Native tests must run on the
+signed embedded helper with dedicated Calendar/Reminder/Mail test data. They may
+request permissions only during the explicit setup/qualification session. The
+evidence file stores hashes and stable statuses, never event, reminder, note,
+file, recipient, subject, or body content.
+
+Generate the qualification only after all tests pass:
+
+```text
+PYTHONPATH=orchestrator/src python3.11 scripts/generate_action_host_qualification.py \
+  --config /absolute/private/action-host.json \
+  --test-manifest /absolute/private/native-tests.json \
+  --test-manifest-sha256 <sha256-of-JCS-normalized-manifest> \
+  --expires-at 2026-09-01T00:00:00.000Z \
+  --output /absolute/private/action-host-qualification.json
+```
+
+The command prints the qualification digest. Activation then requires two
+explicit changes using the same artifact and digest:
+
+1. set `enabled: true`, `qualification_file`, and `qualification_sha256` in the
+   Action Host configuration;
+2. set `tools_enabled: true`, `action_host_qualification_file`, and
+   `action_host_qualification_sha256` in the Orchestrator configuration.
+
+On every host start, the helper signature, binary identity, macOS build,
+registry, artifact expiry and passive readiness are rechecked. Revocation or
+drift fails closed before the Unix socket is served. On the Orchestrator side,
+an unavailable/stale/mismatched qualification disables actions only; the basic
+assistant continues. Each adapter still checks its live permission immediately
+before its native operation.
 
 The v1 same-user threat limit remains explicit: Unix permissions, peer UID,
 Keychain secrets, nonces, and replay protection do not protect a fully

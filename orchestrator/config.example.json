@@ -54,6 +54,8 @@
   "scheduler_qualification_manifest_sha256": "",
   "action_host_socket_path": null,
   "action_host_token_file": null,
+  "action_host_qualification_file": null,
+  "action_host_qualification_sha256": "",
   "max_model_requests_per_tool_task": 6,
   "max_tool_calls_per_tool_task": 4,
   "max_tool_continuations_per_tool_task": 4

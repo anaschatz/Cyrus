@@ -44,6 +44,7 @@ from .tool_crypto import ToolPayloadCipherV1
 from .tool_executor import ActionHostV2ToolExecutor
 from .tool_store import ToolStoreV1
 from .action_host_v2_client import ActionHostV2Client
+from .action_host_qualification import current_macos_build, load_native_qualification
 from .research_adapter import LoopbackResearchAdapter
 from .cloud_provider import (
     OpenRouterCloudAdapter,
@@ -186,52 +187,55 @@ async def _serve_components(config: OrchestratorConfig) -> None:
         store.close()
 
 
+def _apply_native_action_qualification(
+    config: OrchestratorConfig,
+) -> tuple[OrchestratorConfig, ToolRegistryV1 | None]:
+    if not config.tools_enabled:
+        return config, None
+    registry = ToolRegistryV1.build(
+        root_ids=tuple((config.tool_roots or {}).keys()),
+        app_ids=config.tool_app_ids,
+    )
+    assert config.action_host_qualification_file is not None
+    try:
+        native_qualification = load_native_qualification(
+            config.action_host_qualification_file,
+            expected_sha256=config.action_host_qualification_sha256,
+            registry_sha256=registry.digest,
+            expected_os_build=current_macos_build(),
+        )
+        if native_qualification.qualified_tools != registry.names:
+            raise RuntimeError("native qualification does not cover the frozen registry")
+    except Exception:
+        # Native actions are an optional authority. A missing, stale, or
+        # mismatched qualification never takes down the basic assistant.
+        return replace(config, tools_enabled=False), None
+    return config, registry
+
+
 async def _run_components(
     config: OrchestratorConfig, store: OrchestratorStore
 ) -> None:
-    tool_registry = (
-        ToolRegistryV1.build(
-            root_ids=tuple((config.tool_roots or {}).keys()),
-            app_ids=config.tool_app_ids,
-        )
-        if config.tools_enabled
-        else None
-    )
+    config, tool_registry = _apply_native_action_qualification(config)
     inference_control = InferenceControlClient(
         config.inference_base_url,
         config.inference_bearer_token,
         timeout_seconds=min(2.0, config.model_timeout_seconds),
     )
-    try:
-        capabilities = await asyncio.to_thread(inference_control.capabilities)
-    except Exception:
-        class _InferenceUnavailableModel:
-            async def stream(self, _request: Any) -> Any:
-                raise RuntimeError("local inference unavailable")
-                yield  # pragma: no cover - makes this an async iterator
-
-        degraded_config = replace(
-            config,
-            cloud_enabled=False,
-            cloud_terra_enabled=False,
-            research_enabled=False,
-            memory_shadow_enabled=False,
-            tools_enabled=False,
-        )
-        await _run_servers(
-            degraded_config,
-            store,
-            model=_InferenceUnavailableModel(),
-            inference_control=inference_control,
-            shadow_memory=None,
-            active_memory=AnamnesisMemoryAdapter(store) if config.memory_enabled else None,
-            research_adapter=None,
-            cloud_adapter=None,
-            cloud_endpoints=(),
-            structured_inference_ready=False,
-            tool_registry=None,
-        )
-        return
+    capabilities = None
+    for delay in (0.0, 0.25, 0.5):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            capabilities = await asyncio.to_thread(inference_control.capabilities)
+            break
+        except Exception:
+            continue
+    if capabilities is None:
+        # Local inference is the basic assistant, not an optional capability.
+        # Failing startup lets the controlled service manager retry instead of
+        # advertising readiness with a permanently unavailable model object.
+        raise RuntimeError("local inference capability discovery failed")
     if config.research_enabled and not (capabilities.json_schema or capabilities.tools):
         raise RuntimeError("research requires qualified structured local inference")
     if config.cloud_enabled and not (capabilities.json_schema or capabilities.tools):

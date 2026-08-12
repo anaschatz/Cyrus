@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import CryptoKit
 import EventKit
 import Foundation
@@ -104,6 +105,83 @@ func reminderAuthorization() throws {
     let status = EKEventStore.authorizationStatus(for: .reminder)
     if #available(macOS 14.0, *), status == .fullAccess { return }
     throw NativeError.safe("reminder.full_access_required")
+}
+
+func eventAuthorizationName() -> String {
+    let status = EKEventStore.authorizationStatus(for: .event)
+    if #available(macOS 14.0, *) {
+        if status == .fullAccess { return "FULL_ACCESS" }
+        if status == .writeOnly { return "WRITE_ONLY" }
+    }
+    switch status {
+    case .denied: return "DENIED"
+    case .restricted: return "RESTRICTED"
+    default: return "NOT_DETERMINED"
+    }
+}
+
+func reminderAuthorizationName() -> String {
+    let status = EKEventStore.authorizationStatus(for: .reminder)
+    if #available(macOS 14.0, *), status == .fullAccess { return "FULL_ACCESS" }
+    switch status {
+    case .denied: return "DENIED"
+    case .restricted: return "RESTRICTED"
+    default: return "NOT_DETERMINED"
+    }
+}
+
+func mailAutomationAuthorizationName() -> String {
+    guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.mail") != nil else {
+        return "UNAVAILABLE"
+    }
+    let descriptor = NSAppleEventDescriptor(bundleIdentifier: "com.apple.mail")
+    guard let target = descriptor.aeDesc else { return "UNAVAILABLE" }
+    let result = AEDeterminePermissionToAutomateTarget(target, typeWildCard, typeWildCard, false)
+    if result == noErr { return "AUTHORIZED" }
+    if result == errAEEventWouldRequireUserConsent { return "NOT_DETERMINED" }
+    if result == errAEEventNotPermitted { return "DENIED" }
+    return "UNAVAILABLE"
+}
+
+func nativeReadiness(context: [String: Any]) -> [String: Any] {
+    let workspaceReady = qualifiedApps.values.allSatisfy {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundle) != nil
+    }
+    let metadata = NSMetadataQuery()
+    metadata.searchScopes = [NSMetadataQueryUserHomeScope]
+    metadata.predicate = NSPredicate(format: "%K == %@", NSMetadataItemFSNameKey, "__jarvis_readiness_probe__")
+    let spotlightReady = metadata.start()
+    if spotlightReady { metadata.stop() }
+    var notesReady = false
+    if let notesPath = context["notes_path"] as? String {
+        let parent = URL(fileURLWithPath: notesPath).deletingLastPathComponent().path
+        notesReady = FileManager.default.isWritableFile(atPath: parent)
+    }
+    return [
+        "contract": "jarvis.action-host-native-readiness/1",
+        "observed_at_utc": utcText(),
+        "calendar": eventAuthorizationName(),
+        "reminders": reminderAuthorizationName(),
+        "mail_automation": mailAutomationAuthorizationName(),
+        "spotlight": spotlightReady ? "READY" : "UNAVAILABLE",
+        "workspace": workspaceReady ? "READY" : "UNAVAILABLE",
+        "private_notes": notesReady ? "READY" : "UNAVAILABLE",
+    ]
+}
+
+func requestNativePermissions(context: [String: Any]) -> [String: Any] {
+    if #available(macOS 14.0, *) {
+        let eventSemaphore = DispatchSemaphore(value: 0)
+        EKEventStore().requestFullAccessToEvents { _, _ in eventSemaphore.signal() }
+        _ = eventSemaphore.wait(timeout: .now() + 120)
+        let reminderSemaphore = DispatchSemaphore(value: 0)
+        EKEventStore().requestFullAccessToReminders { _, _ in reminderSemaphore.signal() }
+        _ = reminderSemaphore.wait(timeout: .now() + 120)
+    }
+    if let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.mail").aeDesc {
+        _ = AEDeterminePermissionToAutomateTarget(target, typeWildCard, typeWildCard, true)
+    }
+    return nativeReadiness(context: context)
 }
 
 func calendarRead(arguments: [String: Any]) throws -> ([String: Any], [[String: Any]]) {
@@ -609,6 +687,10 @@ func run() throws -> [String: Any] {
     var verification = "EXACT_READBACK"
     var reason = "ok"
     switch toolID {
+    case "host.readiness@1":
+        result = nativeReadiness(context: context)
+    case "host.permission-setup@1":
+        result = requestNativePermissions(context: context)
     case "app.open@1":
         result = try appOpen(arguments: arguments)
         status = "ACCEPTED"; verification = "UNAVAILABLE"; reason = "tool.verification_unavailable"

@@ -21,9 +21,11 @@ from typing import Any
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .action_host_protocol import strict_json
+from .action_host_qualification import NativeReadinessV1
 from .action_host_v2_protocol import ResultVerificationV2
 from .action_host_v2_server import AdapterResultV2, HostAuthKeyProvider
 from .jcs import jcs_bytes, jcs_text
+from .macos_code_identity import code_identity_sha256
 from .tool_contracts import ToolContractError, ToolRegistryV1, ToolStatus
 
 
@@ -88,8 +90,7 @@ class MacOSActionAdapterConfig:
             if (
                 verified.returncode != 0
                 or identity.returncode != 0
-                or hashlib.sha256(identity.stdout).hexdigest()
-                != self.helper_code_identity_sha256
+                or code_identity_sha256(identity.stdout) != self.helper_code_identity_sha256
             ):
                 raise MacOSAdapterError("host.adapter_rejected")
         if not self.roots or any(
@@ -323,6 +324,9 @@ class MacOSNativeAdapterV1:
     def _native_context(self, tool_id: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
         context: dict[str, Any] = {
             "app_ids": list(self.config.app_ids),
+            # Private notes are encrypted in the qualified reference-store DB;
+            # readiness therefore probes the actual durable storage path.
+            "notes_path": os.fspath(self.config.state_path),
             "roots": dict(self.config.roots),
         }
         reference_field = REFERENCE_ARGUMENTS.get(tool_id)
@@ -384,6 +388,40 @@ class MacOSNativeAdapterV1:
         if set(response) != expected:
             raise MacOSAdapterError("host.result_conflict")
         return response
+
+    def readiness(self) -> NativeReadinessV1:
+        """Inspect current native permissions without requesting or mutating them."""
+
+        deadline = _utc_text(datetime.now(UTC) + timedelta(seconds=10))
+        response = self._run_helper("host.readiness@1", {}, deadline)
+        if (
+            response["status"] != ToolStatus.VERIFIED.value
+            or response["verification"] != ResultVerificationV2.EXACT_READBACK.value
+            or response["reason_code"] != "ok"
+            or response["reference_bindings"] != []
+        ):
+            raise MacOSAdapterError("host.adapter_rejected")
+        try:
+            return NativeReadinessV1.from_mapping(response["result_payload"])
+        except Exception as exc:
+            raise MacOSAdapterError("host.adapter_rejected") from exc
+
+    def request_permissions(self) -> NativeReadinessV1:
+        """Explicit setup-only TCC request; never called by startup or execution."""
+
+        deadline = _utc_text(datetime.now(UTC) + timedelta(minutes=5))
+        response = self._run_helper("host.permission-setup@1", {}, deadline)
+        if (
+            response["status"] != ToolStatus.VERIFIED.value
+            or response["verification"] != ResultVerificationV2.EXACT_READBACK.value
+            or response["reason_code"] != "ok"
+            or response["reference_bindings"] != []
+        ):
+            raise MacOSAdapterError("host.adapter_rejected")
+        try:
+            return NativeReadinessV1.from_mapping(response["result_payload"])
+        except Exception as exc:
+            raise MacOSAdapterError("host.adapter_rejected") from exc
 
     def execute(
         self,
