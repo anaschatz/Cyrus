@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import os
 import runpy
 import sys
 from pathlib import Path, PosixPath
@@ -16,6 +17,7 @@ from .macos.compact_greek_tts_pilot import PIPER_CHECKPOINT_ARTIFACTS
 UnsafeGlobalsProbe = Callable[[str], Sequence[str]]
 EXPECTED_UNSAFE_GLOBALS = frozenset({"pathlib.PosixPath"})
 WARM_START_SPEC = PIPER_CHECKPOINT_ARTIFACTS[-1]
+WARM_START_ARGUMENT = "--model.warmstart_ckpt"
 
 
 def _error(code: str, message: str) -> BackendError:
@@ -40,7 +42,7 @@ def validate_piper_mps_checkpoint(
     """Validate the exact checkpoint and its complete weights-only global set."""
 
     indices = [
-        index for index, value in enumerate(piper_argv) if value == "--ckpt_path"
+        index for index, value in enumerate(piper_argv) if value == WARM_START_ARGUMENT
     ]
     if len(indices) != 1 or indices[0] + 1 >= len(piper_argv):
         raise _error(
@@ -86,17 +88,30 @@ def validate_piper_mps_checkpoint(
 
 
 def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
-    """Run Piper with a scoped PosixPath allow-list and weights-only loading."""
+    """Run Piper with a scoped, pinned-checkpoint weights-only override."""
 
     torch = importlib.import_module("torch")
-    validate_piper_mps_checkpoint(
+    checkpoint = validate_piper_mps_checkpoint(
         piper_argv,
         torch.serialization.get_unsafe_globals_in_checkpoint,
     )
+    original_torch_load = torch.load
+
+    def pinned_weights_only_load(source: object, *args: object, **kwargs: object) -> object:
+        try:
+            candidate = Path(os.fspath(source)).expanduser().absolute()
+        except TypeError:
+            candidate = None
+        if candidate == checkpoint.absolute():
+            kwargs["weights_only"] = True
+        return original_torch_load(source, *args, **kwargs)
+
     previous_argv = sys.argv
     sys.argv = ["piper.train", *piper_argv]
+    torch.load = pinned_weights_only_load
     try:
         with torch.serialization.safe_globals([PosixPath]):
             runpy.run_module("piper.train", run_name="__main__", alter_sys=True)
     finally:
+        torch.load = original_torch_load
         sys.argv = previous_argv

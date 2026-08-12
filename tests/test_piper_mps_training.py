@@ -108,6 +108,8 @@ class PiperMpsTrainingTests(unittest.TestCase):
         initial = commands["initial_training_argv"]
         self.assertEqual(smoke[smoke.index("--trainer.accelerator") + 1], "mps")
         self.assertEqual(smoke[smoke.index("--data.batch_size") + 1], "1")
+        self.assertIn("--model.warmstart_ckpt", smoke)
+        self.assertNotIn("--ckpt_path", smoke)
         self.assertIn("--trainer.fast_dev_run", smoke)
         self.assertNotIn("--trainer.fast_dev_run", initial)
 

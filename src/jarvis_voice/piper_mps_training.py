@@ -316,7 +316,7 @@ def piper_mps_training_commands(
         "2",
         "--data.num_workers",
         "0",
-        "--ckpt_path",
+        "--model.warmstart_ckpt",
         str(checkpoint),
     ]
     smoke = [

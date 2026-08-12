@@ -66,8 +66,11 @@ refuses to overwrite an unmanaged or different extension, and performs an
 import probe. Repeated runs validate the manifest without rebuilding. It does
 not use the network or start training.
 
-The training command runs through `scripts/run_piper_mps_fit.py`. Before Piper
-or Lightning loads the warm-start checkpoint, the wrapper verifies its pinned
-size and SHA-256 and statically requires its complete weights-only unsafe-global
-set to be exactly `pathlib.PosixPath`. That single type is allow-listed only for
-the scoped Piper invocation; `weights_only=True` is not disabled.
+The training command runs through `scripts/run_piper_mps_fit.py` and uses Piper
+1.6's full non-strict `model.warmstart_ckpt` path, starting a fresh optimizer
+instead of trying to resume the legacy Lightning configuration. Before Piper
+loads the warm-start checkpoint, the wrapper verifies its pinned size and
+SHA-256 and statically requires its complete weights-only unsafe-global set to
+be exactly `pathlib.PosixPath`. That single type is allow-listed only for the
+scoped Piper invocation, and the wrapper forces `weights_only=True` only for
+that exact verified checkpoint even though Piper requests otherwise.
