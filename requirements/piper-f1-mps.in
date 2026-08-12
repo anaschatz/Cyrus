@@ -1,0 +1,15 @@
+# Resolve only for CPython 3.11 / macOS arm64. Piper itself is installed from
+# the already pinned local 1.6.0 wheel; its training extras are mirrored here.
+# Do not relax torch/lightning without repeating the native MPS smoke.
+
+torch==2.12.1
+lightning==2.6.1
+onnxruntime>=1,<2
+pathvalidate>=3,<4
+tensorboard>=2,<3
+tensorboardX>=2,<3
+jsonargparse[signatures]>=4.27.7
+onnx>=1,<2
+pysilero-vad>=2.1,<3
+cython>=3,<4
+librosa<1

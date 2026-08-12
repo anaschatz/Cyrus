@@ -43,3 +43,10 @@ Only after that gate passes and at least 20 GiB is free may the bounded initial
 The production voice remains the macOS system backend until ONNX size, runtime
 RSS, first-audio, cancellation, pronunciation and explicit listening approval
 all pass.
+
+The environment lock is resolved only for CPython 3.11/macOS arm64 from
+`requirements/piper-f1-mps.in`, with binary wheels and SHA-256 hashes. Piper
+itself is installed from the already pinned local `piper-tts==1.6.0` wheel. The
+monotonic-alignment extension is compiled with the installed Cython/NumPy and
+Clang from the exact pinned source checkout; the incomplete training copy in the
+runtime wheel is never treated as sufficient.
