@@ -79,3 +79,24 @@ The bounded M3 profile sets `model.mos_metric=none`. Piper's optional UTMOS
 validator uses `torch.hub` and otherwise attempts a network download during the
 first validation batch; perceptual scoring belongs in the later offline
 qualification stage, not in training or its smoke gate.
+
+## Native M3 evidence — 2026-08-12
+
+The isolated environment was materialized on the target 16 GiB Apple M3 with
+CPython 3.11.14, `torch==2.12.1`, `lightning==2.6.1` and `piper-tts==1.6.0`.
+The Metal tensor probe reported `mps:0`, and the final offline
+`trainer.fast_dev_run=true` completed successfully:
+
+- 1,301 F1 utterances were accepted from the local cache;
+- all 784 matching parameters were copied from the hash-pinned Greek checkpoint
+  and none were skipped;
+- the 70.4M-parameter model used the MPS accelerator with batch size 1;
+- one training batch completed in about 2.4 seconds and one validation batch in
+  about 0.35 seconds; and
+- Lightning stopped at exactly `max_steps=1`, without invoking UTMOS or another
+  network-backed metric.
+
+The bounded 25-epoch run has not started. The post-smoke readiness report had
+13,636,022,272 free bytes, below the fail-closed 21,474,836,480-byte full-run
+threshold. The generated training cache is retained because it is required by
+the full run.
