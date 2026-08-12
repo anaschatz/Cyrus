@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import os
-import runpy
+import re
 import sys
 from pathlib import Path, PosixPath
 from typing import Callable, Sequence
@@ -18,6 +18,10 @@ UnsafeGlobalsProbe = Callable[[str], Sequence[str]]
 EXPECTED_UNSAFE_GLOBALS = frozenset({"pathlib.PosixPath"})
 WARM_START_SPEC = PIPER_CHECKPOINT_ARTIFACTS[-1]
 WARM_START_ARGUMENT = "--model.warmstart_ckpt"
+RESUME_ARGUMENT = "--ckpt_path"
+MINIMUM_RESUME_CHECKPOINT_BYTES = 100 * 1024 * 1024
+MAXIMUM_RESUME_CHECKPOINT_BYTES = 2 * 1024 * 1024 * 1024
+_LIGHTNING_VERSION = re.compile(r"^version_\d+$")
 
 
 def _error(code: str, message: str) -> BackendError:
@@ -87,14 +91,124 @@ def validate_piper_mps_checkpoint(
     return checkpoint
 
 
+def validate_piper_mps_resume_checkpoint(
+    piper_argv: Sequence[str],
+    unsafe_globals_probe: UnsafeGlobalsProbe,
+    *,
+    minimum_size: int = MINIMUM_RESUME_CHECKPOINT_BYTES,
+    maximum_size: int = MAXIMUM_RESUME_CHECKPOINT_BYTES,
+) -> Path:
+    """Validate a local Lightning `last.ckpt` before weights-only resume."""
+
+    resume_indices = [
+        index for index, value in enumerate(piper_argv) if value == RESUME_ARGUMENT
+    ]
+    warm_indices = [
+        index for index, value in enumerate(piper_argv) if value == WARM_START_ARGUMENT
+    ]
+    if warm_indices or len(resume_indices) != 1 or resume_indices[0] + 1 >= len(
+        piper_argv
+    ):
+        raise _error(
+            "tts.f1_mps.resume_argument_invalid",
+            "Resume requires exactly one checkpoint and no warm-start",
+        )
+    checkpoint = Path(piper_argv[resume_indices[0] + 1]).expanduser()
+    checkpoint_parts_ready = (
+        checkpoint.name == "last.ckpt"
+        and checkpoint.parent.name == "checkpoints"
+        and _LIGHTNING_VERSION.fullmatch(checkpoint.parent.parent.name) is not None
+        and checkpoint.parent.parent.parent.name == "lightning_logs"
+    )
+    if (
+        not checkpoint.is_absolute()
+        or not checkpoint.is_file()
+        or checkpoint.is_symlink()
+        or not checkpoint_parts_ready
+    ):
+        raise _error(
+            "tts.f1_mps.resume_checkpoint_invalid",
+            "Piper resume checkpoint is invalid",
+        )
+    try:
+        size = checkpoint.stat().st_size
+    except OSError as exc:
+        raise _error(
+            "tts.f1_mps.resume_checkpoint_unreadable",
+            "Piper resume checkpoint could not be read",
+        ) from exc
+    if size < minimum_size or size > maximum_size:
+        raise _error(
+            "tts.f1_mps.resume_checkpoint_size_invalid",
+            "Piper resume checkpoint size is outside the bounded profile",
+        )
+    try:
+        observed = frozenset(unsafe_globals_probe(str(checkpoint)))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise _error(
+            "tts.f1_mps.resume_checkpoint_scan_failed",
+            "Piper resume safe-global scan failed",
+        ) from exc
+    if observed:
+        raise _error(
+            "tts.f1_mps.resume_checkpoint_globals_invalid",
+            "Piper resume checkpoint contains unsafe globals",
+        )
+    return checkpoint
+
+
+def _single_value(piper_argv: Sequence[str], argument: str) -> str | None:
+    indices = [index for index, value in enumerate(piper_argv) if value == argument]
+    if not indices:
+        return None
+    if len(indices) != 1 or indices[0] + 1 >= len(piper_argv):
+        raise _error(
+            "tts.f1_mps.training_argument_invalid",
+            "Piper training argument is missing or duplicated",
+        )
+    return piper_argv[indices[0] + 1]
+
+
+def _prepare_piper_main(piper_argv: Sequence[str]) -> tuple[object, tuple[object, ...]]:
+    training_module = importlib.import_module("piper.train.__main__")
+    callbacks = tuple(getattr(training_module, "_DEFAULT_CALLBACKS", ()))
+    if _single_value(piper_argv, "--model.mos_metric") != "none":
+        return training_module, callbacks
+    monitors = tuple(getattr(callback, "monitor", None) for callback in callbacks)
+    if monitors.count("val_mos") != 1 or monitors.count("val_mel") != 1:
+        raise _error(
+            "tts.f1_mps.checkpoint_callbacks_invalid",
+            "Pinned Piper checkpoint callback profile changed",
+        )
+    training_module._DEFAULT_CALLBACKS = [
+        callback
+        for callback in callbacks
+        if getattr(callback, "monitor", None) != "val_mos"
+    ]
+    return training_module, callbacks
+
+
 def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
     """Run Piper with a scoped, pinned-checkpoint weights-only override."""
 
     torch = importlib.import_module("torch")
-    checkpoint = validate_piper_mps_checkpoint(
-        piper_argv,
-        torch.serialization.get_unsafe_globals_in_checkpoint,
-    )
+    warm_start = _single_value(piper_argv, WARM_START_ARGUMENT)
+    resume = _single_value(piper_argv, RESUME_ARGUMENT)
+    if (warm_start is None) == (resume is None):
+        raise _error(
+            "tts.f1_mps.training_checkpoint_mode_invalid",
+            "Training requires exactly one warm-start or resume checkpoint",
+        )
+    if warm_start is not None:
+        checkpoint = validate_piper_mps_checkpoint(
+            piper_argv,
+            torch.serialization.get_unsafe_globals_in_checkpoint,
+        )
+    else:
+        checkpoint = validate_piper_mps_resume_checkpoint(
+            piper_argv,
+            torch.serialization.get_unsafe_globals_in_checkpoint,
+        )
     original_torch_load = torch.load
 
     def pinned_weights_only_load(source: object, *args: object, **kwargs: object) -> object:
@@ -102,16 +216,18 @@ def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
             candidate = Path(os.fspath(source)).expanduser().absolute()
         except TypeError:
             candidate = None
-        if candidate == checkpoint.absolute():
+        if warm_start is not None and candidate == checkpoint.absolute():
             kwargs["weights_only"] = True
         return original_torch_load(source, *args, **kwargs)
 
+    training_module, original_callbacks = _prepare_piper_main(piper_argv)
     previous_argv = sys.argv
     sys.argv = ["piper.train", *piper_argv]
     torch.load = pinned_weights_only_load
     try:
         with torch.serialization.safe_globals([PosixPath]):
-            runpy.run_module("piper.train", run_name="__main__", alter_sys=True)
+            training_module.main()
     finally:
+        training_module._DEFAULT_CALLBACKS = list(original_callbacks)
         torch.load = original_torch_load
         sys.argv = previous_argv

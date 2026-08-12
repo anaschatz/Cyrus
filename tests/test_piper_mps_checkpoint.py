@@ -14,6 +14,7 @@ from jarvis_voice.errors import BackendError
 from jarvis_voice.piper_mps_checkpoint import (
     run_piper_mps_fit,
     validate_piper_mps_checkpoint,
+    validate_piper_mps_resume_checkpoint,
 )
 
 
@@ -106,13 +107,37 @@ class PiperMpsCheckpointTests(unittest.TestCase):
         fake_torch = SimpleNamespace(serialization=serialization, load=torch_load)
         original_argv = list(__import__("sys").argv)
         checkpoint = Path("/private/tmp/pinned.ckpt")
+        callbacks = [
+            SimpleNamespace(monitor="val_mel"),
+            SimpleNamespace(monitor="val_mos"),
+        ]
+        training_module = SimpleNamespace(
+            _DEFAULT_CALLBACKS=callbacks,
+            main=lambda: None,
+        )
 
-        def run_module(*_args: object, **_kwargs: object) -> None:
+        def run_training() -> None:
             state["called"] = True
             self.assertTrue(state["inside"])
-            self.assertEqual(__import__("sys").argv, ["piper.train", "fit"])
+            self.assertEqual(
+                __import__("sys").argv,
+                [
+                    "piper.train",
+                    "fit",
+                    "--model.mos_metric",
+                    "none",
+                    "--model.warmstart_ckpt",
+                    str(checkpoint),
+                ],
+            )
+            self.assertEqual(
+                [callback.monitor for callback in training_module._DEFAULT_CALLBACKS],
+                ["val_mel"],
+            )
             fake_torch.load(str(checkpoint), weights_only=False)
             fake_torch.load("/private/tmp/other.ckpt", weights_only=False)
+
+        training_module.main = run_training
 
         with (
             mock.patch(
@@ -120,19 +145,26 @@ class PiperMpsCheckpointTests(unittest.TestCase):
                 return_value=checkpoint,
             ),
             mock.patch(
-                "jarvis_voice.piper_mps_checkpoint.runpy.run_module",
-                side_effect=run_module,
-            ),
-            mock.patch(
                 "jarvis_voice.piper_mps_checkpoint.importlib.import_module",
-                return_value=fake_torch,
+                side_effect=lambda name: (
+                    fake_torch if name == "torch" else training_module
+                ),
             ),
         ):
-            run_piper_mps_fit(["fit"])
+            run_piper_mps_fit(
+                [
+                    "fit",
+                    "--model.mos_metric",
+                    "none",
+                    "--model.warmstart_ckpt",
+                    str(checkpoint),
+                ]
+            )
         self.assertTrue(state["called"])
         self.assertFalse(state["inside"])
         self.assertEqual(__import__("sys").argv, original_argv)
         self.assertIs(fake_torch.load, torch_load)
+        self.assertEqual(training_module._DEFAULT_CALLBACKS, callbacks)
         self.assertEqual(
             load_calls,
             [
@@ -140,6 +172,55 @@ class PiperMpsCheckpointTests(unittest.TestCase):
                 ("/private/tmp/other.ckpt", {"weights_only": False}),
             ],
         )
+
+    def test_accepts_local_last_checkpoint_with_no_unsafe_globals(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = (
+                Path(temporary)
+                / "lightning_logs/version_0/checkpoints/last.ckpt"
+            )
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.write_bytes(b"resume")
+            result = validate_piper_mps_resume_checkpoint(
+                ["fit", "--ckpt_path", str(checkpoint)],
+                lambda _path: [],
+                minimum_size=1,
+                maximum_size=1024,
+            )
+        self.assertEqual(result, checkpoint)
+
+    def test_resume_rejects_warmstart_or_unsafe_globals(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = (
+                Path(temporary)
+                / "lightning_logs/version_1/checkpoints/last.ckpt"
+            )
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.write_bytes(b"resume")
+            with self.assertRaisesRegex(
+                BackendError, "tts.f1_mps.resume_argument_invalid"
+            ):
+                validate_piper_mps_resume_checkpoint(
+                    [
+                        "fit",
+                        "--ckpt_path",
+                        str(checkpoint),
+                        "--model.warmstart_ckpt",
+                        "/tmp/warm.ckpt",
+                    ],
+                    lambda _path: [],
+                    minimum_size=1,
+                    maximum_size=1024,
+                )
+            with self.assertRaisesRegex(
+                BackendError, "tts.f1_mps.resume_checkpoint_globals_invalid"
+            ):
+                validate_piper_mps_resume_checkpoint(
+                    ["fit", "--ckpt_path", str(checkpoint)],
+                    lambda _path: ["unexpected.Global"],
+                    minimum_size=1,
+                    maximum_size=1024,
+                )
 
 
 if __name__ == "__main__":

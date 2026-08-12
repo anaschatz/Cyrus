@@ -100,3 +100,10 @@ The bounded 25-epoch run has not started. The post-smoke readiness report had
 13,636,022,272 free bytes, below the fail-closed 21,474,836,480-byte full-run
 threshold. The generated training cache is retained because it is required by
 the full run.
+
+When `model.mos_metric=none`, the safe training wrapper also removes exactly
+the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
+and `last.ckpt` callback. A resume is accepted only from a regular, local
+`lightning_logs/version_N/checkpoints/last.ckpt` with bounded size and an empty
+weights-only unsafe-global set; warm-start and resume arguments are mutually
+exclusive.
