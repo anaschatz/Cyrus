@@ -50,3 +50,16 @@ itself is installed from the already pinned local `piper-tts==1.6.0` wheel. The
 monotonic-alignment extension is compiled with the installed Cython/NumPy and
 Clang from the exact pinned source checkout; the incomplete training copy in the
 runtime wheel is never treated as sufficient.
+
+After syncing the hashed lock into a dedicated virtual environment, install the
+pinned local Piper wheel without dependencies and run:
+
+```text
+python scripts/materialize_piper_mps_extension.py \
+  --python /absolute/path/to/.venv-mps/bin/python \
+  --source-root /absolute/path/to/piper-source
+```
+
+The command rejects every source revision except the release-pinned commit,
+builds in a temporary directory, refuses to overwrite a different extension,
+and performs an import probe. It does not use the network or start training.
