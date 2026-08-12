@@ -150,6 +150,25 @@ listening gate must disable or sharply bound duration noise and test calibrated
 does not restore promotion eligibility while timbre and pacing remain under
 human review.
 
+An offline articulation-repeatability diagnostic then separated pronunciation
+realization from pacing. Three epoch-18 renders with both acoustic and duration
+noise set to zero were byte-identical. The existing pinned local
+`faster-whisper-base` transcribed the same stable corruptions in all three,
+including splits or losses around `επεξεργάζεται`, `ελληνική` and `σταθερή`.
+With duration noise still disabled but acoustic noise restored to 0.667, three
+renders produced different and substantially broader word corruptions. Whisper
+round trips are diagnostic evidence rather than a perceptual acceptance metric,
+but this controlled result supports two concurrent failures: learned acoustic
+articulation errors in the checkpoint and stochastic amplification during
+sampling. Neither pacing calibration nor inference-noise tuning makes epoch 18
+eligible for promotion.
+
+The next bounded experiment is a resume from the validated local `last.ckpt` to
+epoch 30 only. Epoch 30 must be exported and pass the same deterministic and
+stochastic articulation set plus human listening before any later epoch budget
+is authorized. Training must not run blindly to epoch 50 and the active JARVIS
+TTS backend remains unchanged.
+
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local
