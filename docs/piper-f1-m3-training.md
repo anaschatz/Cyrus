@@ -61,5 +61,7 @@ python scripts/materialize_piper_mps_extension.py \
 ```
 
 The command rejects every source revision except the release-pinned commit,
-builds in a temporary directory, refuses to overwrite a different extension,
-and performs an import probe. It does not use the network or start training.
+builds in a temporary directory, writes a source/binary provenance manifest,
+refuses to overwrite an unmanaged or different extension, and performs an
+import probe. Repeated runs validate the manifest without rebuilding. It does
+not use the network or start training.

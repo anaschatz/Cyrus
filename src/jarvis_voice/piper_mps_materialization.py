@@ -70,6 +70,16 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _load_provenance(path: Path) -> dict[str, object] | None:
+    if not path.is_file() or path.is_symlink():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def materialize_piper_mps_extension(
     python_executable: str | Path,
     source_root: str | Path,
@@ -105,7 +115,8 @@ def materialize_piper_mps_extension(
             "import importlib.metadata as m,json,sysconfig;"
             "print(json.dumps({'piper':m.version('piper-tts'),"
             "'cython':m.version('cython'),'numpy':m.version('numpy'),"
-            "'platlib':sysconfig.get_path('platlib')}))",
+            "'platlib':sysconfig.get_path('platlib'),"
+            "'ext_suffix':sysconfig.get_config_var('EXT_SUFFIX')}))",
         ),
         runner=runner,
     )
@@ -145,6 +156,65 @@ def materialize_piper_mps_extension(
             "Installed Piper training package is incomplete",
         )
 
+    extension_suffix = environment.get("ext_suffix")
+    if (
+        not isinstance(extension_suffix, str)
+        or not extension_suffix.startswith(".")
+        or "/" in extension_suffix
+    ):
+        raise _error(
+            "tts.f1_mps.extension_suffix_invalid",
+            "Training Python extension suffix is invalid",
+        )
+    source_hash = _sha256(core)
+    target = target_directory / f"core{extension_suffix}"
+    provenance_path = target_directory / "jarvis-provenance.json"
+    if target.exists() or provenance_path.exists():
+        provenance = _load_provenance(provenance_path)
+        target_hash = (
+            _sha256(target)
+            if target.is_file() and not target.is_symlink()
+            else None
+        )
+        expected = {
+            "schema": 1,
+            "source_revision": PIPER_REVISION,
+            "source_core_sha256": source_hash,
+            "extension": target.name,
+            "extension_sha256": target_hash,
+            "piper_version": PIPER_VERSION,
+            "cython_version": environment.get("cython"),
+            "numpy_version": environment.get("numpy"),
+        }
+        if target_hash is None or provenance != expected:
+            raise _error(
+                "tts.f1_mps.extension_target_exists",
+                "Piper native extension provenance is missing or different",
+            )
+        _run(
+            (
+                str(python),
+                "-c",
+                "from piper.train.vits.monotonic_align import maximum_path;"
+                "assert callable(maximum_path)",
+            ),
+            runner=runner,
+        )
+        return {
+            "ready": True,
+            "code": "tts.f1_mps.extension_already_ready",
+            "source_revision": PIPER_REVISION,
+            "source_core_sha256": source_hash,
+            "piper_version": PIPER_VERSION,
+            "cython_version": environment.get("cython"),
+            "numpy_version": environment.get("numpy"),
+            "extension": target.name,
+            "extension_sha256": target_hash,
+            "duplicate": True,
+            "network_used": False,
+            "training_started": False,
+        }
+
     with tempfile.TemporaryDirectory(prefix="jarvis-piper-mps-") as temporary:
         build_directory = Path(temporary)
         build_core = build_directory / "core.pyx"
@@ -169,48 +239,69 @@ def materialize_piper_mps_extension(
             )
         extension = extensions[0]
         target_directory.mkdir(parents=True, exist_ok=True)
-        target = target_directory / extension.name
+        if extension.name != target.name:
+            raise _error(
+                "tts.f1_mps.extension_abi_mismatch",
+                "Piper native-extension ABI does not match training Python",
+            )
         extension_hash = _sha256(extension)
-        if target.exists():
-            if target.is_file() and not target.is_symlink() and _sha256(target) == extension_hash:
-                duplicate = True
-            else:
-                raise _error(
-                    "tts.f1_mps.extension_target_exists",
-                    "A different Piper native extension already exists",
-                )
-        else:
-            temporary_target = target_directory / f".{target.name}.{os.getpid()}.tmp"
-            try:
-                shutil.copy2(extension, temporary_target)
-                os.link(temporary_target, target)
-            finally:
-                temporary_target.unlink(missing_ok=True)
-            duplicate = False
-
-    _run(
-        (
-            str(python),
-            "-c",
-            "from piper.train.vits.monotonic_align import maximum_path;"
-            "assert callable(maximum_path)",
-        ),
-        runner=runner,
-    )
+        provenance = {
+            "schema": 1,
+            "source_revision": PIPER_REVISION,
+            "source_core_sha256": source_hash,
+            "extension": target.name,
+            "extension_sha256": extension_hash,
+            "piper_version": PIPER_VERSION,
+            "cython_version": environment.get("cython"),
+            "numpy_version": environment.get("numpy"),
+        }
+        built_provenance = build_directory / provenance_path.name
+        built_provenance.write_text(
+            json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary_target = target_directory / f".{target.name}.{os.getpid()}.tmp"
+        temporary_provenance = target_directory / (
+            f".{provenance_path.name}.{os.getpid()}.tmp"
+        )
+        target_linked = False
+        provenance_linked = False
+        try:
+            shutil.copy2(extension, temporary_target)
+            shutil.copy2(built_provenance, temporary_provenance)
+            os.link(temporary_target, target)
+            target_linked = True
+            os.link(temporary_provenance, provenance_path)
+            provenance_linked = True
+            _run(
+                (
+                    str(python),
+                    "-c",
+                    "from piper.train.vits.monotonic_align import maximum_path;"
+                    "assert callable(maximum_path)",
+                ),
+                runner=runner,
+            )
+        except BaseException:
+            if provenance_linked:
+                provenance_path.unlink(missing_ok=True)
+            if target_linked:
+                target.unlink(missing_ok=True)
+            raise
+        finally:
+            temporary_target.unlink(missing_ok=True)
+            temporary_provenance.unlink(missing_ok=True)
     return {
         "ready": True,
-        "code": (
-            "tts.f1_mps.extension_already_ready"
-            if duplicate
-            else "tts.f1_mps.extension_materialized"
-        ),
+        "code": "tts.f1_mps.extension_materialized",
         "source_revision": PIPER_REVISION,
+        "source_core_sha256": source_hash,
         "piper_version": PIPER_VERSION,
         "cython_version": environment.get("cython"),
         "numpy_version": environment.get("numpy"),
         "extension": target.name,
         "extension_sha256": extension_hash,
-        "duplicate": duplicate,
+        "duplicate": False,
         "network_used": False,
         "training_started": False,
     }

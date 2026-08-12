@@ -30,6 +30,7 @@ class FakeRunner:
                     "cython": "3.2.9",
                     "numpy": "2.4.6",
                     "platlib": str(self.platlib),
+                    "ext_suffix": ".cpython-311-darwin.so",
                 }
             )
         else:
@@ -66,10 +67,36 @@ class PiperMpsMaterializationTests(unittest.TestCase):
             )
             target = platlib / "piper/train/vits/monotonic_align/monotonic_align"
             built = tuple(target.glob("core*.so"))
+            provenance_ready = (target / "jarvis-provenance.json").is_file()
         self.assertTrue(report["ready"])
         self.assertEqual(report["code"], "tts.f1_mps.extension_materialized")
         self.assertEqual(len(built), 1)
+        self.assertTrue(provenance_ready)
         self.assertEqual(len(runner.calls), 3)
+
+    def test_second_run_validates_provenance_without_rebuilding(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            python, platlib, source = self.fixture(Path(temporary))
+            runner = FakeRunner(platlib)
+            first = materialize_piper_mps_extension(
+                python,
+                source,
+                runner=runner,
+                revision_probe=lambda _source: PIPER_REVISION,
+                compiler_path="/usr/bin/clang",
+            )
+            runner.calls.clear()
+            second = materialize_piper_mps_extension(
+                python,
+                source,
+                runner=runner,
+                revision_probe=lambda _source: PIPER_REVISION,
+                compiler_path="/usr/bin/clang",
+            )
+        self.assertEqual(first["extension_sha256"], second["extension_sha256"])
+        self.assertEqual(second["code"], "tts.f1_mps.extension_already_ready")
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(len(runner.calls), 2)
 
     def test_rejects_unpinned_source_before_compilation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
