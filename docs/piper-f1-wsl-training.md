@@ -58,6 +58,31 @@ than `/mnt/c` to avoid cross-filesystem training I/O overhead. After copying,
 re-run the existing bundle-manifest hashes and the pinned checkpoint hash before
 materializing any environment.
 
+Build the deterministic transfer manifest on the Mac. This command reads and
+hashes every one of the 1,301 F1 WAV files, the metadata, extraction manifest,
+and all three warm-start files. It performs no installation or network access:
+
+```sh
+python3 scripts/run_piper_training_handoff.py build \
+  --data-dir "$PWD/artifacts/compact-greek-tts-f1/f1-training-data" \
+  --artifact-root "$PWD/artifacts/compact-greek-tts-f1" \
+  --output "$PWD/artifacts/compact-greek-tts-f1/f1-wsl-handoff.json"
+```
+
+Copy `f1-training-data/`, `checkpoint/`, and `f1-wsl-handoff.json` into one
+private directory in the WSL ext4 filesystem. Verify the copy before running the
+readiness probe or installing anything:
+
+```sh
+python3.11 scripts/run_piper_training_handoff.py verify \
+  --transfer-root "$HOME/jarvis-f1-inputs" \
+  --manifest "$HOME/jarvis-f1-inputs/f1-wsl-handoff.json"
+```
+
+The verifier rejects symlinks, missing or extra source audio, unsafe relative
+paths, changed bytes, incompatible dataset/Piper revisions, and incorrect
+aggregate totals. It does not write to the transferred inputs.
+
 ## Lock gate
 
 `requirements/piper-f1-torch.in` resolves PyTorch exclusively from the official
