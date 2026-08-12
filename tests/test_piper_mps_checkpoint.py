@@ -230,6 +230,15 @@ class PiperMpsCheckpointTests(unittest.TestCase):
 
     def test_runner_treats_explicit_null_warmstart_as_resume(self) -> None:
         checkpoint = Path("/tmp/lightning_logs/version_0/checkpoints/last.ckpt")
+        observed: list[tuple[object, object]] = []
+
+        class FakeVitsModel:
+            def on_fit_start(self) -> None:
+                observed.append(
+                    (self._warmstart_ckpt, self._vocoder_warmstart_ckpt)
+                )
+
+        original_on_fit_start = FakeVitsModel.on_fit_start
         fake_torch = SimpleNamespace(
             serialization=SimpleNamespace(
                 get_unsafe_globals_in_checkpoint=lambda _path: [],
@@ -242,7 +251,12 @@ class PiperMpsCheckpointTests(unittest.TestCase):
                 SimpleNamespace(monitor="val_mel"),
                 SimpleNamespace(monitor="val_mos"),
             ],
-            main=lambda: None,
+            VitsModel=FakeVitsModel,
+            main=lambda: (
+                setattr(instance := FakeVitsModel(), "_warmstart_ckpt", "restored")
+                or setattr(instance, "_vocoder_warmstart_ckpt", "restored")
+                or instance.on_fit_start()
+            ),
         )
         with (
             mock.patch(
@@ -268,6 +282,8 @@ class PiperMpsCheckpointTests(unittest.TestCase):
                 ]
             )
         resume_probe.assert_called_once()
+        self.assertEqual(observed, [(None, None)])
+        self.assertIs(FakeVitsModel.on_fit_start, original_on_fit_start)
 
 
 if __name__ == "__main__":

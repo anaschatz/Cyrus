@@ -169,23 +169,43 @@ def _single_value(piper_argv: Sequence[str], argument: str) -> str | None:
     return piper_argv[indices[0] + 1]
 
 
-def _prepare_piper_main(piper_argv: Sequence[str]) -> tuple[object, tuple[object, ...]]:
+def _prepare_piper_main(
+    piper_argv: Sequence[str],
+) -> tuple[object, tuple[object, ...], object | None, object | None]:
     training_module = importlib.import_module("piper.train.__main__")
     callbacks = tuple(getattr(training_module, "_DEFAULT_CALLBACKS", ()))
-    if _single_value(piper_argv, "--model.mos_metric") != "none":
-        return training_module, callbacks
-    monitors = tuple(getattr(callback, "monitor", None) for callback in callbacks)
-    if monitors.count("val_mos") != 1 or monitors.count("val_mel") != 1:
-        raise _error(
-            "tts.f1_mps.checkpoint_callbacks_invalid",
-            "Pinned Piper checkpoint callback profile changed",
-        )
-    training_module._DEFAULT_CALLBACKS = [
-        callback
-        for callback in callbacks
-        if getattr(callback, "monitor", None) != "val_mos"
-    ]
-    return training_module, callbacks
+    if _single_value(piper_argv, "--model.mos_metric") == "none":
+        monitors = tuple(getattr(callback, "monitor", None) for callback in callbacks)
+        if monitors.count("val_mos") != 1 or monitors.count("val_mel") != 1:
+            raise _error(
+                "tts.f1_mps.checkpoint_callbacks_invalid",
+                "Pinned Piper checkpoint callback profile changed",
+            )
+        training_module._DEFAULT_CALLBACKS = [
+            callback
+            for callback in callbacks
+            if getattr(callback, "monitor", None) != "val_mos"
+        ]
+
+    model_class = None
+    original_on_fit_start = None
+    if _single_value(piper_argv, RESUME_ARGUMENT) is not None:
+        model_class = getattr(training_module, "VitsModel", None)
+        original_on_fit_start = getattr(model_class, "on_fit_start", None)
+        if model_class is None or not callable(original_on_fit_start):
+            training_module._DEFAULT_CALLBACKS = list(callbacks)
+            raise _error(
+                "tts.f1_mps.resume_hook_invalid",
+                "Pinned Piper resume hook changed",
+            )
+
+        def resume_on_fit_start(instance: object) -> object:
+            instance._warmstart_ckpt = None
+            instance._vocoder_warmstart_ckpt = None
+            return original_on_fit_start(instance)
+
+        model_class.on_fit_start = resume_on_fit_start
+    return training_module, callbacks, model_class, original_on_fit_start
 
 
 def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
@@ -222,7 +242,12 @@ def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
             kwargs["weights_only"] = True
         return original_torch_load(source, *args, **kwargs)
 
-    training_module, original_callbacks = _prepare_piper_main(piper_argv)
+    (
+        training_module,
+        original_callbacks,
+        model_class,
+        original_on_fit_start,
+    ) = _prepare_piper_main(piper_argv)
     previous_argv = sys.argv
     sys.argv = ["piper.train", *piper_argv]
     torch.load = pinned_weights_only_load
@@ -230,6 +255,8 @@ def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
         with torch.serialization.safe_globals([PosixPath]):
             training_module.main()
     finally:
+        if model_class is not None:
+            model_class.on_fit_start = original_on_fit_start
         training_module._DEFAULT_CALLBACKS = list(original_callbacks)
         torch.load = original_torch_load
         sys.argv = previous_argv

@@ -108,4 +108,8 @@ and `last.ckpt` callback. A resume is accepted only from a regular, local
 weights-only unsafe-global set; warm-start and resume arguments are mutually
 exclusive. Resume also passes `model.warmstart_ckpt=null` explicitly so
 LightningCLI cannot restore the original warm-start path from checkpoint
-hyperparameters and overwrite the resumed model weights.
+hyperparameters and overwrite the resumed model weights. Because Lightning may
+still hydrate those private fields from checkpoint metadata, the scoped resume
+hook clears both `_warmstart_ckpt` and `_vocoder_warmstart_ckpt` immediately
+before Piper's original `on_fit_start`; the original method is restored after
+the training invocation.
