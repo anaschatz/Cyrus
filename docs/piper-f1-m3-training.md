@@ -136,6 +136,20 @@ disqualified from promotion despite its best `val_mel`. Epochs 18 and 24 must
 be compared by listening before deciding whether either is usable or training
 must continue with periodic perceptual checkpoints.
 
+The first epoch-18/24 listening comparison also exposed a separate pacing
+failure. Across 40 deterministically selected, seen F1 sentences synthesized
+with duration noise disabled, epoch 18 produced 177.45 seconds for 200.26
+seconds of source speech (source/model ratio 1.129), while epoch 24 produced
+169.98 seconds (ratio 1.178). Per-utterance ratio coefficients of variation
+were 6.41% and 6.73%, respectively. The original comparison at
+`length_scale=1.0` was therefore too fast, particularly for epoch 24; earlier
+experimental `length_scale=0.95` renders moved in the wrong direction because
+Piper values below one accelerate phoneme duration. Any further epoch-18
+listening gate must disable or sharply bound duration noise and test calibrated
+`length_scale` values near 1.08--1.13. This calibration is diagnostic only and
+does not restore promotion eligibility while timbre and pacing remain under
+human review.
+
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local
