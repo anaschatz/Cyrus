@@ -180,6 +180,7 @@ class CompactGreekTtsAcquisitionTests(unittest.TestCase):
         self.assertTrue(plan["gpu_probe_required"])
         self.assertIn("--trainer.max_epochs", plan["training_argv"])
         self.assertIn("--ckpt_path", plan["training_argv"])
+        self.assertIn("scripts/export_piper_mps_checkpoint.py", plan["export_argv"])
 
 
 if __name__ == "__main__":

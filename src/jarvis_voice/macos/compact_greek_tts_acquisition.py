@@ -453,8 +453,7 @@ def compact_f1_training_plan(
     ]
     export_argv = [
         "python3",
-        "-m",
-        "piper.train.export_onnx",
+        "scripts/export_piper_mps_checkpoint.py",
         "--checkpoint",
         "<approved-checkpoint.ckpt>",
         "--output-file",
