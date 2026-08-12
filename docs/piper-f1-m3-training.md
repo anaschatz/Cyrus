@@ -119,6 +119,23 @@ passed. Real-output cancellation and human voice approval were deliberately not
 claimed by that run. The production TTS backend remains unchanged until those
 native gates and the wider qualification profile pass.
 
+Human listening subsequently rejected epoch 22 because of intermittent
+metallic/robotic timbre failures inside otherwise intelligible speech. This was
+not a playback underrun: every affected utterance was emitted as one complete
+Piper chunk, the glitches remained in the saved WAV, and changing duration or
+acoustic-noise inference settings did not remove them. A same-text diagnostic
+also reproduced the defect on text present verbatim in the F1 training set.
+
+Five repeated renders per checkpoint showed why `val_mel` must not select the
+voice by itself. For the same seen sentence, epoch 22 had mean p95/p99
+frame-to-frame log-spectral flux of 0.3888/0.5180, compared with 0.3405/0.4404
+for epoch 18 and 0.3472/0.4546 for epoch 24. The source recordings are valid
+44.1-kHz mono PCM, but contain only 6,418 seconds (1.78 hours) of F1 speech;
+the 25-epoch run completed about 29,000 fine-tuning steps. Epoch 22 is therefore
+disqualified from promotion despite its best `val_mel`. Epochs 18 and 24 must
+be compared by listening before deciding whether either is usable or training
+must continue with periodic perceptual checkpoints.
+
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local
