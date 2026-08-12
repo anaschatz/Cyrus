@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import re
 from pathlib import Path
@@ -17,6 +18,14 @@ MAXIMUM_CHECKPOINT_BYTES = 2 * 1024 * 1024 * 1024
 EXPECTED_OUTPUT_NAME = "el_GR-jarvis-f1-medium.onnx"
 _CHECKPOINT_NAME = re.compile(r"^epoch=\d+-val_mel=\d+\.\d+\.ckpt$")
 _LIGHTNING_VERSION = re.compile(r"^version_\d+$")
+LANGUAGE_METADATA = {
+    "code": "el",
+    "family": "el",
+    "region": "GR",
+    "name_native": "Ελληνικά",
+    "name_english": "Greek",
+    "country_english": "Greece",
+}
 
 
 def _error(code: str, message: str) -> BackendError:
@@ -90,6 +99,69 @@ def validate_piper_mps_export(
             "Piper export output path or companion config is invalid",
         )
     return checkpoint, output
+
+
+def finalize_piper_mps_config(config_path: str | Path) -> None:
+    """Add canonical Greek discovery metadata to Piper's generated config."""
+
+    config = Path(config_path).expanduser()
+    if not config.is_absolute() or not config.is_file() or config.is_symlink():
+        raise _error(
+            "tts.f1_mps.export_config_invalid",
+            "Piper export config is invalid",
+        )
+    try:
+        payload = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise _error(
+            "tts.f1_mps.export_config_unreadable",
+            "Piper export config could not be read",
+        ) from exc
+    audio = payload.get("audio") if isinstance(payload, dict) else None
+    espeak = payload.get("espeak") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(audio, dict)
+        or audio.get("sample_rate") != 22_050
+        or not isinstance(espeak, dict)
+        or espeak.get("voice") != "el"
+        or payload.get("phoneme_type") != "espeak"
+        or payload.get("num_speakers") != 1
+        or payload.get("num_symbols") != 256
+        or not isinstance(payload.get("phoneme_id_map"), dict)
+    ):
+        raise _error(
+            "tts.f1_mps.export_config_incompatible",
+            "Piper export config is incompatible with the Greek F1 profile",
+        )
+    observed_language = payload.get("language")
+    if observed_language not in (None, LANGUAGE_METADATA):
+        raise _error(
+            "tts.f1_mps.export_language_conflict",
+            "Piper export config contains conflicting language metadata",
+        )
+    if observed_language == LANGUAGE_METADATA:
+        return
+    payload["language"] = LANGUAGE_METADATA
+    partial = config.with_name(f".{config.name}.part")
+    if partial.exists() or partial.is_symlink():
+        raise _error(
+            "tts.f1_mps.export_config_partial_exists",
+            "A previous Piper config partial already exists",
+        )
+    try:
+        partial.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(partial, config.stat().st_mode & 0o777)
+        os.replace(partial, config)
+    except OSError as exc:
+        partial.unlink(missing_ok=True)
+        raise _error(
+            "tts.f1_mps.export_config_write_failed",
+            "Piper export config could not be finalized",
+        ) from exc
 
 
 def run_piper_mps_export(checkpoint_path: str | Path, output_path: str | Path) -> None:
@@ -169,6 +241,7 @@ def run_piper_mps_export(checkpoint_path: str | Path, output_path: str | Path) -
             dynamo=False,
         )
         onnx.checker.check_model(onnx.load(partial))
+        finalize_piper_mps_config(output.with_name(f"{output.name}.json"))
         os.replace(partial, output)
     except Exception:
         partial.unlink(missing_ok=True)

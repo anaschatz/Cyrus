@@ -5,7 +5,11 @@ import unittest
 from pathlib import Path
 
 from jarvis_voice.errors import BackendError
-from jarvis_voice.piper_mps_export import validate_piper_mps_export
+from jarvis_voice.piper_mps_export import (
+    LANGUAGE_METADATA,
+    finalize_piper_mps_config,
+    validate_piper_mps_export,
+)
 
 
 class PiperMpsExportTests(unittest.TestCase):
@@ -59,6 +63,34 @@ class PiperMpsExportTests(unittest.TestCase):
                     minimum_size=1,
                 )
         self.assertEqual(raised.exception.code, "tts.f1_mps.export_output_invalid")
+
+    def test_finalizes_generated_config_with_canonical_greek_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "el_GR-jarvis-f1-medium.onnx.json"
+            config.write_text(
+                '{"audio":{"sample_rate":22050},"espeak":{"voice":"el"},'
+                '"phoneme_type":"espeak","num_speakers":1,"num_symbols":256,'
+                '"phoneme_id_map":{"_ ":[0]}}',
+                encoding="utf-8",
+            )
+            finalize_piper_mps_config(config)
+            import json
+
+            payload = json.loads(config.read_text(encoding="utf-8"))
+        self.assertEqual(payload["language"], LANGUAGE_METADATA)
+
+    def test_rejects_conflicting_language_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "el_GR-jarvis-f1-medium.onnx.json"
+            config.write_text(
+                '{"audio":{"sample_rate":22050},"espeak":{"voice":"el"},'
+                '"phoneme_type":"espeak","num_speakers":1,"num_symbols":256,'
+                '"phoneme_id_map":{"_ ":[0]},"language":{"code":"en"}}',
+                encoding="utf-8",
+            )
+            with self.assertRaises(BackendError) as raised:
+                finalize_piper_mps_config(config)
+        self.assertEqual(raised.exception.code, "tts.f1_mps.export_language_conflict")
 
 
 if __name__ == "__main__":
