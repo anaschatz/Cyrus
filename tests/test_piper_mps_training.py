@@ -105,6 +105,24 @@ class PiperMpsTrainingTests(unittest.TestCase):
         self.assertIn("--trainer.fast_dev_run", smoke)
         self.assertNotIn("--trainer.fast_dev_run", initial)
 
+    def test_command_profile_preserves_virtualenv_python_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("data", "artifacts", "work"):
+                (root / name).mkdir()
+            base_python = root / "base-python"
+            base_python.write_bytes(b"")
+            environment_python = root / "environment/bin/python"
+            environment_python.parent.mkdir(parents=True)
+            environment_python.symlink_to(base_python)
+            commands = piper_mps_training_commands(
+                environment_python,
+                root / "data",
+                root / "artifacts",
+                root / "work",
+            )
+        self.assertEqual(commands["smoke_argv"][0], str(environment_python))
+
 
 if __name__ == "__main__":
     unittest.main()

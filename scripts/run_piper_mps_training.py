@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             report = piper_mps_training_commands(
-                args.python.resolve(),
+                args.python.absolute(),
                 args.data_dir.resolve(),
                 args.artifact_root.resolve(),
                 args.work_dir.resolve(),

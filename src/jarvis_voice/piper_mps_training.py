@@ -270,7 +270,10 @@ def piper_mps_training_commands(
     )
     if not all(path.is_absolute() for path in raw_paths):
         raise _error("tts.f1_mps.training_path_invalid", "MPS training paths must be absolute")
-    python, data, artifacts, work = (path.resolve(strict=False) for path in raw_paths)
+    python = raw_paths[0].absolute()
+    data, artifacts, work = (
+        path.resolve(strict=False) for path in raw_paths[1:]
+    )
     checkpoint = artifacts / "checkpoint" / PIPER_CHECKPOINT_DIRECTORY / "epoch=1999-step=485528.ckpt"
     shared: list[str] = [
         str(python),
