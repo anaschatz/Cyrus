@@ -18,7 +18,14 @@ from typing import Any
 
 from .common_schema import JarvisCommonSchemaTransformer, route_decision_schema
 from .cloud_routing import ContextScope, OutputContract, TaskKind, TaskProfileV1
-from .domain import ModelChunk, ModelRequest, ModelUsage, RouteDecision, canonical_json
+from .domain import (
+    ModelChunk,
+    ModelRequest,
+    ModelUsage,
+    OrchestratorError,
+    RouteDecision,
+    canonical_json,
+)
 from .history import canonical_messages_to_pydantic
 from .model import DispatchPermit, GuardedAsyncTransport, _dispatch_reservation
 from .store import OrchestratorStore
@@ -65,10 +72,27 @@ class BudgetedPydanticModel(WrapperModel):  # type: ignore[misc]
             if context.timeout_seconds is not None:
                 model_settings["timeout"] = context.timeout_seconds
             yield model_settings, context, reservation_id
-        except BaseException:
+        except asyncio.CancelledError:
             with suppress(Exception):
                 self._jarvis_store.reconcile_model(reservation_id, context.task_id, context.epoch, None)
             raise
+        except OrchestratorError:
+            with suppress(Exception):
+                self._jarvis_store.reconcile_model(
+                    reservation_id, context.task_id, context.epoch, None
+                )
+            raise
+        except Exception as exc:
+            # Pydantic AI, OpenAI and HTTPX use different exception classes for
+            # the same unavailable/timeout/stream failure. Normalize them at
+            # the authoritative physical-dispatch boundary.
+            with suppress(Exception):
+                self._jarvis_store.reconcile_model(
+                    reservation_id, context.task_id, context.epoch, None
+                )
+            raise OrchestratorError(
+                "backend_failure", status=503, retryable=True
+            ) from exc
         finally:
             _dispatch_reservation.reset(token)
 

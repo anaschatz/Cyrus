@@ -445,6 +445,122 @@ async def run_live_sequential_gate(
     }
 
 
+async def run_live_model_failure_gate(
+    *,
+    host: str,
+    port: int,
+    timeout_seconds: float,
+    expected_error_code: str = "backend_failure",
+) -> dict[str, Any]:
+    """Verify the exact terminal wire contract while local inference is down.
+
+    The caller owns stopping and restarting the inference appliance. This
+    probe only admits one bounded turn and reports content-free counts/codes.
+    """
+
+    if (
+        host != "127.0.0.1"
+        or isinstance(timeout_seconds, bool)
+        or not 0 < timeout_seconds <= 120
+        or expected_error_code != "backend_failure"
+    ):
+        raise ValueError("model failure gate parameters are invalid")
+    try:
+        from websockets.asyncio.client import connect
+        from jarvis_voice.protocol import Envelope, EventFactory
+    except ImportError as exc:  # pragma: no cover - dependency gate
+        raise OperationalError("live_gate_dependency_unavailable") from exc
+
+    started = time.monotonic()
+    factory = EventFactory(session_id=str(uuid.uuid4()))
+    uri = f"ws://{host}:{port}"
+    event_types: list[str] = []
+    event_ids: set[str] = set()
+    error_code: str | None = None
+    reason_code: str | None = None
+    response_id: str | None = None
+    async with connect(uri, max_size=64 * 1024, max_queue=32) as websocket:
+        await websocket.send(
+            factory.create(
+                "client.hello",
+                {
+                    "capabilities": [
+                        "speech_commits",
+                        "speech_done",
+                        "output_epochs",
+                    ],
+                    "protocol": "jarvis.voice/1",
+                },
+            ).to_json()
+        )
+        ready = Envelope.from_json(
+            await asyncio.wait_for(websocket.recv(), timeout=2.0)
+        )
+        if ready.type != "server.ready":
+            raise OperationalError("failure_gate_handshake_failed")
+        transcript = factory.create(
+            "input.transcript.final",
+            {
+                **_synthetic_payload(0),
+                "text": "Reply exactly: local failure gate.",
+            },
+            turn_id=str(uuid.uuid4()),
+        )
+        await websocket.send(transcript.to_json())
+        deadline = time.monotonic() + timeout_seconds + 2.0
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            event = Envelope.from_json(
+                await asyncio.wait_for(websocket.recv(), timeout=remaining)
+            )
+            if event.event_id in event_ids:
+                raise OperationalError("duplicate_server_publication")
+            event_ids.add(event.event_id)
+            if (
+                event.type == "server.ack"
+                and event.payload["acked_event_id"] == transcript.event_id
+            ):
+                response_id = event.response_id
+                event_types.append(event.type)
+                continue
+            if response_id is None or event.response_id != response_id:
+                continue
+            event_types.append(event.type)
+            if event.type == "server.error":
+                error_code = event.payload["code"]
+            elif event.type == "response.cancelled":
+                reason_code = event.payload["reason_code"]
+                break
+
+    expected_order = ["server.ack", "server.error", "response.cancelled"]
+    forbidden_output = {
+        "response.started",
+        "response.text.delta",
+        "response.text.done",
+        "response.speech.commit",
+        "response.speech.done",
+    }
+    bounded = (time.monotonic() - started) <= timeout_seconds + 2.0
+    return {
+        "bounded_timeout": bounded,
+        "duplicate_publication_count": 0,
+        "elapsed_ms": int((time.monotonic() - started) * 1000),
+        "error_code": error_code,
+        "event_count": len(event_types),
+        "failure_deterministic": event_types == expected_order,
+        "late_output_count": sum(item in forbidden_output for item in event_types),
+        "local_only": True,
+        "ready": (
+            bounded
+            and event_types == expected_order
+            and error_code == expected_error_code
+            and reason_code == "backend_failure"
+        ),
+        "reason_code": reason_code,
+        "version": "live-model-failure-ready-gate/1",
+    }
+
+
 async def run_live_soak_gate(
     *,
     host: str,

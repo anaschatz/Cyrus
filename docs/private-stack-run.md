@@ -42,3 +42,23 @@ orchestrator/.venv/bin/python -m jarvis_orchestrator.stack_cli \
 
 All command responses and evidence are content-free. Private paths, bearer
 tokens, transcripts and model output are never printed.
+
+## Local model failure gate
+
+Stop only the qualified local inference service, leave the Orchestrator
+running, and execute:
+
+```zsh
+PYTHONPATH=orchestrator/src:src:inference/src:anamnesis/src:research/src \
+orchestrator/.venv/bin/python -m jarvis_orchestrator.stack_cli \
+  --config /absolute/private/path/jarvis.private.json model-failure \
+  --timeout-seconds 5 \
+  --output /absolute/private/path/model-failure.json
+```
+
+The report passes only for the exact order `server.ack`,
+`server.error(code=backend_failure)`, `response.cancelled(reason_code=backend_failure)`.
+It also requires bounded completion, zero text/speech output and zero duplicate
+publication. Restart inference afterwards and require both `status` and the
+normal `e2e` gate to pass. This local-only fault test must not be run with cloud
+routing enabled.

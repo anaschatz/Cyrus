@@ -97,12 +97,29 @@ class BudgetedModelPort:
                 if chunk.usage is not None:
                     usage = chunk.usage
                 yield chunk
-        except BaseException:
+        except asyncio.CancelledError:
             # A concurrent cancellation may already have atomically cancelled
             # this reservation. Preserve the original exception in that race.
             with suppress(Exception):
                 self._store.reconcile_model(reservation_id, request.task_id, request.epoch, None)
             raise
+        except OrchestratorError:
+            with suppress(Exception):
+                self._store.reconcile_model(
+                    reservation_id, request.task_id, request.epoch, None
+                )
+            raise
+        except Exception as exc:
+            # Provider SDKs expose implementation-specific connection, timeout,
+            # streaming and parse exceptions. They must not leak into lifecycle
+            # semantics or turn the same backend outage into internal_failure.
+            with suppress(Exception):
+                self._store.reconcile_model(
+                    reservation_id, request.task_id, request.epoch, None
+                )
+            raise OrchestratorError(
+                "backend_failure", status=503, retryable=True
+            ) from exc
         else:
             self._store.reconcile_model(
                 reservation_id,

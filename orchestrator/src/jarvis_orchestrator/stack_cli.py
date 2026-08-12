@@ -12,7 +12,11 @@ from typing import Any
 
 from .config import OrchestratorConfig
 from .inference import InferenceControlClient
-from .readiness import run_live_sequential_gate, write_readiness_report
+from .readiness import (
+    run_live_model_failure_gate,
+    run_live_sequential_gate,
+    write_readiness_report,
+)
 from .stack_config import (
     STACK_SCHEMA_VERSION,
     PrivateStackConfig,
@@ -43,6 +47,9 @@ def _parser() -> argparse.ArgumentParser:
     e2e = commands.add_parser("e2e")
     e2e.add_argument("--turns", type=int, default=1)
     e2e.add_argument("--output", type=Path)
+    failure = commands.add_parser("model-failure")
+    failure.add_argument("--timeout-seconds", type=float, required=True)
+    failure.add_argument("--output", type=Path)
     return parser
 
 
@@ -133,6 +140,23 @@ def main(argv: list[str] | None = None) -> int:
             _print(status)
             return 0 if status["ready"] else 1
         config = OrchestratorConfig.load(stack.orchestrator_config_path)
+        if parsed.command == "model-failure":
+            report = asyncio.run(
+                run_live_model_failure_gate(
+                    host=config.voice_host,
+                    port=config.voice_port,
+                    timeout_seconds=parsed.timeout_seconds,
+                )
+            )
+            report = {
+                **report,
+                "config_sha256": stack.sha256,
+                "configured_model_timeout_seconds": config.model_timeout_seconds,
+            }
+            if parsed.output is not None:
+                write_readiness_report(parsed.output, report)
+            _print(report)
+            return 0 if report["ready"] else 1
         status = _status(stack)
         if not status["ready"]:
             raise StackConfigError("stack_not_ready")
