@@ -8,6 +8,12 @@ The voice layer only captures, validates, transcribes, transports, speaks, and c
 
 The new [`orchestrator/`](orchestrator/) package is Python 3.11 source-run code with a hash-bearing cross-platform `uv.lock`. It uses `pydantic-ai-slim[openai]==2.27.0`, but its public and durable domain schemas remain framework-independent. See the [Orchestrator runbook](orchestrator/README.md) and [Core v1 contract map](docs/orchestrator-core-v1.md).
 
+A strict `jarvis-private-stack/1` manifest now provides one private operator
+entry point for the real voice, Orchestrator and qualified inference configs.
+It validates their cross-component bindings without printing secrets and can
+run a real local-model WebSocket-to-speech-commit probe. See the
+[private stack runbook](docs/private-stack-run.md).
+
 An off-by-default Anamnesis adapter now provides qualified local retrospective
 recall for explicit completed statements. Durable memory remains in
 Orchestrator SQLite, is isolated per conversation and is removed by logical

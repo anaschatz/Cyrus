@@ -1,0 +1,10 @@
+{
+  "schema_version": "jarvis-private-stack/1",
+  "voice_config_path": "/absolute/private/path/voice.local.json",
+  "orchestrator_config_path": "/absolute/private/path/orchestrator.local.json",
+  "inference": {
+    "runner_path": "/absolute/private/path/run_qualified_inference.py",
+    "manifest_path": "/absolute/private/path/inference-manifest.json",
+    "qualification_report_path": "/absolute/private/path/qualification-report.json"
+  }
+}

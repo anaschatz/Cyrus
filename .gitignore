@@ -8,6 +8,7 @@ build/
 dist/
 voice.local.json
 orchestrator.local.json
+jarvis.private.json
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm

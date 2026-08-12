@@ -1681,10 +1681,29 @@ class OrchestratorService:
                 except OrchestratorError:
                     pass
             return self.store.get_task(task_id)
-        except Exception:
+        except Exception as exc:
             current = self.store.get_task(task_id)
             if current.state not in {TaskState.CANCELLED, TaskState.INTERRUPTED, TaskState.BUDGET_EXHAUSTED, TaskState.FAILED}:
                 try:
+                    if isinstance(exc, AttributeError):
+                        diagnostic_code = "attribute_error"
+                    elif isinstance(exc, KeyError):
+                        diagnostic_code = "key_error"
+                    elif isinstance(exc, LookupError):
+                        diagnostic_code = "lookup_error"
+                    elif isinstance(exc, OSError):
+                        diagnostic_code = "os_error"
+                    elif isinstance(exc, TypeError):
+                        diagnostic_code = "type_error"
+                    elif isinstance(exc, ValueError):
+                        diagnostic_code = "value_error"
+                    elif isinstance(exc, RuntimeError):
+                        diagnostic_code = "runtime_error"
+                    else:
+                        diagnostic_code = "other_error"
+                    self.store.record_internal_diagnostic(
+                        task_id, current.epoch, diagnostic_code
+                    )
                     self.store.terminate_failure(
                         task_id,
                         current.epoch,

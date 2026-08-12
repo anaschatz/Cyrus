@@ -277,6 +277,15 @@ class SyntheticReadinessTests(unittest.TestCase):
 
 
 class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_harness_rejects_unbounded_explicit_request_text(self) -> None:
+        with self.assertRaisesRegex(ValueError, "request text"):
+            await run_live_sequential_gate(
+                host="127.0.0.1",
+                port=8765,
+                turns=1,
+                request_text="x" * 257,
+            )
+
     async def test_live_harness_observes_exact_sequential_protocol(self) -> None:
         from websockets.asyncio.server import serve
         from jarvis_voice.fakes import FakeOrchestrator

@@ -20,10 +20,18 @@ class StoreContractTests(StoreCase, unittest.TestCase):
         self.assertEqual(duplicate.ack_event_id, again.ack_event_id)
         self.assertNotEqual(accepted.ack_event_id, duplicate.ack_event_id)
         with store._lock:
+            bindings = store._connection.execute(
+                "SELECT response_id FROM outbox WHERE acked_event_id=? ORDER BY ordinal",
+                (event_id,),
+            ).fetchall()
             count = store._connection.execute(
                 "SELECT COUNT(*) FROM outbox WHERE acked_event_id=?", (event_id,)
             ).fetchone()[0]
         self.assertEqual(count, 2)
+        self.assertEqual(
+            [row["response_id"] for row in bindings],
+            [accepted.task.response_id, accepted.task.response_id],
+        )
 
     def test_conflicting_duplicate_is_rejected_without_new_task(self) -> None:
         store = self.make_store()
@@ -41,8 +49,11 @@ class StoreContractTests(StoreCase, unittest.TestCase):
         with self.assertRaises(StaleEpochError):
             store.start_response(task.task_id, task.epoch, "el-GR", now=NOW)
         events = store.claim_outbox(task.conversation_id, str(uuid.uuid4()), now=NOW)
-        self.assertEqual([event.event_type for event in events], ["response.cancelled"])
-        self.assertEqual(events[0].payload["partial_output"], False)
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["server.ack", "response.cancelled"],
+        )
+        self.assertEqual(events[-1].payload["partial_output"], False)
 
     def test_claimed_output_is_rechecked_after_cancellation_commit(self) -> None:
         store = self.make_store()
@@ -125,7 +136,10 @@ class StoreContractTests(StoreCase, unittest.TestCase):
             now=NOW,
         )
         events = store.claim_outbox(before.conversation_id, "before", now=NOW)
-        self.assertEqual([event.event_type for event in events], ["server.error", "response.cancelled"])
+        self.assertEqual(
+            [event.event_type for event in events],
+            ["server.ack", "server.error", "response.cancelled"],
+        )
 
         after = self.executing(store, self.admitted(store, event_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4())))
         store.start_response(after.task_id, after.epoch, "el-GR", now=NOW)
@@ -141,7 +155,31 @@ class StoreContractTests(StoreCase, unittest.TestCase):
             now=NOW,
         )
         visible = store.claim_outbox(after.conversation_id, "after", now=NOW)
-        self.assertEqual([event.event_type for event in visible], ["response.cancelled"])
+        self.assertEqual(
+            [event.event_type for event in visible],
+            ["server.ack", "response.cancelled"],
+        )
+
+    def test_internal_diagnostic_is_closed_and_content_free(self) -> None:
+        store = self.make_store()
+        task = self.executing(
+            store,
+            self.admitted(
+                store, event_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4())
+            ),
+        )
+        store.record_internal_diagnostic(task.task_id, task.epoch, "type_error", now=NOW)
+        with store._lock:
+            row = store._connection.execute(
+                "SELECT event_type,payload_json FROM task_events WHERE task_id=? ORDER BY event_sequence DESC LIMIT 1",
+                (task.task_id,),
+            ).fetchone()
+        self.assertEqual(row["event_type"], "diagnostic.internal_failure")
+        self.assertEqual(row["payload_json"], '{"code":"type_error"}')
+        with self.assertRaises(ValueError):
+            store.record_internal_diagnostic(
+                task.task_id, task.epoch, "private exception text", now=NOW
+            )
 
     def test_outbox_replays_on_new_connection_until_exact_delivery_expiry(self) -> None:
         store = self.make_store()

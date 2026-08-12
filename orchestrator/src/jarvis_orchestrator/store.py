@@ -1484,7 +1484,11 @@ class OrchestratorStore:
             (utc_text(now), row["task_id"], row["epoch"]),
         )
         connection.execute(
-            "UPDATE outbox SET state='STALE',claimed_by=NULL,claim_expires_at=NULL WHERE response_id=? AND event_type NOT IN ('server.error','response.cancelled','response.speech.done')",
+            "UPDATE outbox SET guard_epoch=? WHERE response_id=? AND event_type='server.ack'",
+            (guard_epoch, row["response_id"]),
+        )
+        connection.execute(
+            "UPDATE outbox SET state='STALE',claimed_by=NULL,claim_expires_at=NULL WHERE response_id=? AND event_type NOT IN ('server.ack','server.error','response.cancelled','response.speech.done')",
             (row["response_id"],),
         )
         connection.execute(
@@ -1536,12 +1540,26 @@ class OrchestratorStore:
                     (event_id,),
                 ).fetchone()
                 if ack is None:
+                    task_binding = connection.execute(
+                        "SELECT response_id,epoch FROM tasks WHERE task_id=?",
+                        (existing["task_id"],),
+                    ).fetchone()
                     ack_id = self._append_outbox_tx(
                         connection,
                         conversation_id=conversation["conversation_id"],
                         guard_epoch=conversation["current_epoch"],
                         task_id=existing["task_id"],
+                        task_epoch=(
+                            int(task_binding["epoch"])
+                            if task_binding is not None
+                            else None
+                        ),
                         turn_id=existing["turn_id"],
+                        response_id=(
+                            task_binding["response_id"]
+                            if task_binding is not None
+                            else None
+                        ),
                         event_type="server.ack",
                         payload={"acked_event_id": event_id, "status": "duplicate"},
                         acked_event_id=event_id,
@@ -1601,6 +1619,7 @@ class OrchestratorStore:
                 task_epoch=new_epoch,
                 guard_epoch=new_epoch,
                 turn_id=turn_id,
+                response_id=response_id,
                 event_type="server.ack",
                 payload={"acked_event_id": event_id, "status": "accepted"},
                 acked_event_id=event_id,
@@ -2003,6 +2022,42 @@ class OrchestratorStore:
                 )
             self._cancel_task_tx(connection, row, guard_epoch=new_epoch, state=state, reason=reason, now=selected)
             return {"task_id": task_id, "previous_epoch": expected_epoch, "epoch": new_epoch, "state": state.value}
+
+    def record_internal_diagnostic(
+        self, task_id: str, expected_epoch: int, code: str, *, now: datetime | None = None
+    ) -> None:
+        """Persist one closed, content-free failure classification."""
+
+        allowed = {
+            "attribute_error",
+            "key_error",
+            "lookup_error",
+            "os_error",
+            "runtime_error",
+            "type_error",
+            "value_error",
+            "other_error",
+        }
+        if code not in allowed:
+            raise ValueError("diagnostic code is invalid")
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            row = connection.execute(
+                """SELECT t.state FROM tasks t JOIN conversations c USING(conversation_id)
+                   WHERE t.task_id=? AND t.epoch=? AND t.tombstoned=0
+                   AND c.current_epoch=? AND c.state='ACTIVE'""",
+                (task_id, expected_epoch, expected_epoch),
+            ).fetchone()
+            if row is None or TaskState(row["state"]) in TERMINAL_STATES:
+                raise StaleEpochError()
+            self._append_task_event_tx(
+                connection,
+                task_id,
+                expected_epoch,
+                "diagnostic.internal_failure",
+                {"code": code},
+                selected,
+            )
 
     def reserve_model(
         self,

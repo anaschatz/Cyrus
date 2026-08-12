@@ -298,6 +298,7 @@ async def run_live_sequential_gate(
     timeout_seconds: float = 120.0,
     maximum_database_bytes: int | None = None,
     database_path: str | Path | None = None,
+    request_text: str | None = None,
 ) -> dict[str, Any]:
     """Run real sequential local-model turns through the voice WebSocket.
 
@@ -307,6 +308,12 @@ async def run_live_sequential_gate(
 
     if host != "127.0.0.1" or isinstance(turns, bool) or not 1 <= turns <= 10_000:
         raise ValueError("live gate parameters are invalid")
+    if request_text is not None and (
+        not isinstance(request_text, str)
+        or not request_text.strip()
+        or len(request_text) > 256
+    ):
+        raise ValueError("live gate request text is invalid")
     try:
         from websockets.asyncio.client import connect
         from jarvis_voice.protocol import Envelope, EventFactory
@@ -334,9 +341,12 @@ async def run_live_sequential_gate(
             raise OperationalError("live_gate_handshake_failed")
         for index in range(turns):
             turn_started = time.monotonic()
+            payload = _synthetic_payload(index)
+            if request_text is not None:
+                payload = {**payload, "text": request_text}
             transcript = factory.create(
                 "input.transcript.final",
-                _synthetic_payload(index),
+                payload,
                 turn_id=str(uuid.uuid4()),
             )
             await websocket.send(transcript.to_json())

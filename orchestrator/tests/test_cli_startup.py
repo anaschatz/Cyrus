@@ -4,12 +4,13 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import _bootstrap  # noqa: F401
 
-from jarvis_orchestrator.cli import _run_servers
+from jarvis_orchestrator.cli import _run_components, _run_servers
 from jarvis_orchestrator.config import OrchestratorConfig
+from jarvis_orchestrator.store import OrchestratorStore
 
 
 class _CompositionObserved(RuntimeError):
@@ -17,6 +18,29 @@ class _CompositionObserved(RuntimeError):
 
 
 class CliStartupTests(unittest.TestCase):
+    def test_local_inference_discovery_failure_fails_startup_after_bounded_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = OrchestratorConfig.from_mapping(
+                {
+                    "database_path": str(Path(directory) / "state.sqlite3"),
+                    "control_bearer_token": "control-private",
+                    "inference_bearer_token": "inference-private",
+                }
+            )
+            store = OrchestratorStore(config.database_path)
+            self.addCleanup(store.close)
+            with patch(
+                "jarvis_orchestrator.cli.InferenceControlClient.capabilities",
+                side_effect=RuntimeError("unavailable"),
+            ) as capability, patch(
+                "jarvis_orchestrator.cli.asyncio.sleep", new=AsyncMock()
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "local inference capability discovery failed"
+                ):
+                    asyncio.run(_run_components(config, store))
+            self.assertEqual(capability.call_count, 3)
+
     def test_run_servers_uses_its_config_parameter_for_cloud_release_flag(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = OrchestratorConfig.from_mapping(
