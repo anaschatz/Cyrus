@@ -11,6 +11,9 @@ from .backends import AsrScore, AudioChunk, LanguageMetadata, TranscriptResult
 from .errors import BackendError
 from .manifest import BASE_MODEL_MANIFEST, ModelManifest, validate_model_directory
 
+BILINGUAL_LANGUAGE_CANDIDATES = ("el", "en")
+BILINGUAL_RESOLUTION_THRESHOLD = 0.8
+
 
 def weighted_logprob(segments: Iterable[Any]) -> tuple[float, float]:
     weighted_sum = 0.0
@@ -75,14 +78,54 @@ class FasterWhisperCpuBackend:
             samples: Any = audio.samples
         else:
             samples = numpy.asarray(audio.samples, dtype=numpy.float32)
-        segments_iter, info = self._model.transcribe(samples, vad_filter=False, task="transcribe")
+        segments_iter, info = self._model.transcribe(
+            samples,
+            vad_filter=False,
+            task="transcribe",
+        )
         segments = list(segments_iter)
-        text = unicodedata.normalize("NFC", "".join(str(segment.text) for segment in segments).strip())
+        detected_language = str(getattr(info, "language", "und"))
+        detected_score = float(getattr(info, "language_probability", 0.0))
+        text = unicodedata.normalize(
+            "NFC",
+            "".join(str(segment.text) for segment in segments).strip(),
+        )
+        if detected_score < BILINGUAL_RESOLUTION_THRESHOLD:
+            candidates: list[tuple[float, str, list[Any], str]] = []
+            for language in BILINGUAL_LANGUAGE_CANDIDATES:
+                candidate_iter, _candidate_info = self._model.transcribe(
+                    samples,
+                    vad_filter=False,
+                    task="transcribe",
+                    language=language,
+                )
+                candidate_segments = list(candidate_iter)
+                candidate_text = unicodedata.normalize(
+                    "NFC",
+                    "".join(
+                        str(segment.text) for segment in candidate_segments
+                    ).strip(),
+                )
+                candidate_raw, _candidate_score = weighted_logprob(candidate_segments)
+                if candidate_text and math.isfinite(candidate_raw):
+                    candidates.append(
+                        (candidate_raw, language, candidate_segments, candidate_text)
+                    )
+            if candidates:
+                chosen = max(candidates, key=lambda item: item[0])
+                maximum_raw = max(item[0] for item in candidates)
+                weights = [math.exp(item[0] - maximum_raw) for item in candidates]
+                total_weight = sum(weights)
+                chosen_index = candidates.index(chosen)
+                detected_language = chosen[1]
+                detected_score = weights[chosen_index] / total_weight
+                segments = chosen[2]
+                text = chosen[3]
         if not text:
             raise BackendError("asr.empty_transcript", "ASR produced no transcript", subsystem="asr")
         raw, score = weighted_logprob(segments)
         return TranscriptResult(
             text=text,
-            language=LanguageMetadata(str(getattr(info, "language", "und")), float(getattr(info, "language_probability", 0.0))),
+            language=LanguageMetadata(detected_language, detected_score),
             asr_score=AsrScore(score, raw),
         )

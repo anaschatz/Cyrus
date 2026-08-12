@@ -8,7 +8,9 @@ from pathlib import Path
 import _bootstrap  # noqa: F401
 
 from jarvis_voice.errors import BackendError
+from jarvis_voice.fakes import FakeOrchestrator
 from jarvis_voice.macos.interactive_smoke import GuidedSmokeController, MacSmokeLoopbackServer
+from jarvis_voice.protocol import EventFactory, new_uuid4
 
 
 def event(name: str, timestamp: float, **details: object) -> dict[str, object]:
@@ -118,6 +120,25 @@ class GuidedSmokeControllerTests(unittest.TestCase):
     def test_server_rejects_non_loopback_url(self) -> None:
         with self.assertRaisesRegex(BackendError, "smoke.non_loopback_server"):
             MacSmokeLoopbackServer("ws://192.0.2.1:8765")
+
+    def test_server_emits_frozen_response_cancelled_payload(self) -> None:
+        response_id = new_uuid4()
+        turn_id = new_uuid4()
+        request = EventFactory().create(
+            "response.cancel",
+            {},
+            turn_id=turn_id,
+            response_id=response_id,
+        )
+        reply = MacSmokeLoopbackServer._cancelled_reply(FakeOrchestrator(), request)
+
+        self.assertEqual(reply.type, "response.cancelled")
+        self.assertEqual(
+            reply.payload,
+            {"reason_code": "user_cancelled", "partial_output": False},
+        )
+        self.assertEqual(reply.turn_id, turn_id)
+        self.assertEqual(reply.response_id, response_id)
 
 
 class InteractiveSmokeScriptTests(unittest.TestCase):

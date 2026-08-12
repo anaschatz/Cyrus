@@ -68,6 +68,59 @@ class AsrTests(unittest.TestCase):
         self.assertAlmostEqual(raw, -0.3)
         self.assertAlmostEqual(score, math.exp(-0.3))
 
+    def test_ambiguous_auto_language_is_resolved_by_bilingual_logprob(self) -> None:
+        class AmbiguousModel:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, object]] = []
+
+            def transcribe(self, samples: object, **kwargs: object):
+                del samples
+                self.calls.append(dict(kwargs))
+                language = kwargs.get("language")
+                if language == "en":
+                    segments = [
+                        SimpleNamespace(
+                            text="clear English sentence",
+                            avg_logprob=-0.2,
+                            tokens=[1, 2, 3],
+                        )
+                    ]
+                elif language == "el":
+                    segments = [
+                        SimpleNamespace(
+                            text="λανθασμένη εκδοχή",
+                            avg_logprob=-0.7,
+                            tokens=[1, 2, 3],
+                        )
+                    ]
+                else:
+                    segments = [
+                        SimpleNamespace(
+                            text="uncertain",
+                            avg_logprob=-0.8,
+                            tokens=[1, 2],
+                        )
+                    ]
+                return iter(segments), SimpleNamespace(
+                    language="el",
+                    language_probability=0.6,
+                )
+
+        model = AmbiguousModel()
+        backend = FasterWhisperCpuBackend(
+            str(self.directory),
+            model_factory=lambda *args, **kwargs: model,
+            manifest=self.manifest,
+        )
+        result = backend.transcribe(AudioChunk(array("f", [0.1, 0.2]), 16_000))
+        self.assertEqual(result.language.code, "en")
+        self.assertGreater(result.language.score, 0.5)
+        self.assertEqual(result.text, "clear English sentence")
+        self.assertEqual(
+            [call.get("language") for call in model.calls],
+            [None, "el", "en"],
+        )
+
     def test_requires_16_khz_audio(self) -> None:
         backend = FasterWhisperCpuBackend(str(self.directory), model_factory=lambda *a, **k: FakeModel(), manifest=self.manifest)
         with self.assertRaisesRegex(BackendError, "asr.invalid_audio"):

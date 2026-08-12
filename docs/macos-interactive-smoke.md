@@ -17,6 +17,8 @@ PYTHONPATH=src \
 Για qualification σε Mac όπου το function row δεν εκπέμπει αξιόπιστα F-key,
 χρησιμοποίησε `--ptt-key CONTROL_OPTION`. Το override ισχύει μόνο για το
 συγκεκριμένο smoke process και δεν μεταβάλλει το ιδιωτικό production config.
+Το `--ptt-key RIGHT_OPTION` παρέχει single-modifier επιλογή όταν το chord
+δημιουργεί πολλαπλούς σύντομους capture κύκλους.
 
 ## Guided sequence
 

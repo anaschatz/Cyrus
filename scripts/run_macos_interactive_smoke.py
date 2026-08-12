@@ -29,7 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--ptt-key",
-        choices=[*(f"F{index}" for index in range(1, 21)), "CONTROL_OPTION"],
+        choices=[
+            *(f"F{index}" for index in range(1, 21)),
+            "CONTROL_OPTION",
+            "RIGHT_OPTION",
+        ],
         help="Qualification-only PTT override; the private production config is not modified.",
     )
     return parser

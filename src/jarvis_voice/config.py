@@ -265,10 +265,10 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         and config.ptt_key[1:].isdigit()
         and 1 <= int(config.ptt_key[1:]) <= 24
     )
-    if not function_key and config.ptt_key != "CONTROL_OPTION":
+    if not function_key and config.ptt_key not in {"CONTROL_OPTION", "RIGHT_OPTION"}:
         raise BackendError(
             "config.unsupported_ptt_key",
-            "PTT key must be F1 through F24 or the macOS CONTROL_OPTION chord",
+            "PTT key must be F1 through F24 or an approved macOS modifier input",
             subsystem="config",
             safe_context={"field": "ptt_key"},
         )

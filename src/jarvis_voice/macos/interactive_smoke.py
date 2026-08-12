@@ -270,6 +270,15 @@ class MacSmokeLoopbackServer:
         self._acknowledged: set[str] = set()
         self._transcript_count = 0
 
+    @staticmethod
+    def _cancelled_reply(orchestrator: FakeOrchestrator, event: Envelope) -> Envelope:
+        return orchestrator.factory.create(
+            "response.cancelled",
+            {"reason_code": "user_cancelled", "partial_output": False},
+            turn_id=event.turn_id,
+            response_id=event.response_id,
+        )
+
     async def _handle(self, websocket: Any) -> None:
         orchestrator: FakeOrchestrator | None = None
         async for raw in websocket:
@@ -287,14 +296,24 @@ class MacSmokeLoopbackServer:
                 greek = code == "el"
                 locale = "el-GR" if greek else "en-US"
                 if self._transcript_count >= 3:
+                    greek_barge_sentence = (
+                        "Αυτή είναι μια εσκεμμένα μεγάλη πρόταση για τη δοκιμή "
+                        "άμεσης διακοπής της αναπαραγωγής όταν πατηθεί ξανά το "
+                        "πλήκτρο ομιλίας."
+                    )
+                    english_barge_sentence = (
+                        "This is an intentionally long sentence used to verify "
+                        "immediate playback interruption when push to talk is "
+                        "pressed again."
+                    )
                     sentences = (
                         (
-                            "Αυτή είναι μια εσκεμμένα μεγάλη πρόταση για τη δοκιμή άμεσης διακοπής της αναπαραγωγής όταν πατηθεί ξανά το πλήκτρο ομιλίας.",
+                            " ".join([greek_barge_sentence] * 6),
                             "Η δεύτερη μονάδα δεν πρέπει να ακουστεί μετά τη διακοπή.",
                         )
                         if greek
                         else (
-                            "This is an intentionally long sentence used to verify immediate playback interruption when push to talk is pressed again.",
+                            " ".join([english_barge_sentence] * 8),
                             "The second unit must not be heard after cancellation.",
                         )
                     )
@@ -304,12 +323,7 @@ class MacSmokeLoopbackServer:
                 for reply in scripted.events:
                     await websocket.send(reply.to_json())
             elif event.type == "response.cancel" and event.response_id is not None:
-                cancelled = orchestrator.factory.create(
-                    "response.cancelled",
-                    {"reason": "client_cancel"},
-                    turn_id=event.turn_id,
-                    response_id=event.response_id,
-                )
+                cancelled = self._cancelled_reply(orchestrator, event)
                 await websocket.send(cancelled.to_json())
 
     async def _serve(self) -> None:

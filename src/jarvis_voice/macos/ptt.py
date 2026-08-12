@@ -49,6 +49,8 @@ CG_EVENT_FLAG_MASK_ALTERNATE = 1 << 19
 # exist only inside the passive macOS adapter and never leave the process.
 MAC_CONTROL_OPTION_KEYCODE = -2
 MAC_CONTROL_OPTION_VKEY = 0x100
+MAC_RIGHT_OPTION_KEYCODE = 61
+MAC_RIGHT_OPTION_VKEY = 0x101
 
 
 def mac_function_keycode(name: str) -> int:
@@ -66,12 +68,16 @@ def mac_function_keycode(name: str) -> int:
 def mac_ptt_keycode(name: str) -> int:
     if isinstance(name, str) and name.upper() == "CONTROL_OPTION":
         return MAC_CONTROL_OPTION_KEYCODE
+    if isinstance(name, str) and name.upper() == "RIGHT_OPTION":
+        return MAC_RIGHT_OPTION_KEYCODE
     return mac_function_keycode(name)
 
 
 def mac_ptt_vkey(name: str) -> int:
     if isinstance(name, str) and name.upper() == "CONTROL_OPTION":
         return MAC_CONTROL_OPTION_VKEY
+    if isinstance(name, str) and name.upper() == "RIGHT_OPTION":
+        return MAC_RIGHT_OPTION_VKEY
     return function_key_vkey(name)
 
 
@@ -148,6 +154,16 @@ class CoreGraphicsEventTapAdapter:
                 return event
             if event_type == CG_EVENT_FLAGS_CHANGED:
                 flags = int(cg.CGEventGetFlags(event))
+                keycode = int(cg.CGEventGetIntegerValueField(event, CG_KEYBOARD_EVENT_KEYCODE))
+                if keycode == MAC_RIGHT_OPTION_KEYCODE:
+                    callback(
+                        CG_EVENT_KEY_DOWN
+                        if flags & CG_EVENT_FLAG_MASK_ALTERNATE
+                        else CG_EVENT_KEY_UP,
+                        MAC_RIGHT_OPTION_KEYCODE,
+                        False,
+                        received_at,
+                    )
                 active = bool(flags & CG_EVENT_FLAG_MASK_CONTROL) and bool(
                     flags & CG_EVENT_FLAG_MASK_ALTERNATE
                 )
