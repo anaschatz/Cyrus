@@ -55,6 +55,15 @@ PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}
 TRAINING_TARGET_PROFILES = {"all", "freeze-output-layers", "attention-only"}
+TRAINING_SAMPLE_PROFILES = {"uniform", "jarvis-pronunciation"}
+PRONUNCIATION_CURRICULUM_ROOTS = (
+    ("system_state", "καταστα"),
+    ("operation", "λειτουργ"),
+    ("reminder", "θυμ"),
+    ("importance", "σημαντικ"),
+    ("work", "εργασ"),
+)
+PRONUNCIATION_TARGETED_STEPS = 15
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 PRONUNCIATION_ASR_CANDIDATE_LABELS = {
@@ -254,6 +263,72 @@ def load_cached_split(
     if not result:
         raise BackendError("tts.greektts15.split_empty", "Training split is empty", subsystem="tts")
     return result
+
+
+def build_pronunciation_curriculum_order(
+    plan_path: str | Path,
+    *,
+    steps: int = PILOT_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Select a bounded mix of real F1 pronunciation examples and general speech.
+
+    Indices refer to the train-only order returned by :func:`load_cached_split`.
+    No transcript is synthesized or relabelled: the curriculum only reorders
+    existing, immutable F1 samples from the training split.
+    """
+
+    import random
+
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    if len(train_samples) < steps or any(not isinstance(sample.get("text"), str) for sample in train_samples):
+        raise BackendError("tts.greektts15.plan_invalid", "Training samples are incomplete", subsystem="tts")
+
+    normalized = [" ".join(_normalized_words(sample["text"])) for sample in train_samples]
+    candidates = {
+        label: [index for index, text in enumerate(normalized) if root in text]
+        for label, root in PRONUNCIATION_CURRICULUM_ROOTS
+    }
+    randomizer = random.Random(TRAINING_SEED)
+    for indices in candidates.values():
+        randomizer.shuffle(indices)
+
+    selected: list[int] = []
+    selected_set: set[int] = set()
+    selected_counts = {label: 0 for label, _ in PRONUNCIATION_CURRICULUM_ROOTS}
+    while len(selected) < min(PRONUNCIATION_TARGETED_STEPS, steps):
+        progressed = False
+        for label, _ in PRONUNCIATION_CURRICULUM_ROOTS:
+            while candidates[label] and candidates[label][0] in selected_set:
+                candidates[label].pop(0)
+            if candidates[label] and len(selected) < min(PRONUNCIATION_TARGETED_STEPS, steps):
+                index = candidates[label].pop(0)
+                selected.append(index)
+                selected_set.add(index)
+                selected_counts[label] += 1
+                progressed = True
+        if not progressed:
+            break
+
+    general = [index for index in range(len(train_samples)) if index not in selected_set]
+    randomizer.shuffle(general)
+    selected.extend(general[: steps - len(selected)])
+    if len(selected) != steps or len(set(selected)) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Pronunciation curriculum is incomplete", subsystem="tts")
+    filenames = [train_samples[index].get("filename") for index in selected]
+    return selected, {
+        "profile": "jarvis-pronunciation",
+        "targeted_steps": sum(selected_counts.values()),
+        "general_steps": steps - sum(selected_counts.values()),
+        "target_counts": selected_counts,
+        "sample_filenames": filenames,
+    }
 
 
 def run_gradient_memory_probe(
@@ -469,6 +544,7 @@ def run_training_pilot(
     steps: int = PILOT_STEPS,
     target_profile: str = "all",
     eos_loss_weight: int = 1,
+    sample_profile: str = "uniform",
 ) -> dict[str, object]:
     """Train one deterministic pilot branch from the immutable Greek adapter."""
 
@@ -481,9 +557,11 @@ def run_training_pilot(
         learning_rate not in PILOT_LEARNING_RATES
         or steps != PILOT_STEPS
         or target_profile not in TRAINING_TARGET_PROFILES
+        or sample_profile not in TRAINING_SAMPLE_PROFILES
         or (target_profile != "all" and learning_rate != 1e-6)
         or eos_loss_weight not in EOS_LOSS_WEIGHTS
         or (eos_loss_weight != 1 and target_profile != "attention-only")
+        or (sample_profile != "uniform" and target_profile != "attention-only")
     ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
     gate = _validated_gradient_probe(gradient_report)
@@ -546,8 +624,18 @@ def run_training_pilot(
         train = load_cached_split(plan_path, cache_root, tokenizer, "train")
         validation = load_cached_split(plan_path, cache_root, tokenizer, "validation")
         randomizer = random.Random(TRAINING_SEED)
-        order = list(range(len(train)))
-        randomizer.shuffle(order)
+        if sample_profile == "jarvis-pronunciation":
+            order, curriculum = build_pronunciation_curriculum_order(plan_path, steps=steps)
+        else:
+            order = list(range(len(train)))
+            randomizer.shuffle(order)
+            curriculum = {
+                "profile": "uniform",
+                "targeted_steps": 0,
+                "general_steps": steps,
+                "target_counts": {},
+                "sample_filenames": [],
+            }
         validation_order = sorted(
             range(len(validation)),
             key=lambda index: hashlib.sha256(f"{TRAINING_SEED}:validation:{index}".encode()).digest(),
@@ -616,6 +704,8 @@ def run_training_pilot(
             "gradient_checkpointing": True,
             "eos_loss_weight": eos_loss_weight,
             "target_profile": target_profile,
+            "sample_profile": sample_profile,
+            "curriculum": curriculum,
             "frozen_adapter_layers": frozen_layers,
             "frozen_adapter_sections": ["mlp"] if target_profile == "attention-only" else [],
             "trained_tokens": trained_tokens,

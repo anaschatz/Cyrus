@@ -17,6 +17,7 @@ from jarvis_voice.macos.greektts15_training import (
     EXPECTED_ROWS,
     CACHE_SCHEMA,
     build_training_plan,
+    build_pronunciation_curriculum_order,
     blend_adapter_checkpoint,
     build_orpheus_training_sequence,
     cache_snac_samples,
@@ -28,6 +29,7 @@ from jarvis_voice.macos.greektts15_training import (
     score_quality_candidate_transcripts,
     _validated_gradient_probe,
     TRAINING_TARGET_PROFILES,
+    TRAINING_SAMPLE_PROFILES,
     TARGETED_LORA_GROUPS,
     ATTENTION_ONLY_LORA_GROUPS,
     EOS_LOSS_WEIGHTS,
@@ -43,6 +45,32 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_pronunciation_curriculum_balances_real_f1_samples(self) -> None:
+        samples = []
+        roots = ("κατάσταση", "λειτουργούν", "θυμάμαι", "σημαντικές", "εργασίες")
+        for index in range(30):
+            text = f"Γενικό δείγμα {index}"
+            if index < 20:
+                text = f"{roots[index % len(roots)]} δείγμα {index}"
+            samples.append({"split": "train", "filename": f"f{index}.wav", "text": text})
+        plan = {"schema": "jarvis.voice.greektts15-f1-plan/1", "samples": samples}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "plan.json"
+            path.write_text(json.dumps(plan), encoding="utf-8")
+            first, report = build_pronunciation_curriculum_order(path)
+            second, _ = build_pronunciation_curriculum_order(path)
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 25)
+        self.assertEqual(len(set(first)), 25)
+        self.assertEqual(report["targeted_steps"], 15)
+        self.assertEqual(report["general_steps"], 10)
+        self.assertTrue(all(count == 3 for count in report["target_counts"].values()))
+
+    def test_pronunciation_sample_profile_is_attention_only(self) -> None:
+        self.assertEqual(TRAINING_SAMPLE_PROFILES, {"uniform", "jarvis-pronunciation"})
+        source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
+        self.assertIn('sample_profile != "uniform" and target_profile != "attention-only"', source)
+
     def test_listening_candidate_manifest_cannot_claim_production_readiness(self) -> None:
         manifest = json.loads(Path("docs/greektts15-attention-only-candidate.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["schema"], "jarvis.voice.greektts15-listening-candidate/1")
