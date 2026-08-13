@@ -26,6 +26,11 @@ def main() -> int:
     parser.add_argument("--blend-25", required=True)
     parser.add_argument("--blend-37-5", required=True)
     parser.add_argument("--candidate")
+    parser.add_argument(
+        "--candidate-label",
+        choices=("lr-2_5e-7", "target-freeze-output-layers"),
+        default="lr-2_5e-7",
+    )
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     dataset = Path(args.dataset_root).expanduser()
@@ -35,7 +40,7 @@ def main() -> int:
         "blend-37_5pct": Path(args.blend_37_5).expanduser(),
     }
     if args.candidate:
-        directories["lr-2_5e-7"] = Path(args.candidate).expanduser()
+        directories[args.candidate_label] = Path(args.candidate).expanduser()
     files = {label: {} for label in ("native", *directories)}
     for index, reference in enumerate(PRONUNCIATION_REFERENCES, start=1):
         files["native"][reference.fixture_id] = dataset / "audio" / reference.filename

@@ -106,7 +106,12 @@ def analyze_acoustic_file(audio_path: str | Path) -> dict[str, object]:
 def compare_acoustic_sets(
     files: dict[str, dict[str, str | Path]],
 ) -> dict[str, object]:
-    allowed_candidates = {"blend-25pct", "blend-37_5pct", "lr-2_5e-7"}
+    allowed_candidates = {
+        "blend-25pct",
+        "blend-37_5pct",
+        "lr-2_5e-7",
+        "target-freeze-output-layers",
+    }
     candidates = set(files) - {"native", "baseline"}
     if (
         not candidates

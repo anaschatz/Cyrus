@@ -28,7 +28,7 @@ def main() -> int:
     parser.add_argument("--blend", required=True)
     parser.add_argument(
         "--candidate-label",
-        choices=("blend-25pct", "blend-37_5pct", "lr-2_5e-7"),
+        choices=("blend-25pct", "blend-37_5pct", "lr-2_5e-7", "target-freeze-output-layers"),
         default="blend-25pct",
     )
     parser.add_argument("--report", required=True)
