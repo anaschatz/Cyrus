@@ -11,6 +11,13 @@ confusables in a derived manifest, and produces deterministic train,
 validation, and untouched control splits independently for B2, C1, C2, and
 Harvard. The source metadata and recordings are never modified.
 
+The upstream MLX-Tune Orpheus collator is not used directly. At its pinned
+revision it labels `<custom_token_3>` as an audio-start token even though the
+GreekTTS runtime uses it as start-of-human, omits the explicit speech boundary,
+and offsets SNAC codes by codebook level instead of by each position in the
+seven-token Orpheus frame. JARVIS owns the small compatibility collator and
+tests its SNAC output by round-tripping it through the production decoder.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash

@@ -15,11 +15,39 @@ from jarvis_voice.macos.greektts15_training import (
     DATASET_SCHEMA,
     EXPECTED_ROWS,
     build_training_plan,
+    build_orpheus_training_sequence,
+    interleave_snac_codes,
     normalize_transcript,
+)
+from jarvis_voice.macos.greektts15_pilot import (
+    END_OF_HUMAN,
+    END_OF_SPEECH,
+    END_OF_TEXT,
+    START_OF_HUMAN,
+    START_OF_SPEECH,
+    extract_snac_codes,
 )
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_snac_interleave_round_trips_through_runtime_decoder(self) -> None:
+        layers = ([1, 2], [3, 4, 5, 6], list(range(7, 15)))
+        audio = interleave_snac_codes(*layers)
+        self.assertEqual(extract_snac_codes([START_OF_SPEECH, *audio, END_OF_SPEECH]), layers)
+
+    def test_training_sequence_matches_runtime_control_protocol(self) -> None:
+        audio = interleave_snac_codes([1], [2, 3], [4, 5, 6, 7])
+        ids, labels = build_orpheus_training_sequence([128000, 42], audio)
+        prefix = [START_OF_HUMAN, 128000, 42, END_OF_TEXT, END_OF_HUMAN]
+        completion = [START_OF_SPEECH, *audio, END_OF_SPEECH]
+        self.assertEqual(ids, prefix + completion)
+        self.assertEqual(labels, [-100] * len(prefix) + completion)
+
+    def test_training_sequence_does_not_duplicate_eot(self) -> None:
+        audio = interleave_snac_codes([1], [2, 3], [4, 5, 6, 7])
+        ids, _ = build_orpheus_training_sequence([128000, END_OF_TEXT], audio)
+        self.assertEqual(ids.count(END_OF_TEXT), 1)
+
     def test_normalization_repairs_only_leading_greek_confusables(self) -> None:
         self.assertEqual(normalize_transcript("Tην  ίδια μέρα"), ("Την ίδια μέρα", True))
         self.assertEqual(normalize_transcript("To παιδί"), ("Το παιδί", True))
@@ -34,6 +62,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first["split"]["counts"], {"train": 16, "validation": 2, "control": 2})
         self.assertFalse(first["training_policy"]["merge_into_quantized_base"])
+        self.assertTrue(first["training_policy"]["owned_greektts_token_collator"])
 
     def test_hash_mismatch_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

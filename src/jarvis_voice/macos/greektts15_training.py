@@ -19,6 +19,15 @@ from pathlib import Path
 from typing import Iterable
 
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos.greektts15_pilot import (
+    AUDIO_TOKEN_OFFSET,
+    CODEBOOK_SIZE,
+    END_OF_HUMAN,
+    END_OF_SPEECH,
+    END_OF_TEXT,
+    START_OF_HUMAN,
+    START_OF_SPEECH,
+)
 
 
 DATASET_SCHEMA = "jarvis.voice.stoma-f1-training-bundle/1"
@@ -64,6 +73,53 @@ class PlannedSample:
     duration_seconds: float
     audio_sha256: str
     transcript_normalized: bool
+
+
+def interleave_snac_codes(
+    layer_1: Iterable[int],
+    layer_2: Iterable[int],
+    layer_3: Iterable[int],
+) -> list[int]:
+    """Encode the exact seven-token Orpheus frame layout used at runtime."""
+
+    first, second, third = list(layer_1), list(layer_2), list(layer_3)
+    if not first or len(second) != len(first) * 2 or len(third) != len(first) * 4:
+        raise BackendError("tts.greektts15.snac_shape_invalid", "SNAC layers do not form complete frames", subsystem="tts")
+    if any(code < 0 or code >= CODEBOOK_SIZE for layer in (first, second, third) for code in layer):
+        raise BackendError("tts.greektts15.snac_code_invalid", "SNAC code is outside its codebook", subsystem="tts")
+    tokens: list[int] = []
+    for frame in range(len(first)):
+        raw = (
+            first[frame],
+            second[frame * 2],
+            third[frame * 4],
+            third[frame * 4 + 1],
+            second[frame * 2 + 1],
+            third[frame * 4 + 2],
+            third[frame * 4 + 3],
+        )
+        tokens.extend(AUDIO_TOKEN_OFFSET + position * CODEBOOK_SIZE + code for position, code in enumerate(raw))
+    return tokens
+
+
+def build_orpheus_training_sequence(text_ids: Iterable[int], audio_tokens: Iterable[int]) -> tuple[list[int], list[int]]:
+    """Build GreekTTS teacher-forcing IDs and completion-only labels.
+
+    ``text_ids`` contains only the tokenizer's text payload (normally BOS plus
+    text).  Control tokens are added explicitly so training and inference share
+    the same protocol. The start-of-speech token is part of the learned
+    completion; all human prompt positions are masked.
+    """
+
+    text = list(text_ids)
+    audio = list(audio_tokens)
+    if not text or not audio or len(audio) % 7:
+        raise BackendError("tts.greektts15.training_tokens_invalid", "Training tokens are incomplete", subsystem="tts")
+    if text[-1] == END_OF_TEXT:
+        text = text[:-1]
+    prefix = [START_OF_HUMAN, *text, END_OF_TEXT, END_OF_HUMAN]
+    completion = [START_OF_SPEECH, *audio, END_OF_SPEECH]
+    return prefix + completion, [-100] * len(prefix) + completion
 
 
 def _sha256(path: Path) -> str:
@@ -209,6 +265,7 @@ def build_training_plan(dataset_root: str | Path, *, verify_audio_hashes: bool =
         "training_policy": {
             "continue_existing_rank_64_adapter": True,
             "merge_into_quantized_base": False,
+            "owned_greektts_token_collator": True,
             "initial_learning_rates": [5e-6, 1e-5],
             "checkpoint_steps": [25, 50, 100],
             "requires_human_listening_gate": True,
