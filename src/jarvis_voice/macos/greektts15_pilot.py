@@ -8,6 +8,7 @@ adapter layout, and runs one offline Greek pronunciation fixture.
 from __future__ import annotations
 
 import hashlib
+import gc
 import importlib.metadata
 import json
 import os
@@ -70,6 +71,15 @@ LORA_RANK = 64
 
 PILOT_FIXTURE_ID = "greek_consonants"
 PILOT_FIXTURE_TEXT = "Ο μπαμπάς πήγε στην αντάρα για να βρει τα αγκάθια."
+QUALITY_FIXTURES = (
+    ("greeting", "Καλημέρα. Είμαι έτοιμη να σε βοηθήσω."),
+    ("system_status", "Έλεγξα την κατάσταση του συστήματος και όλα λειτουργούν κανονικά."),
+    ("calendar", "Η επόμενη συνάντησή σου είναι στις οκτώ και μισή."),
+    ("reminder", "Αν θέλεις, μπορώ να σου υπενθυμίσω τις σημαντικές εργασίες."),
+)
+QUALITY_MAX_RSS_BYTES = 4 * GIB
+QUALITY_MAX_MLX_MEMORY_BYTES = 3 * GIB
+QUALITY_MAX_MEAN_REALTIME_FACTOR = 1.0
 EXPERIMENTAL_ORPHEUS_SPEAKERS = ("tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe")
 
 
@@ -763,11 +773,11 @@ def format_pilot_prompt(speaker: str | None = None) -> str:
     return f"{speaker}: {PILOT_FIXTURE_TEXT}"
 
 
-@_deny_network_during_pilot
-def run_greektts15_pilot(
+def _run_greektts15_suite(
     model_root: str | Path,
     output_directory: str | Path,
     *,
+    fixtures: tuple[tuple[str, str], ...],
     max_new_tokens: int = 1_200,
     seed: int = 10_001,
     base_variant: str = "4bit",
@@ -790,7 +800,8 @@ def run_greektts15_pilot(
     os.chmod(output, 0o700)
     if max_new_tokens < 7 or max_new_tokens > 1_200:
         raise BackendError("tts.greektts15.max_tokens_invalid", "GreekTTS token limit is invalid", subsystem="tts")
-    prompt_text = format_pilot_prompt(speaker)
+    if not fixtures or len({fixture_id for fixture_id, _ in fixtures}) != len(fixtures):
+        raise BackendError("tts.greektts15.fixtures_invalid", "GreekTTS fixtures are invalid", subsystem="tts")
 
     try:
         import mlx.core as mx
@@ -804,7 +815,6 @@ def run_greektts15_pilot(
         raise BackendError("tts.greektts15.dependencies_missing", "GreekTTS dependencies are unavailable", subsystem="tts") from exc
 
     with _offline_model_environment():
-        mx.random.seed(seed)
         load_started = time.perf_counter()
         model, tokenizer = load(
             str(root / base.directory),
@@ -821,54 +831,76 @@ def run_greektts15_pilot(
         snac_started = time.perf_counter()
         snac_model = SNAC.from_pretrained(str(root / SNAC_DIRECTORY)).to("cpu").eval()
         snac_load_ms = (time.perf_counter() - snac_started) * 1000.0
-        text_ids = list(tokenizer.encode(prompt_text, add_special_tokens=True))
-        if not text_ids or text_ids[0] != 128_000:
-            raise BackendError("tts.greektts15.tokenizer_invalid", "Tokenizer did not emit start-of-text", subsystem="tts")
-        prompt_ids = [START_OF_HUMAN, *text_ids, END_OF_TEXT, END_OF_HUMAN]
-        sampler = make_sampler(temp=0.6, top_p=0.95)
-        logits_processors = make_logits_processors(repetition_penalty=1.1)
-        generated: list[int] = []
-        first_speech_ms: float | None = None
-        generation_started = time.perf_counter()
-        for token, _ in generate_step(
-            mx.array(prompt_ids),
-            model,
-            max_tokens=max_new_tokens,
-            sampler=sampler,
-            logits_processors=logits_processors,
-        ):
-            token_id = int(token if isinstance(token, int) else token.item())
-            generated.append(token_id)
-            if token_id == START_OF_SPEECH and first_speech_ms is None:
-                first_speech_ms = (time.perf_counter() - generation_started) * 1000.0
-            if token_id == END_OF_SPEECH:
-                break
-        mx.synchronize()
-        generation_ms = (time.perf_counter() - generation_started) * 1000.0
-        if not generated or generated[-1] != END_OF_SPEECH:
-            raise BackendError("tts.greektts15.end_of_speech_missing", "Speech generation reached its token limit", subsystem="tts")
-        code_layers = extract_snac_codes(generated)
-        decode_started = time.perf_counter()
-        with torch.inference_mode():
-            codes = [torch.tensor(layer, dtype=torch.long).unsqueeze(0) for layer in code_layers]
-            waveform = snac_model.decode(codes)
-        decode_ms = (time.perf_counter() - decode_started) * 1000.0
-        suffix = "" if base.variant == "4bit" else f"-{base.variant}"
-        if speaker is not None:
-            suffix = f"{suffix}-{speaker}"
-        destination = output / f"01-{PILOT_FIXTURE_ID}{suffix}.wav"
-        sample_count, peak_before, gain = _write_pcm16_wav(destination, waveform, torch)
+        samples: list[dict[str, object]] = []
+        for index, (fixture_id, fixture_text) in enumerate(fixtures, start=1):
+            mx.random.seed(seed + index - 1)
+            prompt_text = f"{speaker}: {fixture_text}" if speaker is not None else fixture_text
+            text_ids = list(tokenizer.encode(prompt_text, add_special_tokens=True))
+            if not text_ids or text_ids[0] != 128_000:
+                raise BackendError("tts.greektts15.tokenizer_invalid", "Tokenizer did not emit start-of-text", subsystem="tts")
+            prompt_ids = [START_OF_HUMAN, *text_ids, END_OF_TEXT, END_OF_HUMAN]
+            sampler = make_sampler(temp=0.6, top_p=0.95)
+            logits_processors = make_logits_processors(repetition_penalty=1.1)
+            generated: list[int] = []
+            first_speech_ms: float | None = None
+            generation_started = time.perf_counter()
+            for token, _ in generate_step(
+                mx.array(prompt_ids),
+                model,
+                max_tokens=max_new_tokens,
+                sampler=sampler,
+                logits_processors=logits_processors,
+            ):
+                token_id = int(token if isinstance(token, int) else token.item())
+                generated.append(token_id)
+                if token_id == START_OF_SPEECH and first_speech_ms is None:
+                    first_speech_ms = (time.perf_counter() - generation_started) * 1000.0
+                if token_id == END_OF_SPEECH:
+                    break
+            mx.synchronize()
+            generation_ms = (time.perf_counter() - generation_started) * 1000.0
+            if not generated or generated[-1] != END_OF_SPEECH:
+                raise BackendError("tts.greektts15.end_of_speech_missing", "Speech generation reached its token limit", subsystem="tts")
+            code_layers = extract_snac_codes(generated)
+            decode_started = time.perf_counter()
+            with torch.inference_mode():
+                codes = [torch.tensor(layer, dtype=torch.long).unsqueeze(0) for layer in code_layers]
+                waveform = snac_model.decode(codes)
+            decode_ms = (time.perf_counter() - decode_started) * 1000.0
+            suffix = "" if base.variant == "4bit" else f"-{base.variant}"
+            if speaker is not None:
+                suffix = f"{suffix}-{speaker}"
+            destination = output / f"{index:02d}-{fixture_id}{suffix}.wav"
+            sample_count, peak_before, gain = _write_pcm16_wav(destination, waveform, torch)
+            duration_ms = sample_count * 1000.0 / SAMPLE_RATE
+            total_synthesis_ms = generation_ms + decode_ms
+            samples.append(
+                {
+                    "fixture_id": fixture_id,
+                    "generation_ms": round(generation_ms, 3),
+                    "time_to_first_speech_token_ms": round(first_speech_ms, 3) if first_speech_ms is not None else None,
+                    "warm_audio_ready_ms": round(total_synthesis_ms, 3),
+                    "decode_ms": round(decode_ms, 3),
+                    "audio_duration_ms": round(duration_ms, 3),
+                    "realtime_factor": round(total_synthesis_ms / duration_ms, 4) if duration_ms else None,
+                    "generated_tokens": len(generated),
+                    "audio_frames": len(code_layers[0]),
+                    "peak_before_normalization": round(peak_before, 6),
+                    "normalization_gain": round(gain, 6),
+                    "file": destination.name,
+                }
+            )
+            del codes, waveform
+            gc.collect()
+            mx.clear_cache()
+            mx.synchronize()
 
-    duration_ms = sample_count * 1000.0 / SAMPLE_RATE
-    total_synthesis_ms = generation_ms + decode_ms
     return {
         "schema_version": 1,
         "ready": True,
-        "code": "tts.greektts15.pilot_completed",
         "backend": f"greektts_1_5_mlx_{base.variant}",
         "device": "mlx_apple_silicon",
         "language": "el",
-        "fixture_id": PILOT_FIXTURE_ID,
         "models": {
             "base": {
                 "variant": base.variant,
@@ -886,22 +918,83 @@ def run_greektts15_pilot(
         },
         "model_load_ms": round(model_load_ms, 3),
         "snac_load_ms": round(snac_load_ms, 3),
-        "generation_ms": round(generation_ms, 3),
-        "time_to_first_speech_token_ms": round(first_speech_ms, 3) if first_speech_ms is not None else None,
-        "warm_audio_ready_ms": round(total_synthesis_ms, 3),
         "streaming_enabled": False,
-        "decode_ms": round(decode_ms, 3),
-        "audio_duration_ms": round(duration_ms, 3),
-        "realtime_factor": round(total_synthesis_ms / duration_ms, 4) if duration_ms else None,
-        "generated_tokens": len(generated),
-        "audio_frames": len(code_layers[0]),
-        "peak_before_normalization": round(peak_before, 6),
-        "normalization_gain": round(gain, 6),
         "peak_mlx_memory_bytes": int(mx.get_peak_memory()),
         "peak_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
-        "sample": {"file": destination.name, "sample_rate": SAMPLE_RATE, "channels": 1},
+        "samples": samples,
         "network_used": False,
         "network_guard": "python_socket_fail_closed",
         "production_backend_changed": False,
         "content_captured": False,
     }
+
+
+@_deny_network_during_pilot
+def run_greektts15_pilot(
+    model_root: str | Path,
+    output_directory: str | Path,
+    *,
+    max_new_tokens: int = 1_200,
+    seed: int = 10_001,
+    base_variant: str = "4bit",
+    speaker: str | None = None,
+) -> dict[str, object]:
+    report = _run_greektts15_suite(
+        model_root,
+        output_directory,
+        fixtures=((PILOT_FIXTURE_ID, PILOT_FIXTURE_TEXT),),
+        max_new_tokens=max_new_tokens,
+        seed=seed,
+        base_variant=base_variant,
+        speaker=speaker,
+    )
+    sample = report.pop("samples")[0]
+    report.update(sample)
+    report["code"] = "tts.greektts15.pilot_completed"
+    report["sample"] = {"file": sample["file"], "sample_rate": SAMPLE_RATE, "channels": 1}
+    report.pop("file")
+    return report
+
+
+@_deny_network_during_pilot
+def run_greektts15_quality_qualification(
+    model_root: str | Path,
+    output_directory: str | Path,
+    *,
+    max_new_tokens: int = 1_200,
+    seed: int = 10_001,
+) -> dict[str, object]:
+    report = _run_greektts15_suite(
+        model_root,
+        output_directory,
+        fixtures=QUALITY_FIXTURES,
+        max_new_tokens=max_new_tokens,
+        seed=seed,
+        base_variant="4bit",
+        speaker=None,
+    )
+    samples = report["samples"]
+    realtime_factors = [float(sample["realtime_factor"]) for sample in samples]
+    mean_realtime_factor = sum(realtime_factors) / len(realtime_factors)
+    gates = {
+        "all_quality_fixtures_generated": len(samples) == len(QUALITY_FIXTURES),
+        "standalone_rss_within_limit": int(report["peak_rss_bytes"]) <= QUALITY_MAX_RSS_BYTES,
+        "mlx_memory_within_limit": int(report["peak_mlx_memory_bytes"]) <= QUALITY_MAX_MLX_MEMORY_BYTES,
+        "mean_realtime_factor_within_limit": mean_realtime_factor <= QUALITY_MAX_MEAN_REALTIME_FACTOR,
+        "incremental_audio_streaming": False,
+        "interrupt_during_generation": False,
+    }
+    report["code"] = "tts.greektts15.quality_qualification_completed"
+    report["qualification"] = {
+        "mean_realtime_factor": round(mean_realtime_factor, 4),
+        "rss_limit_bytes": QUALITY_MAX_RSS_BYTES,
+        "mlx_memory_limit_bytes": QUALITY_MAX_MLX_MEMORY_BYTES,
+        "mean_realtime_factor_limit": QUALITY_MAX_MEAN_REALTIME_FACTOR,
+        "automated_gates": gates,
+        "automated_gates_passed": all(gates.values()),
+        "asr_round_trip_measured": False,
+        "llm_coexistence_measured": False,
+        "human_voice_approved": False,
+        "production_promotion_allowed": False,
+    }
+    return report

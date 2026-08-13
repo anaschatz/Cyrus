@@ -21,6 +21,7 @@ from jarvis_voice.macos.greektts15_pilot import (  # noqa: E402
     convert_greektts15_adapter,
     greektts15_pilot_preflight,
     run_greektts15_pilot,
+    run_greektts15_quality_qualification,
 )
 from jarvis_voice.qualification import write_report  # noqa: E402
 
@@ -49,6 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--report", required=True)
     run.add_argument("--max-new-tokens", type=int, default=1200)
     run.add_argument("--seed", type=int, default=10001)
+    qualify = commands.add_parser("qualify")
+    qualify.add_argument("--model-root", required=True)
+    qualify.add_argument("--output-dir", required=True)
+    qualify.add_argument("--report", required=True)
+    qualify.add_argument("--max-new-tokens", type=int, default=1200)
+    qualify.add_argument("--seed", type=int, default=10001)
     return parser
 
 
@@ -69,6 +76,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "convert-adapter":
             report = convert_greektts15_adapter(args.model_root)
+        elif args.command == "qualify":
+            report = run_greektts15_quality_qualification(
+                args.model_root,
+                args.output_dir,
+                max_new_tokens=args.max_new_tokens,
+                seed=args.seed,
+            )
         else:
             report = run_greektts15_pilot(
                 args.model_root,

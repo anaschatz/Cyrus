@@ -20,6 +20,10 @@ from jarvis_voice.macos.greektts15_pilot import (
     MODEL_DOWNLOAD_BYTES,
     MODEL_LAYERS,
     PEFT_ARTIFACTS,
+    QUALITY_FIXTURES,
+    QUALITY_MAX_MEAN_REALTIME_FACTOR,
+    QUALITY_MAX_MLX_MEMORY_BYTES,
+    QUALITY_MAX_RSS_BYTES,
     SNAC_ARTIFACTS,
     START_OF_SPEECH,
     END_OF_SPEECH,
@@ -31,6 +35,8 @@ from jarvis_voice.macos.greektts15_pilot import (
     format_pilot_prompt,
     greektts15_pilot_preflight,
     remap_peft_weight_key,
+    run_greektts15_pilot,
+    run_greektts15_quality_qualification,
     validate_greektts_model_root,
 )
 
@@ -241,6 +247,58 @@ class GreekTts15PilotTests(unittest.TestCase):
         with self.assertRaises(BackendError) as raised:
             format_pilot_prompt("unknown")
         self.assertEqual(raised.exception.code, "tts.greektts15.speaker_invalid")
+
+    def test_quality_fixture_set_and_resource_gates_are_bounded(self) -> None:
+        self.assertEqual(len(QUALITY_FIXTURES), 4)
+        self.assertEqual(len({fixture_id for fixture_id, _ in QUALITY_FIXTURES}), 4)
+        self.assertTrue(all(text.strip() for _, text in QUALITY_FIXTURES))
+        self.assertEqual(QUALITY_MAX_RSS_BYTES, 4 * 1024**3)
+        self.assertEqual(QUALITY_MAX_MLX_MEMORY_BYTES, 3 * 1024**3)
+        self.assertEqual(QUALITY_MAX_MEAN_REALTIME_FACTOR, 1.0)
+
+    def test_legacy_pilot_flattens_single_suite_sample(self) -> None:
+        suite = {
+            "ready": True,
+            "peak_rss_bytes": 1,
+            "peak_mlx_memory_bytes": 1,
+            "samples": [
+                {
+                    "fixture_id": "greek_consonants",
+                    "file": "01-greek_consonants.wav",
+                    "realtime_factor": 0.5,
+                }
+            ],
+        }
+        with mock.patch(
+            "jarvis_voice.macos.greektts15_pilot._run_greektts15_suite",
+            return_value=suite,
+        ):
+            report = run_greektts15_pilot("/models", "/output")
+        self.assertEqual(report["code"], "tts.greektts15.pilot_completed")
+        self.assertEqual(report["fixture_id"], "greek_consonants")
+        self.assertEqual(report["sample"]["file"], "01-greek_consonants.wav")
+        self.assertNotIn("samples", report)
+        self.assertNotIn("file", report)
+
+    def test_quality_qualification_never_promotes_without_streaming(self) -> None:
+        suite = {
+            "ready": True,
+            "peak_rss_bytes": QUALITY_MAX_RSS_BYTES,
+            "peak_mlx_memory_bytes": QUALITY_MAX_MLX_MEMORY_BYTES,
+            "samples": [
+                {"fixture_id": fixture_id, "realtime_factor": 0.5}
+                for fixture_id, _ in QUALITY_FIXTURES
+            ],
+        }
+        with mock.patch(
+            "jarvis_voice.macos.greektts15_pilot._run_greektts15_suite",
+            return_value=suite,
+        ):
+            report = run_greektts15_quality_qualification("/models", "/output")
+        qualification = report["qualification"]
+        self.assertFalse(qualification["automated_gates_passed"])
+        self.assertFalse(qualification["production_promotion_allowed"])
+        self.assertFalse(qualification["automated_gates"]["incremental_audio_streaming"])
 
 
 if __name__ == "__main__":
