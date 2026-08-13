@@ -77,6 +77,43 @@ QUALITY_FIXTURES = (
     ("calendar", "Η επόμενη συνάντησή σου είναι στις οκτώ και μισή."),
     ("reminder", "Αν θέλεις, μπορώ να σου υπενθυμίσω τις σημαντικές εργασίες."),
 )
+
+
+class PronunciationReference(NamedTuple):
+    fixture_id: str
+    text: str
+    filename: str
+    audio_sha256: str
+
+
+# Untouched STOMA F1 control recordings. These phonetically rich Harvard
+# sentences pair synthesized speech with the exact native speaker and wording.
+PRONUNCIATION_REFERENCES = (
+    PronunciationReference(
+        "labials_palatal",
+        "Δες τη βουτιά της πάπιας στην έξοχη λίμνη.",
+        "Greek-F1-Harvard-01-24.wav",
+        "d1e174301b3a435cfabfd3fafe2b7eeaf10df6db25a0d710fff07215e78aa230",
+    ),
+    PronunciationReference(
+        "velars_fricatives",
+        "Το χερούλι ήταν φτιαγμένο από κράμα χαλκού και σιδήρου.",
+        "Greek-F1-Harvard-09-19.wav",
+        "e114d9fb8ee97b07f2799700a3046b0bc68e91f3ab1d51b31beeddc0fe24580e",
+    ),
+    PronunciationReference(
+        "clusters",
+        "Το στρες της εγκύου μπορεί να πειράξει το έμβρυο.",
+        "Greek-F1-Harvard-16-21.wav",
+        "99bbabcabd53cc797eee33b5d9f375cd2be05d6029688d797760ebbf2cd664b9",
+    ),
+    PronunciationReference(
+        "fricatives_rhythm",
+        "Ντύθηκα πρόχειρα δίχως να κοιταχτώ στον καθρέφτη.",
+        "Greek-F1-Harvard-27-25.wav",
+        "08d5b52498ebabb5f3ffb3a8b105c40755fcb19fd3ff064702f1cba69a644fcf",
+    ),
+)
 QUALITY_MAX_RSS_BYTES = 4 * GIB
 QUALITY_MAX_MLX_MEMORY_BYTES = 3 * GIB
 QUALITY_MAX_MEAN_REALTIME_FACTOR = 1.0
@@ -1024,6 +1061,67 @@ def run_greektts15_quality_qualification(
         "asr_round_trip_measured": False,
         "llm_coexistence_measured": False,
         "human_voice_approved": False,
+        "production_promotion_allowed": False,
+    }
+    return report
+
+
+@_deny_network_during_pilot
+def run_greektts15_pronunciation_qualification(
+    model_root: str | Path,
+    dataset_root: str | Path,
+    output_directory: str | Path,
+    *,
+    max_new_tokens: int = 1_200,
+    seed: int = 10_001,
+    adapter_directory: str | Path | None = None,
+    temperature: float = 0.4,
+) -> dict[str, object]:
+    """Render exact text pairs against untouched native F1 control audio."""
+
+    dataset = Path(dataset_root).expanduser()
+    audio_root = dataset / "audio"
+    references: list[dict[str, str]] = []
+    for reference in PRONUNCIATION_REFERENCES:
+        audio = audio_root / reference.filename
+        if (
+            not dataset.is_absolute()
+            or dataset.is_symlink()
+            or not audio.is_file()
+            or audio.is_symlink()
+            or _sha256(audio) != reference.audio_sha256
+        ):
+            raise BackendError(
+                "tts.greektts15.pronunciation_reference_invalid",
+                "GreekTTS native pronunciation reference is invalid",
+                subsystem="tts",
+            )
+        references.append(
+            {
+                "fixture_id": reference.fixture_id,
+                "text": reference.text,
+                "native_audio": str(audio),
+                "native_audio_sha256": reference.audio_sha256,
+            }
+        )
+
+    report = _run_greektts15_suite(
+        model_root,
+        output_directory,
+        fixtures=tuple((reference.fixture_id, reference.text) for reference in PRONUNCIATION_REFERENCES),
+        max_new_tokens=max_new_tokens,
+        seed=seed,
+        base_variant="4bit",
+        speaker=None,
+        adapter_directory=adapter_directory,
+        temperature=temperature,
+    )
+    report["code"] = "tts.greektts15.pronunciation_qualification_completed"
+    report["pronunciation"] = {
+        "reference_kind": "untouched_stoma_f1_control",
+        "references": references,
+        "same_text_pairing": True,
+        "human_native_pronunciation_approved": False,
         "production_promotion_allowed": False,
     }
     return report

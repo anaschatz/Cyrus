@@ -20,6 +20,7 @@ from jarvis_voice.macos.greektts15_pilot import (
     MODEL_DOWNLOAD_BYTES,
     MODEL_LAYERS,
     PEFT_ARTIFACTS,
+    PRONUNCIATION_REFERENCES,
     QUALITY_FIXTURES,
     QUALITY_MAX_MEAN_REALTIME_FACTOR,
     QUALITY_MAX_MLX_MEMORY_BYTES,
@@ -36,6 +37,7 @@ from jarvis_voice.macos.greektts15_pilot import (
     greektts15_pilot_preflight,
     remap_peft_weight_key,
     run_greektts15_pilot,
+    run_greektts15_pronunciation_qualification,
     run_greektts15_quality_qualification,
     validate_greektts_model_root,
     _native_adapter_config,
@@ -265,6 +267,34 @@ class GreekTts15PilotTests(unittest.TestCase):
         self.assertEqual(QUALITY_MAX_RSS_BYTES, 4 * 1024**3)
         self.assertEqual(QUALITY_MAX_MLX_MEMORY_BYTES, 3 * 1024**3)
         self.assertEqual(QUALITY_MAX_MEAN_REALTIME_FACTOR, 1.0)
+
+    def test_pronunciation_references_are_pinned_and_phonetically_bounded(self) -> None:
+        self.assertEqual(len(PRONUNCIATION_REFERENCES), 4)
+        self.assertEqual(len({item.fixture_id for item in PRONUNCIATION_REFERENCES}), 4)
+        self.assertTrue(all(item.filename.startswith("Greek-F1-Harvard-") for item in PRONUNCIATION_REFERENCES))
+        self.assertTrue(all(len(item.audio_sha256) == 64 for item in PRONUNCIATION_REFERENCES))
+
+    def test_pronunciation_qualification_pairs_native_and_synthetic_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            dataset = Path(temp) / "dataset"
+            audio_root = dataset / "audio"
+            audio_root.mkdir(parents=True)
+            hashes = {}
+            for item in PRONUNCIATION_REFERENCES:
+                path = audio_root / item.filename
+                path.write_bytes(b"reference")
+                hashes[str(path)] = item.audio_sha256
+            suite = {"ready": True, "samples": []}
+            with (
+                mock.patch("jarvis_voice.macos.greektts15_pilot._sha256", side_effect=lambda path: hashes[str(path)]),
+                mock.patch("jarvis_voice.macos.greektts15_pilot._run_greektts15_suite", return_value=suite) as run,
+            ):
+                report = run_greektts15_pronunciation_qualification("/models", dataset, Path(temp) / "out")
+        self.assertEqual(report["code"], "tts.greektts15.pronunciation_qualification_completed")
+        self.assertTrue(report["pronunciation"]["same_text_pairing"])
+        self.assertFalse(report["pronunciation"]["production_promotion_allowed"])
+        fixtures = run.call_args.kwargs["fixtures"]
+        self.assertEqual(fixtures, tuple((item.fixture_id, item.text) for item in PRONUNCIATION_REFERENCES))
 
     def test_legacy_pilot_flattens_single_suite_sample(self) -> None:
         suite = {

@@ -21,6 +21,7 @@ from jarvis_voice.macos.greektts15_pilot import (  # noqa: E402
     convert_greektts15_adapter,
     greektts15_pilot_preflight,
     run_greektts15_pilot,
+    run_greektts15_pronunciation_qualification,
     run_greektts15_quality_qualification,
 )
 from jarvis_voice.qualification import write_report  # noqa: E402
@@ -58,6 +59,15 @@ def build_parser() -> argparse.ArgumentParser:
     qualify.add_argument("--seed", type=int, default=10001)
     qualify.add_argument("--adapter-directory")
     qualify.add_argument("--temperature", type=float, choices=(0.0, 0.2, 0.4, 0.6), default=0.6)
+    pronunciation = commands.add_parser("pronunciation")
+    pronunciation.add_argument("--model-root", required=True)
+    pronunciation.add_argument("--dataset-root", required=True)
+    pronunciation.add_argument("--output-dir", required=True)
+    pronunciation.add_argument("--report", required=True)
+    pronunciation.add_argument("--max-new-tokens", type=int, default=1200)
+    pronunciation.add_argument("--seed", type=int, default=10001)
+    pronunciation.add_argument("--adapter-directory")
+    pronunciation.add_argument("--temperature", type=float, choices=(0.0, 0.2, 0.4, 0.6), default=0.4)
     return parser
 
 
@@ -81,6 +91,16 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "qualify":
             report = run_greektts15_quality_qualification(
                 args.model_root,
+                args.output_dir,
+                max_new_tokens=args.max_new_tokens,
+                seed=args.seed,
+                adapter_directory=args.adapter_directory,
+                temperature=args.temperature,
+            )
+        elif args.command == "pronunciation":
+            report = run_greektts15_pronunciation_qualification(
+                args.model_root,
+                args.dataset_root,
                 args.output_dir,
                 max_new_tokens=args.max_new_tokens,
                 seed=args.seed,

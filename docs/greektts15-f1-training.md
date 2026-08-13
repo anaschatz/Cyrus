@@ -100,6 +100,15 @@ render scored 63.64% WER. The candidate is the objective listening winner but
 cannot proceed to 50 steps until human evaluation confirms timbre, pacing,
 native pronunciation, and absence of robotic artifacts.
 
+Human evaluation then found the smoother candidate free of the earlier
+robotic failure but less natively Greek, described as sounding foreign. That
+checkpoint is therefore not extended. Pronunciation qualification now uses
+four phonetically rich, untouched Harvard sentences from the F1 control split.
+Each synthesized sentence is paired with the exact same text spoken by the
+native F1 recording, whose SHA-256 is pinned. This separates accent and rhythm
+judgment from speaker preference and from Whisper's imperfect Greek WER. No
+checkpoint can continue until it wins this same-text native-reference gate.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
