@@ -42,6 +42,21 @@ class GreekTts15AcousticTests(unittest.TestCase):
         with self.assertRaises(BackendError):
             compare_acoustic_sets({"native": {"one": "/x"}, "baseline": {"one": "/x"}, "unknown": {"one": "/x"}})
 
+    @unittest.skipUnless(find_spec("numpy") and find_spec("soundfile"), "optional acoustic dependencies")
+    def test_quality_comparison_does_not_require_native_group(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            baseline = Path(temp) / "baseline.wav"
+            candidate = Path(temp) / "candidate.wav"
+            self._tone(baseline)
+            self._tone(candidate)
+            report = compare_acoustic_sets(
+                {
+                    "baseline": {"one": baseline},
+                    "attention-only": {"one": candidate},
+                }
+            )
+        self.assertTrue(report["ready"])
+
 
 if __name__ == "__main__":
     unittest.main()

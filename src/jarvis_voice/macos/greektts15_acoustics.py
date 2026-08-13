@@ -117,9 +117,9 @@ def compare_acoustic_sets(
     if (
         not candidates
         or not candidates <= allowed_candidates
-        or not {"native", "baseline"} <= set(files)
-        or not files["native"]
-        or any(set(group) != set(files["native"]) for group in files.values())
+        or "baseline" not in files
+        or not files["baseline"]
+        or any(set(group) != set(files["baseline"]) for group in files.values())
     ):
         raise BackendError(
             "tts.greektts15.acoustic_set_incomplete",
