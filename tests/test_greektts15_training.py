@@ -47,8 +47,24 @@ class GreekTts15TrainingTests(unittest.TestCase):
         }
         report = score_pronunciation_transcripts(references, transcripts)
         self.assertEqual(report["native_calibration_wer_percent"], 0.0)
-        self.assertTrue(report["blend_not_worse_than_baseline"])
+        self.assertEqual(report["candidate_label"], "blend-25pct")
+        self.assertTrue(report["candidate_not_worse_than_baseline"])
         self.assertFalse(report["promotion_allowed"])
+
+    def test_pronunciation_asr_accepts_only_bounded_blend_labels(self) -> None:
+        references = {"one": "Καλημέρα"}
+        transcripts = {
+            "native": dict(references),
+            "baseline": dict(references),
+            "blend-37_5pct": dict(references),
+        }
+        self.assertEqual(
+            score_pronunciation_transcripts(references, transcripts)["candidate_label"],
+            "blend-37_5pct",
+        )
+        transcripts["unknown"] = transcripts.pop("blend-37_5pct")
+        with self.assertRaises(BackendError):
+            score_pronunciation_transcripts(references, transcripts)
 
     def test_adapter_blending_is_bounded_away_from_rejected_candidate(self) -> None:
         self.assertEqual(ADAPTER_BLEND_FACTORS, {0.25, 0.375, 0.5})

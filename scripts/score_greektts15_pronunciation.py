@@ -26,6 +26,7 @@ def main() -> int:
     parser.add_argument("--dataset-root", required=True)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--blend", required=True)
+    parser.add_argument("--candidate-label", choices=("blend-25pct", "blend-37_5pct"), default="blend-25pct")
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     model_dir = Path(args.model_dir).expanduser()
@@ -49,14 +50,14 @@ def main() -> int:
 
     model = WhisperModel(str(model_dir), device="cpu", compute_type="int8", cpu_threads=4, local_files_only=True)
     references = {item.fixture_id: item.text for item in PRONUNCIATION_REFERENCES}
-    transcripts = {label: {} for label in ("native", "baseline", "blend-25pct")}
+    transcripts = {label: {} for label in ("native", "baseline", args.candidate_label)}
     details = {label: [] for label in transcripts}
-    directories = {"baseline": baseline, "blend-25pct": blend}
+    directories = {"baseline": baseline, args.candidate_label: blend}
     for index, item in enumerate(PRONUNCIATION_REFERENCES, start=1):
         audio_files = {
             "native": dataset / "audio" / item.filename,
             "baseline": directories["baseline"] / f"{index:02d}-{item.fixture_id}.wav",
-            "blend-25pct": directories["blend-25pct"] / f"{index:02d}-{item.fixture_id}.wav",
+            args.candidate_label: directories[args.candidate_label] / f"{index:02d}-{item.fixture_id}.wav",
         }
         for label, audio in audio_files.items():
             if audio.is_symlink() or not audio.is_file():
