@@ -417,7 +417,15 @@ def acquire_chatterbox_model(
         "code": "tts.chatterbox.model_acquired",
         "network_used": True,
         "downloaded_bytes": MODEL_DOWNLOAD_BYTES,
-        "model": report["model"],
+        "model": {
+            "repo_id": MODEL_REPO_ID,
+            "revision": MODEL_REVISION,
+            "t3_model": T3_MODEL,
+            "ready": validation.ready,
+            "code": validation.code,
+            "files_present": validation.files_present,
+            "files_required": validation.files_required,
+        },
     }
 
 

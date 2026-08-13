@@ -138,6 +138,39 @@ class ChatterboxPilotTests(unittest.TestCase):
         self.assertTrue(result.ready)
         self.assertEqual(result.files_present, len(MODEL_ARTIFACTS))
 
+    def test_acquisition_report_uses_post_download_model_validation(self) -> None:
+        from jarvis_voice.macos.chatterbox_pilot import acquire_chatterbox_model
+
+        before = SimpleNamespace(ready=False, code="tts.chatterbox.model_directory_missing")
+        after = SimpleNamespace(
+            ready=True,
+            code="tts.chatterbox.model_ready",
+            files_present=len(MODEL_ARTIFACTS),
+            files_required=len(MODEL_ARTIFACTS),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            model = root / "model"
+            with (
+                mock.patch(
+                    "jarvis_voice.macos.chatterbox_pilot.chatterbox_pilot_preflight",
+                    return_value={"acquisition_ready": True, "code": "ready", "model": {}},
+                ),
+                mock.patch(
+                    "jarvis_voice.macos.chatterbox_pilot.validate_chatterbox_model_directory",
+                    side_effect=[before, after],
+                ),
+                mock.patch.dict(
+                    "sys.modules",
+                    {"huggingface_hub": SimpleNamespace(snapshot_download=mock.Mock())},
+                ),
+                mock.patch("os.chmod"),
+            ):
+                report = acquire_chatterbox_model(root, model)
+        self.assertTrue(report["model"]["ready"])
+        self.assertEqual(report["model"]["code"], "tts.chatterbox.model_ready")
+        self.assertEqual(report["model"]["files_present"], len(MODEL_ARTIFACTS))
+
     def test_voice_conversion_audio_validation_rejects_unsafe_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
