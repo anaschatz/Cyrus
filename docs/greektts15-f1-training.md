@@ -258,6 +258,28 @@ in `docs/greektts15-attention-only-candidate.json`. No longer run or runtime
 promotion is allowed until human listening evaluates timbre, native accent,
 pauses, and the reported robotic artifact.
 
+Human listening found no meaningful pronunciation difference between the
+immutable baseline and the attention-only candidate on the difficult words.
+The voice no longer sounded broadly foreign or robotic, apart from a somewhat
+long pause in fixture 02, but both variants pronounced parts of `κατάσταση`,
+`λειτουργούν`, and the text after `να σου υπενθυμίσω` in fixture 04 oddly.
+This localizes the remaining defect to repeatable lexical/phonetic paths rather
+than general timbre or waveform continuity.
+
+The bounded follow-up uses only existing F1 recordings. The train split has
+eight `καταστα-`, ten `λειτουργ-`, twelve `σημαντικ-`, seven `εργασ-`, and
+fifteen `θυμ-` matches; it has no recording of `υπενθυμίσω` itself. A
+deterministic `jarvis-pronunciation` curriculum therefore selects three unique
+real recordings from each of those five clusters and ten general recordings.
+It never synthesizes or relabels a transcript. From the immutable adapter, the
+same attention-only 25-update, `1e-6` pilot reduced validation loss from
+5.198685 to 5.064960, used 4.69 GB peak MLX memory, and saved checkpoint SHA-256
+`88f6ab6f7e64be5809a23d83c13bf15da995d82e835cf09ba1b7cf777c3158a8`.
+All four seed-10,001 fixtures completed at temperature 0.4. Acoustic comparison
+against the previous attention-only render is diagnostic only; human listening
+of fixtures 02 and 04 remains the deciding gate, and production promotion is
+still false.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
