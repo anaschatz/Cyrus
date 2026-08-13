@@ -32,6 +32,10 @@ MINIMUM_FULL_TRAINING_DISK_BYTES = 20 * GIB
 LOCKED_TORCH_VERSION = "2.12.1"
 LOCKED_LIGHTNING_VERSION = "2.6.1"
 INITIAL_MPS_EPOCHS = 25
+RECOVERY_MPS_EPOCHS = 5
+RECOVERY_LEARNING_RATE = 2e-5
+RECOVERY_DISCRIMINATOR_LEARNING_RATE = 1e-5
+RECOVERY_DIRECTORY_NAME = "recovery-low-lr"
 MPS_ENVIRONMENT = {
     "PYTORCH_ENABLE_MPS_FALLBACK": "1",
     "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.90",
@@ -345,13 +349,44 @@ def piper_mps_training_commands(
         "--data.config_path",
         str(work / "export" / "el_GR-jarvis-f1-medium.onnx.json"),
     ]
+    recovery = [
+        *shared,
+        "--model.learning_rate",
+        str(RECOVERY_LEARNING_RATE),
+        "--model.learning_rate_d",
+        str(RECOVERY_DISCRIMINATOR_LEARNING_RATE),
+        "--trainer.max_epochs",
+        str(RECOVERY_MPS_EPOCHS),
+        "--trainer.default_root_dir",
+        str(work / RECOVERY_DIRECTORY_NAME / "runs"),
+        "--trainer.log_every_n_steps",
+        "25",
+        "--data.cache_dir",
+        str(work / "cache"),
+        "--data.config_path",
+        str(
+            work
+            / RECOVERY_DIRECTORY_NAME
+            / "export"
+            / "el_GR-jarvis-f1-medium.onnx.json"
+        ),
+    ]
     return {
         "ready": False,
         "code": "tts.f1_mps.smoke_required",
         "environment": dict(MPS_ENVIRONMENT),
         "smoke_argv": smoke,
         "initial_training_argv": initial,
+        "recovery_training_argv": recovery,
         "initial_epochs": INITIAL_MPS_EPOCHS,
+        "recovery": {
+            "epochs": RECOVERY_MPS_EPOCHS,
+            "learning_rate": RECOVERY_LEARNING_RATE,
+            "learning_rate_d": RECOVERY_DISCRIMINATOR_LEARNING_RATE,
+            "starts_from_pinned_warmstart": True,
+            "failed_run_checkpoint_forbidden": True,
+            "articulation_gate_required_before_extension": True,
+        },
         "training_must_not_start_before_smoke": True,
         "network_used": False,
         "installation_performed": False,

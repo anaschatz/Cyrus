@@ -14,6 +14,9 @@ from jarvis_voice.piper_mps_training import (
     LOCKED_TORCH_VERSION,
     PIPER_REVISION,
     PIPER_VERSION,
+    RECOVERY_DISCRIMINATOR_LEARNING_RATE,
+    RECOVERY_LEARNING_RATE,
+    RECOVERY_MPS_EPOCHS,
     piper_mps_training_commands,
     piper_mps_training_readiness,
 )
@@ -113,6 +116,23 @@ class PiperMpsTrainingTests(unittest.TestCase):
         self.assertNotIn("--ckpt_path", smoke)
         self.assertIn("--trainer.fast_dev_run", smoke)
         self.assertNotIn("--trainer.fast_dev_run", initial)
+
+        recovery = commands["recovery_training_argv"]
+        self.assertEqual(
+            recovery[recovery.index("--model.learning_rate") + 1],
+            str(RECOVERY_LEARNING_RATE),
+        )
+        self.assertEqual(
+            recovery[recovery.index("--model.learning_rate_d") + 1],
+            str(RECOVERY_DISCRIMINATOR_LEARNING_RATE),
+        )
+        self.assertEqual(
+            recovery[recovery.index("--trainer.max_epochs") + 1],
+            str(RECOVERY_MPS_EPOCHS),
+        )
+        self.assertIn("--model.warmstart_ckpt", recovery)
+        self.assertNotIn("--ckpt_path", recovery)
+        self.assertIn("recovery-low-lr", " ".join(recovery))
 
     def test_command_profile_preserves_virtualenv_python_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

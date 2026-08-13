@@ -202,6 +202,17 @@ cannot contaminate articulation or speaker identity. A future accepted F1
 model must preserve the source voice first, then apply pitch-preserving pace
 control equivalent to `1.15x` at the output boundary.
 
+## Low-learning-rate recovery experiment
+
+The next approved experiment starts a new optimizer trajectory from the exact
+hash-pinned Greek `rapunzelina` warm-start. It must never consume a checkpoint
+from the rejected 30-epoch run. Generator/discriminator learning rates are
+reduced tenfold to `2e-5` and `1e-5`; all other bounded M3 parameters remain
+unchanged. The experiment writes under `recovery-low-lr`, stops after five
+epochs, and requires export plus the deterministic/stochastic articulation
+control before any extension. The `1.15x` listening preference remains an
+output-only setting and is not applied during this training experiment.
+
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local
