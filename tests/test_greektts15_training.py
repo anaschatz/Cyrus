@@ -25,6 +25,7 @@ from jarvis_voice.macos.greektts15_training import (
     normalize_transcript,
     score_candidate_transcripts,
     score_pronunciation_transcripts,
+    score_quality_candidate_transcripts,
     _validated_gradient_probe,
     TRAINING_TARGET_PROFILES,
     TARGETED_LORA_GROUPS,
@@ -41,6 +42,18 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_quality_candidate_scoring_stays_baseline_relative(self) -> None:
+        references = {"one": "Καλημέρα κόσμε"}
+        report = score_quality_candidate_transcripts(
+            references,
+            {
+                "baseline": {"one": "Καλημέρα"},
+                "attention-only": dict(references),
+            },
+        )
+        self.assertTrue(report["candidate_not_worse_than_baseline"])
+        self.assertFalse(report["promotion_allowed"])
+
     def test_targeted_profile_freezes_exactly_two_complete_adapter_layers(self) -> None:
         self.assertEqual(TRAINING_TARGET_PROFILES, {"all", "freeze-output-layers", "attention-only"})
         self.assertEqual(TARGETED_LORA_GROUPS, 26 * 7 * 2)

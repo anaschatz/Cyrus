@@ -63,6 +63,7 @@ PRONUNCIATION_ASR_CANDIDATE_LABELS = {
     "target-freeze-output-layers",
     "attention-only",
 }
+QUALITY_ASR_CANDIDATE_LABELS = {"attention-only"}
 
 _LEADING_CONFUSABLES = str.maketrans(
     {
@@ -999,6 +1000,34 @@ def score_pronunciation_transcripts(
     )
     by_label = {item["label"]: item for item in report["candidates"]}
     report["native_calibration_wer_percent"] = by_label["native"]["micro_wer_percent"]
+    report["candidate_label"] = candidate_label
+    report["candidate_not_worse_than_baseline"] = (
+        by_label[candidate_label]["micro_wer_percent"] <= by_label["baseline"]["micro_wer_percent"]
+    )
+    return report
+
+
+def score_quality_candidate_transcripts(
+    references: dict[str, str],
+    transcripts: dict[str, dict[str, str]],
+) -> dict[str, object]:
+    """Compare one approved JARVIS-text candidate with the immutable baseline."""
+
+    candidate_labels = set(transcripts) - {"baseline"}
+    if len(candidate_labels) != 1 or not candidate_labels <= QUALITY_ASR_CANDIDATE_LABELS:
+        raise BackendError(
+            "tts.greektts15.asr_transcripts_incomplete",
+            "Quality candidate label is invalid",
+            subsystem="tts",
+        )
+    candidate_label = next(iter(candidate_labels))
+    report = _score_transcript_sets(
+        references,
+        transcripts,
+        required_labels={"baseline", candidate_label},
+        schema="jarvis.voice.greektts15-quality-asr/1",
+    )
+    by_label = {item["label"]: item for item in report["candidates"]}
     report["candidate_label"] = candidate_label
     report["candidate_not_worse_than_baseline"] = (
         by_label[candidate_label]["micro_wer_percent"] <= by_label["baseline"]["micro_wer_percent"]
