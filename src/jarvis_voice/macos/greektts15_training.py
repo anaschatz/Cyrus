@@ -58,7 +58,13 @@ PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}
 TRAINING_TARGET_PROFILES = {"all", "freeze-output-layers", "attention-only", "mlp-only"}
-TRAINING_SAMPLE_PROFILES = {"uniform", "jarvis-pronunciation", "jarvis-lexical", "jarvis-exact-core"}
+TRAINING_SAMPLE_PROFILES = {
+    "uniform",
+    "jarvis-pronunciation",
+    "jarvis-lexical",
+    "jarvis-exact-core",
+    "jarvis-word-focus",
+}
 PRONUNCIATION_CURRICULUM_ROOTS = (
     ("system_state", "καταστα"),
     ("operation", "λειτουργ"),
@@ -84,6 +90,7 @@ WORD_FOCUS_CROPS = (
     ("ergasies", "Greek-F1-C1-02-03.wav", "εργασίες", 0.34, 0.92, 0.845),
 )
 WORD_FOCUS_PADDING_SECONDS = 0.10
+WORD_FOCUS_TARGETED_STEPS = 15
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 PRONUNCIATION_ASR_CANDIDATE_LABELS = {
@@ -297,6 +304,51 @@ def build_word_focus_bundle(
         encoding="utf-8",
     )
     return bundle
+
+
+def build_word_focus_training_plan(
+    base_plan_path: str | Path,
+    word_focus_manifest_path: str | Path,
+    output_path: str | Path,
+) -> dict[str, object]:
+    """Append approved real-F1 crops to the original plan without changing validation."""
+
+    base_path = Path(base_plan_path).expanduser()
+    focus_path = Path(word_focus_manifest_path).expanduser()
+    output = Path(output_path).expanduser()
+    if not base_path.is_absolute() or not focus_path.is_absolute() or not output.is_absolute() or output.exists():
+        raise BackendError("tts.greektts15.word_focus_path_invalid", "Word-focus plan paths are invalid", subsystem="tts")
+    try:
+        base = json.loads(base_path.read_text(encoding="utf-8"))
+        focus = json.loads(focus_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Word-focus plan input is unreadable", subsystem="tts") from exc
+    base_samples = base.get("samples") if isinstance(base, dict) else None
+    focus_samples = focus.get("samples") if isinstance(focus, dict) else None
+    if (
+        not isinstance(base, dict)
+        or base.get("schema") != PLAN_SCHEMA
+        or not isinstance(base_samples, list)
+        or not isinstance(focus, dict)
+        or focus.get("schema") != WORD_FOCUS_SCHEMA
+        or focus.get("ready") is not True
+        or not isinstance(focus_samples, list)
+        or len(focus_samples) != len(WORD_FOCUS_CROPS)
+        or any(sample.get("split") != "train" for sample in focus_samples if isinstance(sample, dict))
+    ):
+        raise BackendError("tts.greektts15.plan_invalid", "Word-focus plan input is invalid", subsystem="tts")
+    filenames = [sample.get("filename") for sample in [*base_samples, *focus_samples] if isinstance(sample, dict)]
+    if len(filenames) != len(set(filenames)):
+        raise BackendError("tts.greektts15.plan_invalid", "Word-focus filenames collide", subsystem="tts")
+    combined = dict(base)
+    combined["samples"] = [*base_samples, *focus_samples]
+    combined["word_focus"] = {
+        "schema": WORD_FOCUS_SCHEMA,
+        "samples": len(focus_samples),
+        "manifest_sha256": _sha256(focus_path),
+    }
+    output.write_text(json.dumps(combined, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return combined
 
 
 def interleave_snac_codes(
@@ -580,6 +632,45 @@ def build_exact_core_curriculum_order(
     }
 
 
+def build_word_focus_curriculum_order(
+    plan_path: str | Path,
+    *,
+    steps: int = PILOT_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Repeat human-approved real word crops and retain ten general F1 samples."""
+
+    import random
+
+    if steps != PILOT_STEPS:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Word-focus step count is invalid", subsystem="tts")
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    focus_indices = [
+        index for index, sample in enumerate(train_samples) if sample.get("corpus") == "STOMA-F1-word-focus"
+    ]
+    if len(focus_indices) != len(WORD_FOCUS_CROPS):
+        raise BackendError("tts.greektts15.curriculum_invalid", "Approved word-focus samples are incomplete", subsystem="tts")
+    selected = [focus_indices[round_index % len(focus_indices)] for round_index in range(WORD_FOCUS_TARGETED_STEPS)]
+    general = [index for index, sample in enumerate(train_samples) if sample.get("corpus") != "STOMA-F1-word-focus"]
+    randomizer = random.Random(TRAINING_SEED)
+    randomizer.shuffle(general)
+    selected.extend(general[: steps - len(selected)])
+    return selected, {
+        "profile": "jarvis-word-focus",
+        "targeted_steps": WORD_FOCUS_TARGETED_STEPS,
+        "general_steps": steps - WORD_FOCUS_TARGETED_STEPS,
+        "focus_samples": len(focus_indices),
+        "sample_filenames": [train_samples[index].get("filename") for index in selected],
+        "human_crop_approval_required": True,
+    }
+
+
 def run_gradient_memory_probe(
     model_root: str | Path,
     plan_path: str | Path,
@@ -794,6 +885,7 @@ def run_training_pilot(
     target_profile: str = "all",
     eos_loss_weight: int = 1,
     sample_profile: str = "uniform",
+    source_adapter_directory: str | Path | None = None,
 ) -> dict[str, object]:
     """Train one deterministic pilot branch from the immutable Greek adapter."""
 
@@ -814,6 +906,8 @@ def run_training_pilot(
         or (sample_profile == "jarvis-pronunciation" and target_profile != "attention-only")
         or (sample_profile == "jarvis-lexical" and target_profile != "mlp-only")
         or (sample_profile == "jarvis-exact-core" and target_profile != "mlp-only")
+        or (sample_profile == "jarvis-word-focus" and target_profile != "mlp-only")
+        or (source_adapter_directory is not None and sample_profile != "jarvis-word-focus")
     ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
     gate = _validated_gradient_probe(gradient_report)
@@ -822,6 +916,31 @@ def run_training_pilot(
         raise BackendError("tts.greektts15.model_root_missing", "GreekTTS model root is unavailable", subsystem="tts")
     if not output.is_absolute() or output.exists() or output.is_symlink():
         raise BackendError("tts.greektts15.pilot_output_invalid", "Training pilot output must be a new absolute path", subsystem="tts")
+    baseline_adapter = root / "mlx-adapter"
+    source_adapter = baseline_adapter if source_adapter_directory is None else Path(source_adapter_directory).expanduser()
+    if (
+        not source_adapter.is_absolute()
+        or not source_adapter.is_dir()
+        or source_adapter.is_symlink()
+        or not (source_adapter / "adapters.safetensors").is_file()
+        or not (source_adapter / "adapter_config.json").is_file()
+    ):
+        raise BackendError("tts.greektts15.training_source_invalid", "Training source adapter is invalid", subsystem="tts")
+    if source_adapter != baseline_adapter:
+        try:
+            source_manifest = json.loads((source_adapter / "training_manifest.json").read_text(encoding="utf-8"))
+            source_config = json.loads((source_adapter / "adapter_config.json").read_text(encoding="utf-8"))
+            baseline_config = json.loads((baseline_adapter / "adapter_config.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BackendError("tts.greektts15.training_source_invalid", "Training source evidence is unreadable", subsystem="tts") from exc
+        if not (
+            source_manifest.get("schema") == "jarvis.voice.greektts15-training-pilot/1"
+            and source_manifest.get("ready") is True
+            and source_manifest.get("output_adapter_sha256") == _sha256(source_adapter / "adapters.safetensors")
+            and source_manifest.get("source_adapter_sha256") == _sha256(baseline_adapter / "adapters.safetensors")
+            and source_config == baseline_config
+        ):
+            raise BackendError("tts.greektts15.training_source_invalid", "Training source lineage is invalid", subsystem="tts")
     output.mkdir(mode=0o700, parents=True)
     try:
         import mlx.core as mx
@@ -855,7 +974,7 @@ def run_training_pilot(
         mx.random.seed(TRAINING_SEED)
         model, tokenizer = load(str(root / "base"), lazy=False)
         model.freeze()
-        model = load_adapters(model, str(root / "mlx-adapter"))
+        model = load_adapters(model, str(source_adapter))
         frozen_layers: list[int] = []
         if target_profile == "freeze-output-layers":
             frozen_layers = [26, 27]
@@ -886,6 +1005,8 @@ def run_training_pilot(
             order, curriculum = build_lexical_curriculum_order(plan_path, steps=steps)
         elif sample_profile == "jarvis-exact-core":
             order, curriculum = build_exact_core_curriculum_order(plan_path, steps=steps)
+        elif sample_profile == "jarvis-word-focus":
+            order, curriculum = build_word_focus_curriculum_order(plan_path, steps=steps)
         else:
             order = list(range(len(train)))
             randomizer.shuffle(order)
@@ -948,8 +1069,8 @@ def run_training_pilot(
                 subsystem="tts",
             )
         mx.save_safetensors(str(adapter_file), complete_adapter, metadata={"format": "mlx"})
-        shutil.copyfile(root / "mlx-adapter" / "adapter_config.json", output / "adapter_config.json")
-        source_hash = _sha256(root / "mlx-adapter" / "adapters.safetensors")
+        shutil.copyfile(source_adapter / "adapter_config.json", output / "adapter_config.json")
+        source_hash = _sha256(source_adapter / "adapters.safetensors")
         output_hash = _sha256(adapter_file)
         if source_hash == output_hash:
             raise BackendError("tts.greektts15.optimizer_update_missing", "Training pilot did not change the adapter", subsystem="tts")
@@ -987,6 +1108,7 @@ def run_training_pilot(
             "saved_adapter_groups": len(complete_adapter),
             "trainable_parameters": sum(int(value.size) for _, value in trainable),
             "source_adapter_sha256": source_hash,
+            "source_adapter_kind": "immutable_baseline" if source_adapter == baseline_adapter else "training_checkpoint",
             "output_adapter_sha256": output_hash,
             "gradient_gate_peak_mlx_bytes": gate["peak_mlx_bytes"],
             "base_frozen": True,

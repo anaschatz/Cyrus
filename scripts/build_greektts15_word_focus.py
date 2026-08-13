@@ -15,7 +15,10 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from jarvis_voice.errors import BackendError  # noqa: E402
-from jarvis_voice.macos.greektts15_training import build_word_focus_bundle  # noqa: E402
+from jarvis_voice.macos.greektts15_training import (  # noqa: E402
+    build_word_focus_bundle,
+    build_word_focus_training_plan,
+)
 
 
 def main() -> int:
@@ -26,6 +29,13 @@ def main() -> int:
     args = parser.parse_args()
     try:
         report = build_word_focus_bundle(args.plan, args.dataset_root, args.output_root)
+        output = Path(args.output_root).expanduser()
+        build_word_focus_training_plan(
+            Path(args.plan).expanduser().resolve(),
+            (output / "word-focus-manifest.json").resolve(),
+            (output / "word-focus-training-plan.json").resolve(),
+        )
+        report["training_plan"] = "word-focus-training-plan.json"
     except BackendError as exc:
         report = {"ready": False, "code": exc.code}
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))

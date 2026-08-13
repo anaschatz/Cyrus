@@ -35,9 +35,10 @@ def main() -> int:
     parser.add_argument("--eos-loss-weight", type=int, choices=(1, 16), default=1)
     parser.add_argument(
         "--sample-profile",
-        choices=("uniform", "jarvis-pronunciation", "jarvis-lexical", "jarvis-exact-core"),
+        choices=("uniform", "jarvis-pronunciation", "jarvis-lexical", "jarvis-exact-core", "jarvis-word-focus"),
         default="uniform",
     )
+    parser.add_argument("--source-adapter-directory")
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     try:
@@ -52,6 +53,7 @@ def main() -> int:
             target_profile=args.target_profile,
             eos_loss_weight=args.eos_loss_weight,
             sample_profile=args.sample_profile,
+            source_adapter_directory=args.source_adapter_directory,
         )
     except BackendError as exc:
         report = {"ready": False, "code": exc.code}
