@@ -25,6 +25,7 @@ from jarvis_voice.macos.chatterbox_pilot import (
     TOKENIZER_FILENAME,
     _add_f1_qualification_gates,
     _deny_network_during_pilot,
+    _release_mps_unit_cache,
     _validated_f1_reference_audio,
     _validated_audio_path,
     chatterbox_pilot_preflight,
@@ -252,6 +253,14 @@ class ChatterboxPilotTests(unittest.TestCase):
         with self.assertRaises(BackendError) as raised:
             score_f1_transcripts({"greeting": "Καλημέρα"})
         self.assertEqual(raised.exception.code, "tts.chatterbox.f1_transcripts_incomplete")
+
+    def test_mps_unit_cache_release_collects_empties_and_synchronizes(self) -> None:
+        fake_mps = SimpleNamespace(empty_cache=mock.Mock(), synchronize=mock.Mock())
+        with mock.patch("gc.collect") as collect:
+            _release_mps_unit_cache(SimpleNamespace(mps=fake_mps))
+        collect.assert_called_once_with()
+        fake_mps.empty_cache.assert_called_once_with()
+        fake_mps.synchronize.assert_called_once_with()
 
 
 if __name__ == "__main__":

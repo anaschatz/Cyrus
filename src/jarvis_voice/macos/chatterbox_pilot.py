@@ -9,6 +9,7 @@ the host has enough disk headroom.
 from __future__ import annotations
 
 import hashlib
+import gc
 import importlib.metadata
 import importlib.util
 import json
@@ -504,6 +505,15 @@ def _mps_memory_bytes(torch_module: object, function_name: str) -> int | None:
         return None
 
 
+def _release_mps_unit_cache(torch_module: object) -> None:
+    gc.collect()
+    mps = getattr(torch_module, "mps", None)
+    empty_cache = getattr(mps, "empty_cache", None)
+    if callable(empty_cache):
+        empty_cache()
+    _synchronize_mps(torch_module)
+
+
 def _run_chatterbox_synthesis_suite(
     model_directory: str | Path,
     output_directory: str | Path,
@@ -580,6 +590,8 @@ def _run_chatterbox_synthesis_suite(
                 "normalization_gain": round(normalization_gain, 6),
             }
         )
+        del waveform
+        _release_mps_unit_cache(torch)
 
     return {
         "schema_version": 1,
