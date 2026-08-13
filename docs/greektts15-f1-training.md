@@ -91,6 +91,15 @@ differences into a different audio-token path, candidate decoding is qualified
 separately at bounded temperatures 0.0, 0.2, 0.4, and 0.6. Any comparison must
 record the exact temperature and use identical settings for the baseline.
 
+Decoding qualification selected temperature 0.4 for the `1e-6`, 25-step
+candidate. It completed all four fixtures at mean RTF 4.23 and scored 36.36%
+micro WER with no English collapse. The same candidate scored 45.45% at
+temperature 0.2 and 39.39% at 0.6; 0.4 is therefore the best measured balance.
+The baseline failed end-of-speech at both 0.2 and 0.4, while its completed 0.6
+render scored 63.64% WER. The candidate is the objective listening winner but
+cannot proceed to 50 steps until human evaluation confirms timbre, pacing,
+native pronunciation, and absence of robotic artifacts.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
