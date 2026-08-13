@@ -61,6 +61,7 @@ PRONUNCIATION_ASR_CANDIDATE_LABELS = {
     "blend-37_5pct",
     "lr-2_5e-7",
     "target-freeze-output-layers",
+    "attention-only",
 }
 
 _LEADING_CONFUSABLES = str.maketrans(

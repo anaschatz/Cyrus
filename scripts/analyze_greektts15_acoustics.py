@@ -28,7 +28,7 @@ def main() -> int:
     parser.add_argument("--candidate")
     parser.add_argument(
         "--candidate-label",
-        choices=("lr-2_5e-7", "target-freeze-output-layers"),
+        choices=("lr-2_5e-7", "target-freeze-output-layers", "attention-only"),
         default="lr-2_5e-7",
     )
     parser.add_argument("--report", required=True)

@@ -88,6 +88,11 @@ class GreekTts15TrainingTests(unittest.TestCase):
             score_pronunciation_transcripts(references, transcripts)["candidate_label"],
             "target-freeze-output-layers",
         )
+        transcripts["attention-only"] = transcripts.pop("target-freeze-output-layers")
+        self.assertEqual(
+            score_pronunciation_transcripts(references, transcripts)["candidate_label"],
+            "attention-only",
+        )
 
     def test_adapter_blending_is_bounded_away_from_rejected_candidate(self) -> None:
         self.assertEqual(ADAPTER_BLEND_FACTORS, {0.25, 0.375, 0.5})

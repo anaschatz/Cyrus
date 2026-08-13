@@ -111,6 +111,7 @@ def compare_acoustic_sets(
         "blend-37_5pct",
         "lr-2_5e-7",
         "target-freeze-output-layers",
+        "attention-only",
     }
     candidates = set(files) - {"native", "baseline"}
     if (
