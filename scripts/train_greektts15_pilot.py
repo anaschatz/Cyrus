@@ -26,6 +26,7 @@ def main() -> int:
     parser.add_argument("--gradient-report", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--learning-rate", required=True, type=float, choices=(2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5))
+    parser.add_argument("--steps", type=int, choices=(25, 100), default=25)
     parser.add_argument(
         "--target-profile",
         choices=("all", "freeze-output-layers", "attention-only", "mlp-only"),
@@ -34,7 +35,7 @@ def main() -> int:
     parser.add_argument("--eos-loss-weight", type=int, choices=(1, 16), default=1)
     parser.add_argument(
         "--sample-profile",
-        choices=("uniform", "jarvis-pronunciation", "jarvis-lexical"),
+        choices=("uniform", "jarvis-pronunciation", "jarvis-lexical", "jarvis-exact-core"),
         default="uniform",
     )
     parser.add_argument("--report", required=True)
@@ -47,6 +48,7 @@ def main() -> int:
             args.gradient_report,
             args.output_dir,
             learning_rate=args.learning_rate,
+            steps=args.steps,
             target_profile=args.target_profile,
             eos_loss_weight=args.eos_loss_weight,
             sample_profile=args.sample_profile,

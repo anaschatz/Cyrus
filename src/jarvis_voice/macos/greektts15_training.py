@@ -52,11 +52,12 @@ MLP_ONLY_LORA_GROUPS = 168
 EOS_LOSS_WEIGHTS = {1, 16}
 MAX_GRADIENT_PROBE_MLX_BYTES = 6 * 1024**3
 PILOT_STEPS = 25
+EXACT_CORE_STEPS = 100
 PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}
 TRAINING_TARGET_PROFILES = {"all", "freeze-output-layers", "attention-only", "mlp-only"}
-TRAINING_SAMPLE_PROFILES = {"uniform", "jarvis-pronunciation", "jarvis-lexical"}
+TRAINING_SAMPLE_PROFILES = {"uniform", "jarvis-pronunciation", "jarvis-lexical", "jarvis-exact-core"}
 PRONUNCIATION_CURRICULUM_ROOTS = (
     ("system_state", "καταστα"),
     ("operation", "λειτουργ"),
@@ -72,6 +73,8 @@ LEXICAL_CURRICULUM_TARGETS = (
     ("importance", "σημαντικεσ", True),
     ("work", "εργασιεσ", True),
 )
+EXACT_CORE_TARGETS = tuple(target for target in LEXICAL_CURRICULUM_TARGETS if target[0] != "reminder")
+EXACT_CORE_TARGETED_STEPS = 60
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 PRONUNCIATION_ASR_CANDIDATE_LABELS = {
@@ -400,6 +403,67 @@ def build_lexical_curriculum_order(
     }
 
 
+def build_exact_core_curriculum_order(
+    plan_path: str | Path,
+    *,
+    steps: int = EXACT_CORE_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Build a longer exact-word curriculum with no synthetic reminder proxy."""
+
+    import random
+
+    if steps != EXACT_CORE_STEPS:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Exact-core step count is invalid", subsystem="tts")
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    if len(train_samples) < steps or any(not isinstance(sample.get("text"), str) for sample in train_samples):
+        raise BackendError("tts.greektts15.plan_invalid", "Training samples are incomplete", subsystem="tts")
+
+    words = [set(_normalized_words(sample["text"])) for sample in train_samples]
+    candidates: dict[str, list[int]] = {}
+    for label, needle, exact_word in EXACT_CORE_TARGETS:
+        if not exact_word:
+            raise BackendError("tts.greektts15.curriculum_invalid", "Exact-core target is not exact", subsystem="tts")
+        matches = [index for index, sample_words in enumerate(words) if needle in sample_words]
+        if not matches:
+            raise BackendError("tts.greektts15.curriculum_invalid", "Exact F1 coverage is incomplete", subsystem="tts")
+        candidates[label] = matches
+
+    randomizer = random.Random(TRAINING_SEED)
+    for indices in candidates.values():
+        randomizer.shuffle(indices)
+    selected: list[int] = []
+    selected_counts = {label: 0 for label, _, _ in EXACT_CORE_TARGETS}
+    rounds = EXACT_CORE_TARGETED_STEPS // len(EXACT_CORE_TARGETS)
+    for round_index in range(rounds):
+        for label, _, _ in EXACT_CORE_TARGETS:
+            indices = candidates[label]
+            selected.append(indices[round_index % len(indices)])
+            selected_counts[label] += 1
+
+    targeted_set = {index for indices in candidates.values() for index in indices}
+    general = [index for index in range(len(train_samples)) if index not in targeted_set]
+    randomizer.shuffle(general)
+    selected.extend(general[: steps - len(selected)])
+    if len(selected) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Exact-core curriculum is incomplete", subsystem="tts")
+    return selected, {
+        "profile": "jarvis-exact-core",
+        "targeted_steps": EXACT_CORE_TARGETED_STEPS,
+        "general_steps": steps - EXACT_CORE_TARGETED_STEPS,
+        "target_counts": selected_counts,
+        "sample_filenames": [train_samples[index].get("filename") for index in selected],
+        "repeated_exact_examples": True,
+        "reminder_proxy_excluded": True,
+    }
+
+
 def run_gradient_memory_probe(
     model_root: str | Path,
     plan_path: str | Path,
@@ -624,7 +688,7 @@ def run_training_pilot(
 
     if (
         learning_rate not in PILOT_LEARNING_RATES
-        or steps != PILOT_STEPS
+        or (steps != PILOT_STEPS and not (steps == EXACT_CORE_STEPS and sample_profile == "jarvis-exact-core"))
         or target_profile not in TRAINING_TARGET_PROFILES
         or sample_profile not in TRAINING_SAMPLE_PROFILES
         or (target_profile in {"freeze-output-layers", "attention-only"} and learning_rate != 1e-6)
@@ -633,6 +697,7 @@ def run_training_pilot(
         or (eos_loss_weight != 1 and target_profile != "attention-only")
         or (sample_profile == "jarvis-pronunciation" and target_profile != "attention-only")
         or (sample_profile == "jarvis-lexical" and target_profile != "mlp-only")
+        or (sample_profile == "jarvis-exact-core" and target_profile != "mlp-only")
     ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
     gate = _validated_gradient_probe(gradient_report)
@@ -703,6 +768,8 @@ def run_training_pilot(
             order, curriculum = build_pronunciation_curriculum_order(plan_path, steps=steps)
         elif sample_profile == "jarvis-lexical":
             order, curriculum = build_lexical_curriculum_order(plan_path, steps=steps)
+        elif sample_profile == "jarvis-exact-core":
+            order, curriculum = build_exact_core_curriculum_order(plan_path, steps=steps)
         else:
             order = list(range(len(train)))
             randomizer.shuffle(order)

@@ -19,6 +19,7 @@ from jarvis_voice.macos.greektts15_training import (
     build_training_plan,
     build_pronunciation_curriculum_order,
     build_lexical_curriculum_order,
+    build_exact_core_curriculum_order,
     blend_adapter_checkpoint,
     build_orpheus_training_sequence,
     cache_snac_samples,
@@ -69,10 +70,14 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertTrue(all(count == 3 for count in report["target_counts"].values()))
 
     def test_pronunciation_sample_profile_is_attention_only(self) -> None:
-        self.assertEqual(TRAINING_SAMPLE_PROFILES, {"uniform", "jarvis-pronunciation", "jarvis-lexical"})
+        self.assertEqual(
+            TRAINING_SAMPLE_PROFILES,
+            {"uniform", "jarvis-pronunciation", "jarvis-lexical", "jarvis-exact-core"},
+        )
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
         self.assertIn('sample_profile == "jarvis-pronunciation" and target_profile != "attention-only"', source)
         self.assertIn('sample_profile == "jarvis-lexical" and target_profile != "mlp-only"', source)
+        self.assertIn('sample_profile == "jarvis-exact-core" and target_profile != "mlp-only"', source)
 
     def test_lexical_curriculum_repeats_exact_real_examples_only(self) -> None:
         samples = []
@@ -93,6 +98,28 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertTrue(report["repeated_exact_examples"])
         self.assertTrue(all(count == 3 for count in report["target_counts"].values()))
         self.assertEqual(order[:5], order[5:10])
+
+    def test_exact_core_curriculum_excludes_reminder_proxy(self) -> None:
+        targets = ("κατάσταση", "λειτουργούν", "σημαντικές", "εργασίες")
+        samples = [
+            {"split": "train", "filename": f"target-{index}.wav", "text": target}
+            for index, target in enumerate(targets)
+        ]
+        samples.extend(
+            {"split": "train", "filename": f"general-{index}.wav", "text": f"Γενικό δείγμα {index}"}
+            for index in range(100)
+        )
+        plan = {"schema": "jarvis.voice.greektts15-f1-plan/1", "samples": samples}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "plan.json"
+            path.write_text(json.dumps(plan), encoding="utf-8")
+            order, report = build_exact_core_curriculum_order(path)
+        self.assertEqual(len(order), 100)
+        self.assertEqual(report["targeted_steps"], 60)
+        self.assertEqual(report["general_steps"], 40)
+        self.assertTrue(report["reminder_proxy_excluded"])
+        self.assertEqual(set(report["target_counts"]), {"system_state", "operation", "importance", "work"})
+        self.assertTrue(all(count == 15 for count in report["target_counts"].values()))
 
     def test_listening_candidate_manifest_cannot_claim_production_readiness(self) -> None:
         manifest = json.loads(Path("docs/greektts15-attention-only-candidate.json").read_text(encoding="utf-8"))
@@ -231,7 +258,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
         self.assertIn('learning_rate not in PILOT_LEARNING_RATES', source)
         self.assertIn('PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}', source)
-        self.assertIn('steps != PILOT_STEPS', source)
+        self.assertIn('steps == EXACT_CORE_STEPS and sample_profile == "jarvis-exact-core"', source)
         self.assertIn('random.Random(TRAINING_SEED)', source)
 
     def test_cached_split_builds_completion_offset(self) -> None:
