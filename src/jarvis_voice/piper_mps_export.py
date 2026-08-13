@@ -17,6 +17,7 @@ MINIMUM_CHECKPOINT_BYTES = 100 * 1024 * 1024
 MAXIMUM_CHECKPOINT_BYTES = 2 * 1024 * 1024 * 1024
 EXPECTED_OUTPUT_NAME = "el_GR-jarvis-f1-medium.onnx"
 _CHECKPOINT_NAME = re.compile(r"^epoch=\d+-val_mel=\d+\.\d+\.ckpt$")
+_PROTECTED_CHECKPOINT_NAME = re.compile(r"^step=(100|200)\.ckpt$")
 _LIGHTNING_VERSION = re.compile(r"^version_\d+$")
 LANGUAGE_METADATA = {
     "code": "el",
@@ -44,12 +45,22 @@ def validate_piper_mps_export(
 
     checkpoint = Path(checkpoint_path).expanduser()
     output = Path(output_path).expanduser()
-    checkpoint_layout_ready = (
-        _CHECKPOINT_NAME.fullmatch(checkpoint.name) is not None
-        and checkpoint.parent.name == "checkpoints"
+    common_layout_ready = (
+        checkpoint.parent.name == "checkpoints"
         and _LIGHTNING_VERSION.fullmatch(checkpoint.parent.parent.name) is not None
         and checkpoint.parent.parent.parent.name == "lightning_logs"
     )
+    regular_layout_ready = (
+        _CHECKPOINT_NAME.fullmatch(checkpoint.name) is not None
+        and common_layout_ready
+    )
+    protected_layout_ready = (
+        _PROTECTED_CHECKPOINT_NAME.fullmatch(checkpoint.name) is not None
+        and common_layout_ready
+        and checkpoint.parent.parent.parent.parent.name == "runs"
+        and checkpoint.parent.parent.parent.parent.parent.name == "protected-mini"
+    )
+    checkpoint_layout_ready = regular_layout_ready or protected_layout_ready
     if (
         not checkpoint.is_absolute()
         or not checkpoint.is_file()

@@ -36,6 +36,55 @@ class PiperMpsExportTests(unittest.TestCase):
             )
         self.assertEqual(observed, (checkpoint, output))
 
+    def test_accepts_only_bounded_protected_step_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            checkpoint = (
+                root
+                / "protected-mini/runs/lightning_logs/version_0/checkpoints/step=100.ckpt"
+            )
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.write_bytes(b"protected")
+            output = root / "export/el_GR-jarvis-f1-medium.onnx"
+            output.parent.mkdir()
+            output.with_name(f"{output.name}.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            observed = validate_piper_mps_export(
+                checkpoint,
+                output,
+                lambda _: (),
+                minimum_size=1,
+            )
+        self.assertEqual(observed, (checkpoint, output))
+
+    def test_rejects_unapproved_step_or_wrong_protected_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output = root / "export/el_GR-jarvis-f1-medium.onnx"
+            output.parent.mkdir()
+            output.with_name(f"{output.name}.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            for relative in (
+                "protected-mini/runs/lightning_logs/version_0/checkpoints/step=150.ckpt",
+                "other/runs/lightning_logs/version_0/checkpoints/step=100.ckpt",
+            ):
+                checkpoint = root / relative
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint.write_bytes(b"rejected")
+                with self.assertRaises(BackendError) as raised:
+                    validate_piper_mps_export(
+                        checkpoint,
+                        output,
+                        lambda _: (),
+                        minimum_size=1,
+                    )
+                self.assertEqual(
+                    raised.exception.code,
+                    "tts.f1_mps.export_checkpoint_invalid",
+                )
+
     def test_rejects_unsafe_checkpoint_globals(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             checkpoint, output = self._paths(Path(temp))
