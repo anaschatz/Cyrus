@@ -280,6 +280,24 @@ against the previous attention-only render is diagnostic only; human listening
 of fixtures 02 and 04 remains the deciding gate, and production promotion is
 still false.
 
+The pronunciation curriculum improved only `σημαντικές εργασίες` slightly in
+human listening. Orthographic aliases could improve individual words but
+changed later autoregressive audio, while separately synthesized speech units
+had an unacceptable cadence discontinuity. All text rewriting, synonym, and
+waveform-stitching experiments are rejected and none entered production.
+
+The next model-level branch trains only the 168 MLP LoRA groups, freezes all
+attention LoRA groups, and restarts from the immutable F1 adapter. Its
+`jarvis-lexical` curriculum repeats the real train recordings containing the
+exact forms `κατάσταση`, `λειτουργούν`, `σημαντικές`, and `εργασίες` three
+times each; the unavailable `υπενθυμίσω` is represented by three real `θυμ-`
+recordings. Ten general F1 clips retain coverage. At `2.5e-7` for 25 updates,
+validation loss moved from 5.198685 to 5.166773, peak MLX memory was
+4,542,308,972 bytes, and checkpoint SHA-256 is
+`e4b56588806ac73995390ae0dcde84e07704f6d8f7a2a7432b8d317555dd5b1a`.
+The four unchanged quality fixtures completed at temperature 0.4 and seed
+10,001. Human listening remains mandatory and production promotion is false.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
