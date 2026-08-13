@@ -18,6 +18,13 @@ and offsets SNAC codes by codebook level instead of by each position in the
 seven-token Orpheus frame. JARVIS owns the small compatibility collator and
 tests its SNAC output by round-tripping it through the production decoder.
 
+Audio tokenization is a separate resumable stage. It uses the pinned local
+SNAC checkpoint offline on CPU, resamples the untouched 44.1 kHz F1 recordings
+to 24 kHz with SoXR VHQ, and writes one content-bound cache entry per clip.
+Every entry records the source-audio hash, codec hash, revision, resampler, and
+exact Orpheus tokens. A retry reuses an entry only when that full signature
+still matches.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash

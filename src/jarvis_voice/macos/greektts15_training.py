@@ -10,13 +10,14 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import re
 import unicodedata
 import wave
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Protocol
 
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.greektts15_pilot import (
@@ -32,6 +33,7 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 DATASET_SCHEMA = "jarvis.voice.stoma-f1-training-bundle/1"
 PLAN_SCHEMA = "jarvis.voice.greektts15-f1-plan/1"
+CACHE_SCHEMA = "jarvis.voice.greektts15-snac-cache/1"
 EXPECTED_ROWS = 1_301
 EXPECTED_SAMPLE_RATE = 44_100
 EXPECTED_CHANNELS = 1
@@ -73,6 +75,65 @@ class PlannedSample:
     duration_seconds: float
     audio_sha256: str
     transcript_normalized: bool
+
+
+class SnacEncoder(Protocol):
+    signature: dict[str, object]
+
+    def encode(self, audio_path: Path) -> list[int]: ...
+
+
+class TorchSnacEncoder:
+    """Offline CPU encoder for the pinned 24 kHz SNAC checkpoint."""
+
+    def __init__(self, snac_directory: str | Path) -> None:
+        directory = Path(snac_directory).expanduser()
+        if not directory.is_absolute() or not directory.is_dir() or directory.is_symlink():
+            raise BackendError("tts.greektts15.snac_root_invalid", "SNAC model root is invalid", subsystem="tts")
+        try:
+            import numpy as np
+            import soundfile as sf
+            import soxr
+            import torch
+            from snac import SNAC
+        except ImportError as exc:
+            raise BackendError("tts.greektts15.dependencies_missing", "SNAC cache dependencies are missing", subsystem="tts") from exc
+        self._np = np
+        self._sf = sf
+        self._soxr = soxr
+        self._torch = torch
+        previous = {name: os.environ.get(name) for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")}
+        os.environ.update({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
+        try:
+            self._model = SNAC.from_pretrained(str(directory)).to("cpu").eval()
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        self.signature = {
+            "backend": "torch-snac",
+            "model_revision": SNAC_REVISION,
+            "model_sha256": _sha256(directory / "pytorch_model.bin"),
+            "sample_rate": 24_000,
+            "resampler": "soxr-vhq",
+            "device": "cpu",
+        }
+
+    def encode(self, audio_path: Path) -> list[int]:
+        waveform, sample_rate = self._sf.read(str(audio_path), dtype="float32", always_2d=False)
+        if waveform.ndim != 1 or waveform.size == 0 or not self._np.isfinite(waveform).all():
+            raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 waveform is invalid", subsystem="tts")
+        if sample_rate != 24_000:
+            waveform = self._soxr.resample(waveform, sample_rate, 24_000, quality="VHQ")
+        tensor = self._torch.from_numpy(self._np.asarray(waveform, dtype=self._np.float32)).reshape(1, 1, -1)
+        with self._torch.inference_mode():
+            layers = self._model.encode(tensor)
+        values = [layer.detach().to("cpu").reshape(-1).tolist() for layer in layers]
+        if len(values) != 3:
+            raise BackendError("tts.greektts15.snac_shape_invalid", "SNAC returned the wrong layer count", subsystem="tts")
+        return interleave_snac_codes(values[0], values[1], values[2])
 
 
 def interleave_snac_codes(
@@ -128,6 +189,107 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _cache_payload_is_valid(payload: object, sample: dict[str, object], signature: dict[str, object]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    tokens = payload.get("tokens")
+    return (
+        payload.get("schema") == CACHE_SCHEMA
+        and payload.get("filename") == sample.get("filename")
+        and payload.get("audio_sha256") == sample.get("audio_sha256")
+        and payload.get("encoder") == signature
+        and isinstance(tokens, list)
+        and bool(tokens)
+        and len(tokens) % 7 == 0
+        and _audio_tokens_are_valid(tokens)
+    )
+
+
+def _audio_tokens_are_valid(tokens: list[object]) -> bool:
+    if not tokens or len(tokens) % 7:
+        return False
+    return all(
+        isinstance(token, int)
+        and AUDIO_TOKEN_OFFSET + position * CODEBOOK_SIZE <= token < AUDIO_TOKEN_OFFSET + (position + 1) * CODEBOOK_SIZE
+        for index, token in enumerate(tokens)
+        for position in (index % 7,)
+    )
+
+
+def cache_snac_samples(
+    plan_path: str | Path,
+    dataset_root: str | Path,
+    cache_root: str | Path,
+    encoder: SnacEncoder,
+    *,
+    limit: int | None = None,
+) -> dict[str, object]:
+    """Create a resumable, content-addressed SNAC cache from a verified plan."""
+
+    plan_file = Path(plan_path).expanduser()
+    dataset = Path(dataset_root).expanduser()
+    cache = Path(cache_root).expanduser()
+    if not plan_file.is_absolute() or not dataset.is_absolute() or not cache.is_absolute() or cache.is_symlink():
+        raise BackendError("tts.greektts15.cache_path_invalid", "SNAC cache path is invalid", subsystem="tts")
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list) or not samples:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    selected = samples if limit is None else samples[:limit]
+    if not selected or (limit is not None and limit < 1):
+        raise BackendError("tts.greektts15.cache_limit_invalid", "SNAC cache limit is invalid", subsystem="tts")
+    cache.mkdir(mode=0o700, parents=True, exist_ok=True)
+    encoded = reused = 0
+    token_count = 0
+    for sample in selected:
+        if not isinstance(sample, dict) or not isinstance(sample.get("filename"), str):
+            raise BackendError("tts.greektts15.plan_invalid", "Training sample is invalid", subsystem="tts")
+        filename = str(sample["filename"])
+        source = dataset / "audio" / filename
+        if source.is_symlink() or not source.is_file() or source.parent != dataset / "audio":
+            raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 audio path is invalid", subsystem="tts")
+        if _sha256(source) != sample.get("audio_sha256"):
+            raise BackendError("tts.greektts15.dataset_audio_hash_invalid", "F1 audio changed after planning", subsystem="tts")
+        destination = cache / f"{Path(filename).stem}.json"
+        if destination.is_symlink():
+            raise BackendError("tts.greektts15.cache_path_invalid", "SNAC cache contains a symlink", subsystem="tts")
+        try:
+            existing = json.loads(destination.read_text(encoding="utf-8")) if destination.is_file() else None
+        except (OSError, json.JSONDecodeError):
+            existing = None
+        if _cache_payload_is_valid(existing, sample, encoder.signature):
+            tokens = existing["tokens"]
+            reused += 1
+        else:
+            tokens = encoder.encode(source)
+            payload = {
+                "schema": CACHE_SCHEMA,
+                "filename": filename,
+                "audio_sha256": sample["audio_sha256"],
+                "encoder": encoder.signature,
+                "tokens": tokens,
+            }
+            if not _cache_payload_is_valid(payload, sample, encoder.signature):
+                raise BackendError("tts.greektts15.cache_tokens_invalid", "SNAC encoder returned invalid tokens", subsystem="tts")
+            temporary = destination.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
+            temporary.replace(destination)
+            encoded += 1
+        token_count += len(tokens)
+    return {
+        "schema": CACHE_SCHEMA,
+        "ready": True,
+        "requested": len(selected),
+        "encoded": encoded,
+        "reused": reused,
+        "audio_tokens": token_count,
+        "encoder": encoder.signature,
+    }
 
 
 def normalize_transcript(text: str) -> tuple[str, bool]:

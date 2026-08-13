@@ -14,8 +14,10 @@ from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.greektts15_training import (
     DATASET_SCHEMA,
     EXPECTED_ROWS,
+    CACHE_SCHEMA,
     build_training_plan,
     build_orpheus_training_sequence,
+    cache_snac_samples,
     interleave_snac_codes,
     normalize_transcript,
 )
@@ -30,6 +32,35 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_snac_cache_is_resumable_and_content_bound(self) -> None:
+        class Encoder:
+            signature = {"backend": "fake", "revision": "test"}
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def encode(self, audio_path: Path) -> list[int]:
+                self.calls += 1
+                del audio_path
+                return interleave_snac_codes([1], [2, 3], [4, 5, 6, 7])
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = self._bundle(Path(temp) / "dataset")
+            with mock.patch("jarvis_voice.macos.greektts15_training.EXPECTED_ROWS", 20):
+                plan = build_training_plan(root)
+            plan_path = Path(temp) / "plan.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            encoder = Encoder()
+            cache_root = Path(temp) / "cache"
+            first = cache_snac_samples(plan_path, root, cache_root, encoder, limit=2)
+            second = cache_snac_samples(plan_path, root, cache_root, encoder, limit=2)
+            payload = json.loads(next(cache_root.iterdir()).read_text())
+        self.assertEqual(first["schema"], CACHE_SCHEMA)
+        self.assertEqual((first["encoded"], first["reused"]), (2, 0))
+        self.assertEqual((second["encoded"], second["reused"]), (0, 2))
+        self.assertEqual(encoder.calls, 2)
+        self.assertEqual(payload["encoder"], encoder.signature)
+
     def test_snac_interleave_round_trips_through_runtime_decoder(self) -> None:
         layers = ([1, 2], [3, 4, 5, 6], list(range(7, 15)))
         audio = interleave_snac_codes(*layers)
@@ -77,7 +108,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
     @staticmethod
     def _bundle(root: Path) -> Path:
         audio = root / "audio"
-        audio.mkdir()
+        audio.mkdir(parents=True)
         rows = []
         hashes = {}
         for corpus in ("B2", "C1"):
