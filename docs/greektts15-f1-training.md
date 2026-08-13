@@ -139,6 +139,12 @@ weak to judge accent, but the nine-point relative improvement is enough to
 retain the blend. A final 37.5% midpoint is permitted solely to binary-search
 the interval between the accepted 25% and rejected 50% endpoints.
 
+The 37.5% midpoint completed all four native-reference fixtures and scored
+54.55% WER, improving on both the 25% blend (60.61%) and baseline (69.70%). It
+is the objective listening candidate. No higher fraction is attempted before
+human comparison because the 50% endpoint already loses termination and the
+full checkpoint was judged to have foreign accent drift.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
