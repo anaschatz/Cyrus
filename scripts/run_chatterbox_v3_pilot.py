@@ -19,6 +19,7 @@ from jarvis_voice.macos.chatterbox_pilot import (  # noqa: E402
     VOICE_CONVERSION_LABELS,
     acquire_chatterbox_model,
     chatterbox_pilot_preflight,
+    run_chatterbox_f1_qualification,
     run_chatterbox_pilot,
     run_chatterbox_voice_conversion_pilot,
 )
@@ -41,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--output-dir", required=True)
     run.add_argument("--report", required=True)
     run.add_argument("--reference-audio")
+    qualify_f1 = commands.add_parser("qualify-f1")
+    qualify_f1.add_argument("--model-dir", required=True)
+    qualify_f1.add_argument("--output-dir", required=True)
+    qualify_f1.add_argument("--report", required=True)
+    qualify_f1.add_argument("--reference-audio", required=True)
     convert = commands.add_parser("voice-convert")
     convert.add_argument("--model-dir", required=True)
     convert.add_argument("--output-dir", required=True)
@@ -60,6 +66,8 @@ def main(argv: list[str] | None = None) -> int:
             report = acquire_chatterbox_model(args.storage_root, args.model_dir)
         elif args.command == "run":
             report = run_chatterbox_pilot(args.model_dir, args.output_dir, args.reference_audio)
+        elif args.command == "qualify-f1":
+            report = run_chatterbox_f1_qualification(args.model_dir, args.output_dir, args.reference_audio)
         else:
             report = run_chatterbox_voice_conversion_pilot(
                 args.model_dir,

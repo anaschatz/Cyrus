@@ -16,10 +16,16 @@ from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.chatterbox_pilot import (
     MINIMUM_ACQUISITION_FREE_BYTES,
     MINIMUM_RUN_FREE_BYTES,
+    F1_MAX_MEAN_REALTIME_FACTOR,
+    F1_MAX_STANDALONE_RSS_BYTES,
+    F1_QUALIFICATION_FIXTURES,
+    F1_REFERENCE_SHA256,
     MODEL_ARTIFACTS,
     MODEL_DOWNLOAD_BYTES,
     TOKENIZER_FILENAME,
+    _add_f1_qualification_gates,
     _deny_network_during_pilot,
+    _validated_f1_reference_audio,
     _validated_audio_path,
     chatterbox_pilot_preflight,
     validate_chatterbox_model_directory,
@@ -157,6 +163,47 @@ class ChatterboxPilotTests(unittest.TestCase):
             with self.assertRaises(BackendError) as raised:
                 _validated_audio_path(empty, role="target")
         self.assertEqual(raised.exception.code, "tts.chatterbox.target_audio_invalid")
+
+    def test_f1_qualification_fixture_set_is_fixed_and_complete(self) -> None:
+        fixture_ids = [fixture_id for fixture_id, _ in F1_QUALIFICATION_FIXTURES]
+        self.assertEqual(len(F1_QUALIFICATION_FIXTURES), 20)
+        self.assertEqual(len(set(fixture_ids)), 20)
+        self.assertTrue(all(text.strip() for _, text in F1_QUALIFICATION_FIXTURES))
+        self.assertEqual(F1_MAX_STANDALONE_RSS_BYTES, 6 * 1024**3)
+        self.assertEqual(F1_MAX_MEAN_REALTIME_FACTOR, 1.0)
+
+    def test_f1_reference_requires_the_pinned_stoma_recording(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            reference = Path(temp) / "reference.wav"
+            with wave.open(str(reference), "wb") as stream:
+                stream.setnchannels(1)
+                stream.setsampwidth(2)
+                stream.setframerate(44_100)
+                stream.writeframes(b"\0\0")
+            with mock.patch("jarvis_voice.macos.chatterbox_pilot._sha256", return_value=F1_REFERENCE_SHA256):
+                self.assertEqual(_validated_f1_reference_audio(reference), reference)
+            with mock.patch("jarvis_voice.macos.chatterbox_pilot._sha256", return_value="wrong"):
+                with self.assertRaises(BackendError) as raised:
+                    _validated_f1_reference_audio(reference)
+        self.assertEqual(raised.exception.code, "tts.chatterbox.f1_reference_mismatch")
+
+    def test_f1_qualification_stays_blocked_until_streaming_and_cancel_exist(self) -> None:
+        report = _add_f1_qualification_gates(
+            {
+                "voice": {"reference_sha256": F1_REFERENCE_SHA256},
+                "peak_rss_bytes": F1_MAX_STANDALONE_RSS_BYTES,
+                "samples": [
+                    {"realtime_factor": 0.5}
+                    for _ in F1_QUALIFICATION_FIXTURES
+                ],
+            }
+        )
+        qualification = report["qualification"]
+        self.assertFalse(qualification["automated_gates_passed"])
+        self.assertFalse(qualification["production_promotion_allowed"])
+        self.assertFalse(qualification["automated_gates"]["incremental_audio_streaming"])
+        self.assertFalse(qualification["automated_gates"]["interrupt_during_generation"])
+        self.assertFalse(report["production_backend_changed"])
 
 
 if __name__ == "__main__":

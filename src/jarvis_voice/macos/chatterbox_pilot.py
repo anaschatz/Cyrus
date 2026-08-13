@@ -83,6 +83,31 @@ PILOT_FIXTURES = (
     ("greek_status", "Η σύνδεση ολοκληρώθηκε με επιτυχία."),
     ("greek_barge_in", "Θα σταματήσω αμέσως μόλις αρχίσεις να μιλάς."),
 )
+F1_REFERENCE_SHA256 = "72826663025609f540344a4adbab494d89405d0dfc44fe6202e124e7b6a1c192"
+F1_QUALIFICATION_FIXTURES = (
+    ("greeting", "Καλημέρα. Είμαι έτοιμη να σε βοηθήσω."),
+    ("system_status", "Έλεγξα την κατάσταση του συστήματος και όλα λειτουργούν κανονικά."),
+    ("calendar", "Η επόμενη συνάντησή σου είναι στις οκτώ και μισή."),
+    ("reminder", "Αν θέλεις, μπορώ να σου υπενθυμίσω τις σημαντικές εργασίες."),
+    ("articulation", "Η τεχνητή νοημοσύνη επεξεργάζεται πληροφορίες και προφέρει κάθε ελληνική λέξη με σταθερή και φυσική άρθρωση."),
+    ("source_control", "Ελπίζουμε ότι η επόμενη δουλειά του θα είναι αντιπροσωπευτική για αυτόν."),
+    ("barge_in", "Θα σταματήσω αμέσως μόλις αρχίσεις να μιλάς."),
+    ("connection", "Η ασύρματη σύνδεση αποκαταστάθηκε χωρίς απώλεια δεδομένων."),
+    ("weather", "Αύριο προβλέπονται ισχυρές βροχές και χαμηλότερη θερμοκρασία."),
+    ("navigation", "Στρίψε δεξιά στη διασταύρωση και συνέχισε μέχρι την πλατεία."),
+    ("security", "Η πρόσβαση απορρίφθηκε επειδή ο κωδικός επιβεβαίωσης έληξε."),
+    ("numbers", "Υπάρχουν δεκατρία νέα μηνύματα και είκοσι επτά εκκρεμείς ειδοποιήσεις."),
+    ("time", "Το αντίγραφο ασφαλείας θα ολοκληρωθεί σε περίπου τριάντα πέντε λεπτά."),
+    ("names", "Η Αλεξάνδρα και ο Χρήστος θα συμμετάσχουν στη συνάντηση."),
+    ("consonants", "Ο ξεναγός εξήγησε προσεκτικά την πολύπλοκη αρχιτεκτονική του κτιρίου."),
+    ("clusters", "Η ψύχραιμη αξιολόγηση απέτρεψε μια βιαστική και λανθασμένη απόφαση."),
+    ("question", "Θέλεις να ανοίξω το έγγραφο ή να δημιουργήσω ένα καινούργιο;"),
+    ("confirmation", "Βεβαίως. Η αλλαγή αποθηκεύτηκε και μπορεί να αναιρεθεί."),
+    ("long_sentence", "Μόλις ολοκληρωθεί η επεξεργασία, θα συγκρίνω τα αποτελέσματα και θα σου παρουσιάσω μόνο τις σημαντικότερες διαφορές."),
+    ("closing", "Ολοκλήρωσα τον έλεγχο. Πες μου όταν θέλεις να συνεχίσουμε."),
+)
+F1_MAX_STANDALONE_RSS_BYTES = 6 * GIB
+F1_MAX_MEAN_REALTIME_FACTOR = 1.0
 VOICE_CONVERSION_LABELS = (
     "serious-male",
     "serious-female",
@@ -193,6 +218,17 @@ def _validated_audio_path(value: str | Path, *, role: str) -> Path:
         raise BackendError(
             f"tts.chatterbox.{role}_audio_invalid",
             "Chatterbox pilot audio is invalid",
+            subsystem="tts",
+        )
+    return path
+
+
+def _validated_f1_reference_audio(value: str | Path) -> Path:
+    path = _validated_audio_path(value, role="reference")
+    if path.suffix.lower() != ".wav" or _sha256(path) != F1_REFERENCE_SHA256:
+        raise BackendError(
+            "tts.chatterbox.f1_reference_mismatch",
+            "Chatterbox F1 qualification requires the pinned STOMA F1 reference",
             subsystem="tts",
         )
     return path
@@ -447,11 +483,24 @@ def _deny_network_during_pilot(function: Callable[..., dict[str, object]]) -> Ca
     return guarded
 
 
-@_deny_network_during_pilot
-def run_chatterbox_pilot(
+def _mps_memory_bytes(torch_module: object, function_name: str) -> int | None:
+    mps = getattr(torch_module, "mps", None)
+    function = getattr(mps, function_name, None)
+    if not callable(function):
+        return None
+    try:
+        return int(function())
+    except (RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _run_chatterbox_synthesis_suite(
     model_directory: str | Path,
     output_directory: str | Path,
-    reference_audio: str | Path | None = None,
+    reference_audio: str | Path | None,
+    *,
+    fixtures: tuple[tuple[str, str], ...],
+    completion_code: str,
 ) -> dict[str, object]:
     model_path = Path(model_directory).expanduser()
     validation = validate_chatterbox_model_directory(model_path)
@@ -485,7 +534,9 @@ def run_chatterbox_pilot(
         model.prepare_conditionals(str(reference_path))
         _synchronize_mps(torch)
     samples: list[dict[str, object]] = []
-    for index, (fixture_id, text) in enumerate(PILOT_FIXTURES, start=1):
+    peak_mps_allocated_bytes = _mps_memory_bytes(torch, "current_allocated_memory")
+    peak_mps_driver_bytes = _mps_memory_bytes(torch, "driver_allocated_memory")
+    for index, (fixture_id, text) in enumerate(fixtures, start=1):
         torch.manual_seed(10_000 + index)
         _synchronize_mps(torch)
         started = time.perf_counter()
@@ -502,6 +553,12 @@ def run_chatterbox_pilot(
         destination = output / filename
         torchaudio.save(str(destination), waveform.detach().cpu(), model.sr)
         os.chmod(destination, 0o600)
+        current_allocated = _mps_memory_bytes(torch, "current_allocated_memory")
+        current_driver = _mps_memory_bytes(torch, "driver_allocated_memory")
+        if current_allocated is not None:
+            peak_mps_allocated_bytes = max(peak_mps_allocated_bytes or 0, current_allocated)
+        if current_driver is not None:
+            peak_mps_driver_bytes = max(peak_mps_driver_bytes or 0, current_driver)
         samples.append(
             {
                 "fixture_id": fixture_id,
@@ -517,7 +574,7 @@ def run_chatterbox_pilot(
     return {
         "schema_version": 1,
         "ready": True,
-        "code": "tts.chatterbox.pilot_completed",
+        "code": completion_code,
         "backend": "chatterbox_multilingual_v3",
         "device": "mps",
         "language": "el",
@@ -529,11 +586,87 @@ def run_chatterbox_pilot(
         },
         "model_load_ms": round(load_ms, 3),
         "peak_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
+        "peak_mps_allocated_bytes": peak_mps_allocated_bytes,
+        "peak_mps_driver_bytes": peak_mps_driver_bytes,
         "samples": samples,
         "network_used": False,
         "network_guard": "python_socket_fail_closed",
         "content_captured": False,
     }
+
+
+@_deny_network_during_pilot
+def run_chatterbox_pilot(
+    model_directory: str | Path,
+    output_directory: str | Path,
+    reference_audio: str | Path | None = None,
+) -> dict[str, object]:
+    return _run_chatterbox_synthesis_suite(
+        model_directory,
+        output_directory,
+        reference_audio,
+        fixtures=PILOT_FIXTURES,
+        completion_code="tts.chatterbox.pilot_completed",
+    )
+
+
+def _add_f1_qualification_gates(report: dict[str, object]) -> dict[str, object]:
+    raw_samples = report.get("samples")
+    samples = raw_samples if isinstance(raw_samples, list) else []
+    realtime_factors = [
+        float(sample["realtime_factor"])
+        for sample in samples
+        if isinstance(sample, dict) and sample.get("realtime_factor") is not None
+    ]
+    mean_realtime_factor = sum(realtime_factors) / len(realtime_factors) if realtime_factors else float("inf")
+    voice = report.get("voice")
+    reference_sha256 = voice.get("reference_sha256") if isinstance(voice, dict) else None
+    peak_rss_bytes = report.get("peak_rss_bytes")
+    rss_within_limit = (
+        isinstance(peak_rss_bytes, int)
+        and not isinstance(peak_rss_bytes, bool)
+        and peak_rss_bytes <= F1_MAX_STANDALONE_RSS_BYTES
+    )
+    automated_gates = {
+        "pinned_f1_reference": reference_sha256 == F1_REFERENCE_SHA256,
+        "all_twenty_fixtures_generated": len(samples) == len(F1_QUALIFICATION_FIXTURES),
+        "standalone_rss_within_limit": rss_within_limit,
+        "mean_realtime_factor_within_limit": mean_realtime_factor <= F1_MAX_MEAN_REALTIME_FACTOR,
+        "incremental_audio_streaming": False,
+        "interrupt_during_generation": False,
+    }
+    report["qualification"] = {
+        "profile": "stoma_f1_reference",
+        "fixture_count": len(F1_QUALIFICATION_FIXTURES),
+        "mean_realtime_factor": round(mean_realtime_factor, 4),
+        "standalone_rss_limit_bytes": F1_MAX_STANDALONE_RSS_BYTES,
+        "mean_realtime_factor_limit": F1_MAX_MEAN_REALTIME_FACTOR,
+        "automated_gates": automated_gates,
+        "automated_gates_passed": all(automated_gates.values()),
+        "llm_coexistence_measured": False,
+        "asr_round_trip_measured": False,
+        "human_voice_approved": False,
+        "production_promotion_allowed": False,
+    }
+    report["production_backend_changed"] = False
+    return report
+
+
+@_deny_network_during_pilot
+def run_chatterbox_f1_qualification(
+    model_directory: str | Path,
+    output_directory: str | Path,
+    reference_audio: str | Path,
+) -> dict[str, object]:
+    reference_path = _validated_f1_reference_audio(reference_audio)
+    report = _run_chatterbox_synthesis_suite(
+        model_directory,
+        output_directory,
+        reference_path,
+        fixtures=F1_QUALIFICATION_FIXTURES,
+        completion_code="tts.chatterbox.f1_qualification_completed",
+    )
+    return _add_f1_qualification_gates(report)
 
 
 @_deny_network_during_pilot
