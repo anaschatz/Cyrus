@@ -249,6 +249,35 @@ extension or promotion. The pitch-preserving `1.15x` listening derivative was
 also rejected as excessively fast; the current listening target is the native
 `1.00x`, although pacing cannot change the articulation result.
 
+## Zero-training warm-start baseline
+
+The original hash-pinned `rapunzelina` checkpoint was evaluated before any F1
+fine-tuning to separate a base-model limitation from damage introduced by the
+training trajectory. The existing 63,516,051-byte zero-training ONNX passed the
+offline structural checker and has SHA-256
+`bec65b49fdcf1629ef66c9e5244e64b95e4f6b83df9cd7c52ff665c1bc770f14`.
+Three zero-noise renders of the fixed 15-word articulation sentence were
+byte-identical but had 73.3% WER. Three normal-acoustic-noise renders averaged
+62.2% WER. A realistic three-unit system preview at the model's default
+acoustic and phoneme-width noise was also substantially corrupted.
+
+A same-text source control then provided the decisive separation. The real F1
+recording of `Greek-F1-B2-03-14.wav` produced 0/11 word errors. On its verbatim
+transcript, the warm-start produced 1/11 errors with all inference noise
+disabled and 5/11 with normal acoustic noise. Recovery epoch 3 produced 5/11
+deterministically and 7/11 with normal acoustic noise. Phoneme-width noise was
+disabled for all four synthesized controls.
+
+The evidence identifies two independent problems. First, normal stochastic
+sampling can severely amplify errors even before fine-tuning, so a future
+candidate must qualify with zero or tightly bounded inference noise. Second,
+the recovery trajectory damages an utterance that the deterministic warm-start
+can render almost correctly, so additional epochs or another global low-rate
+fine-tune are not justified. Any new Piper experiment must preserve the
+linguistic/text and duration stack, use step-level checkpoints from the first
+hundreds of updates, and gate every checkpoint against the source-controlled
+articulation set. The existing recovery checkpoints remain rejected.
+
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local
