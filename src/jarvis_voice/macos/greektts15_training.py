@@ -46,6 +46,7 @@ GREEK_ADAPTER_REVISION = "0da4d9fff8b974fb1127f3c829f793dc0439dfd1"
 SNAC_REVISION = "d73ad176a12188fcf4f360ba3bf2c2fbbe8f58ec"
 MAX_TRAINING_SEQUENCE = 1_536
 EXPECTED_LORA_GROUPS = 392
+MAX_GRADIENT_PROBE_MLX_BYTES = 6 * 1024**3
 
 _LEADING_CONFUSABLES = str.maketrans(
     {
@@ -303,6 +304,125 @@ def run_gradient_memory_probe(
             "peak_mlx_bytes": int(mx.get_peak_memory()),
             "peak_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
         }
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _validated_gradient_probe(report_path: str | Path) -> dict[str, object]:
+    try:
+        report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.gradient_gate_missing", "Gradient probe report is unavailable", subsystem="tts") from exc
+    if not (
+        isinstance(report, dict)
+        and report.get("schema") == "jarvis.voice.greektts15-gradient-probe/1"
+        and report.get("ready") is True
+        and report.get("optimizer_update_applied") is False
+        and report.get("trainable_groups") == EXPECTED_LORA_GROUPS
+        and report.get("gradient_groups") == EXPECTED_LORA_GROUPS
+        and isinstance(report.get("peak_mlx_bytes"), int)
+        and 0 < report["peak_mlx_bytes"] <= MAX_GRADIENT_PROBE_MLX_BYTES
+    ):
+        raise BackendError("tts.greektts15.gradient_gate_failed", "Gradient probe did not pass the memory gate", subsystem="tts")
+    return report
+
+
+def run_optimizer_smoke(
+    model_root: str | Path,
+    plan_path: str | Path,
+    cache_root: str | Path,
+    gradient_report: str | Path,
+    output_directory: str | Path,
+    *,
+    learning_rate: float = 5e-6,
+) -> dict[str, object]:
+    """Apply exactly one AdamW update and save a standalone adapter checkpoint."""
+
+    import resource
+    import shutil
+    import time
+
+    if learning_rate != 5e-6:
+        raise BackendError("tts.greektts15.smoke_lr_invalid", "Optimizer smoke must use the qualified learning rate", subsystem="tts")
+    probe = _validated_gradient_probe(gradient_report)
+    root, output = Path(model_root).expanduser(), Path(output_directory).expanduser()
+    if not root.is_absolute() or not root.is_dir() or root.is_symlink():
+        raise BackendError("tts.greektts15.model_root_missing", "GreekTTS model root is unavailable", subsystem="tts")
+    if not output.is_absolute() or output.exists() or output.is_symlink():
+        raise BackendError("tts.greektts15.smoke_output_invalid", "Optimizer smoke output must be a new absolute path", subsystem="tts")
+    output.mkdir(mode=0o700, parents=True)
+    try:
+        import mlx.core as mx
+        import mlx.nn as nn
+        import mlx.optimizers as optim
+        from mlx.utils import tree_flatten
+        from mlx_lm import load
+        from mlx_lm.tuner.trainer import default_loss
+        from mlx_lm.tuner.utils import load_adapters
+    except ImportError as exc:
+        raise BackendError("tts.greektts15.dependencies_missing", "MLX training dependencies are missing", subsystem="tts") from exc
+
+    previous = {name: os.environ.get(name) for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY")}
+    os.environ.update({name: "1" for name in previous})
+    try:
+        model, tokenizer = load(str(root / "base"), lazy=False)
+        model.freeze()
+        model = load_adapters(model, str(root / "mlx-adapter"))
+        trainable = tree_flatten(model.trainable_parameters())
+        if len(trainable) != EXPECTED_LORA_GROUPS or any("lora_" not in name for name, _ in trainable):
+            raise BackendError("tts.greektts15.trainable_surface_invalid", "Only the Greek LoRA adapter may be trainable", subsystem="tts")
+        dataset = load_cached_split(plan_path, cache_root, tokenizer, "train")
+        sequence, offset = min(dataset, key=lambda item: len(item[0]))
+        batch = mx.array([sequence], dtype=mx.int32)
+        lengths = mx.array([[offset, len(sequence)]], dtype=mx.int32)
+        optimizer = optim.AdamW(learning_rate=learning_rate, weight_decay=0.0)
+        value_and_grad = nn.value_and_grad(model, default_loss)
+        if hasattr(mx, "reset_peak_memory"):
+            mx.reset_peak_memory()
+        started = time.perf_counter()
+        (loss_before, trained_tokens), gradients = value_and_grad(model, batch, lengths)
+        optimizer.update(model, gradients)
+        mx.eval(model.state, optimizer.state, loss_before, trained_tokens)
+        loss_after, after_tokens = default_loss(model, batch, lengths)
+        mx.eval(loss_after, after_tokens)
+        elapsed = time.perf_counter() - started
+        adapter_file = output / "adapters.safetensors"
+        mx.save_safetensors(str(adapter_file), dict(tree_flatten(model.trainable_parameters())), metadata={"format": "mlx"})
+        shutil.copyfile(root / "mlx-adapter" / "adapter_config.json", output / "adapter_config.json")
+        source_hash = _sha256(root / "mlx-adapter" / "adapters.safetensors")
+        output_hash = _sha256(adapter_file)
+        if source_hash == output_hash:
+            raise BackendError("tts.greektts15.optimizer_update_missing", "Optimizer did not change the adapter checkpoint", subsystem="tts")
+        report = {
+            "schema": "jarvis.voice.greektts15-optimizer-smoke/1",
+            "ready": True,
+            "optimizer": "AdamW",
+            "optimizer_updates": 1,
+            "learning_rate": learning_rate,
+            "weight_decay": 0.0,
+            "sequence_tokens": len(sequence),
+            "trained_tokens": int(trained_tokens.item()),
+            "loss_before": round(float(loss_before.item()), 6),
+            "loss_after": round(float(loss_after.item()), 6),
+            "trainable_groups": len(trainable),
+            "trainable_parameters": sum(int(value.size) for _, value in trainable),
+            "elapsed_seconds": round(elapsed, 3),
+            "peak_mlx_bytes": int(mx.get_peak_memory()),
+            "peak_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
+            "source_adapter_sha256": source_hash,
+            "output_adapter_sha256": output_hash,
+            "gradient_gate_peak_mlx_bytes": probe["peak_mlx_bytes"],
+            "base_frozen": True,
+            "adapter_merged": False,
+        }
+        (output / "training_manifest.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return report
     finally:
         for name, value in previous.items():
             if value is None:

@@ -21,6 +21,7 @@ from jarvis_voice.macos.greektts15_training import (
     interleave_snac_codes,
     load_cached_split,
     normalize_transcript,
+    _validated_gradient_probe,
 )
 from jarvis_voice.macos.greektts15_pilot import (
     END_OF_HUMAN,
@@ -33,6 +34,25 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_optimizer_gate_accepts_only_no_update_memory_probe(self) -> None:
+        valid = {
+            "schema": "jarvis.voice.greektts15-gradient-probe/1",
+            "ready": True,
+            "optimizer_update_applied": False,
+            "trainable_groups": 392,
+            "gradient_groups": 392,
+            "peak_mlx_bytes": 4_000_000_000,
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            report = Path(temp) / "probe.json"
+            report.write_text(json.dumps(valid), encoding="utf-8")
+            self.assertEqual(_validated_gradient_probe(report), valid)
+            valid["optimizer_update_applied"] = True
+            report.write_text(json.dumps(valid), encoding="utf-8")
+            with self.assertRaises(BackendError) as raised:
+                _validated_gradient_probe(report)
+        self.assertEqual(raised.exception.code, "tts.greektts15.gradient_gate_failed")
+
     def test_cached_split_builds_completion_offset(self) -> None:
         class Tokenizer:
             def encode(self, text: str, *, add_special_tokens: bool) -> list[int]:

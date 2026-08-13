@@ -45,6 +45,12 @@ that exactly its 392 LoRA tensors are trainable, and computes one real
 completion-only forward/backward pass. It records MLX and process peak memory
 and deliberately creates no optimizer and saves no weights.
 
+The measured no-update probe on the M3 used 3.659 GB peak MLX memory and 2.245
+GB peak process RSS. It found exactly 97,255,424 trainable parameters in 392
+LoRA tensors, with a matching 392-group gradient tree. The first optimizer gate
+therefore allows exactly one AdamW update at `5e-6`, no weight decay, into a new
+adapter directory. The original adapter remains immutable and unmerged.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
