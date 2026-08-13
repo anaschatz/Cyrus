@@ -23,6 +23,14 @@ from .macos.compact_greek_tts_pilot import (
     validate_artifact_set,
 )
 from .piper_training_handoff import build_piper_f1_handoff
+from .piper_mps_checkpoint import (
+    PROTECTED_F1_ARGUMENT,
+    PROTECTED_F1_CHECKPOINT_INTERVAL,
+    PROTECTED_F1_DISCRIMINATOR_LEARNING_RATE,
+    PROTECTED_F1_FROZEN_MODULE_PARAMETERS,
+    PROTECTED_F1_LEARNING_RATE,
+    PROTECTED_F1_MAX_STEPS,
+)
 
 
 GIB = 1024**3
@@ -36,6 +44,7 @@ RECOVERY_MPS_EPOCHS = 5
 RECOVERY_LEARNING_RATE = 2e-5
 RECOVERY_DISCRIMINATOR_LEARNING_RATE = 1e-5
 RECOVERY_DIRECTORY_NAME = "recovery-low-lr"
+PROTECTED_F1_DIRECTORY_NAME = "protected-mini"
 MPS_ENVIRONMENT = {
     "PYTORCH_ENABLE_MPS_FALLBACK": "1",
     "PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.90",
@@ -371,6 +380,33 @@ def piper_mps_training_commands(
             / "el_GR-jarvis-f1-medium.onnx.json"
         ),
     ]
+    protected_mini = [
+        *shared,
+        PROTECTED_F1_ARGUMENT,
+        "--model.learning_rate",
+        str(PROTECTED_F1_LEARNING_RATE),
+        "--model.learning_rate_d",
+        str(PROTECTED_F1_DISCRIMINATOR_LEARNING_RATE),
+        "--trainer.max_steps",
+        str(PROTECTED_F1_MAX_STEPS),
+        "--trainer.limit_val_batches",
+        "0",
+        "--trainer.num_sanity_val_steps",
+        "0",
+        "--trainer.default_root_dir",
+        str(work / PROTECTED_F1_DIRECTORY_NAME / "runs"),
+        "--trainer.log_every_n_steps",
+        "10",
+        "--data.cache_dir",
+        str(work / "cache"),
+        "--data.config_path",
+        str(
+            work
+            / PROTECTED_F1_DIRECTORY_NAME
+            / "export"
+            / "el_GR-jarvis-f1-medium.onnx.json"
+        ),
+    ]
     return {
         "ready": False,
         "code": "tts.f1_mps.smoke_required",
@@ -378,6 +414,7 @@ def piper_mps_training_commands(
         "smoke_argv": smoke,
         "initial_training_argv": initial,
         "recovery_training_argv": recovery,
+        "protected_mini_training_argv": protected_mini,
         "initial_epochs": INITIAL_MPS_EPOCHS,
         "recovery": {
             "epochs": RECOVERY_MPS_EPOCHS,
@@ -386,6 +423,17 @@ def piper_mps_training_commands(
             "starts_from_pinned_warmstart": True,
             "failed_run_checkpoint_forbidden": True,
             "articulation_gate_required_before_extension": True,
+        },
+        "protected_mini": {
+            "max_steps": PROTECTED_F1_MAX_STEPS,
+            "checkpoint_interval": PROTECTED_F1_CHECKPOINT_INTERVAL,
+            "learning_rate": PROTECTED_F1_LEARNING_RATE,
+            "learning_rate_d": PROTECTED_F1_DISCRIMINATOR_LEARNING_RATE,
+            "frozen_modules": dict(PROTECTED_F1_FROZEN_MODULE_PARAMETERS),
+            "starts_from_pinned_warmstart": True,
+            "resume_forbidden": True,
+            "validation_disabled": True,
+            "zero_noise_articulation_gate_required": True,
         },
         "training_must_not_start_before_smoke": True,
         "network_used": False,

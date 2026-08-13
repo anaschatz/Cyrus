@@ -12,6 +12,8 @@ import _bootstrap  # noqa: F401
 
 from jarvis_voice.errors import BackendError
 from jarvis_voice.piper_mps_checkpoint import (
+    PROTECTED_F1_ARGUMENT,
+    freeze_protected_f1_stack,
     run_piper_mps_fit,
     validate_piper_mps_checkpoint,
     validate_piper_mps_resume_checkpoint,
@@ -81,6 +83,73 @@ class PiperMpsCheckpointTests(unittest.TestCase):
                     lambda _path: ["pathlib.PosixPath"],
                     expected_size=checkpoint.stat().st_size,
                     expected_sha256=checksum,
+                )
+
+    def test_protected_stack_freezes_exact_modules_and_rejects_drift(self) -> None:
+        class FakeParameter:
+            def __init__(self, count: int) -> None:
+                self.count = count
+                self.requires_grad = True
+
+            def numel(self) -> int:
+                return self.count
+
+        class FakeModule:
+            def __init__(self, count: int) -> None:
+                self.values = [FakeParameter(count)]
+                self.training = True
+
+            def parameters(self):
+                return iter(self.values)
+
+            def requires_grad_(self, enabled: bool):
+                for value in self.values:
+                    value.requires_grad = enabled
+                return self
+
+            def eval(self):
+                self.training = False
+                return self
+
+        model_g = SimpleNamespace(
+            enc_p=FakeModule(10),
+            flow=FakeModule(20),
+            dp=FakeModule(30),
+        )
+        instance = SimpleNamespace(model_g=model_g)
+        observed = freeze_protected_f1_stack(
+            instance,
+            expected_parameters={"enc_p": 10, "flow": 20, "dp": 30},
+        )
+        self.assertEqual(observed, {"enc_p": 10, "flow": 20, "dp": 30})
+        for module in (model_g.enc_p, model_g.flow, model_g.dp):
+            self.assertFalse(module.training)
+            self.assertTrue(all(not value.requires_grad for value in module.values))
+        with self.assertRaisesRegex(
+            BackendError, "tts.f1_mps.protected_stack_invalid"
+        ):
+            freeze_protected_f1_stack(
+                instance,
+                expected_parameters={"enc_p": 11, "flow": 20, "dp": 30},
+            )
+
+    def test_protected_profile_rejects_unbounded_arguments_before_loading(self) -> None:
+        with mock.patch(
+            "jarvis_voice.piper_mps_checkpoint.importlib.import_module",
+            return_value=SimpleNamespace(),
+        ):
+            with self.assertRaisesRegex(
+                BackendError, "tts.f1_mps.protected_profile_invalid"
+            ):
+                run_piper_mps_fit(
+                    [
+                        "fit",
+                        PROTECTED_F1_ARGUMENT,
+                        "--model.warmstart_ckpt",
+                        "/private/pinned.ckpt",
+                        "--trainer.max_steps",
+                        "500",
+                    ]
                 )
 
     def test_runner_scopes_safe_global_and_restores_argv(self) -> None:

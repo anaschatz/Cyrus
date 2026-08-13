@@ -19,6 +19,16 @@ EXPECTED_UNSAFE_GLOBALS = frozenset({"pathlib.PosixPath"})
 WARM_START_SPEC = PIPER_CHECKPOINT_ARTIFACTS[-1]
 WARM_START_ARGUMENT = "--model.warmstart_ckpt"
 RESUME_ARGUMENT = "--ckpt_path"
+PROTECTED_F1_ARGUMENT = "--jarvis-protected-f1"
+PROTECTED_F1_MAX_STEPS = 200
+PROTECTED_F1_CHECKPOINT_INTERVAL = 100
+PROTECTED_F1_LEARNING_RATE = 2e-6
+PROTECTED_F1_DISCRIMINATOR_LEARNING_RATE = 1e-6
+PROTECTED_F1_FROZEN_MODULE_PARAMETERS = {
+    "enc_p": 6_341_760,
+    "flow": 7_102_080,
+    "dp": 1_317_168,
+}
 MINIMUM_RESUME_CHECKPOINT_BYTES = 100 * 1024 * 1024
 MAXIMUM_RESUME_CHECKPOINT_BYTES = 2 * 1024 * 1024 * 1024
 _LIGHTNING_VERSION = re.compile(r"^version_\d+$")
@@ -169,9 +179,105 @@ def _single_value(piper_argv: Sequence[str], argument: str) -> str | None:
     return piper_argv[indices[0] + 1]
 
 
+def _protected_f1_arguments(piper_argv: Sequence[str]) -> tuple[bool, list[str]]:
+    count = sum(value == PROTECTED_F1_ARGUMENT for value in piper_argv)
+    if count > 1:
+        raise _error(
+            "tts.f1_mps.protected_argument_invalid",
+            "Protected F1 training argument is duplicated",
+        )
+    return count == 1, [value for value in piper_argv if value != PROTECTED_F1_ARGUMENT]
+
+
+def _validate_protected_f1_profile(piper_argv: Sequence[str]) -> None:
+    expected = {
+        "--trainer.accelerator": "mps",
+        "--trainer.devices": "1",
+        "--trainer.precision": "32-true",
+        "--trainer.max_steps": str(PROTECTED_F1_MAX_STEPS),
+        "--trainer.limit_val_batches": "0",
+        "--trainer.num_sanity_val_steps": "0",
+        "--data.batch_size": "1",
+        "--data.num_workers": "0",
+        "--model.learning_rate": str(PROTECTED_F1_LEARNING_RATE),
+        "--model.learning_rate_d": str(PROTECTED_F1_DISCRIMINATOR_LEARNING_RATE),
+        "--model.mos_metric": "none",
+    }
+    if any(
+        _single_value(piper_argv, key) != value for key, value in expected.items()
+    ):
+        raise _error(
+            "tts.f1_mps.protected_profile_invalid",
+            "Protected F1 training profile changed",
+        )
+    forbidden = {
+        "--trainer.fast_dev_run",
+        "--trainer.limit_train_batches",
+        "--trainer.max_epochs",
+        "--trainer.overfit_batches",
+    }
+    if any(value in forbidden for value in piper_argv):
+        raise _error(
+            "tts.f1_mps.protected_profile_invalid",
+            "Protected F1 training cannot use an epoch budget",
+        )
+
+
+def freeze_protected_f1_stack(
+    instance: object,
+    *,
+    expected_parameters: dict[str, int] | None = None,
+) -> dict[str, int]:
+    """Freeze the exact inference alignment stack or fail before training."""
+
+    expected = (
+        PROTECTED_F1_FROZEN_MODULE_PARAMETERS
+        if expected_parameters is None
+        else expected_parameters
+    )
+    model_g = getattr(instance, "model_g", None)
+    observed: dict[str, int] = {}
+    modules: list[object] = []
+    for name, expected_count in expected.items():
+        module = getattr(model_g, name, None)
+        parameters = getattr(module, "parameters", None)
+        if module is None or not callable(parameters):
+            raise _error(
+                "tts.f1_mps.protected_stack_invalid",
+                "Protected F1 inference stack changed",
+            )
+        try:
+            count = sum(int(parameter.numel()) for parameter in parameters())
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise _error(
+                "tts.f1_mps.protected_stack_invalid",
+                "Protected F1 inference stack could not be inspected",
+            ) from exc
+        if count != expected_count:
+            raise _error(
+                "tts.f1_mps.protected_stack_invalid",
+                "Protected F1 inference stack parameter count changed",
+            )
+        observed[name] = count
+        modules.append(module)
+    for module in modules:
+        requires_grad = getattr(module, "requires_grad_", None)
+        evaluate = getattr(module, "eval", None)
+        if not callable(requires_grad) or not callable(evaluate):
+            raise _error(
+                "tts.f1_mps.protected_stack_invalid",
+                "Protected F1 inference stack cannot be frozen",
+            )
+        requires_grad(False)
+        evaluate()
+    return observed
+
+
 def _prepare_piper_main(
     piper_argv: Sequence[str],
-) -> tuple[object, tuple[object, ...], object | None, object | None]:
+    *,
+    protected_f1: bool = False,
+) -> tuple[object, tuple[object, ...], object | None, dict[str, object]]:
     training_module = importlib.import_module("piper.train.__main__")
     callbacks = tuple(getattr(training_module, "_DEFAULT_CALLBACKS", ()))
     if _single_value(piper_argv, "--model.mos_metric") == "none":
@@ -188,7 +294,7 @@ def _prepare_piper_main(
         ]
 
     model_class = None
-    original_on_fit_start = None
+    originals: dict[str, object] = {}
     if _single_value(piper_argv, RESUME_ARGUMENT) is not None:
         model_class = getattr(training_module, "VitsModel", None)
         original_on_fit_start = getattr(model_class, "on_fit_start", None)
@@ -205,15 +311,83 @@ def _prepare_piper_main(
             return original_on_fit_start(instance)
 
         model_class.on_fit_start = resume_on_fit_start
-    return training_module, callbacks, model_class, original_on_fit_start
+        originals["on_fit_start"] = original_on_fit_start
+
+    if protected_f1:
+        model_class = getattr(training_module, "VitsModel", None)
+        original_configure = getattr(model_class, "configure_optimizers", None)
+        original_on_fit_start = getattr(model_class, "on_fit_start", None)
+        original_on_train_batch_start = getattr(
+            model_class, "on_train_batch_start", None
+        )
+        if (
+            model_class is None
+            or not callable(original_configure)
+            or not callable(original_on_fit_start)
+            or not callable(original_on_train_batch_start)
+        ):
+            training_module._DEFAULT_CALLBACKS = list(callbacks)
+            raise _error(
+                "tts.f1_mps.protected_hook_invalid",
+                "Pinned Piper protected-training hooks changed",
+            )
+        checkpoint_module = importlib.import_module("lightning.pytorch.callbacks")
+        checkpoint_class = getattr(checkpoint_module, "ModelCheckpoint", None)
+        if checkpoint_class is None:
+            training_module._DEFAULT_CALLBACKS = list(callbacks)
+            raise _error(
+                "tts.f1_mps.protected_checkpoint_invalid",
+                "Protected F1 checkpoint callback is unavailable",
+            )
+        training_module._DEFAULT_CALLBACKS = [
+            checkpoint_class(
+                monitor=None,
+                save_top_k=-1,
+                save_last=True,
+                save_weights_only=False,
+                filename="step={step}",
+                auto_insert_metric_name=False,
+                every_n_train_steps=PROTECTED_F1_CHECKPOINT_INTERVAL,
+                every_n_epochs=None,
+                save_on_train_epoch_end=False,
+                enable_version_counter=False,
+            )
+        ]
+
+        def protected_configure_optimizers(instance: object) -> object:
+            freeze_protected_f1_stack(instance)
+            return original_configure(instance)
+
+        def protected_on_fit_start(instance: object) -> object:
+            result = original_on_fit_start(instance)
+            freeze_protected_f1_stack(instance)
+            return result
+
+        def protected_on_train_batch_start(
+            instance: object, *args: object, **kwargs: object
+        ) -> object:
+            result = original_on_train_batch_start(instance, *args, **kwargs)
+            freeze_protected_f1_stack(instance)
+            return result
+
+        originals = {
+            "configure_optimizers": original_configure,
+            "on_fit_start": original_on_fit_start,
+            "on_train_batch_start": original_on_train_batch_start,
+        }
+        model_class.configure_optimizers = protected_configure_optimizers
+        model_class.on_fit_start = protected_on_fit_start
+        model_class.on_train_batch_start = protected_on_train_batch_start
+    return training_module, callbacks, model_class, originals
 
 
 def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
     """Run Piper with a scoped, pinned-checkpoint weights-only override."""
 
     torch = importlib.import_module("torch")
-    warm_start = _single_value(piper_argv, WARM_START_ARGUMENT)
-    resume = _single_value(piper_argv, RESUME_ARGUMENT)
+    protected_f1, piper_arguments = _protected_f1_arguments(piper_argv)
+    warm_start = _single_value(piper_arguments, WARM_START_ARGUMENT)
+    resume = _single_value(piper_arguments, RESUME_ARGUMENT)
     warm_start_mode = warm_start not in (None, "null")
     resume_mode = resume is not None
     if warm_start_mode == resume_mode:
@@ -221,14 +395,21 @@ def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
             "tts.f1_mps.training_checkpoint_mode_invalid",
             "Training requires exactly one warm-start or resume checkpoint",
         )
+    if protected_f1:
+        if not warm_start_mode:
+            raise _error(
+                "tts.f1_mps.protected_warmstart_required",
+                "Protected F1 training requires the pinned warm-start",
+            )
+        _validate_protected_f1_profile(piper_arguments)
     if warm_start_mode:
         checkpoint = validate_piper_mps_checkpoint(
-            piper_argv,
+            piper_arguments,
             torch.serialization.get_unsafe_globals_in_checkpoint,
         )
     else:
         checkpoint = validate_piper_mps_resume_checkpoint(
-            piper_argv,
+            piper_arguments,
             torch.serialization.get_unsafe_globals_in_checkpoint,
         )
     original_torch_load = torch.load
@@ -246,17 +427,18 @@ def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
         training_module,
         original_callbacks,
         model_class,
-        original_on_fit_start,
-    ) = _prepare_piper_main(piper_argv)
+        original_methods,
+    ) = _prepare_piper_main(piper_arguments, protected_f1=protected_f1)
     previous_argv = sys.argv
-    sys.argv = ["piper.train", *piper_argv]
+    sys.argv = ["piper.train", *piper_arguments]
     torch.load = pinned_weights_only_load
     try:
         with torch.serialization.safe_globals([PosixPath]):
             training_module.main()
     finally:
         if model_class is not None:
-            model_class.on_fit_start = original_on_fit_start
+            for name, method in original_methods.items():
+                setattr(model_class, name, method)
         training_module._DEFAULT_CALLBACKS = list(original_callbacks)
         torch.load = original_torch_load
         sys.argv = previous_argv

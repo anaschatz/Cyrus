@@ -278,6 +278,25 @@ linguistic/text and duration stack, use step-level checkpoints from the first
 hundreds of updates, and gate every checkpoint against the source-controlled
 articulation set. The existing recovery checkpoints remain rejected.
 
+## Protected 200-step mini experiment
+
+The next bounded diagnostic starts again from the exact pinned warm-start and
+cannot resume any prior F1 checkpoint. It freezes the inference alignment stack
+before optimizer construction and reasserts the freeze before every training
+batch: text encoder `enc_p` (6,341,760 parameters), normalizing flow `flow`
+(7,102,080), and stochastic duration predictor `dp` (1,317,168). Only the
+decoder, posterior encoder and discriminators remain trainable. Any missing
+module or parameter-count drift fails before training.
+
+The generator/discriminator rates are `2e-6` and `1e-6`. The run stops after
+exactly 200 steps, disables validation and network-backed metrics, and writes
+full checkpoints at steps 100 and 200 under `protected-mini`. Neither epoch
+budgets nor resume mode are accepted. Each checkpoint must be exported and
+evaluated with zero acoustic and duration noise against both the fixed
+articulation sentence and the source-controlled F1 sentence before listening.
+This diagnostic cannot promote a model or authorize additional steps by
+itself.
+
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local

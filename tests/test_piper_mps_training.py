@@ -14,6 +14,10 @@ from jarvis_voice.piper_mps_training import (
     LOCKED_TORCH_VERSION,
     PIPER_REVISION,
     PIPER_VERSION,
+    PROTECTED_F1_CHECKPOINT_INTERVAL,
+    PROTECTED_F1_DISCRIMINATOR_LEARNING_RATE,
+    PROTECTED_F1_LEARNING_RATE,
+    PROTECTED_F1_MAX_STEPS,
     RECOVERY_DISCRIMINATOR_LEARNING_RATE,
     RECOVERY_LEARNING_RATE,
     RECOVERY_MPS_EPOCHS,
@@ -133,6 +137,33 @@ class PiperMpsTrainingTests(unittest.TestCase):
         self.assertIn("--model.warmstart_ckpt", recovery)
         self.assertNotIn("--ckpt_path", recovery)
         self.assertIn("recovery-low-lr", " ".join(recovery))
+
+        protected = commands["protected_mini_training_argv"]
+        self.assertIn("--jarvis-protected-f1", protected)
+        self.assertEqual(
+            protected[protected.index("--trainer.max_steps") + 1],
+            str(PROTECTED_F1_MAX_STEPS),
+        )
+        self.assertEqual(
+            protected[protected.index("--model.learning_rate") + 1],
+            str(PROTECTED_F1_LEARNING_RATE),
+        )
+        self.assertEqual(
+            protected[protected.index("--model.learning_rate_d") + 1],
+            str(PROTECTED_F1_DISCRIMINATOR_LEARNING_RATE),
+        )
+        self.assertEqual(
+            protected[protected.index("--trainer.limit_val_batches") + 1],
+            "0",
+        )
+        self.assertNotIn("--trainer.max_epochs", protected)
+        self.assertIn("--model.warmstart_ckpt", protected)
+        self.assertNotIn("--ckpt_path", protected)
+        self.assertIn("protected-mini", " ".join(protected))
+        self.assertEqual(
+            commands["protected_mini"]["checkpoint_interval"],
+            PROTECTED_F1_CHECKPOINT_INTERVAL,
+        )
 
     def test_command_profile_preserves_virtualenv_python_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
