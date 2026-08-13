@@ -64,6 +64,13 @@ two independent 25-update branches from the immutable Greek adapter: AdamW at
 and gradient checkpointing. Each branch measures the same deterministic eight
 validation clips before and after training and saves to its own directory.
 
+Both initial branches reduced validation loss (`5e-6`: 5.1987 to 4.6492;
+`1e-5`: 5.1987 to 4.4983), but both failed to emit end-of-speech on the second
+deterministic quality fixture within 1,200 tokens. They are rejected despite
+the lower loss. The rescue experiment keeps the same 25 samples and gates but
+uses `5e-7` and `1e-6`, reflecting that this is continuation of a mature
+rank-64 language/voice adapter rather than training a fresh small LoRA.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches

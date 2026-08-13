@@ -50,6 +50,7 @@ MAX_GRADIENT_PROBE_MLX_BYTES = 6 * 1024**3
 PILOT_STEPS = 25
 PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
+PILOT_LEARNING_RATES = {5e-7, 1e-6, 5e-6, 1e-5}
 
 _LEADING_CONFUSABLES = str.maketrans(
     {
@@ -460,7 +461,7 @@ def run_training_pilot(
     import shutil
     import time
 
-    if learning_rate not in {5e-6, 1e-5} or steps != PILOT_STEPS:
+    if learning_rate not in PILOT_LEARNING_RATES or steps != PILOT_STEPS:
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
     gate = _validated_gradient_probe(gradient_report)
     root, output = Path(model_root).expanduser(), Path(output_directory).expanduser()
