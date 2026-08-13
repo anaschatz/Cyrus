@@ -54,6 +54,7 @@ class GreekTts15PilotTests(unittest.TestCase):
     def test_candidate_temperature_choices_are_bounded(self) -> None:
         source = Path("src/jarvis_voice/macos/greektts15_pilot.py").read_text(encoding="utf-8")
         self.assertIn('temperature not in {0.0, 0.2, 0.4, 0.5, 0.6}', source)
+        self.assertIn('top_p not in {0.9, 0.95}', source)
     def test_network_guard_fails_closed_and_restores_socket(self) -> None:
         original_socket = socket.socket
 

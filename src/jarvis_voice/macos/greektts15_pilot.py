@@ -821,6 +821,7 @@ def _run_greektts15_suite(
     speaker: str | None = None,
     adapter_directory: str | Path | None = None,
     temperature: float = 0.6,
+    top_p: float = 0.95,
 ) -> dict[str, object]:
     root = Path(model_root).expanduser()
     base = _select_base_variant(base_variant)
@@ -853,6 +854,8 @@ def _run_greektts15_suite(
         raise BackendError("tts.greektts15.max_tokens_invalid", "GreekTTS token limit is invalid", subsystem="tts")
     if temperature not in {0.0, 0.2, 0.4, 0.5, 0.6}:
         raise BackendError("tts.greektts15.temperature_invalid", "GreekTTS sampling temperature is invalid", subsystem="tts")
+    if top_p not in {0.9, 0.95}:
+        raise BackendError("tts.greektts15.top_p_invalid", "GreekTTS nucleus sampling is invalid", subsystem="tts")
     if not fixtures or len({fixture_id for fixture_id, _ in fixtures}) != len(fixtures):
         raise BackendError("tts.greektts15.fixtures_invalid", "GreekTTS fixtures are invalid", subsystem="tts")
 
@@ -895,7 +898,7 @@ def _run_greektts15_suite(
             if not text_ids or text_ids[0] != 128_000:
                 raise BackendError("tts.greektts15.tokenizer_invalid", "Tokenizer did not emit start-of-text", subsystem="tts")
             prompt_ids = [START_OF_HUMAN, *text_ids, END_OF_TEXT, END_OF_HUMAN]
-            sampler = make_sampler(temp=temperature, top_p=0.95)
+            sampler = make_sampler(temp=temperature, top_p=top_p)
             logits_processors = make_logits_processors(repetition_penalty=1.1)
             generated: list[int] = []
             first_speech_ms: float | None = None
@@ -980,7 +983,7 @@ def _run_greektts15_suite(
         "model_load_ms": round(model_load_ms, 3),
         "snac_load_ms": round(snac_load_ms, 3),
         "streaming_enabled": False,
-        "sampling": {"temperature": temperature, "top_p": 0.95, "repetition_penalty": 1.1, "seed": seed},
+        "sampling": {"temperature": temperature, "top_p": top_p, "repetition_penalty": 1.1, "seed": seed},
         "peak_mlx_memory_bytes": int(mx.get_peak_memory()),
         "peak_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
         "samples": samples,
@@ -1027,6 +1030,7 @@ def run_greektts15_quality_qualification(
     seed: int = 10_001,
     adapter_directory: str | Path | None = None,
     temperature: float = 0.6,
+    top_p: float = 0.95,
 ) -> dict[str, object]:
     report = _run_greektts15_suite(
         model_root,
@@ -1038,6 +1042,7 @@ def run_greektts15_quality_qualification(
         speaker=None,
         adapter_directory=adapter_directory,
         temperature=temperature,
+        top_p=top_p,
     )
     samples = report["samples"]
     realtime_factors = [float(sample["realtime_factor"]) for sample in samples]

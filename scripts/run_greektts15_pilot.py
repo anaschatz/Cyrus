@@ -59,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     qualify.add_argument("--seed", type=int, default=10001)
     qualify.add_argument("--adapter-directory")
     qualify.add_argument("--temperature", type=float, choices=(0.0, 0.2, 0.4, 0.5, 0.6), default=0.6)
+    qualify.add_argument("--top-p", type=float, choices=(0.9, 0.95), default=0.95)
     pronunciation = commands.add_parser("pronunciation")
     pronunciation.add_argument("--model-root", required=True)
     pronunciation.add_argument("--dataset-root", required=True)
@@ -96,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
                 seed=args.seed,
                 adapter_directory=args.adapter_directory,
                 temperature=args.temperature,
+                top_p=args.top_p,
             )
         elif args.command == "pronunciation":
             report = run_greektts15_pronunciation_qualification(

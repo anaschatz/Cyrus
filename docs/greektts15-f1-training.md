@@ -239,6 +239,14 @@ without reweighting audio tokens or unfreezing MLP. Validation remains the
 ordinary unweighted loss for comparability. The candidate must complete all
 three qualification seeds before any longer training is considered.
 
+The EOS-weighted branch fails the same seed 10,002 reminder and is rejected.
+Its weighted teacher-forced loss differs only marginally, confirming that EOS
+is already easy once generation reaches the correct final context; the bad
+sample drifts earlier. The next bounded intervention is decoding-only:
+attention-only, temperature 0.4, repetition penalty 1.1, and `top_p` reduced
+from 0.95 to 0.90. This removes only the lowest-probability nucleus tail and is
+tested first on the known failing seed before any wider qualification.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
