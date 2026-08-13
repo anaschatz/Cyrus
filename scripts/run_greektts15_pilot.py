@@ -57,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     qualify.add_argument("--max-new-tokens", type=int, default=1200)
     qualify.add_argument("--seed", type=int, default=10001)
     qualify.add_argument("--adapter-directory")
+    qualify.add_argument("--temperature", type=float, choices=(0.0, 0.2, 0.4, 0.6), default=0.6)
     return parser
 
 
@@ -84,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_new_tokens=args.max_new_tokens,
                 seed=args.seed,
                 adapter_directory=args.adapter_directory,
+                temperature=args.temperature,
             )
         else:
             report = run_greektts15_pilot(

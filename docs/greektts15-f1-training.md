@@ -86,6 +86,11 @@ settings produce a per-fixture and micro word-error comparison. Whisper is an
 independent intelligibility signal only: it cannot approve timbre, pacing,
 speaker identity, or robotic artifacts, so human listening remains mandatory.
 
+Because a single fixed seed at temperature 0.6 can amplify small checkpoint
+differences into a different audio-token path, candidate decoding is qualified
+separately at bounded temperatures 0.0, 0.2, 0.4, and 0.6. Any comparison must
+record the exact temperature and use identical settings for the baseline.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches

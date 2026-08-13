@@ -48,6 +48,10 @@ class GreekTts15PilotTests(unittest.TestCase):
         self.assertEqual(config["lora_parameters"]["rank"], 64)
         self.assertEqual(config["lora_parameters"]["scale"], 1.0)
         self.assertEqual(len(config["lora_parameters"]["keys"]), 7)
+
+    def test_candidate_temperature_choices_are_bounded(self) -> None:
+        source = Path("src/jarvis_voice/macos/greektts15_pilot.py").read_text(encoding="utf-8")
+        self.assertIn('temperature not in {0.0, 0.2, 0.4, 0.6}', source)
     def test_network_guard_fails_closed_and_restores_socket(self) -> None:
         original_socket = socket.socket
 
