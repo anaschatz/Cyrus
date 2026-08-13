@@ -52,6 +52,11 @@ rerun on the longest planned sequence and stay below 6 GiB. It must still find
 exactly 97,255,424 trainable parameters in 392 LoRA tensors with a matching
 392-group gradient tree. Only then may an optimizer checkpoint be promoted.
 
+The first longest-sequence probe without recomputation measured 13.480 GB MLX
+for 1,331 tokens and is rejected. The next probe uses MLX-LM gradient
+checkpointing on the identical sample; it is accepted only if the same strict
+6 GiB gate passes.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash

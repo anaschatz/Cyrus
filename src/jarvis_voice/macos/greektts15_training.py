@@ -242,6 +242,8 @@ def run_gradient_memory_probe(
     model_root: str | Path,
     plan_path: str | Path,
     cache_root: str | Path,
+    *,
+    gradient_checkpointing: bool = True,
 ) -> dict[str, object]:
     """Run one real forward/backward pass without applying an optimizer update."""
 
@@ -256,7 +258,7 @@ def run_gradient_memory_probe(
         import mlx.nn as nn
         from mlx.utils import tree_flatten
         from mlx_lm import load
-        from mlx_lm.tuner.trainer import default_loss
+        from mlx_lm.tuner.trainer import default_loss, grad_checkpoint
         from mlx_lm.tuner.utils import load_adapters
     except ImportError as exc:
         raise BackendError("tts.greektts15.dependencies_missing", "MLX training dependencies are missing", subsystem="tts") from exc
@@ -268,6 +270,8 @@ def run_gradient_memory_probe(
         model, tokenizer = load(str(root / "base"), lazy=False)
         model.freeze()
         model = load_adapters(model, str(root / "mlx-adapter"))
+        if gradient_checkpointing:
+            grad_checkpoint(model.layers[0])
         mx.synchronize()
         load_seconds = time.perf_counter() - started
         trainable = tree_flatten(model.trainable_parameters())
@@ -296,6 +300,7 @@ def run_gradient_memory_probe(
             "optimizer_update_applied": False,
             "sequence_tokens": len(sequence),
             "sequence_selection": "longest_train_sample",
+            "gradient_checkpointing": gradient_checkpointing,
             "trained_tokens": int(trained_tokens.item()),
             "loss": round(float(loss.item()), 6),
             "trainable_groups": len(trainable),
