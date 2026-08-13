@@ -309,3 +309,41 @@ still hydrate those private fields from checkpoint metadata, the scoped resume
 hook clears both `_warmstart_ckpt` and `_vocoder_warmstart_ckpt` immediately
 before Piper's original `on_fit_start`; the original method is restored after
 the training invocation.
+
+The protected experiment completed on the M3 GPU without an epoch or resume.
+Piper copied 784 warm-start tensors with no skipped tensors. The resulting
+model contained 70.4 million parameters: 55.6 million trainable and 14.8
+million protected. Because Piper uses manual generator and discriminator
+optimization, Lightning reached global step 200 after 100 training batches.
+The two required checkpoints were emitted at global steps 100 and 200, and
+their weights-only unsafe-global sets were empty.
+
+| Global step | Checkpoint size | Checkpoint SHA-256 | ONNX SHA-256 |
+| ---: | ---: | --- | --- |
+| 100 | 727,355,271 bytes | `f008819826d246385429981381e23abbc69b99af25d92918ab78fa2de5cf8365` | `713291fb0e4b5c7b260044e89a13ea1d378ff98eb8cdaf2c1b38671debdc78a9` |
+| 200 | 727,355,463 bytes | `e8719c2d8b8db3fabce372981b93823a73907d5f613cf6e12292e67842c86cbf` | `4a3d0cb412b899e8539ff0da9ef9570a27e780d181850fae0cd42985ccb12ad8` |
+
+Both ONNX files are 63,516,051 bytes and use the same 5,213-byte sidecar with
+SHA-256
+`08c0eadfc6f6eacb66f1effc2ace3447ef39d5e83994e05566899b174cf83cec`.
+Every checkpoint render was repeated three times with `noise_scale=0`,
+`noise_w_scale=0`, and `length_scale=1`; all three copies were byte-identical
+for each model and test sentence.
+
+The pinned offline `faster-whisper-base` control again produced 0/11 word
+errors on the real F1 recording. Qualification of the synthesized controls was:
+
+| Candidate | Fixed articulation WER | Same-text F1 control WER |
+| --- | ---: | ---: |
+| Zero-training warm-start | 11/15 (73.3%) | 1/11 (9.1%) |
+| Protected step 100 | 12/15 (80.0%) | 1/11 (9.1%) |
+| Protected step 200 | 10/15 (66.7%) | 1/11 (9.1%) |
+
+Step 200 preserved the good source-controlled result and improved the fixed
+sentence by one word relative to the warm-start, but it remained far outside
+the articulation gate. A realistic three-unit, zero-noise system preview also
+produced 18/28 word errors (64.3%). This shows that the defect is present in
+synthesis rather than pacing or playback. The protected mini experiment is
+therefore complete but rejected for activation, extension, or additional
+Piper fine-tuning. The active JARVIS TTS backend and the native `1.00x` pacing
+remain unchanged.
