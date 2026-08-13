@@ -213,6 +213,39 @@ epochs, and requires export plus the deterministic/stochastic articulation
 control before any extension. The `1.15x` listening preference remains an
 output-only setting and is not applied during this training experiment.
 
+The recovery run completed all five epochs normally. Validation mel loss fell
+monotonically from `0.5259` at epoch 0 to `0.4863` at epoch 4. The final
+845,857,682-byte checkpoint has SHA-256
+`21ee1595fa3005e19cf516e6d10d8b6daeff8a2721050eb37c3caae38b8ad841`.
+Its offline export passed ONNX and structural Piper validation; the
+63,516,051-byte model has SHA-256
+`835a2e997b8e7cda669b6debe1e27fe201c175c82393d38c6b769a0445dc0e4d`.
+The four fixed qualification fixtures also passed model-size, offline,
+peak-RSS and warm-first-audio gates, with 310,558,720 bytes peak RSS and
+122.538 ms maximum warm first audio. Cancellation and human approval were not
+claimed by that non-playback run.
+
+All five checkpoints were then exported and evaluated with the same local,
+manifest-pinned `faster-whisper-base` articulation sentence. Phoneme-width
+noise was disabled throughout. Each deterministic result used zero acoustic
+noise; three normal samples per checkpoint used acoustic noise `0.667`.
+
+| Recovery epoch | Deterministic WER | Mean normal WER | Normal range |
+| --- | ---: | ---: | ---: |
+| 0 | 60.0% | 68.9% | 40.0%--93.3% |
+| 1 | 73.3% | 64.4% | 46.7%--93.3% |
+| 2 | 60.0% | 64.4% | 53.3%--86.7% |
+| 3 | 40.0% | 68.9% | 60.0%--73.3% |
+| 4 | 46.7% | 68.9% | 60.0%--80.0% |
+
+The three repeated deterministic epoch-4 renders were byte-identical, so the
+failure is not a playback underrun or run-to-run timing issue. Even the
+least-bad deterministic checkpoint, epoch 3, retained large phoneme-level
+corruptions, and every normal-sampling mean was above 60%. The low-learning-rate
+recovery experiment therefore fails the articulation gate and is rejected for
+extension or promotion. A pitch-preserving `1.15x` listening derivative may be
+used to confirm the perceptual finding, but pacing cannot change this result.
+
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local
