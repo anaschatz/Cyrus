@@ -48,14 +48,15 @@ MAX_TRAINING_SEQUENCE = 1_536
 EXPECTED_LORA_GROUPS = 392
 TARGETED_LORA_GROUPS = 364
 ATTENTION_ONLY_LORA_GROUPS = 224
+MLP_ONLY_LORA_GROUPS = 168
 EOS_LOSS_WEIGHTS = {1, 16}
 MAX_GRADIENT_PROBE_MLX_BYTES = 6 * 1024**3
 PILOT_STEPS = 25
 PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}
-TRAINING_TARGET_PROFILES = {"all", "freeze-output-layers", "attention-only"}
-TRAINING_SAMPLE_PROFILES = {"uniform", "jarvis-pronunciation"}
+TRAINING_TARGET_PROFILES = {"all", "freeze-output-layers", "attention-only", "mlp-only"}
+TRAINING_SAMPLE_PROFILES = {"uniform", "jarvis-pronunciation", "jarvis-lexical"}
 PRONUNCIATION_CURRICULUM_ROOTS = (
     ("system_state", "καταστα"),
     ("operation", "λειτουργ"),
@@ -64,6 +65,13 @@ PRONUNCIATION_CURRICULUM_ROOTS = (
     ("work", "εργασ"),
 )
 PRONUNCIATION_TARGETED_STEPS = 15
+LEXICAL_CURRICULUM_TARGETS = (
+    ("system_state", "κατασταση", True),
+    ("operation", "λειτουργουν", True),
+    ("reminder", "θυμ", False),
+    ("importance", "σημαντικεσ", True),
+    ("work", "εργασιεσ", True),
+)
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 PRONUNCIATION_ASR_CANDIDATE_LABELS = {
@@ -331,6 +339,67 @@ def build_pronunciation_curriculum_order(
     }
 
 
+def build_lexical_curriculum_order(
+    plan_path: str | Path,
+    *,
+    steps: int = PILOT_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Repeat exact real F1 lexical examples in a bounded MLP-only curriculum."""
+
+    import random
+
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    if len(train_samples) < steps or any(not isinstance(sample.get("text"), str) for sample in train_samples):
+        raise BackendError("tts.greektts15.plan_invalid", "Training samples are incomplete", subsystem="tts")
+
+    words = [set(_normalized_words(sample["text"])) for sample in train_samples]
+    normalized = [" ".join(_normalized_words(sample["text"])) for sample in train_samples]
+    candidates: dict[str, list[int]] = {}
+    for label, needle, exact_word in LEXICAL_CURRICULUM_TARGETS:
+        matches = [
+            index
+            for index in range(len(train_samples))
+            if (needle in words[index] if exact_word else needle in normalized[index])
+        ]
+        if not matches:
+            raise BackendError("tts.greektts15.curriculum_invalid", "Lexical F1 coverage is incomplete", subsystem="tts")
+        candidates[label] = matches
+
+    randomizer = random.Random(TRAINING_SEED)
+    for indices in candidates.values():
+        randomizer.shuffle(indices)
+    selected: list[int] = []
+    selected_counts = {label: 0 for label, _, _ in LEXICAL_CURRICULUM_TARGETS}
+    rounds = PRONUNCIATION_TARGETED_STEPS // len(LEXICAL_CURRICULUM_TARGETS)
+    for round_index in range(rounds):
+        for label, _, _ in LEXICAL_CURRICULUM_TARGETS:
+            indices = candidates[label]
+            selected.append(indices[round_index % len(indices)])
+            selected_counts[label] += 1
+
+    targeted_set = {index for indices in candidates.values() for index in indices}
+    general = [index for index in range(len(train_samples)) if index not in targeted_set]
+    randomizer.shuffle(general)
+    selected.extend(general[: steps - len(selected)])
+    if len(selected) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Lexical curriculum is incomplete", subsystem="tts")
+    return selected, {
+        "profile": "jarvis-lexical",
+        "targeted_steps": sum(selected_counts.values()),
+        "general_steps": steps - sum(selected_counts.values()),
+        "target_counts": selected_counts,
+        "sample_filenames": [train_samples[index].get("filename") for index in selected],
+        "repeated_exact_examples": True,
+    }
+
+
 def run_gradient_memory_probe(
     model_root: str | Path,
     plan_path: str | Path,
@@ -558,10 +627,12 @@ def run_training_pilot(
         or steps != PILOT_STEPS
         or target_profile not in TRAINING_TARGET_PROFILES
         or sample_profile not in TRAINING_SAMPLE_PROFILES
-        or (target_profile != "all" and learning_rate != 1e-6)
+        or (target_profile in {"freeze-output-layers", "attention-only"} and learning_rate != 1e-6)
+        or (target_profile == "mlp-only" and learning_rate != 2.5e-7)
         or eos_loss_weight not in EOS_LOSS_WEIGHTS
         or (eos_loss_weight != 1 and target_profile != "attention-only")
-        or (sample_profile != "uniform" and target_profile != "attention-only")
+        or (sample_profile == "jarvis-pronunciation" and target_profile != "attention-only")
+        or (sample_profile == "jarvis-lexical" and target_profile != "mlp-only")
     ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
     gate = _validated_gradient_probe(gradient_report)
@@ -612,11 +683,15 @@ def run_training_pilot(
         elif target_profile == "attention-only":
             for layer in model.layers:
                 layer.mlp.freeze()
+        elif target_profile == "mlp-only":
+            for layer in model.layers:
+                layer.self_attn.freeze()
         trainable = tree_flatten(model.trainable_parameters())
         expected_trainable_groups = {
             "all": EXPECTED_LORA_GROUPS,
             "freeze-output-layers": TARGETED_LORA_GROUPS,
             "attention-only": ATTENTION_ONLY_LORA_GROUPS,
+            "mlp-only": MLP_ONLY_LORA_GROUPS,
         }[target_profile]
         if len(trainable) != expected_trainable_groups or any("lora_" not in name for name, _ in trainable):
             raise BackendError("tts.greektts15.trainable_surface_invalid", "Only the Greek LoRA adapter may be trainable", subsystem="tts")
@@ -626,6 +701,8 @@ def run_training_pilot(
         randomizer = random.Random(TRAINING_SEED)
         if sample_profile == "jarvis-pronunciation":
             order, curriculum = build_pronunciation_curriculum_order(plan_path, steps=steps)
+        elif sample_profile == "jarvis-lexical":
+            order, curriculum = build_lexical_curriculum_order(plan_path, steps=steps)
         else:
             order = list(range(len(train)))
             randomizer.shuffle(order)
@@ -707,7 +784,9 @@ def run_training_pilot(
             "sample_profile": sample_profile,
             "curriculum": curriculum,
             "frozen_adapter_layers": frozen_layers,
-            "frozen_adapter_sections": ["mlp"] if target_profile == "attention-only" else [],
+            "frozen_adapter_sections": (
+                ["mlp"] if target_profile == "attention-only" else ["self_attn"] if target_profile == "mlp-only" else []
+            ),
             "trained_tokens": trained_tokens,
             "mean_train_loss": round(sum(losses) / len(losses), 6),
             "first_train_loss": round(losses[0], 6),

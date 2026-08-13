@@ -28,13 +28,13 @@ def main() -> int:
     parser.add_argument("--learning-rate", required=True, type=float, choices=(2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5))
     parser.add_argument(
         "--target-profile",
-        choices=("all", "freeze-output-layers", "attention-only"),
+        choices=("all", "freeze-output-layers", "attention-only", "mlp-only"),
         default="all",
     )
     parser.add_argument("--eos-loss-weight", type=int, choices=(1, 16), default=1)
     parser.add_argument(
         "--sample-profile",
-        choices=("uniform", "jarvis-pronunciation"),
+        choices=("uniform", "jarvis-pronunciation", "jarvis-lexical"),
         default="uniform",
     )
     parser.add_argument("--report", required=True)

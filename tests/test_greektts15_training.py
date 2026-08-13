@@ -18,6 +18,7 @@ from jarvis_voice.macos.greektts15_training import (
     CACHE_SCHEMA,
     build_training_plan,
     build_pronunciation_curriculum_order,
+    build_lexical_curriculum_order,
     blend_adapter_checkpoint,
     build_orpheus_training_sequence,
     cache_snac_samples,
@@ -32,6 +33,7 @@ from jarvis_voice.macos.greektts15_training import (
     TRAINING_SAMPLE_PROFILES,
     TARGETED_LORA_GROUPS,
     ATTENTION_ONLY_LORA_GROUPS,
+    MLP_ONLY_LORA_GROUPS,
     EOS_LOSS_WEIGHTS,
 )
 from jarvis_voice.macos.greektts15_pilot import (
@@ -67,9 +69,30 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertTrue(all(count == 3 for count in report["target_counts"].values()))
 
     def test_pronunciation_sample_profile_is_attention_only(self) -> None:
-        self.assertEqual(TRAINING_SAMPLE_PROFILES, {"uniform", "jarvis-pronunciation"})
+        self.assertEqual(TRAINING_SAMPLE_PROFILES, {"uniform", "jarvis-pronunciation", "jarvis-lexical"})
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
-        self.assertIn('sample_profile != "uniform" and target_profile != "attention-only"', source)
+        self.assertIn('sample_profile == "jarvis-pronunciation" and target_profile != "attention-only"', source)
+        self.assertIn('sample_profile == "jarvis-lexical" and target_profile != "mlp-only"', source)
+
+    def test_lexical_curriculum_repeats_exact_real_examples_only(self) -> None:
+        samples = []
+        targets = ("κατάσταση", "λειτουργούν", "θυμάμαι", "σημαντικές", "εργασίες")
+        for index in range(30):
+            text = f"Γενικό δείγμα {index}"
+            if index < len(targets):
+                text = f"{targets[index]} δείγμα {index}"
+            samples.append({"split": "train", "filename": f"f{index}.wav", "text": text})
+        plan = {"schema": "jarvis.voice.greektts15-f1-plan/1", "samples": samples}
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "plan.json"
+            path.write_text(json.dumps(plan), encoding="utf-8")
+            order, report = build_lexical_curriculum_order(path)
+        self.assertEqual(len(order), 25)
+        self.assertEqual(report["targeted_steps"], 15)
+        self.assertEqual(report["general_steps"], 10)
+        self.assertTrue(report["repeated_exact_examples"])
+        self.assertTrue(all(count == 3 for count in report["target_counts"].values()))
+        self.assertEqual(order[:5], order[5:10])
 
     def test_listening_candidate_manifest_cannot_claim_production_readiness(self) -> None:
         manifest = json.loads(Path("docs/greektts15-attention-only-candidate.json").read_text(encoding="utf-8"))
@@ -99,13 +122,15 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertFalse(report["promotion_allowed"])
 
     def test_targeted_profile_freezes_exactly_two_complete_adapter_layers(self) -> None:
-        self.assertEqual(TRAINING_TARGET_PROFILES, {"all", "freeze-output-layers", "attention-only"})
+        self.assertEqual(TRAINING_TARGET_PROFILES, {"all", "freeze-output-layers", "attention-only", "mlp-only"})
         self.assertEqual(TARGETED_LORA_GROUPS, 26 * 7 * 2)
         self.assertEqual(ATTENTION_ONLY_LORA_GROUPS, 28 * 4 * 2)
+        self.assertEqual(MLP_ONLY_LORA_GROUPS, 28 * 3 * 2)
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
         self.assertIn('frozen_layers = [26, 27]', source)
         self.assertIn('len(complete_adapter) != EXPECTED_LORA_GROUPS', source)
         self.assertIn('layer.mlp.freeze()', source)
+        self.assertIn('layer.self_attn.freeze()', source)
 
     def test_pronunciation_asr_calibrates_against_native_f1(self) -> None:
         references = {"one": "Καλημέρα κόσμε", "two": "Όλα λειτουργούν"}
