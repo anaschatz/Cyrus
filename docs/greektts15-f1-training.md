@@ -80,6 +80,12 @@ listening candidate; `1e-6` remains the stronger adaptation candidate. Human
 comparison of identical fixtures is required before either branch can continue
 to 50 updates.
 
+The listening set is also transcribed offline by the already-local pinned
+`Systran/faster-whisper-base` CPU model. Identical forced-Greek beam-search
+settings produce a per-fixture and micro word-error comparison. Whisper is an
+independent intelligibility signal only: it cannot approve timbre, pacing,
+speaker identity, or robotic artifacts, so human listening remains mandatory.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches

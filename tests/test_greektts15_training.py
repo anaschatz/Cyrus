@@ -21,6 +21,7 @@ from jarvis_voice.macos.greektts15_training import (
     interleave_snac_codes,
     load_cached_split,
     normalize_transcript,
+    score_candidate_transcripts,
     _validated_gradient_probe,
 )
 from jarvis_voice.macos.greektts15_pilot import (
@@ -34,6 +35,20 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_candidate_asr_scoring_compares_identical_fixture_sets(self) -> None:
+        references = {"one": "Καλημέρα κόσμε", "two": "Όλα λειτουργούν"}
+        transcripts = {
+            "baseline": dict(references),
+            "lr-5e-7": {"one": "Καλημέρα", "two": "Όλα λειτουργούν"},
+            "lr-1e-6": dict(references),
+        }
+        report = score_candidate_transcripts(references, transcripts)
+        by_label = {item["label"]: item for item in report["candidates"]}
+        self.assertEqual(by_label["baseline"]["micro_wer_percent"], 0.0)
+        self.assertGreater(by_label["lr-5e-7"]["micro_wer_percent"], 0.0)
+        self.assertTrue(report["human_listening_required"])
+        self.assertFalse(report["promotion_allowed"])
+
     def test_optimizer_gate_accepts_only_no_update_memory_probe(self) -> None:
         valid = {
             "schema": "jarvis.voice.greektts15-gradient-probe/1",

@@ -51,6 +51,7 @@ PILOT_STEPS = 25
 PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {5e-7, 1e-6, 5e-6, 1e-5}
+ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 
 _LEADING_CONFUSABLES = str.maketrans(
     {
@@ -714,6 +715,73 @@ def normalize_transcript(text: str) -> tuple[str, bool]:
         if first != normalized[0]:
             normalized = first + normalized[1:]
     return normalized, normalized != text
+
+
+def _normalized_words(text: str) -> list[str]:
+    normalized = unicodedata.normalize("NFKD", text.casefold())
+    without_marks = "".join(character for character in normalized if not unicodedata.combining(character))
+    return re.findall(r"[α-ωϊϋΐΰ]+", without_marks)
+
+
+def _word_error_distance(reference: list[str], hypothesis: list[str]) -> int:
+    previous = list(range(len(hypothesis) + 1))
+    for reference_index, reference_word in enumerate(reference, start=1):
+        current = [reference_index]
+        for hypothesis_index, hypothesis_word in enumerate(hypothesis, start=1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[hypothesis_index] + 1,
+                    previous[hypothesis_index - 1] + (reference_word != hypothesis_word),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def score_candidate_transcripts(
+    references: dict[str, str],
+    transcripts: dict[str, dict[str, str]],
+) -> dict[str, object]:
+    if set(transcripts) != ASR_CANDIDATE_LABELS or not references or any(set(items) != set(references) for items in transcripts.values()):
+        raise BackendError("tts.greektts15.asr_transcripts_incomplete", "Candidate transcripts are incomplete", subsystem="tts")
+    candidates: list[dict[str, object]] = []
+    for label in sorted(transcripts):
+        samples: list[dict[str, object]] = []
+        total_words = total_errors = 0
+        for fixture_id, reference_text in references.items():
+            hypothesis = transcripts[label][fixture_id]
+            if not isinstance(hypothesis, str):
+                raise BackendError("tts.greektts15.asr_transcripts_incomplete", "Candidate transcript is invalid", subsystem="tts")
+            reference_words = _normalized_words(reference_text)
+            errors = _word_error_distance(reference_words, _normalized_words(hypothesis))
+            total_words += len(reference_words)
+            total_errors += errors
+            samples.append(
+                {
+                    "fixture_id": fixture_id,
+                    "reference": reference_text,
+                    "transcript": hypothesis,
+                    "reference_words": len(reference_words),
+                    "word_errors": errors,
+                }
+            )
+        candidates.append(
+            {
+                "label": label,
+                "total_reference_words": total_words,
+                "total_word_errors": total_errors,
+                "micro_wer_percent": round(100.0 * total_errors / total_words, 3),
+                "samples": samples,
+            }
+        )
+    return {
+        "schema": "jarvis.voice.greektts15-asr-comparison/1",
+        "ready": True,
+        "candidates": candidates,
+        "human_listening_required": True,
+        "promotion_allowed": False,
+    }
 
 
 def _corpus(filename: str) -> str:
