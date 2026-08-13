@@ -44,6 +44,8 @@ MLX_TUNE_REVISION = "9690fe1fed19c72f0810902b9c188d9a2625eb5b"
 BASE_REVISION = "b30aed4ecfa03c0177a5419b51919d14a105f183"
 GREEK_ADAPTER_REVISION = "0da4d9fff8b974fb1127f3c829f793dc0439dfd1"
 SNAC_REVISION = "d73ad176a12188fcf4f360ba3bf2c2fbbe8f58ec"
+MAX_TRAINING_SEQUENCE = 1_536
+EXPECTED_LORA_GROUPS = 392
 
 _LEADING_CONFUSABLES = str.maketrans(
     {
@@ -187,6 +189,126 @@ def build_orpheus_training_sequence(text_ids: Iterable[int], audio_tokens: Itera
     prefix = [START_OF_HUMAN, *text, END_OF_TEXT, END_OF_HUMAN]
     completion = [START_OF_SPEECH, *audio, END_OF_SPEECH]
     return prefix + completion, [-100] * len(prefix) + completion
+
+
+def load_cached_split(
+    plan_path: str | Path,
+    cache_root: str | Path,
+    tokenizer: object,
+    split: str,
+) -> list[tuple[list[int], int]]:
+    """Materialize an MLX-LM dataset as ``(tokens, completion_offset)``."""
+
+    if split not in {"train", "validation", "control"}:
+        raise BackendError("tts.greektts15.split_invalid", "Training split is invalid", subsystem="tts")
+    plan_file, cache = Path(plan_path).expanduser(), Path(cache_root).expanduser()
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    encode = getattr(tokenizer, "encode", None)
+    if not callable(encode):
+        raise BackendError("tts.greektts15.tokenizer_invalid", "Tokenizer is invalid", subsystem="tts")
+    result: list[tuple[list[int], int]] = []
+    for sample in samples:
+        if not isinstance(sample, dict) or sample.get("split") != split:
+            continue
+        filename, text = sample.get("filename"), sample.get("text")
+        if not isinstance(filename, str) or not isinstance(text, str):
+            raise BackendError("tts.greektts15.plan_invalid", "Training sample is invalid", subsystem="tts")
+        entry = cache / f"{Path(filename).stem}.json"
+        try:
+            payload = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BackendError("tts.greektts15.cache_incomplete", "SNAC cache entry is unavailable", subsystem="tts") from exc
+        if not _cache_payload_is_valid(payload, sample, payload.get("encoder") if isinstance(payload, dict) else {}):
+            raise BackendError("tts.greektts15.cache_tokens_invalid", "SNAC cache entry is invalid", subsystem="tts")
+        text_ids = list(encode(text, add_special_tokens=True))
+        sequence, labels = build_orpheus_training_sequence(text_ids, payload["tokens"])
+        if len(sequence) > MAX_TRAINING_SEQUENCE:
+            raise BackendError("tts.greektts15.sequence_too_long", "Training sequence exceeds the safe bound", subsystem="tts")
+        offset = next((index for index, label in enumerate(labels) if label != -100), len(labels))
+        result.append((sequence, offset))
+    if not result:
+        raise BackendError("tts.greektts15.split_empty", "Training split is empty", subsystem="tts")
+    return result
+
+
+def run_gradient_memory_probe(
+    model_root: str | Path,
+    plan_path: str | Path,
+    cache_root: str | Path,
+) -> dict[str, object]:
+    """Run one real forward/backward pass without applying an optimizer update."""
+
+    import resource
+    import time
+
+    root = Path(model_root).expanduser()
+    if not root.is_absolute() or not root.is_dir() or root.is_symlink():
+        raise BackendError("tts.greektts15.model_root_missing", "GreekTTS model root is unavailable", subsystem="tts")
+    try:
+        import mlx.core as mx
+        import mlx.nn as nn
+        from mlx.utils import tree_flatten
+        from mlx_lm import load
+        from mlx_lm.tuner.trainer import default_loss
+        from mlx_lm.tuner.utils import load_adapters
+    except ImportError as exc:
+        raise BackendError("tts.greektts15.dependencies_missing", "MLX training dependencies are missing", subsystem="tts") from exc
+
+    previous = {name: os.environ.get(name) for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_HUB_DISABLE_TELEMETRY")}
+    os.environ.update({name: "1" for name in previous})
+    try:
+        started = time.perf_counter()
+        model, tokenizer = load(str(root / "base"), lazy=False)
+        model.freeze()
+        model = load_adapters(model, str(root / "mlx-adapter"))
+        mx.synchronize()
+        load_seconds = time.perf_counter() - started
+        trainable = tree_flatten(model.trainable_parameters())
+        if len(trainable) != EXPECTED_LORA_GROUPS or any("lora_" not in name for name, _ in trainable):
+            raise BackendError("tts.greektts15.trainable_surface_invalid", "Only the Greek LoRA adapter may be trainable", subsystem="tts")
+        dataset = load_cached_split(plan_path, cache_root, tokenizer, "train")
+        sequence, offset = min(dataset, key=lambda item: len(item[0]))
+        batch = mx.array([sequence], dtype=mx.int32)
+        lengths = mx.array([[offset, len(sequence)]], dtype=mx.int32)
+        if hasattr(mx, "reset_peak_memory"):
+            mx.reset_peak_memory()
+        probe_started = time.perf_counter()
+        value_and_grad = nn.value_and_grad(model, default_loss)
+        (loss, trained_tokens), gradients = value_and_grad(model, batch, lengths)
+        mx.eval(loss, trained_tokens, gradients)
+        probe_seconds = time.perf_counter() - probe_started
+        if not float(loss.item()) > 0 or int(trained_tokens.item()) <= 0:
+            raise BackendError("tts.greektts15.gradient_probe_invalid", "Gradient probe returned invalid metrics", subsystem="tts")
+        gradient_groups = tree_flatten(gradients)
+        if len(gradient_groups) != EXPECTED_LORA_GROUPS:
+            raise BackendError("tts.greektts15.gradient_surface_invalid", "Gradient tree does not match the adapter", subsystem="tts")
+        return {
+            "schema": "jarvis.voice.greektts15-gradient-probe/1",
+            "ready": True,
+            "optimizer_update_applied": False,
+            "sequence_tokens": len(sequence),
+            "trained_tokens": int(trained_tokens.item()),
+            "loss": round(float(loss.item()), 6),
+            "trainable_groups": len(trainable),
+            "trainable_parameters": sum(int(value.size) for _, value in trainable),
+            "gradient_groups": len(gradient_groups),
+            "model_load_seconds": round(load_seconds, 3),
+            "probe_seconds": round(probe_seconds, 3),
+            "peak_mlx_bytes": int(mx.get_peak_memory()),
+            "peak_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
+        }
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _sha256(path: Path) -> str:

@@ -19,6 +19,7 @@ from jarvis_voice.macos.greektts15_training import (
     build_orpheus_training_sequence,
     cache_snac_samples,
     interleave_snac_codes,
+    load_cached_split,
     normalize_transcript,
 )
 from jarvis_voice.macos.greektts15_pilot import (
@@ -32,17 +33,11 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
-    def test_snac_cache_is_resumable_and_content_bound(self) -> None:
-        class Encoder:
-            signature = {"backend": "fake", "revision": "test"}
-
-            def __init__(self) -> None:
-                self.calls = 0
-
-            def encode(self, audio_path: Path) -> list[int]:
-                self.calls += 1
-                del audio_path
-                return interleave_snac_codes([1], [2, 3], [4, 5, 6, 7])
+    def test_cached_split_builds_completion_offset(self) -> None:
+        class Tokenizer:
+            def encode(self, text: str, *, add_special_tokens: bool) -> list[int]:
+                self.assertion = (text, add_special_tokens)
+                return [128000, 42]
 
         with tempfile.TemporaryDirectory() as temp:
             root = self._bundle(Path(temp) / "dataset")
@@ -50,7 +45,22 @@ class GreekTts15TrainingTests(unittest.TestCase):
                 plan = build_training_plan(root)
             plan_path = Path(temp) / "plan.json"
             plan_path.write_text(json.dumps(plan), encoding="utf-8")
-            encoder = Encoder()
+            cache = Path(temp) / "cache"
+            encoder = self._FakeEncoder()
+            cache_snac_samples(plan_path, root, cache, encoder)
+            dataset = load_cached_split(plan_path, cache, Tokenizer(), "train")
+        sequence, offset = dataset[0]
+        self.assertEqual(sequence[offset], START_OF_SPEECH)
+        self.assertEqual(offset, 5)
+
+    def test_snac_cache_is_resumable_and_content_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = self._bundle(Path(temp) / "dataset")
+            with mock.patch("jarvis_voice.macos.greektts15_training.EXPECTED_ROWS", 20):
+                plan = build_training_plan(root)
+            plan_path = Path(temp) / "plan.json"
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            encoder = self._FakeEncoder()
             cache_root = Path(temp) / "cache"
             first = cache_snac_samples(plan_path, root, cache_root, encoder, limit=2)
             second = cache_snac_samples(plan_path, root, cache_root, encoder, limit=2)
@@ -60,6 +70,17 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertEqual((second["encoded"], second["reused"]), (0, 2))
         self.assertEqual(encoder.calls, 2)
         self.assertEqual(payload["encoder"], encoder.signature)
+
+    class _FakeEncoder:
+        signature = {"backend": "fake", "revision": "test"}
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def encode(self, audio_path: Path) -> list[int]:
+            self.calls += 1
+            del audio_path
+            return interleave_snac_codes([1], [2, 3], [4, 5, 6, 7])
 
     def test_snac_interleave_round_trips_through_runtime_decoder(self) -> None:
         layers = ([1, 2], [3, 4, 5, 6], list(range(7, 15)))

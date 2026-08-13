@@ -35,6 +35,16 @@ The first real M3 probe encoded one F1 clip into 798 valid Orpheus tokens and a
 second run reused the content-bound entry. Full caching must use the final
 50 ms trim signature, so the earlier untrimmed probe is intentionally invalidated.
 
+The complete cache contains all 1,301 clips and 541,758 audio tokens. A second
+full pass encoded nothing and reused all 1,301 entries, proving resumability
+against the final encoder signature.
+
+Before any optimizer state or weight update is allowed, the M3 training probe
+loads the frozen 4-bit base, attaches the existing rank-64 Greek adapter, proves
+that exactly its 392 LoRA tensors are trainable, and computes one real
+completion-only forward/backward pass. It records MLX and process peak memory
+and deliberately creates no optimizer and saves no weights.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
