@@ -38,6 +38,10 @@ class GreekTts15AcousticTests(unittest.TestCase):
             compare_acoustic_sets({"native": {}})
         self.assertEqual(raised.exception.code, "tts.greektts15.acoustic_set_incomplete")
 
+    def test_comparison_rejects_unknown_candidate_label(self) -> None:
+        with self.assertRaises(BackendError):
+            compare_acoustic_sets({"native": {"one": "/x"}, "baseline": {"one": "/x"}, "unknown": {"one": "/x"}})
+
 
 if __name__ == "__main__":
     unittest.main()

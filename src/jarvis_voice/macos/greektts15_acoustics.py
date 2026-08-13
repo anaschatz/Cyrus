@@ -106,8 +106,15 @@ def analyze_acoustic_file(audio_path: str | Path) -> dict[str, object]:
 def compare_acoustic_sets(
     files: dict[str, dict[str, str | Path]],
 ) -> dict[str, object]:
-    required = {"native", "baseline", "blend-25pct", "blend-37_5pct"}
-    if set(files) != required or not files["native"] or any(set(group) != set(files["native"]) for group in files.values()):
+    allowed_candidates = {"blend-25pct", "blend-37_5pct", "lr-2_5e-7"}
+    candidates = set(files) - {"native", "baseline"}
+    if (
+        not candidates
+        or not candidates <= allowed_candidates
+        or not {"native", "baseline"} <= set(files)
+        or not files["native"]
+        or any(set(group) != set(files["native"]) for group in files.values())
+    ):
         raise BackendError(
             "tts.greektts15.acoustic_set_incomplete",
             "GreekTTS acoustic comparison set is incomplete",

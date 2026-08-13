@@ -53,7 +53,7 @@ TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
-PRONUNCIATION_ASR_CANDIDATE_LABELS = {"blend-25pct", "blend-37_5pct"}
+PRONUNCIATION_ASR_CANDIDATE_LABELS = {"blend-25pct", "blend-37_5pct", "lr-2_5e-7"}
 
 _LEADING_CONFUSABLES = str.maketrans(
     {

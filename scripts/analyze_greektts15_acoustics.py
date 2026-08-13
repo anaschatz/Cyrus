@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--blend-25", required=True)
     parser.add_argument("--blend-37-5", required=True)
+    parser.add_argument("--candidate")
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     dataset = Path(args.dataset_root).expanduser()
@@ -33,6 +34,8 @@ def main() -> int:
         "blend-25pct": Path(args.blend_25).expanduser(),
         "blend-37_5pct": Path(args.blend_37_5).expanduser(),
     }
+    if args.candidate:
+        directories["lr-2_5e-7"] = Path(args.candidate).expanduser()
     files = {label: {} for label in ("native", *directories)}
     for index, reference in enumerate(PRONUNCIATION_REFERENCES, start=1):
         files["native"][reference.fixture_id] = dataset / "audio" / reference.filename

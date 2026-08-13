@@ -66,6 +66,12 @@ class GreekTts15TrainingTests(unittest.TestCase):
         with self.assertRaises(BackendError):
             score_pronunciation_transcripts(references, transcripts)
 
+        transcripts["lr-2_5e-7"] = transcripts.pop("unknown")
+        self.assertEqual(
+            score_pronunciation_transcripts(references, transcripts)["candidate_label"],
+            "lr-2_5e-7",
+        )
+
     def test_adapter_blending_is_bounded_away_from_rejected_candidate(self) -> None:
         self.assertEqual(ADAPTER_BLEND_FACTORS, {0.25, 0.375, 0.5})
         with self.assertRaises(BackendError) as raised:

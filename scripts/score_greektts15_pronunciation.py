@@ -26,7 +26,11 @@ def main() -> int:
     parser.add_argument("--dataset-root", required=True)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--blend", required=True)
-    parser.add_argument("--candidate-label", choices=("blend-25pct", "blend-37_5pct"), default="blend-25pct")
+    parser.add_argument(
+        "--candidate-label",
+        choices=("blend-25pct", "blend-37_5pct", "lr-2_5e-7"),
+        default="blend-25pct",
+    )
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     model_dir = Path(args.model_dir).expanduser()
