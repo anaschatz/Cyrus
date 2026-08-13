@@ -43,6 +43,15 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_listening_candidate_manifest_cannot_claim_production_readiness(self) -> None:
+        manifest = json.loads(Path("docs/greektts15-attention-only-candidate.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["schema"], "jarvis.voice.greektts15-listening-candidate/1")
+        self.assertEqual(manifest["status"], "human_listening_required")
+        self.assertFalse(manifest["production_promotion_allowed"])
+        self.assertFalse(manifest["qualification"]["seed_robustness_passed"])
+        self.assertFalse(manifest["qualification"]["human_robotic_artifact_approved"])
+        self.assertEqual(len(manifest["model"]["checkpoint_sha256"]), 64)
+
     def test_eos_weighting_is_bounded_to_attention_only_training(self) -> None:
         self.assertEqual(EOS_LOSS_WEIGHTS, {1, 16})
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")

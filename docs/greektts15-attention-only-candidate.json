@@ -1,0 +1,54 @@
+{
+  "schema": "jarvis.voice.greektts15-listening-candidate/1",
+  "status": "human_listening_required",
+  "production_promotion_allowed": false,
+  "model": {
+    "base": "mlx-community/orpheus-3b-0.1-ft-4bit",
+    "base_revision": "b30aed4ecfa03c0177a5419b51919d14a105f183",
+    "greek_adapter_revision": "0da4d9fff8b974fb1127f3c829f793dc0439dfd1",
+    "checkpoint": "artifacts/greektts15-training/checkpoints/pilot-attention-only-lr-1e-6-step-25",
+    "checkpoint_sha256": "8005ac15e3a9d0d0701cd993bbadc087d5d09d83a5dace1b493b546e1dcec994"
+  },
+  "training": {
+    "immutable_adapter_start": true,
+    "target_profile": "attention-only",
+    "frozen_adapter_sections": [
+      "mlp"
+    ],
+    "trainable_groups": 224,
+    "saved_adapter_groups": 392,
+    "learning_rate": 1e-06,
+    "optimizer_updates": 25,
+    "eos_loss_weight": 1,
+    "validation_loss_before": 5.198685,
+    "validation_loss_after": 5.070154
+  },
+  "decoding": {
+    "temperature": 0.4,
+    "top_p": 0.95,
+    "repetition_penalty": 1.1,
+    "listening_seed": 10001
+  },
+  "qualification": {
+    "native_fixture_eos": "4/4",
+    "jarvis_fixture_eos_seed_10001": "4/4",
+    "jarvis_fixture_eos_seed_10002": "3/4",
+    "jarvis_fixture_eos_seed_10003": "4/4",
+    "native_micro_wer_percent": 48.485,
+    "jarvis_micro_wer_percent_seed_10001": 45.455,
+    "jarvis_micro_wer_percent_seed_10003": 45.455,
+    "baseline_jarvis_micro_wer_percent": 63.636,
+    "seed_robustness_passed": false,
+    "human_timbre_approved": false,
+    "human_pronunciation_approved": false,
+    "human_robotic_artifact_approved": false
+  },
+  "rejected_alternatives": {
+    "temperature_0_0": "wer_regression",
+    "temperature_0_2": "wer_regression",
+    "temperature_0_5": "wer_and_acoustic_regression",
+    "temperature_0_6": "wer_regression",
+    "top_p_0_90": "eos_failure_seed_10002",
+    "eos_loss_weight_16": "eos_failure_seed_10002"
+  }
+}

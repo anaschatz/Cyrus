@@ -247,6 +247,17 @@ attention-only, temperature 0.4, repetition penalty 1.1, and `top_p` reduced
 from 0.95 to 0.90. This removes only the lowest-probability nucleus tail and is
 tested first on the known failing seed before any wider qualification.
 
+Neither EOS weighting nor `top_p=0.90` repairs the known seed 10,002 failure.
+Greedy decoding completes deterministically but regresses to 72.73% WER, and
+temperature 0.2 completes seed 10,002 but regresses to 69.70% WER. Therefore
+attention-only at temperature 0.4 remains a listening candidate, not a robust
+production checkpoint: seeds 10,001 and 10,003 both complete at 45.45% WER,
+while 10,002 completes only three of four fixtures. The exact checkpoint,
+decoding configuration, measured gates, and rejected alternatives are pinned
+in `docs/greektts15-attention-only-candidate.json`. No longer run or runtime
+promotion is allowed until human listening evaluates timbre, native accent,
+pauses, and the reported robotic artifact.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
