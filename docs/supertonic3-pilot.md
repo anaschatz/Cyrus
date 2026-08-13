@@ -68,11 +68,25 @@ strict ASR screening limit of 5% micro-WER, followed by native-speaker listening
 Production promotion remains blocked until human listening, sentence-unit
 streaming, hard cancellation and concurrent main-LLM qualification all pass.
 
-## Early comparison on the M3
+## M3 qualification result (2026-08-13)
 
 The rejected 36.3M-parameter VITS candidates were very light but failed the
 same four-phrase Greek screen: `facebook/mms-tts-ell` measured 38–41% micro-WER
 and `vlntlbr/vits-greek-female` measured 65–76%. Supertonic's F5 voice reduced
 that screen to 14.7% at 12 steps and speed 1.00, while using about 572 MB peak
-RSS and remaining faster than real time. This is promising but not yet the
-near-perfect production gate.
+RSS and remaining faster than real time.
+
+The complete pinned F5/12-step/x1.00 run generated all twenty fixtures,
+reproduced byte-identical audio for a fixed seed, loaded in 0.293 seconds,
+measured 0.308 mean RTF and peaked at 583,991,296 bytes RSS. It then failed the
+pronunciation gate with 50 word errors across 186 reference words (26.882%
+strict micro-WER). The worst failures affected ordinary system phrases such as
+wireless reconnection, navigation and confirmation, not only artificial tongue
+twisters.
+
+Follow-up runs showed that randomness was not the root cause: reusing one seed
+measured 35.5% WER on the eight hardest fixtures, forcing the initial latent to
+zero measured 51.3%, and the language-agnostic `na` mode measured 42.1%.
+Supertonic 3 is therefore rejected as the JARVIS Greek production voice. The
+active backend remains unchanged; the harness stays as reproducible evidence
+and as a future regression target for later model revisions.
