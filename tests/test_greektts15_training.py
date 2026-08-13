@@ -51,7 +51,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertFalse(report["promotion_allowed"])
 
     def test_adapter_blending_is_bounded_away_from_rejected_candidate(self) -> None:
-        self.assertEqual(ADAPTER_BLEND_FACTORS, {0.25, 0.5})
+        self.assertEqual(ADAPTER_BLEND_FACTORS, {0.25, 0.375, 0.5})
         with self.assertRaises(BackendError) as raised:
             blend_adapter_checkpoint("/models", "/candidate", "/output", candidate_fraction=0.75)
         self.assertEqual(raised.exception.code, "tts.greektts15.blend_factor_invalid")

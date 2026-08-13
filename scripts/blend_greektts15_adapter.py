@@ -23,7 +23,7 @@ def main() -> int:
     parser.add_argument("--model-root", required=True)
     parser.add_argument("--candidate-directory", required=True)
     parser.add_argument("--output-directory", required=True)
-    parser.add_argument("--candidate-fraction", required=True, type=float, choices=(0.25, 0.5))
+    parser.add_argument("--candidate-fraction", required=True, type=float, choices=(0.25, 0.375, 0.5))
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     try:

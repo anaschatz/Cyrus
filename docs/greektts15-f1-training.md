@@ -118,8 +118,9 @@ evidence and is never used as a continuation source.
 
 Before another optimizer run, bounded parameter interpolation tests whether a
 small part of the smoother checkpoint can remove the robotic artifact without
-carrying its accent drift. Only 25% and 50% candidate fractions are permitted,
-always measured from the immutable adapter. The candidate manifest must prove
+carrying its accent drift. The bounded 25% and 50% endpoints, plus a single
+37.5% binary-search midpoint, are permitted and always measured from the
+immutable adapter. The candidate manifest must prove
 that it descended directly from that adapter, all 392 tensors must match in
 name, shape, and dtype, and every blend records both source hashes. A blend is
 a listening experiment, never a training continuation source or production
@@ -131,6 +132,12 @@ completed all four texts and reduced mean standalone render RTF from about
 end-of-speech and is rejected. This bounds the useful interpolation region
 close to the immutable adapter. Only the 25% blend advances to paired human
 listening; neither blend may seed subsequent training.
+
+Offline Whisper calibration on the same four texts scored the native F1 at
+36.36% WER, the baseline at 69.70%, and the 25% blend at 60.61%. The ASR is too
+weak to judge accent, but the nine-point relative improvement is enough to
+retain the blend. A final 37.5% midpoint is permitted solely to binary-search
+the interval between the accepted 25% and rejected 50% endpoints.
 
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
