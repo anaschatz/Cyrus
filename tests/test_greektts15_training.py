@@ -20,6 +20,7 @@ from jarvis_voice.macos.greektts15_training import (
     build_pronunciation_curriculum_order,
     build_lexical_curriculum_order,
     build_exact_core_curriculum_order,
+    build_word_focus_bundle,
     blend_adapter_checkpoint,
     build_orpheus_training_sequence,
     cache_snac_samples,
@@ -48,6 +49,44 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_word_focus_bundle_crops_only_hash_verified_real_audio(self) -> None:
+        from jarvis_voice.macos.greektts15_training import WORD_FOCUS_CROPS
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            dataset = root / "dataset"
+            audio = dataset / "audio"
+            audio.mkdir(parents=True)
+            samples = []
+            for _, filename, _, _, word_end, _ in WORD_FOCUS_CROPS:
+                path = audio / filename
+                with wave.open(str(path), "wb") as stream:
+                    stream.setnchannels(1)
+                    stream.setsampwidth(2)
+                    stream.setframerate(44_100)
+                    stream.writeframes(b"\x00\x00" * round((word_end + 0.5) * 44_100))
+                samples.append(
+                    {
+                        "filename": filename,
+                        "text": "source",
+                        "split": "train",
+                        "audio_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    }
+                )
+            plan = root / "plan.json"
+            plan.write_text(
+                json.dumps({"schema": "jarvis.voice.greektts15-f1-plan/1", "samples": samples}),
+                encoding="utf-8",
+            )
+            output = root / "focus"
+            report = build_word_focus_bundle(plan.resolve(), dataset.resolve(), output.resolve())
+            manifest = json.loads((output / "word-focus-manifest.json").read_text(encoding="utf-8"))
+        self.assertTrue(report["ready"])
+        self.assertEqual(len(manifest["samples"]), len(WORD_FOCUS_CROPS))
+        self.assertTrue(all(sample["corpus"] == "STOMA-F1-word-focus" for sample in manifest["samples"]))
+        self.assertTrue(all(sample["alignment_confidence"] >= 0.8 for sample in manifest["samples"]))
+        self.assertTrue(all(sample["crop_start_seconds"] < sample["word_start_seconds"] for sample in manifest["samples"]))
+
     def test_pronunciation_curriculum_balances_real_f1_samples(self) -> None:
         samples = []
         roots = ("κατάσταση", "λειτουργούν", "θυμάμαι", "σημαντικές", "εργασίες")

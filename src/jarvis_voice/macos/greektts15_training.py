@@ -34,6 +34,7 @@ from jarvis_voice.macos.greektts15_pilot import (
 DATASET_SCHEMA = "jarvis.voice.stoma-f1-training-bundle/1"
 PLAN_SCHEMA = "jarvis.voice.greektts15-f1-plan/1"
 CACHE_SCHEMA = "jarvis.voice.greektts15-snac-cache/1"
+WORD_FOCUS_SCHEMA = "jarvis.voice.greektts15-word-focus/1"
 EXPECTED_ROWS = 1_301
 EXPECTED_SAMPLE_RATE = 44_100
 EXPECTED_CHANNELS = 1
@@ -75,6 +76,14 @@ LEXICAL_CURRICULUM_TARGETS = (
 )
 EXACT_CORE_TARGETS = tuple(target for target in LEXICAL_CURRICULUM_TARGETS if target[0] != "reminder")
 EXACT_CORE_TARGETED_STEPS = 60
+WORD_FOCUS_CROPS = (
+    ("katastasi", "Greek-F1-B2-51-22.wav", "κατάσταση", 3.92, 4.60, 0.972),
+    ("leitourgoun", "Greek-F1-B2-51-06.wav", "λειτουργούν", 2.52, 3.24, 0.848),
+    ("simantikes-a", "Greek-F1-B2-09-05.wav", "σημαντικές", 1.24, 1.86, 0.907),
+    ("simantikes-b", "Greek-F1-C1-25-07.wav", "σημαντικές", 1.98, 2.62, 0.940),
+    ("ergasies", "Greek-F1-C1-02-03.wav", "εργασίες", 0.34, 0.92, 0.845),
+)
+WORD_FOCUS_PADDING_SECONDS = 0.10
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 PRONUNCIATION_ASR_CANDIDATE_LABELS = {
@@ -181,6 +190,113 @@ class TorchSnacEncoder:
         if len(values) != 3:
             raise BackendError("tts.greektts15.snac_shape_invalid", "SNAC returned the wrong layer count", subsystem="tts")
         return interleave_snac_codes(values[0], values[1], values[2])
+
+
+def build_word_focus_bundle(
+    plan_path: str | Path,
+    dataset_root: str | Path,
+    output_root: str | Path,
+) -> dict[str, object]:
+    """Crop pinned real-F1 word examples with content-bound provenance."""
+
+    plan_file = Path(plan_path).expanduser()
+    dataset = Path(dataset_root).expanduser()
+    output = Path(output_root).expanduser()
+    if (
+        not plan_file.is_absolute()
+        or not dataset.is_absolute()
+        or not output.is_absolute()
+        or output.exists()
+        or output.is_symlink()
+    ):
+        raise BackendError("tts.greektts15.word_focus_path_invalid", "Word-focus paths are invalid", subsystem="tts")
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    by_filename = {
+        sample.get("filename"): sample
+        for sample in samples
+        if isinstance(sample, dict) and isinstance(sample.get("filename"), str)
+    }
+
+    audio_output = output / "audio"
+    audio_output.mkdir(mode=0o700, parents=True)
+    manifest_samples: list[dict[str, object]] = []
+    for label, source_name, text, word_start, word_end, confidence in WORD_FOCUS_CROPS:
+        source_sample = by_filename.get(source_name)
+        source = dataset / "audio" / source_name
+        if (
+            not isinstance(source_sample, dict)
+            or source_sample.get("split") != "train"
+            or source.is_symlink()
+            or not source.is_file()
+            or source.parent != dataset / "audio"
+            or _sha256(source) != source_sample.get("audio_sha256")
+        ):
+            raise BackendError("tts.greektts15.word_focus_source_invalid", "Word-focus source is invalid", subsystem="tts")
+        with wave.open(str(source), "rb") as reader:
+            if (
+                reader.getnchannels() != EXPECTED_CHANNELS
+                or reader.getsampwidth() != EXPECTED_SAMPLE_WIDTH
+                or reader.getframerate() != EXPECTED_SAMPLE_RATE
+            ):
+                raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 waveform format is invalid", subsystem="tts")
+            total_frames = reader.getnframes()
+            crop_start = max(0.0, word_start - WORD_FOCUS_PADDING_SECONDS)
+            crop_end = min(total_frames / EXPECTED_SAMPLE_RATE, word_end + WORD_FOCUS_PADDING_SECONDS)
+            start_frame = round(crop_start * EXPECTED_SAMPLE_RATE)
+            end_frame = round(crop_end * EXPECTED_SAMPLE_RATE)
+            if end_frame <= start_frame:
+                raise BackendError("tts.greektts15.word_focus_bounds_invalid", "Word-focus bounds are invalid", subsystem="tts")
+            reader.setpos(start_frame)
+            frames = reader.readframes(end_frame - start_frame)
+        filename = f"word-focus-{label}.wav"
+        destination = audio_output / filename
+        with wave.open(str(destination), "wb") as writer:
+            writer.setnchannels(EXPECTED_CHANNELS)
+            writer.setsampwidth(EXPECTED_SAMPLE_WIDTH)
+            writer.setframerate(EXPECTED_SAMPLE_RATE)
+            writer.writeframes(frames)
+        os.chmod(destination, 0o600)
+        manifest_samples.append(
+            {
+                "filename": filename,
+                "text": text,
+                "split": "train",
+                "corpus": "STOMA-F1-word-focus",
+                "duration_seconds": round((end_frame - start_frame) / EXPECTED_SAMPLE_RATE, 6),
+                "audio_sha256": _sha256(destination),
+                "transcript_normalized": False,
+                "source_filename": source_name,
+                "source_audio_sha256": source_sample["audio_sha256"],
+                "word_start_seconds": word_start,
+                "word_end_seconds": word_end,
+                "crop_start_seconds": round(start_frame / EXPECTED_SAMPLE_RATE, 6),
+                "crop_end_seconds": round(end_frame / EXPECTED_SAMPLE_RATE, 6),
+                "alignment_backend": "faster-whisper-base-word-timestamps",
+                "alignment_confidence": confidence,
+            }
+        )
+    bundle = {
+        "schema": WORD_FOCUS_SCHEMA,
+        "ready": True,
+        "padding_seconds": WORD_FOCUS_PADDING_SECONDS,
+        "samples": manifest_samples,
+    }
+    (output / "word-focus-manifest.json").write_text(
+        json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    cache_plan = {"schema": PLAN_SCHEMA, "samples": manifest_samples}
+    (output / "word-focus-plan.json").write_text(
+        json.dumps(cache_plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return bundle
 
 
 def interleave_snac_codes(
