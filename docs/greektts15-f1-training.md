@@ -199,6 +199,17 @@ contributes strongly to the existing Greek timbre and pronunciation. This is
 a bounded hypothesis and must beat the 25% blend on listening, EOS, ASR, and
 acoustic diagnostics to survive.
 
+The attention-only branch completed 25 updates with 224 trainable groups and
+36.7M trainable parameters, reduced validation loss from 5.1987 to 5.0702,
+and kept peak MLX memory near 4.32 GB. It completed all native-reference EOS
+fixtures with normal durations and scored 48.49% WER, the best synthetic
+result so far (25% blend: 60.61%; 37.5% blend: 54.55%). Its mean pitch-jump
+rate fell to 1.87% and spectral-flux tail to 0.6632, both better than every
+other synthetic candidate, while internal silence stayed normal at 2.33%.
+The sample-step tail is slightly higher than the 25% blend but below the 37.5%
+blend and native reference. Attention-only advances to JARVIS-text rendering
+and human listening; it is not yet production-promoted.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
