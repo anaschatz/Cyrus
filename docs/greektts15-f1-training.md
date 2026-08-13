@@ -163,6 +163,16 @@ and continuity without parameter interpolation. It must pass the full EOS,
 native-reference, offline-ASR, and acoustic-discontinuity gates; it cannot
 continue beyond 25 updates from loss alone.
 
+The clean `2.5e-7` branch completed 25 updates in 172 seconds and reduced the
+fixed validation loss from 5.1987 to 5.1307 while keeping peak MLX memory near
+5.01 GB. It emitted EOS on all four native-reference fixtures, but scored only
+66.67% WER versus 60.61% for the 25% blend. Its acoustic means also had higher
+pitch-jump rate, spectral-flux tail, and normalized sample-step tail than the
+25% blend; only internal silence was slightly lower. The branch is rejected
+as a listening winner. This proves that merely shrinking the learning rate
+does not reproduce the useful interpolated parameter region, so no still
+smaller LR branch is justified from these results.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
