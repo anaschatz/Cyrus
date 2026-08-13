@@ -184,6 +184,21 @@ tensor in layers 26–27. Exactly 364 groups may train, but all 392 groups must
 remain present in the saved standalone adapter. The targeted profile receives
 no relaxed quality gate.
 
+The output-layer-frozen branch retained most validation improvement (5.1987
+to 5.0003) and completed all four EOS fixtures, but scored 63.64% WER versus
+60.61% for the 25% blend. It also increased internal silence and sample-step
+tail despite a slightly lower pitch-jump rate; its long clusters render was
+incorrect content rather than a natural pause. It is rejected.
+
+The next targeted profile isolates temporal alignment from voice mapping. It
+freezes every MLP LoRA tensor and trains only q/k/v/o attention adapters at
+`1e-6` for 25 updates: exactly 224 trainable groups, with all 392 retained in
+the saved checkpoint. Attention-only adaptation is intended to improve audio
+token sequencing and continuity while preserving the mature MLP mapping that
+contributes strongly to the existing Greek timbre and pronunciation. This is
+a bounded hypothesis and must beat the 25% blend on listening, EOS, ASR, and
+acoustic diagnostics to survive.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches

@@ -47,12 +47,13 @@ SNAC_REVISION = "d73ad176a12188fcf4f360ba3bf2c2fbbe8f58ec"
 MAX_TRAINING_SEQUENCE = 1_536
 EXPECTED_LORA_GROUPS = 392
 TARGETED_LORA_GROUPS = 364
+ATTENTION_ONLY_LORA_GROUPS = 224
 MAX_GRADIENT_PROBE_MLX_BYTES = 6 * 1024**3
 PILOT_STEPS = 25
 PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}
-TRAINING_TARGET_PROFILES = {"all", "freeze-output-layers"}
+TRAINING_TARGET_PROFILES = {"all", "freeze-output-layers", "attention-only"}
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 PRONUNCIATION_ASR_CANDIDATE_LABELS = {
@@ -476,7 +477,7 @@ def run_training_pilot(
         learning_rate not in PILOT_LEARNING_RATES
         or steps != PILOT_STEPS
         or target_profile not in TRAINING_TARGET_PROFILES
-        or (target_profile == "freeze-output-layers" and learning_rate != 1e-6)
+        or (target_profile != "all" and learning_rate != 1e-6)
     ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
     gate = _validated_gradient_probe(gradient_report)
@@ -524,10 +525,15 @@ def run_training_pilot(
             frozen_layers = [26, 27]
             for layer_index in frozen_layers:
                 model.layers[layer_index].freeze()
+        elif target_profile == "attention-only":
+            for layer in model.layers:
+                layer.mlp.freeze()
         trainable = tree_flatten(model.trainable_parameters())
-        expected_trainable_groups = (
-            TARGETED_LORA_GROUPS if target_profile == "freeze-output-layers" else EXPECTED_LORA_GROUPS
-        )
+        expected_trainable_groups = {
+            "all": EXPECTED_LORA_GROUPS,
+            "freeze-output-layers": TARGETED_LORA_GROUPS,
+            "attention-only": ATTENTION_ONLY_LORA_GROUPS,
+        }[target_profile]
         if len(trainable) != expected_trainable_groups or any("lora_" not in name for name, _ in trainable):
             raise BackendError("tts.greektts15.trainable_surface_invalid", "Only the Greek LoRA adapter may be trainable", subsystem="tts")
         grad_checkpoint(model.layers[0])
@@ -591,6 +597,7 @@ def run_training_pilot(
             "gradient_checkpointing": True,
             "target_profile": target_profile,
             "frozen_adapter_layers": frozen_layers,
+            "frozen_adapter_sections": ["mlp"] if target_profile == "attention-only" else [],
             "trained_tokens": trained_tokens,
             "mean_train_loss": round(sum(losses) / len(losses), 6),
             "first_train_loss": round(losses[0], 6),

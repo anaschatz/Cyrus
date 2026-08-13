@@ -28,6 +28,7 @@ from jarvis_voice.macos.greektts15_training import (
     _validated_gradient_probe,
     TRAINING_TARGET_PROFILES,
     TARGETED_LORA_GROUPS,
+    ATTENTION_ONLY_LORA_GROUPS,
 )
 from jarvis_voice.macos.greektts15_pilot import (
     END_OF_HUMAN,
@@ -41,11 +42,13 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 class GreekTts15TrainingTests(unittest.TestCase):
     def test_targeted_profile_freezes_exactly_two_complete_adapter_layers(self) -> None:
-        self.assertEqual(TRAINING_TARGET_PROFILES, {"all", "freeze-output-layers"})
+        self.assertEqual(TRAINING_TARGET_PROFILES, {"all", "freeze-output-layers", "attention-only"})
         self.assertEqual(TARGETED_LORA_GROUPS, 26 * 7 * 2)
+        self.assertEqual(ATTENTION_ONLY_LORA_GROUPS, 28 * 4 * 2)
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
         self.assertIn('frozen_layers = [26, 27]', source)
         self.assertIn('len(complete_adapter) != EXPECTED_LORA_GROUPS', source)
+        self.assertIn('layer.mlp.freeze()', source)
 
     def test_pronunciation_asr_calibrates_against_native_f1(self) -> None:
         references = {"one": "Καλημέρα κόσμε", "two": "Όλα λειτουργούν"}
