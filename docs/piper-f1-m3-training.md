@@ -195,6 +195,13 @@ approved training recipe—starting again from the pinned Greek warm-start with 
 substantially lower learning rate and perceptual/articulation gates from the
 first checkpoints—not additional epochs on this optimizer trajectory.
 
+Human listening against the real F1 source selected `1.15x` as the target
+playback pace. This is an inference/output target only: training recordings
+must remain at their original timing and sample rate so that tempo processing
+cannot contaminate articulation or speaker identity. A future accepted F1
+model must preserve the source voice first, then apply pitch-preserving pace
+control equivalent to `1.15x` at the output boundary.
+
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local
