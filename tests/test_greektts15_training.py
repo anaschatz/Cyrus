@@ -30,6 +30,7 @@ from jarvis_voice.macos.greektts15_training import (
     TRAINING_TARGET_PROFILES,
     TARGETED_LORA_GROUPS,
     ATTENTION_ONLY_LORA_GROUPS,
+    EOS_LOSS_WEIGHTS,
 )
 from jarvis_voice.macos.greektts15_pilot import (
     END_OF_HUMAN,
@@ -42,6 +43,12 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_eos_weighting_is_bounded_to_attention_only_training(self) -> None:
+        self.assertEqual(EOS_LOSS_WEIGHTS, {1, 16})
+        source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
+        self.assertIn('targets == END_OF_SPEECH', source)
+        self.assertIn('eos_loss_weight != 1 and target_profile != "attention-only"', source)
+
     def test_quality_candidate_scoring_stays_baseline_relative(self) -> None:
         references = {"one": "Καλημέρα κόσμε"}
         report = score_quality_candidate_transcripts(

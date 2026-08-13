@@ -31,6 +31,7 @@ def main() -> int:
         choices=("all", "freeze-output-layers", "attention-only"),
         default="all",
     )
+    parser.add_argument("--eos-loss-weight", type=int, choices=(1, 16), default=1)
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     try:
@@ -42,6 +43,7 @@ def main() -> int:
             args.output_dir,
             learning_rate=args.learning_rate,
             target_profile=args.target_profile,
+            eos_loss_weight=args.eos_loss_weight,
         )
     except BackendError as exc:
         report = {"ready": False, "code": exc.code}

@@ -227,6 +227,18 @@ pitch/spectral continuity. Its JARVIS-text internal-silence and discontinuity
 means remain slightly above baseline, so human listening—not another sampling
 sweep—is the next mandatory gate. Production promotion remains false.
 
+Seed robustness exposes the remaining failure: JARVIS-text seeds 10,001 and
+10,003 both complete and score 45.45% WER, but seed 10,002 fails EOS on the
+fourth fixture after producing the first three. Each several-hundred-token
+training completion contains only one EOS target, so uniform token averaging
+gives termination negligible gradient mass. The next bounded branch retains
+the attention-only profile and immutable start point but weights only the EOS
+cross-entropy by 16 for the same 25 updates. This makes EOS roughly a few
+percent, rather than a few tenths of a percent, of a typical sequence loss
+without reweighting audio tokens or unfreezing MLP. Validation remains the
+ordinary unweighted loss for comparability. The candidate must complete all
+three qualification seeds before any longer training is considered.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches

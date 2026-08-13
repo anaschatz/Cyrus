@@ -48,6 +48,7 @@ MAX_TRAINING_SEQUENCE = 1_536
 EXPECTED_LORA_GROUPS = 392
 TARGETED_LORA_GROUPS = 364
 ATTENTION_ONLY_LORA_GROUPS = 224
+EOS_LOSS_WEIGHTS = {1, 16}
 MAX_GRADIENT_PROBE_MLX_BYTES = 6 * 1024**3
 PILOT_STEPS = 25
 PILOT_VALIDATION_SAMPLES = 8
@@ -467,6 +468,7 @@ def run_training_pilot(
     learning_rate: float,
     steps: int = PILOT_STEPS,
     target_profile: str = "all",
+    eos_loss_weight: int = 1,
 ) -> dict[str, object]:
     """Train one deterministic pilot branch from the immutable Greek adapter."""
 
@@ -480,6 +482,8 @@ def run_training_pilot(
         or steps != PILOT_STEPS
         or target_profile not in TRAINING_TARGET_PROFILES
         or (target_profile != "all" and learning_rate != 1e-6)
+        or eos_loss_weight not in EOS_LOSS_WEIGHTS
+        or (eos_loss_weight != 1 and target_profile != "attention-only")
     ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
     gate = _validated_gradient_probe(gradient_report)
@@ -550,7 +554,20 @@ def run_training_pilot(
         )[:PILOT_VALIDATION_SAMPLES]
         validation_samples = [validation[index] for index in validation_order]
         optimizer = optim.AdamW(learning_rate=learning_rate, weight_decay=0.0)
-        value_and_grad = nn.value_and_grad(model, default_loss)
+        def training_loss(model: object, batch: object, lengths: object) -> tuple[object, object]:
+            if eos_loss_weight == 1:
+                return default_loss(model, batch, lengths)
+            inputs = batch[:, :-1]
+            targets = batch[:, 1:]
+            logits = model(inputs)
+            steps = mx.arange(1, targets.shape[1] + 1)
+            mask = mx.logical_and(steps >= lengths[:, 0:1], steps <= lengths[:, 1:])
+            token_weights = mask + (eos_loss_weight - 1) * mx.logical_and(mask, targets == END_OF_SPEECH)
+            cross_entropy = nn.losses.cross_entropy(logits, targets)
+            token_count = mask.sum()
+            return (cross_entropy * token_weights).astype(mx.float32).sum() / token_count, token_count
+
+        value_and_grad = nn.value_and_grad(model, training_loss)
         validation_before = evaluate(model, validation_samples)
         if hasattr(mx, "reset_peak_memory"):
             mx.reset_peak_memory()
@@ -597,6 +614,7 @@ def run_training_pilot(
             "learning_rate": learning_rate,
             "weight_decay": 0.0,
             "gradient_checkpointing": True,
+            "eos_loss_weight": eos_loss_weight,
             "target_profile": target_profile,
             "frozen_adapter_layers": frozen_layers,
             "frozen_adapter_sections": ["mlp"] if target_profile == "attention-only" else [],
