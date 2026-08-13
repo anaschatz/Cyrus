@@ -35,7 +35,15 @@ def main() -> int:
     parser.add_argument("--eos-loss-weight", type=int, choices=(1, 16), default=1)
     parser.add_argument(
         "--sample-profile",
-        choices=("uniform", "jarvis-pronunciation", "jarvis-lexical", "jarvis-exact-core", "jarvis-word-focus"),
+        choices=(
+            "uniform",
+            "jarvis-pronunciation",
+            "jarvis-lexical",
+            "jarvis-exact-core",
+            "jarvis-word-focus",
+            "jarvis-operation-focus",
+            "jarvis-state-focus",
+        ),
         default="uniform",
     )
     parser.add_argument("--source-adapter-directory")

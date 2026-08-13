@@ -22,6 +22,7 @@ from jarvis_voice.macos.greektts15_training import (
     build_exact_core_curriculum_order,
     build_word_focus_bundle,
     build_word_focus_curriculum_order,
+    build_single_word_focus_curriculum_order,
     build_word_focus_training_plan,
     blend_adapter_checkpoint,
     build_orpheus_training_sequence,
@@ -127,8 +128,39 @@ class GreekTts15TrainingTests(unittest.TestCase):
     def test_word_focus_continuation_is_mlp_only(self) -> None:
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
         self.assertIn('sample_profile == "jarvis-word-focus" and target_profile != "mlp-only"', source)
-        self.assertIn('source_adapter_directory is not None and sample_profile != "jarvis-word-focus"', source)
+        self.assertIn('sample_profile not in {"jarvis-word-focus", "jarvis-operation-focus", "jarvis-state-focus"}', source)
         self.assertIn('"source_adapter_kind": "immutable_baseline"', source)
+
+    def test_single_word_curricula_exclude_every_unrelated_crop(self) -> None:
+        samples = [
+            {
+                "split": "train",
+                "filename": filename,
+                "text": text,
+                "corpus": "STOMA-F1-word-focus",
+            }
+            for label, _, text, *_ in __import__(
+                "jarvis_voice.macos.greektts15_training", fromlist=["WORD_FOCUS_CROPS"]
+            ).WORD_FOCUS_CROPS
+            for filename in (f"word-focus-{label}.wav",)
+        ]
+        samples.extend(
+            {"split": "train", "filename": f"general-{index}.wav", "text": "γενικό", "corpus": "F1"}
+            for index in range(30)
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "plan.json"
+            path.write_text(json.dumps({"schema": "jarvis.voice.greektts15-f1-plan/1", "samples": samples}))
+            operation, operation_report = build_single_word_focus_curriculum_order(
+                path, "jarvis-operation-focus"
+            )
+            state, state_report = build_single_word_focus_curriculum_order(path, "jarvis-state-focus")
+        self.assertEqual(operation_report["targeted_steps"], 10)
+        self.assertEqual(state_report["targeted_steps"], 15)
+        self.assertTrue(operation_report["unrelated_word_crops_excluded"])
+        self.assertTrue(state_report["unrelated_word_crops_excluded"])
+        self.assertEqual(set(operation[:10]), {1})
+        self.assertEqual(set(state[:15]), {0})
 
     def test_pronunciation_curriculum_balances_real_f1_samples(self) -> None:
         samples = []
@@ -154,7 +186,15 @@ class GreekTts15TrainingTests(unittest.TestCase):
     def test_pronunciation_sample_profile_is_attention_only(self) -> None:
         self.assertEqual(
             TRAINING_SAMPLE_PROFILES,
-            {"uniform", "jarvis-pronunciation", "jarvis-lexical", "jarvis-exact-core", "jarvis-word-focus"},
+            {
+                "uniform",
+                "jarvis-pronunciation",
+                "jarvis-lexical",
+                "jarvis-exact-core",
+                "jarvis-word-focus",
+                "jarvis-operation-focus",
+                "jarvis-state-focus",
+            },
         )
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
         self.assertIn('sample_profile == "jarvis-pronunciation" and target_profile != "attention-only"', source)

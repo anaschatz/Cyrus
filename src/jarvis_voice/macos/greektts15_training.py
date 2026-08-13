@@ -64,6 +64,8 @@ TRAINING_SAMPLE_PROFILES = {
     "jarvis-lexical",
     "jarvis-exact-core",
     "jarvis-word-focus",
+    "jarvis-operation-focus",
+    "jarvis-state-focus",
 }
 PRONUNCIATION_CURRICULUM_ROOTS = (
     ("system_state", "καταστα"),
@@ -91,6 +93,8 @@ WORD_FOCUS_CROPS = (
 )
 WORD_FOCUS_PADDING_SECONDS = 0.10
 WORD_FOCUS_TARGETED_STEPS = 15
+OPERATION_FOCUS_TARGETED_STEPS = 10
+STATE_FOCUS_TARGETED_STEPS = 15
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 PRONUNCIATION_ASR_CANDIDATE_LABELS = {
@@ -671,6 +675,52 @@ def build_word_focus_curriculum_order(
     }
 
 
+def build_single_word_focus_curriculum_order(
+    plan_path: str | Path,
+    profile: str,
+    *,
+    steps: int = PILOT_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Isolate one approved word crop so unrelated phrases cannot regress."""
+
+    import random
+
+    settings = {
+        "jarvis-operation-focus": ("word-focus-leitourgoun.wav", OPERATION_FOCUS_TARGETED_STEPS),
+        "jarvis-state-focus": ("word-focus-katastasi.wav", STATE_FOCUS_TARGETED_STEPS),
+    }
+    if profile not in settings or steps != PILOT_STEPS:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Single-word focus profile is invalid", subsystem="tts")
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    filename, targeted_steps = settings[profile]
+    matches = [index for index, sample in enumerate(train_samples) if sample.get("filename") == filename]
+    if len(matches) != 1 or train_samples[matches[0]].get("corpus") != "STOMA-F1-word-focus":
+        raise BackendError("tts.greektts15.curriculum_invalid", "Single-word F1 crop is unavailable", subsystem="tts")
+    focus_index = matches[0]
+    selected = [focus_index] * targeted_steps
+    general = [
+        index for index, sample in enumerate(train_samples) if sample.get("corpus") != "STOMA-F1-word-focus"
+    ]
+    randomizer = random.Random(TRAINING_SEED)
+    randomizer.shuffle(general)
+    selected.extend(general[: steps - targeted_steps])
+    return selected, {
+        "profile": profile,
+        "targeted_steps": targeted_steps,
+        "general_steps": steps - targeted_steps,
+        "focus_filename": filename,
+        "unrelated_word_crops_excluded": True,
+        "sample_filenames": [train_samples[index].get("filename") for index in selected],
+    }
+
+
 def run_gradient_memory_probe(
     model_root: str | Path,
     plan_path: str | Path,
@@ -907,7 +957,12 @@ def run_training_pilot(
         or (sample_profile == "jarvis-lexical" and target_profile != "mlp-only")
         or (sample_profile == "jarvis-exact-core" and target_profile != "mlp-only")
         or (sample_profile == "jarvis-word-focus" and target_profile != "mlp-only")
-        or (source_adapter_directory is not None and sample_profile != "jarvis-word-focus")
+        or (sample_profile == "jarvis-operation-focus" and target_profile != "mlp-only")
+        or (sample_profile == "jarvis-state-focus" and target_profile != "attention-only")
+        or (
+            source_adapter_directory is not None
+            and sample_profile not in {"jarvis-word-focus", "jarvis-operation-focus", "jarvis-state-focus"}
+        )
     ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
     gate = _validated_gradient_probe(gradient_report)
@@ -1007,6 +1062,8 @@ def run_training_pilot(
             order, curriculum = build_exact_core_curriculum_order(plan_path, steps=steps)
         elif sample_profile == "jarvis-word-focus":
             order, curriculum = build_word_focus_curriculum_order(plan_path, steps=steps)
+        elif sample_profile in {"jarvis-operation-focus", "jarvis-state-focus"}:
+            order, curriculum = build_single_word_focus_curriculum_order(plan_path, sample_profile, steps=steps)
         else:
             order = list(range(len(train)))
             randomizer.shuffle(order)
