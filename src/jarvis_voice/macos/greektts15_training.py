@@ -51,6 +51,7 @@ PILOT_STEPS = 25
 PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {5e-7, 1e-6, 5e-6, 1e-5}
+ADAPTER_BLEND_FACTORS = {0.25, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 
 _LEADING_CONFUSABLES = str.maketrans(
@@ -584,6 +585,139 @@ def run_training_pilot(
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+def blend_adapter_checkpoint(
+    model_root: str | Path,
+    candidate_directory: str | Path,
+    output_directory: str | Path,
+    *,
+    candidate_fraction: float,
+) -> dict[str, object]:
+    """Interpolate a trained adapter back toward the immutable Greek baseline."""
+
+    import shutil
+
+    if candidate_fraction not in ADAPTER_BLEND_FACTORS:
+        raise BackendError(
+            "tts.greektts15.blend_factor_invalid",
+            "GreekTTS adapter blend factor is not approved",
+            subsystem="tts",
+        )
+    root = Path(model_root).expanduser()
+    baseline = root / "mlx-adapter"
+    candidate = Path(candidate_directory).expanduser()
+    output = Path(output_directory).expanduser()
+    if (
+        not root.is_absolute()
+        or not root.is_dir()
+        or root.is_symlink()
+        or not candidate.is_absolute()
+        or not candidate.is_dir()
+        or candidate.is_symlink()
+        or not output.is_absolute()
+        or output.exists()
+        or output.is_symlink()
+    ):
+        raise BackendError(
+            "tts.greektts15.blend_path_invalid",
+            "GreekTTS adapter blend paths are invalid",
+            subsystem="tts",
+        )
+    baseline_weights = baseline / "adapters.safetensors"
+    candidate_weights = candidate / "adapters.safetensors"
+    baseline_config = baseline / "adapter_config.json"
+    candidate_config = candidate / "adapter_config.json"
+    manifest_path = candidate / "training_manifest.json"
+    try:
+        baseline_config_value = json.loads(baseline_config.read_text(encoding="utf-8"))
+        candidate_config_value = json.loads(candidate_config.read_text(encoding="utf-8"))
+        candidate_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError(
+            "tts.greektts15.blend_source_invalid",
+            "GreekTTS adapter blend source is unreadable",
+            subsystem="tts",
+        ) from exc
+    baseline_hash = _sha256(baseline_weights)
+    candidate_hash = _sha256(candidate_weights)
+    if not (
+        baseline_config_value == candidate_config_value
+        and isinstance(candidate_manifest, dict)
+        and candidate_manifest.get("schema") == "jarvis.voice.greektts15-training-pilot/1"
+        and candidate_manifest.get("ready") is True
+        and candidate_manifest.get("source_adapter_sha256") == baseline_hash
+        and candidate_manifest.get("output_adapter_sha256") == candidate_hash
+    ):
+        raise BackendError(
+            "tts.greektts15.blend_source_invalid",
+            "GreekTTS candidate does not descend from the immutable adapter",
+            subsystem="tts",
+        )
+    try:
+        import mlx.core as mx
+    except ImportError as exc:
+        raise BackendError(
+            "tts.greektts15.dependencies_missing",
+            "MLX training dependencies are missing",
+            subsystem="tts",
+        ) from exc
+    baseline_tensors = mx.load(str(baseline_weights))
+    candidate_tensors = mx.load(str(candidate_weights))
+    if (
+        not isinstance(baseline_tensors, dict)
+        or not isinstance(candidate_tensors, dict)
+        or set(baseline_tensors) != set(candidate_tensors)
+        or len(baseline_tensors) != EXPECTED_LORA_GROUPS
+    ):
+        raise BackendError(
+            "tts.greektts15.blend_weights_invalid",
+            "GreekTTS adapter tensors do not match",
+            subsystem="tts",
+        )
+    blended = {}
+    for key in sorted(baseline_tensors):
+        baseline_tensor = baseline_tensors[key]
+        candidate_tensor = candidate_tensors[key]
+        if baseline_tensor.shape != candidate_tensor.shape or baseline_tensor.dtype != candidate_tensor.dtype:
+            raise BackendError(
+                "tts.greektts15.blend_weights_invalid",
+                "GreekTTS adapter tensor shapes do not match",
+                subsystem="tts",
+            )
+        blended[key] = baseline_tensor + candidate_fraction * (candidate_tensor - baseline_tensor)
+    mx.eval(blended)
+    output.mkdir(mode=0o700, parents=True)
+    adapter_file = output / "adapters.safetensors"
+    mx.save_safetensors(str(adapter_file), blended, metadata={"format": "mlx"})
+    shutil.copyfile(baseline_config, output / "adapter_config.json")
+    output_hash = _sha256(adapter_file)
+    if output_hash in {baseline_hash, candidate_hash}:
+        raise BackendError(
+            "tts.greektts15.blend_output_invalid",
+            "GreekTTS adapter interpolation did not create a distinct checkpoint",
+            subsystem="tts",
+        )
+    report = {
+        "schema": "jarvis.voice.greektts15-adapter-blend/1",
+        "ready": True,
+        "method": "linear_parameter_interpolation",
+        "formula": "baseline + candidate_fraction * (candidate - baseline)",
+        "candidate_fraction": candidate_fraction,
+        "baseline_fraction": 1.0 - candidate_fraction,
+        "tensor_groups": len(blended),
+        "baseline_adapter_sha256": baseline_hash,
+        "candidate_adapter_sha256": candidate_hash,
+        "output_adapter_sha256": output_hash,
+        "candidate_training_schema": candidate_manifest["schema"],
+        "production_promotion_allowed": False,
+        "human_listening_required": True,
+    }
+    (output / "blend_manifest.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return report
 
 
 def _sha256(path: Path) -> str:

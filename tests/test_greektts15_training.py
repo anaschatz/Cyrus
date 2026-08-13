@@ -12,10 +12,12 @@ import _bootstrap  # noqa: F401
 
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.greektts15_training import (
+    ADAPTER_BLEND_FACTORS,
     DATASET_SCHEMA,
     EXPECTED_ROWS,
     CACHE_SCHEMA,
     build_training_plan,
+    blend_adapter_checkpoint,
     build_orpheus_training_sequence,
     cache_snac_samples,
     interleave_snac_codes,
@@ -35,6 +37,17 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_adapter_blending_is_bounded_away_from_rejected_candidate(self) -> None:
+        self.assertEqual(ADAPTER_BLEND_FACTORS, {0.25, 0.5})
+        with self.assertRaises(BackendError) as raised:
+            blend_adapter_checkpoint("/models", "/candidate", "/output", candidate_fraction=0.75)
+        self.assertEqual(raised.exception.code, "tts.greektts15.blend_factor_invalid")
+
+    def test_adapter_blending_requires_new_absolute_output(self) -> None:
+        with self.assertRaises(BackendError) as raised:
+            blend_adapter_checkpoint("relative", "/candidate", "/output", candidate_fraction=0.25)
+        self.assertEqual(raised.exception.code, "tts.greektts15.blend_path_invalid")
+
     def test_candidate_asr_scoring_compares_identical_fixture_sets(self) -> None:
         references = {"one": "Καλημέρα κόσμε", "two": "Όλα λειτουργούν"}
         transcripts = {

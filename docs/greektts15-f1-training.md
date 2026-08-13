@@ -116,6 +116,15 @@ qualified temperature 0.6. Further adaptation therefore restarts from the
 immutable adapter; the rejected checkpoint is retained only as diagnostic
 evidence and is never used as a continuation source.
 
+Before another optimizer run, bounded parameter interpolation tests whether a
+small part of the smoother checkpoint can remove the robotic artifact without
+carrying its accent drift. Only 25% and 50% candidate fractions are permitted,
+always measured from the immutable adapter. The candidate manifest must prove
+that it descended directly from that adapter, all 392 tensors must match in
+name, shape, and dtype, and every blend records both source hashes. A blend is
+a listening experiment, never a training continuation source or production
+promotion by itself.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
