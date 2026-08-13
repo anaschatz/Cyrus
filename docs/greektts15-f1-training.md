@@ -313,6 +313,25 @@ All four unchanged fixtures completed at temperature 0.4 and seed 10,001.
 Human listening must show a real fixture-02 gain without general regression;
 production promotion remains false.
 
+Human listening accepted the 100-step exact-core checkpoint as the first clear
+overall improvement, especially on fixtures 01 and 03. Fixture 02 improved but
+still realized `κατάσταση` approximately as `κατάταση`; fixture 04 still made
+`σημαντικές εργασίες` unintelligible. Offline forced-Greek word timestamps on
+the immutable F1 sources identified five high-confidence examples. Human
+listening approved 100-ms-padded crops for `κατάσταση`, `λειτουργούν`, two
+instances of `σημαντικές`, and `εργασίες` before training.
+
+The word-focus continuation starts from exact-core SHA-256
+`3b8b65e6df3c93374c23141430818ad5b1b9ab5e729dc1ff9b1c70b123d7dde1`,
+trains only MLP LoRA at `2.5e-7`, and mixes 15 approved real-word crops with
+ten general F1 clips. After 25 updates validation improved from 5.105781 to
+5.090697 and produced checkpoint SHA-256
+`6c562214e9044df94f0789fe49ddfcd1226bf1c6daa6f3ace1e385de03029157`.
+Fixtures 01–03 completed with ordinary durations, but fixture 04 expanded to
+7.253 seconds versus about 3.4 seconds for exact-core, indicating severe
+autoregressive drift. The checkpoint is not production-promotable regardless
+of isolated word gains; human listening remains diagnostic only.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
