@@ -173,6 +173,17 @@ as a listening winner. This proves that merely shrinking the learning rate
 does not reproduce the useful interpolated parameter region, so no still
 smaller LR branch is justified from these results.
 
+Delta analysis of both the `1e-6` and `2.5e-7` trajectories shows the same
+concentration: layers 26 and 27 absorb about 11.1–11.5% of update energy even
+though two of 28 uniform layers would account for 7.1%, and the six largest
+tensors are all in those two output-near layers. Module and LoRA A/B shares
+remain stable across rates, so there is no evidence for arbitrarily removing
+all attention or MLP updates. The first targeted branch therefore restarts
+from the immutable adapter at `1e-6` for 25 updates while freezing every LoRA
+tensor in layers 26–27. Exactly 364 groups may train, but all 392 groups must
+remain present in the saved standalone adapter. The targeted profile receives
+no relaxed quality gate.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches

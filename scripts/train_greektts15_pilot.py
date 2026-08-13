@@ -26,6 +26,7 @@ def main() -> int:
     parser.add_argument("--gradient-report", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--learning-rate", required=True, type=float, choices=(2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5))
+    parser.add_argument("--target-profile", choices=("all", "freeze-output-layers"), default="all")
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     try:
@@ -36,6 +37,7 @@ def main() -> int:
             args.gradient_report,
             args.output_dir,
             learning_rate=args.learning_rate,
+            target_profile=args.target_profile,
         )
     except BackendError as exc:
         report = {"ready": False, "code": exc.code}

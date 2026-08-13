@@ -46,11 +46,13 @@ GREEK_ADAPTER_REVISION = "0da4d9fff8b974fb1127f3c829f793dc0439dfd1"
 SNAC_REVISION = "d73ad176a12188fcf4f360ba3bf2c2fbbe8f58ec"
 MAX_TRAINING_SEQUENCE = 1_536
 EXPECTED_LORA_GROUPS = 392
+TARGETED_LORA_GROUPS = 364
 MAX_GRADIENT_PROBE_MLX_BYTES = 6 * 1024**3
 PILOT_STEPS = 25
 PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}
+TRAINING_TARGET_PROFILES = {"all", "freeze-output-layers"}
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 PRONUNCIATION_ASR_CANDIDATE_LABELS = {"blend-25pct", "blend-37_5pct", "lr-2_5e-7"}
@@ -456,6 +458,7 @@ def run_training_pilot(
     *,
     learning_rate: float,
     steps: int = PILOT_STEPS,
+    target_profile: str = "all",
 ) -> dict[str, object]:
     """Train one deterministic pilot branch from the immutable Greek adapter."""
 
@@ -464,7 +467,12 @@ def run_training_pilot(
     import shutil
     import time
 
-    if learning_rate not in PILOT_LEARNING_RATES or steps != PILOT_STEPS:
+    if (
+        learning_rate not in PILOT_LEARNING_RATES
+        or steps != PILOT_STEPS
+        or target_profile not in TRAINING_TARGET_PROFILES
+        or (target_profile == "freeze-output-layers" and learning_rate != 1e-6)
+    ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
     gate = _validated_gradient_probe(gradient_report)
     root, output = Path(model_root).expanduser(), Path(output_directory).expanduser()
@@ -506,8 +514,16 @@ def run_training_pilot(
         model, tokenizer = load(str(root / "base"), lazy=False)
         model.freeze()
         model = load_adapters(model, str(root / "mlx-adapter"))
+        frozen_layers: list[int] = []
+        if target_profile == "freeze-output-layers":
+            frozen_layers = [26, 27]
+            for layer_index in frozen_layers:
+                model.layers[layer_index].freeze()
         trainable = tree_flatten(model.trainable_parameters())
-        if len(trainable) != EXPECTED_LORA_GROUPS or any("lora_" not in name for name, _ in trainable):
+        expected_trainable_groups = (
+            TARGETED_LORA_GROUPS if target_profile == "freeze-output-layers" else EXPECTED_LORA_GROUPS
+        )
+        if len(trainable) != expected_trainable_groups or any("lora_" not in name for name, _ in trainable):
             raise BackendError("tts.greektts15.trainable_surface_invalid", "Only the Greek LoRA adapter may be trainable", subsystem="tts")
         grad_checkpoint(model.layers[0])
         train = load_cached_split(plan_path, cache_root, tokenizer, "train")
@@ -542,7 +558,18 @@ def run_training_pilot(
         elapsed = time.perf_counter() - started
         validation_after = evaluate(model, validation_samples)
         adapter_file = output / "adapters.safetensors"
-        mx.save_safetensors(str(adapter_file), dict(tree_flatten(model.trainable_parameters())), metadata={"format": "mlx"})
+        complete_adapter = {
+            name: value
+            for name, value in tree_flatten(model.parameters())
+            if "lora_" in name
+        }
+        if len(complete_adapter) != EXPECTED_LORA_GROUPS:
+            raise BackendError(
+                "tts.greektts15.adapter_save_invalid",
+                "Targeted training did not retain the complete Greek adapter",
+                subsystem="tts",
+            )
+        mx.save_safetensors(str(adapter_file), complete_adapter, metadata={"format": "mlx"})
         shutil.copyfile(root / "mlx-adapter" / "adapter_config.json", output / "adapter_config.json")
         source_hash = _sha256(root / "mlx-adapter" / "adapters.safetensors")
         output_hash = _sha256(adapter_file)
@@ -557,6 +584,8 @@ def run_training_pilot(
             "learning_rate": learning_rate,
             "weight_decay": 0.0,
             "gradient_checkpointing": True,
+            "target_profile": target_profile,
+            "frozen_adapter_layers": frozen_layers,
             "trained_tokens": trained_tokens,
             "mean_train_loss": round(sum(losses) / len(losses), 6),
             "first_train_loss": round(losses[0], 6),
@@ -571,6 +600,7 @@ def run_training_pilot(
             "peak_mlx_bytes": int(mx.get_peak_memory()),
             "peak_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
             "trainable_groups": len(trainable),
+            "saved_adapter_groups": len(complete_adapter),
             "trainable_parameters": sum(int(value.size) for _, value in trainable),
             "source_adapter_sha256": source_hash,
             "output_adapter_sha256": output_hash,
