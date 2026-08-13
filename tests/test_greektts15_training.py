@@ -120,7 +120,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
     def test_pilot_is_bounded_to_two_learning_rates_and_25_steps(self) -> None:
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
         self.assertIn('learning_rate not in PILOT_LEARNING_RATES', source)
-        self.assertIn('PILOT_LEARNING_RATES = {5e-7, 1e-6, 5e-6, 1e-5}', source)
+        self.assertIn('PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}', source)
         self.assertIn('steps != PILOT_STEPS', source)
         self.assertIn('random.Random(TRAINING_SEED)', source)
 

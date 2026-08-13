@@ -155,6 +155,14 @@ listening candidate. The 37.5% result remains an intelligibility boundary, not
 the preferred checkpoint. Acoustic metrics are diagnostic and cannot replace
 human listening approval.
 
+The stable 25% interpolation motivates one new optimizer experiment rather
+than promotion of a blended checkpoint. A clean branch restarts from the
+immutable adapter at `2.5e-7` for the same bounded 25 updates. This tests
+whether a genuinely smaller training trajectory can preserve native accent
+and continuity without parameter interpolation. It must pass the full EOS,
+native-reference, offline-ASR, and acoustic-discontinuity gates; it cannot
+continue beyond 25 updates from loss alone.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
