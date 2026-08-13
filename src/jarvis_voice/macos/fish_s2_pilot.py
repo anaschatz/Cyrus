@@ -304,7 +304,6 @@ def run_pilot(
         import numpy as np
         import soundfile as sf
         from mlx_audio.tts.utils import load_model
-        from mlx_audio.utils import load_audio
     except ImportError as exc:
         raise BackendError(
             "tts.fish_s2.dependencies_missing",
@@ -315,7 +314,18 @@ def run_pilot(
     load_started = time.perf_counter()
     model = load_model(model_path, lazy=False, strict=True)
     load_seconds = time.perf_counter() - load_started
-    reference = load_audio(str(reference_path), sample_rate=model.sample_rate, volume_normalize=False)
+    reference_samples, reference_rate = sf.read(
+        reference_path,
+        dtype="float32",
+        always_2d=False,
+    )
+    if reference_rate != model.sample_rate or reference_samples.ndim != 1:
+        raise BackendError(
+            "tts.fish_s2.reference_runtime_mismatch",
+            "Fish S2 reference does not match the model audio profile",
+            subsystem="tts",
+        )
+    reference = mx.array(np.asarray(reference_samples, dtype=np.float32))
 
     samples: list[dict[str, object]] = []
     for index, (fixture_id, text) in enumerate(selected, start=1):
