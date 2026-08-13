@@ -41,6 +41,8 @@ class GreekTts15TrainingTests(unittest.TestCase):
             "optimizer_update_applied": False,
             "trainable_groups": 392,
             "gradient_groups": 392,
+            "gradient_checkpointing": True,
+            "sequence_selection": "longest_train_sample",
             "peak_mlx_bytes": 4_000_000_000,
         }
         with tempfile.TemporaryDirectory() as temp:
@@ -57,6 +59,12 @@ class GreekTts15TrainingTests(unittest.TestCase):
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
         self.assertIn('max(dataset, key=lambda item: len(item[0]))', source)
         self.assertIn('grad_checkpoint(model.layers[0])', source)
+
+    def test_pilot_is_bounded_to_two_learning_rates_and_25_steps(self) -> None:
+        source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
+        self.assertIn('learning_rate not in {5e-6, 1e-5}', source)
+        self.assertIn('steps != PILOT_STEPS', source)
+        self.assertIn('random.Random(TRAINING_SEED)', source)
 
     def test_cached_split_builds_completion_offset(self) -> None:
         class Tokenizer:

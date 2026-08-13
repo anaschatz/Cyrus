@@ -57,6 +57,13 @@ for 1,331 tokens and is rejected. The next probe uses MLX-LM gradient
 checkpointing on the identical sample; it is accepted only if the same strict
 6 GiB gate passes.
 
+The checkpointed longest-sequence gate passed at 4.366 GB MLX peak memory with
+the same loss and gradient surface. The first quality experiment is therefore
+two independent 25-update branches from the immutable Greek adapter: AdamW at
+`5e-6` and `1e-5`, both with zero weight decay, batch size one, seed 10,001,
+and gradient checkpointing. Each branch measures the same deterministic eight
+validation clips before and after training and saves to its own directory.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
