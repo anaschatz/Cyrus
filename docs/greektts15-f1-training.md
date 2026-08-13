@@ -218,6 +218,15 @@ gain. One final bounded midpoint at temperature 0.5 is therefore allowed to
 balance token-path continuity and pronunciation; no broader sampling sweep is
 justified before human listening.
 
+The final midpoint did not win: temperature 0.5 scored 57.58% WER and did not
+improve the JARVIS-text pause/discontinuity aggregate. Temperature 0.4 remains
+the selected attention-only listening configuration at 45.45% WER. It is the
+first candidate to combine a large JARVIS-text intelligibility gain, the best
+native-suite synthetic WER, normal EOS/durations, and improved native-suite
+pitch/spectral continuity. Its JARVIS-text internal-silence and discontinuity
+means remain slightly above baseline, so human listening—not another sampling
+sweep—is the next mandatory gate. Production promotion remains false.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
