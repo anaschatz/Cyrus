@@ -833,7 +833,10 @@ def _run_greektts15_suite(
         snac_load_ms = (time.perf_counter() - snac_started) * 1000.0
         samples: list[dict[str, object]] = []
         for index, (fixture_id, fixture_text) in enumerate(fixtures, start=1):
-            mx.random.seed(seed + index - 1)
+            # Production speech units must not receive incidental acoustic
+            # variation from their queue position. Re-seed every independent
+            # utterance with the qualified deterministic seed.
+            mx.random.seed(seed)
             prompt_text = f"{speaker}: {fixture_text}" if speaker is not None else fixture_text
             text_ids = list(tokenizer.encode(prompt_text, add_special_tokens=True))
             if not text_ids or text_ids[0] != 128_000:
