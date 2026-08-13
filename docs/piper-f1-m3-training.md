@@ -195,12 +195,13 @@ approved training recipe—starting again from the pinned Greek warm-start with 
 substantially lower learning rate and perceptual/articulation gates from the
 first checkpoints—not additional epochs on this optimizer trajectory.
 
-Human listening against the real F1 source selected `1.15x` as the target
-playback pace. This is an inference/output target only: training recordings
-must remain at their original timing and sample rate so that tempo processing
-cannot contaminate articulation or speaker identity. A future accepted F1
-model must preserve the source voice first, then apply pitch-preserving pace
-control equivalent to `1.15x` at the output boundary.
+Human listening initially selected `1.15x` against the real F1 source, but a
+later model listening check found that pace excessively fast and superseded it
+with `1.00x`. Pacing remains an inference/output concern only: training
+recordings must remain at their original timing and sample rate so that tempo
+processing cannot contaminate articulation or speaker identity. A future
+accepted F1 model must preserve the source voice and use its native `1.00x`
+output timing unless a later listening gate explicitly changes it.
 
 ## Low-learning-rate recovery experiment
 
@@ -210,8 +211,9 @@ from the rejected 30-epoch run. Generator/discriminator learning rates are
 reduced tenfold to `2e-5` and `1e-5`; all other bounded M3 parameters remain
 unchanged. The experiment writes under `recovery-low-lr`, stops after five
 epochs, and requires export plus the deterministic/stochastic articulation
-control before any extension. The `1.15x` listening preference remains an
-output-only setting and is not applied during this training experiment.
+control before any extension. The then-current `1.15x` listening preference
+remained output-only and was not applied during this training experiment. It
+has since been superseded by `1.00x`.
 
 The recovery run completed all five epochs normally. Validation mel loss fell
 monotonically from `0.5259` at epoch 0 to `0.4863` at epoch 4. The final
@@ -243,8 +245,9 @@ failure is not a playback underrun or run-to-run timing issue. Even the
 least-bad deterministic checkpoint, epoch 3, retained large phoneme-level
 corruptions, and every normal-sampling mean was above 60%. The low-learning-rate
 recovery experiment therefore fails the articulation gate and is rejected for
-extension or promotion. A pitch-preserving `1.15x` listening derivative may be
-used to confirm the perceptual finding, but pacing cannot change this result.
+extension or promotion. The pitch-preserving `1.15x` listening derivative was
+also rejected as excessively fast; the current listening target is the native
+`1.00x`, although pacing cannot change the articulation result.
 
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
