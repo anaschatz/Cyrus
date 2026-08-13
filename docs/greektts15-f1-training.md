@@ -145,6 +145,16 @@ is the objective listening candidate. No higher fraction is attempted before
 human comparison because the 50% endpoint already loses termination and the
 full checkpoint was judged to have foreign accent drift.
 
+The discontinuity diagnostic reverses the ASR-only preference. Against the
+same four renders, the 25% blend has lower mean pitch-jump rate, spectral-flux
+tail, and normalized sample-step tail than the 37.5% blend. The midpoint also
+doubles mean internal silence (4.76% versus 2.37%); on the difficult clusters
+fixture it reaches 17.85% versus 7.91%. Because the reported user defect is
+robotic instability rather than recognition alone, 25% is the conservative
+listening candidate. The 37.5% result remains an intelligibility boundary, not
+the preferred checkpoint. Acoustic metrics are diagnostic and cannot replace
+human listening approval.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
