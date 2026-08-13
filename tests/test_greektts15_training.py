@@ -53,6 +53,10 @@ class GreekTts15TrainingTests(unittest.TestCase):
                 _validated_gradient_probe(report)
         self.assertEqual(raised.exception.code, "tts.greektts15.gradient_gate_failed")
 
+    def test_memory_probe_source_selects_longest_training_sequence(self) -> None:
+        source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
+        self.assertIn('max(dataset, key=lambda item: len(item[0]))', source)
+
     def test_cached_split_builds_completion_offset(self) -> None:
         class Tokenizer:
             def encode(self, text: str, *, add_special_tokens: bool) -> list[int]:

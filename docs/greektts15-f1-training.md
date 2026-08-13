@@ -43,13 +43,14 @@ Before any optimizer state or weight update is allowed, the M3 training probe
 loads the frozen 4-bit base, attaches the existing rank-64 Greek adapter, proves
 that exactly its 392 LoRA tensors are trainable, and computes one real
 completion-only forward/backward pass. It records MLX and process peak memory
-and deliberately creates no optimizer and saves no weights.
+on the longest training sequence and deliberately creates no optimizer and
+saves no weights.
 
-The measured no-update probe on the M3 used 3.659 GB peak MLX memory and 2.245
-GB peak process RSS. It found exactly 97,255,424 trainable parameters in 392
-LoRA tensors, with a matching 392-group gradient tree. The first optimizer gate
-therefore allows exactly one AdamW update at `5e-6`, no weight decay, into a new
-adapter directory. The original adapter remains immutable and unmerged.
+The initial plumbing probe used a 165-token sample and measured 3.659 GB peak
+MLX memory. It is not the training memory gate. The authoritative gate must be
+rerun on the longest planned sequence and stay below 6 GiB. It must still find
+exactly 97,255,424 trainable parameters in 392 LoRA tensors with a matching
+392-group gradient tree. Only then may an optimizer checkpoint be promoted.
 
 Run the preflight with the repository on `PYTHONPATH`:
 

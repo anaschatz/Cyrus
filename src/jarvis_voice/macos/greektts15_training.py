@@ -274,7 +274,8 @@ def run_gradient_memory_probe(
         if len(trainable) != EXPECTED_LORA_GROUPS or any("lora_" not in name for name, _ in trainable):
             raise BackendError("tts.greektts15.trainable_surface_invalid", "Only the Greek LoRA adapter may be trainable", subsystem="tts")
         dataset = load_cached_split(plan_path, cache_root, tokenizer, "train")
-        sequence, offset = min(dataset, key=lambda item: len(item[0]))
+        # Cover the worst activation shape allowed by the bounded plan.
+        sequence, offset = max(dataset, key=lambda item: len(item[0]))
         batch = mx.array([sequence], dtype=mx.int32)
         lengths = mx.array([[offset, len(sequence)]], dtype=mx.int32)
         if hasattr(mx, "reset_peak_memory"):
@@ -294,6 +295,7 @@ def run_gradient_memory_probe(
             "ready": True,
             "optimizer_update_applied": False,
             "sequence_tokens": len(sequence),
+            "sequence_selection": "longest_train_sample",
             "trained_tokens": int(trained_tokens.item()),
             "loss": round(float(loss.item()), 6),
             "trainable_groups": len(trainable),
