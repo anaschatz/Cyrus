@@ -210,6 +210,14 @@ The sample-step tail is slightly higher than the 25% blend but below the 37.5%
 blend and native reference. Attention-only advances to JARVIS-text rendering
 and human listening; it is not yet production-promoted.
 
+On JARVIS text at temperature 0.6 the candidate scored 66.67% WER, but at 0.4
+it completed all four fixtures and improved to 45.45% versus the baseline's
+63.64%. The 0.4 renders show slightly higher aggregate acoustic discontinuity
+and internal-silence metrics than baseline, despite the large intelligibility
+gain. One final bounded midpoint at temperature 0.5 is therefore allowed to
+balance token-path continuity and pronunciation; no broader sampling sweep is
+justified before human listening.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches

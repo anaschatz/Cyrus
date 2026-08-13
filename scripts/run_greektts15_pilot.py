@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     qualify.add_argument("--max-new-tokens", type=int, default=1200)
     qualify.add_argument("--seed", type=int, default=10001)
     qualify.add_argument("--adapter-directory")
-    qualify.add_argument("--temperature", type=float, choices=(0.0, 0.2, 0.4, 0.6), default=0.6)
+    qualify.add_argument("--temperature", type=float, choices=(0.0, 0.2, 0.4, 0.5, 0.6), default=0.6)
     pronunciation = commands.add_parser("pronunciation")
     pronunciation.add_argument("--model-root", required=True)
     pronunciation.add_argument("--dataset-root", required=True)
@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     pronunciation.add_argument("--max-new-tokens", type=int, default=1200)
     pronunciation.add_argument("--seed", type=int, default=10001)
     pronunciation.add_argument("--adapter-directory")
-    pronunciation.add_argument("--temperature", type=float, choices=(0.0, 0.2, 0.4, 0.6), default=0.4)
+    pronunciation.add_argument("--temperature", type=float, choices=(0.0, 0.2, 0.4, 0.5, 0.6), default=0.4)
     return parser
 
 

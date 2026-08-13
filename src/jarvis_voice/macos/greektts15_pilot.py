@@ -851,7 +851,7 @@ def _run_greektts15_suite(
     os.chmod(output, 0o700)
     if max_new_tokens < 7 or max_new_tokens > 1_200:
         raise BackendError("tts.greektts15.max_tokens_invalid", "GreekTTS token limit is invalid", subsystem="tts")
-    if temperature not in {0.0, 0.2, 0.4, 0.6}:
+    if temperature not in {0.0, 0.2, 0.4, 0.5, 0.6}:
         raise BackendError("tts.greektts15.temperature_invalid", "GreekTTS sampling temperature is invalid", subsystem="tts")
     if not fixtures or len({fixture_id for fixture_id, _ in fixtures}) != len(fixtures):
         raise BackendError("tts.greektts15.fixtures_invalid", "GreekTTS fixtures are invalid", subsystem="tts")
