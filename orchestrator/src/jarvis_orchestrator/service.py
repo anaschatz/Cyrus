@@ -58,11 +58,13 @@ from .jcs import domain_sha256
 from .inference import InferenceControlClient
 from .memory import (
     DisabledShadowMemoryService,
+    EXPLICIT_MEMORY_RESPONSE_TOKENS,
     MemoryObservation,
     MemoryRecall,
     MemoryRecallRequest,
     MemoryProposal,
     ShadowMemoryServicePort,
+    parse_explicit_memory_command,
 )
 from .memory_release import shadow_safety_fields
 from .ports import (
@@ -385,7 +387,9 @@ class OrchestratorService:
         )
         try:
             async with asyncio.timeout(self.config.memory_timeout_seconds):
-                await self.active_memory.remember(observation)
+                deletion = await self.active_memory.forget(observation)
+                if not deletion.requested:
+                    await self.active_memory.remember(observation)
         except Exception:
             # The canonical response is already committed. Memory is optional
             # and never changes or invalidates that completed result.
@@ -1533,6 +1537,8 @@ class OrchestratorService:
                 self.config.final_response_output_tokens,
                 budget["output_tokens"],
             )
+            if parse_explicit_memory_command(input_record["text"]) is not None:
+                allowance = min(allowance, EXPLICIT_MEMORY_RESPONSE_TOKENS)
             if budget["requests"] < 1 or allowance < 1:
                 raise BudgetExhaustedError()
             locale = resolve_locale(input_record["language"], self.config.default_speech_locale)

@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from typing import Any, Mapping, Protocol
+from collections.abc import AsyncIterator, Mapping
+from typing import Any, Protocol
 
-from .domain import ModelChunk, ModelRequest
-from .tool_contracts import ToolDefinitionV1, ToolOutcomeV1
-from .cloud_provider import CloudModelResultV1, OpenRouterRevalidationV1
 from .cloud_contract import QualifiedEndpointV1
+from .cloud_provider import CloudModelResultV1, OpenRouterRevalidationV1
 from .cloud_routing import ContextScope, OutputContract, TaskProfileV1
-from .memory import MemoryObservation, MemoryRecall, MemoryRecallRequest, MemoryWriteResult
+from .domain import ModelChunk, ModelRequest
+from .memory import (
+    MemoryDeleteResult,
+    MemoryObservation,
+    MemoryRecall,
+    MemoryRecallRequest,
+    MemoryWriteResult,
+)
 from .research import (
     NormalizedDocumentV1,
     RankedPassageV1,
@@ -19,6 +24,7 @@ from .research import (
     SearchPlanV1,
     SpanSelectionV1,
 )
+from .tool_contracts import ToolDefinitionV1, ToolOutcomeV1
 
 
 class ModelPort(Protocol):
@@ -26,7 +32,9 @@ class ModelPort(Protocol):
 
 
 class CloudModelPort(Protocol):
-    async def revalidate(self, endpoint: QualifiedEndpointV1) -> OpenRouterRevalidationV1: ...
+    async def revalidate(
+        self, endpoint: QualifiedEndpointV1
+    ) -> OpenRouterRevalidationV1: ...
 
     async def dispatch(self, **kwargs: Any) -> CloudModelResultV1: ...
 
@@ -46,6 +54,8 @@ class MemoryPort(Protocol):
     async def search(self, request: MemoryRecallRequest) -> MemoryRecall: ...
 
     async def remember(self, observation: MemoryObservation) -> MemoryWriteResult: ...
+
+    async def forget(self, observation: MemoryObservation) -> MemoryDeleteResult: ...
 
 
 class ResearchPort(Protocol):
@@ -81,7 +91,9 @@ class ResearchPlannerPort(Protocol):
 
 
 class ToolPort(Protocol):
-    async def execute(self, name: str, arguments: Mapping[str, Any], *, idempotency_key: str) -> Mapping[str, Any]: ...
+    async def execute(
+        self, name: str, arguments: Mapping[str, Any], *, idempotency_key: str
+    ) -> Mapping[str, Any]: ...
 
 
 class ToolPlannerPort(Protocol):
@@ -125,6 +137,10 @@ class DisabledMemoryPort:
         del observation
         return MemoryWriteResult(False, "disabled", "0" * 64)
 
+    async def forget(self, observation: MemoryObservation) -> MemoryDeleteResult:
+        del observation
+        return MemoryDeleteResult(False, False, 0, "disabled", "0" * 64)
+
 
 class DisabledResearchPort:
     async def research(
@@ -135,5 +151,7 @@ class DisabledResearchPort:
 
 
 class DisabledToolPort:
-    async def execute(self, name: str, arguments: Mapping[str, Any], *, idempotency_key: str) -> Mapping[str, Any]:
+    async def execute(
+        self, name: str, arguments: Mapping[str, Any], *, idempotency_key: str
+    ) -> Mapping[str, Any]:
         raise RuntimeError("tool_disabled")

@@ -691,7 +691,7 @@ class OrchestratorStore:
         route: Mapping[str, Any],
         *,
         now: datetime | None = None,
-    ) -> dict[str, Any]:
+    ) -> bool:
         """Persist the validated planner decision before any capability work."""
 
         selected = now or utc_now()
@@ -947,7 +947,7 @@ class OrchestratorStore:
         *,
         query_sha256: str,
         now: datetime | None = None,
-    ) -> bool:
+    ) -> dict[str, Any]:
         """Reserve the one recall attempt for a routing task."""
 
         selected = now or utc_now()
@@ -1139,6 +1139,90 @@ class OrchestratorStore:
             return connection.execute(
                 "DELETE FROM memory_records WHERE record_id=?", (record_id,)
             ).rowcount == 1
+
+    def record_explicit_memory_delete(
+        self,
+        *,
+        task_id: str,
+        conversation_id: str,
+        epoch: int,
+        target_sha256: str,
+        record_id: str | None,
+        expected_content_sha256: str | None,
+        matched_count: int,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Atomically audit and apply one exact explicit retrospective deletion."""
+
+        if matched_count < 0 or isinstance(matched_count, bool):
+            raise ValueError("memory delete match count is invalid")
+        if (record_id is None) != (expected_content_sha256 is None):
+            raise ValueError("memory delete record binding is incomplete")
+        if (matched_count == 1) != (record_id is not None):
+            raise ValueError("memory delete record binding is inconsistent")
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            task = self._guarded_task_tx(
+                connection, task_id, epoch, (TaskState.COMPLETED,)
+            )
+            if task["conversation_id"] != conversation_id:
+                raise StaleEpochError()
+            existing = connection.execute(
+                """SELECT payload_json FROM task_events
+                   WHERE task_id=? AND event_type LIKE 'memory.delete.%'""",
+                (task_id,),
+            ).fetchone()
+            if existing is not None:
+                previous = json.loads(existing["payload_json"])
+                if previous.get("target_sha256") != target_sha256:
+                    raise OrchestratorError("idempotency_conflict", status=409)
+                return dict(previous)
+            deleted_count = 0
+            status = "empty" if matched_count == 0 else "ambiguous"
+            if record_id is not None:
+                changed = connection.execute(
+                    """DELETE FROM memory_records
+                       WHERE record_id=? AND conversation_id=? AND content_sha256=?""",
+                    (record_id, conversation_id, expected_content_sha256),
+                )
+                if changed.rowcount != 1:
+                    raise OrchestratorError("memory_delete_target_changed", status=409)
+                deleted_count = 1
+                status = "completed"
+            payload = {
+                "status": status,
+                "target_sha256": target_sha256,
+                "matched_count": matched_count,
+                "deleted_count": deleted_count,
+                "authoritative_state_changed": deleted_count == 1,
+                "selection": "exact_normalized_content",
+            }
+            self._append_task_event_tx(
+                connection,
+                task_id,
+                epoch,
+                f"memory.delete.{status}",
+                payload,
+                selected,
+            )
+            return dict(payload)
+
+    def memory_delete_audit(self, task_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT epoch,event_type,payload_json,created_at
+                   FROM task_events
+                   WHERE task_id=? AND event_type LIKE 'memory.delete.%'""",
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "epoch": row["epoch"],
+            "event_type": row["event_type"],
+            "payload": json.loads(row["payload_json"]),
+            "created_at": row["created_at"],
+        }
 
     def memory_record_count(self, conversation_id: str) -> int:
         with self._lock:
@@ -4248,6 +4332,14 @@ class OrchestratorStore:
             if task_ids:
                 placeholders = ",".join("?" for _ in task_ids)
                 connection.execute(
+                    f"""DELETE FROM model_request_provenance
+                        WHERE reservation_id IN (
+                            SELECT reservation_id FROM reservations
+                            WHERE task_id IN ({placeholders})
+                        )""",
+                    tuple(task_ids),
+                )
+                connection.execute(
                     f"""DELETE FROM cloud_extension_inbox WHERE approval_id IN (
                        SELECT approval_id FROM approvals WHERE task_id IN ({placeholders})
                        )""",
@@ -4294,6 +4386,13 @@ class OrchestratorStore:
                 "DELETE FROM memory_records WHERE conversation_id=?", (conversation_id,)
             )
             connection.execute("DELETE FROM outbox WHERE conversation_id=?", (conversation_id,))
+            connection.execute(
+                """DELETE FROM content_provenance
+                   WHERE entity_kind='canonical_turn' AND entity_id IN (
+                       SELECT turn_id FROM canonical_turns WHERE conversation_id=?
+                   )""",
+                (conversation_id,),
+            )
             connection.execute("DELETE FROM canonical_turns WHERE conversation_id=?", (conversation_id,))
             connection.execute("DELETE FROM tasks WHERE conversation_id=?", (conversation_id,))
             connection.execute(

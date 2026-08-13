@@ -162,6 +162,12 @@ failure or no match safely falls back to `local`. See
 [`docs/anamnesis-memory-integration.md`](../docs/anamnesis-memory-integration.md)
 for the qualification inventory and limitations.
 
+Explicit retrospective deletion is equally closed: `Forget that…` or
+`Ξέχασε ότι…` deletes only when the normalized command target equals exactly
+one stored record in the active conversation. Zero or multiple matches are
+content-free audited outcomes and leave all records unchanged; no model selects
+the record to delete.
+
 ## Memory shadow mode
 
 The Orchestrator now exposes an audit-only `ShadowMemoryServicePort`. It runs

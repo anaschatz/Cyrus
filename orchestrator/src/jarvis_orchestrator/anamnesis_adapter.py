@@ -17,29 +17,20 @@ from typing import Any, ClassVar
 
 from .domain import canonical_json
 from .memory import (
+    MemoryDeleteResult,
     MemoryItem,
     MemoryObservation,
     MemoryRecall,
     MemoryRecallRequest,
     MemoryWriteResult,
+    parse_explicit_memory_command,
 )
 from .store import OrchestratorStore
-
 
 SUPPORTED_ANAMNESIS_CONTRACT_SHA256 = (
     "832de106ffcfa543d8544bb7b29084a141666d6a3f6e2d40e90ff03ade2b1352"
 )
 
-_REMEMBER = re.compile(
-    r"^\s*(?:jarvis[\s,:-]+)?(?:"
-    r"να\s+θυμάσαι(?:\s+(?:ότι|πως))?"
-    r"|θυμήσου(?:\s+(?:ότι|πως))?"
-    r"|κράτα\s+στη\s+μνήμη(?:\s+(?:ότι|πως))?"
-    r"|please\s+remember(?:\s+that)?"
-    r"|remember(?:\s+that)?"
-    r")\s*[:,;-]?\s*(?P<fact>.+?)\s*$",
-    re.IGNORECASE,
-)
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 _STOPWORDS = frozenset(
     {
@@ -73,7 +64,9 @@ def _sha256_text(value: str) -> str:
 
 def _normalized(value: str) -> str:
     decomposed = unicodedata.normalize("NFKD", value.casefold())
-    return "".join(character for character in decomposed if not unicodedata.combining(character))
+    return "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
 
 
 def _tokens(value: str) -> frozenset[str]:
@@ -85,13 +78,13 @@ def _tokens(value: str) -> frozenset[str]:
 
 
 def _explicit_fact(value: str) -> str | None:
-    match = _REMEMBER.fullmatch(unicodedata.normalize("NFC", value))
-    if match is None:
-        return None
-    fact = " ".join(match.group("fact").split()).strip(" .")
-    if not fact or len(fact.encode("utf-8")) > 16_384:
-        return None
-    return fact
+    command = parse_explicit_memory_command(value)
+    return command[1] if command is not None and command[0] == "remember" else None
+
+
+def _explicit_forget_target(value: str) -> str | None:
+    command = parse_explicit_memory_command(value)
+    return command[1] if command is not None and command[0] == "forget" else None
 
 
 class _SQLiteRecallClient:
@@ -141,7 +134,9 @@ class _SQLiteRecallClient:
         )
         return self._provider_row(row)
 
-    def search(self, query: str, *, user_id: str, limit: int) -> list[dict[str, object]]:
+    def search(
+        self, query: str, *, user_id: str, limit: int
+    ) -> list[dict[str, object]]:
         query_tokens = _tokens(query)
         recall_all = any(
             marker in _normalized(query)
@@ -205,6 +200,7 @@ class AnamnesisMemoryAdapter:
         self._contract = dict(contract)
         self._contract_sha256 = digest
         self._index_type = OpenMemoryRecallIndex
+        self._store = store
         self._client = _SQLiteRecallClient(store)
 
     @property
@@ -231,7 +227,9 @@ class AnamnesisMemoryAdapter:
         result = await self._index(request.conversation_id).search(
             request.query, limit=request.limit
         )
-        items = tuple(MemoryItem(match.content, match.score) for match in result.matches)
+        items = tuple(
+            MemoryItem(match.content, match.score) for match in result.matches
+        )
         return MemoryRecall(items=items, provider=self.provider)
 
     async def remember(self, observation: MemoryObservation) -> MemoryWriteResult:
@@ -252,8 +250,38 @@ class AnamnesisMemoryAdapter:
         )
         return MemoryWriteResult(True, self.provider, _sha256_text(fact))
 
+    async def forget(self, observation: MemoryObservation) -> MemoryDeleteResult:
+        target = _explicit_forget_target(observation.text)
+        if target is None:
+            return MemoryDeleteResult(False, False, 0, self.provider, _sha256_text(""))
+        scoped_user_id = f"anamnesis::jarvis::{observation.conversation_id}"
+        matches = [
+            row
+            for row in self._store.memory_records_for_scope(scoped_user_id)
+            if _normalized(str(row["content"])) == _normalized(target)
+        ]
+        selected = matches[0] if len(matches) == 1 else None
+        outcome = self._store.record_explicit_memory_delete(
+            task_id=observation.task_id,
+            conversation_id=observation.conversation_id,
+            epoch=observation.epoch,
+            target_sha256=_sha256_text(target),
+            record_id=None if selected is None else str(selected["record_id"]),
+            expected_content_sha256=(
+                None if selected is None else str(selected["content_sha256"])
+            ),
+            matched_count=len(matches),
+        )
+        return MemoryDeleteResult(
+            True,
+            outcome["deleted_count"] == 1,
+            int(outcome["matched_count"]),
+            self.provider,
+            _sha256_text(target),
+        )
+
 
 __all__ = [
-    "AnamnesisMemoryAdapter",
     "SUPPORTED_ANAMNESIS_CONTRACT_SHA256",
+    "AnamnesisMemoryAdapter",
 ]

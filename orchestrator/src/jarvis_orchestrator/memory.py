@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -18,6 +19,45 @@ class MemoryOperation(StrEnum):
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _MEMORY_KEY = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_EXPLICIT_REMEMBER = re.compile(
+    r"^\s*(?:jarvis[\s,:-]+)?(?:"
+    r"να\s+θυμάσαι(?:\s+(?:ότι|πως))?"
+    r"|θυμήσου(?:\s+(?:ότι|πως))?"
+    r"|κράτα\s+στη\s+μνήμη(?:\s+(?:ότι|πως))?"
+    r"|please\s+remember(?:\s+that)?"
+    r"|remember(?:\s+that)?"
+    r")\s*[:,;-]?\s*(?P<fact>.+?)\s*$",
+    re.IGNORECASE,
+)
+_EXPLICIT_FORGET = re.compile(
+    r"^\s*(?:jarvis[\s,:-]+)?(?:"
+    r"ξέχασε(?:\s+(?:ότι|πως))?"
+    r"|διέγραψε\s+από\s+τη\s+μνήμη(?:\s+(?:ότι|πως))?"
+    r"|please\s+forget(?:\s+that)?"
+    r"|forget(?:\s+that)?"
+    r")\s*[:,;-]?\s*(?P<fact>.+?)\s*$",
+    re.IGNORECASE,
+)
+
+EXPLICIT_MEMORY_RESPONSE_TOKENS = 32
+
+
+def parse_explicit_memory_command(value: str) -> tuple[str, str] | None:
+    """Return one closed explicit operation/target without model interpretation."""
+
+    normalized = unicodedata.normalize("NFC", value)
+    for operation, pattern in (
+        ("remember", _EXPLICIT_REMEMBER),
+        ("forget", _EXPLICIT_FORGET),
+    ):
+        match = pattern.fullmatch(normalized)
+        if match is None:
+            continue
+        target = " ".join(match.group("fact").split()).strip(" .")
+        if not target or len(target.encode("utf-8")) > 16_384:
+            return None
+        return operation, target
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +162,33 @@ class MemoryWriteResult:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryDeleteResult:
+    """Content-free outcome of one explicit retrospective forget command."""
+
+    requested: bool
+    deleted: bool
+    matched_count: int
+    provider: str
+    target_sha256: str
+
+    def __post_init__(self) -> None:
+        if not _IDENTIFIER.fullmatch(self.provider):
+            raise ValueError("memory delete provider is invalid")
+        if not _SHA256.fullmatch(self.target_sha256):
+            raise ValueError("memory delete target hash is invalid")
+        if (
+            isinstance(self.matched_count, bool)
+            or not isinstance(self.matched_count, int)
+            or self.matched_count < 0
+        ):
+            raise ValueError("memory delete match count is invalid")
+        if not self.requested and (self.deleted or self.matched_count):
+            raise ValueError("unrequested memory delete outcome is not empty")
+        if self.deleted != (self.requested and self.matched_count == 1):
+            raise ValueError("memory delete outcome is inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
 class MemoryProposal:
     operation: MemoryOperation
     memory_key: str | None
@@ -172,13 +239,16 @@ class DisabledShadowMemoryService:
 
 
 __all__ = [
+    "EXPLICIT_MEMORY_RESPONSE_TOKENS",
     "DisabledShadowMemoryService",
-    "MemoryObservation",
+    "MemoryDeleteResult",
     "MemoryItem",
+    "MemoryObservation",
     "MemoryOperation",
     "MemoryProposal",
     "MemoryRecall",
     "MemoryRecallRequest",
     "MemoryWriteResult",
     "ShadowMemoryServicePort",
+    "parse_explicit_memory_command",
 ]

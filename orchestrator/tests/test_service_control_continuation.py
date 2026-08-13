@@ -173,6 +173,61 @@ class ServiceAndControlTests(StoreCase, unittest.TestCase):
         self.assertEqual((status, body), (204, None))
         self.assertIsNone(store.active_conversation())
 
+    def test_conversation_delete_removes_scoped_provenance(self) -> None:
+        store = self.make_store()
+        service = OrchestratorService(
+            config(store.path), store, BudgetedModelPort(store, FakeModel())
+        )
+        task = self.admitted(
+            store,
+            event_id=str(uuid.uuid4()),
+            turn_id=str(uuid.uuid4()),
+            now=utc_now(),
+        )
+        completed = asyncio.run(service.execute_task(task.task_id))
+        self.assertEqual(completed.state, TaskState.COMPLETED)
+        with store._lock:
+            reservation = store._connection.execute(
+                "SELECT reservation_id FROM reservations WHERE task_id=?",
+                (task.task_id,),
+            ).fetchone()
+            assert reservation is not None
+            store._connection.execute(
+                """INSERT INTO model_request_provenance(
+                       reservation_id,consumed_entity_ids_json,
+                       aggregate_provenance_sha256,created_at
+                   ) VALUES(?,?,?,?)""",
+                (reservation["reservation_id"], "[]", "a" * 64, utc_text(NOW)),
+            )
+            self.assertEqual(
+                store._connection.execute(
+                    """SELECT COUNT(*) FROM content_provenance
+                       WHERE entity_kind='canonical_turn' AND entity_id=?""",
+                    (task.turn_id,),
+                ).fetchone()[0],
+                1,
+            )
+
+        store.delete_conversation(task.conversation_id, completed.epoch)
+
+        with store._lock:
+            self.assertEqual(
+                store._connection.execute(
+                    """SELECT COUNT(*) FROM content_provenance
+                       WHERE entity_kind='canonical_turn' AND entity_id=?""",
+                    (task.turn_id,),
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                store._connection.execute(
+                    """SELECT COUNT(*) FROM model_request_provenance
+                       WHERE reservation_id=?""",
+                    (reservation["reservation_id"],),
+                ).fetchone()[0],
+                0,
+            )
+
 
 class ContinuationAndRecoveryTests(StoreCase, unittest.TestCase):
     def test_continuation_is_versioned_and_fails_closed_on_digest_change(self) -> None:

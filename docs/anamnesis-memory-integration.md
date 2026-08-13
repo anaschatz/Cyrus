@@ -23,7 +23,7 @@ Startup fails closed if the imported Anamnesis runtime contract changes.
 | Input | Bounded text, namespace, user partition, scalar metadata and search limit |
 | Output | Closed Pydantic `RecallSearchResult`/`RecallMatch` objects; recalled text is explicitly non-authoritative and cannot carry action evidence |
 | Persistence | The Anamnesis temporal store is explicitly pure in-memory. JARVIS therefore persists accepted recall records in Orchestrator SQLite. |
-| Deletion | Anamnesis exposes record deletion on its recall boundary. JARVIS additionally deletes all conversation memory inside the same logical conversation-deletion transaction. |
+| Deletion | JARVIS accepts only an explicit `Forget that…` / `Ξέχασε ότι…` command whose normalized target matches exactly one record in the active conversation. Zero or multiple matches fail closed without deletion. Conversation deletion additionally removes all scoped memory and provenance in one transaction. |
 | Authentication | No network service is opened, so there is no bearer-auth surface. The adapter requires positive local-only attestation and performs no network request. |
 | Timeout/cancellation | Owned by the Orchestrator active timer with a configurable bounded timeout and post-call epoch CAS. |
 | Idempotency | `UNIQUE(conversation_id, source_event_id)`; same content/metadata returns the existing record, conflicting reuse fails closed. |
@@ -38,6 +38,10 @@ older versions fail closed.
 - A completed turn is eligible for storage only when it explicitly begins with
   a phrase such as `Να θυμάσαι ότι…`, `Θυμήσου…`, `Remember that…` or
   `Please remember…`.
+- Record deletion is eligible only after a completed explicit `Forget that…`
+  or `Ξέχασε ότι…` turn. Selection is deterministic exact normalized-content
+  equality within the active conversation; no model chooses the target.
+- Empty and ambiguous forget commands are audited but never delete a record.
 - Partial, cancelled, interrupted, budget-exhausted and failed turns cannot
   write normal memory.
 - Recall runs during `ROUTING`. A non-empty qualified result selects
