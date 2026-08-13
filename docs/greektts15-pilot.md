@@ -152,3 +152,43 @@ python scripts/run_greektts15_pilot.py run \
 Each speaker gets a distinct output filename and evidence record. Promotion is
 forbidden unless listening confirms that both Greek pronunciation and speaker
 identity remain acceptable.
+
+## Deterministic native-Greek qualification (2026-08-13)
+
+The 4-bit candidate was requalified without a foundation-speaker prompt or any
+voice conversion. A four-unit system set covered greeting, system status,
+calendar and reminder responses. Every independent unit resets MLX to the same
+qualified seed (`10001`), so queue position cannot introduce an incidental
+voice or pronunciation change. The worker releases decoded tensors and clears
+the MLX cache after each unit. Production remains fail-closed because SNAC
+streaming and interruption during generation are not implemented.
+
+The first four-unit run intentionally varied the seed by queue position. It
+used 2,427,944,960 bytes peak RSS and 2,371,473,334 bytes peak MLX memory, but
+the fourth response ended after 0.94 seconds. Offline `faster-whisper-base`
+scoring produced 22 errors across 33 reference words (66.7% micro WER). This
+identified stochastic instability, so varying the seed per unit was removed.
+
+The deterministic rerun completed all four units and no longer truncated the
+reminder. It measured:
+
+- 1.20 seconds model load and 0.08 seconds SNAC load;
+- 3,797,565,440 bytes peak RSS and 2,375,825,644 bytes peak MLX memory;
+- 3.13 mean real-time factor, with 8.14--11.75 seconds until complete audio;
+- 183--219 ms to the first speech token after warm-up, which is not
+  time-to-audio because SNAC still decodes only after the full utterance;
+- 20 word errors across 33 reference words (60.6% micro WER).
+
+| Fixture | Duration | Word errors | SHA-256 |
+| --- | ---: | ---: | --- |
+| greeting | 2.90 s | 1/6 | `f194f446b6b31f9e3ac27f9f1e9c33c953a4fe66996a7dec9cb1958d62517a9a` |
+| system status | 3.16 s | 9/9 | `4e708ab112f3cfc3bc22bdb86bb01652142caf5563a627de3bba8c9f8b044c66` |
+| calendar | 2.65 s | 3/9 | `b6b037a197ad1e45e2698ac4f777ac7a9d69ce23ce23ace3435651d872e02b02` |
+| reminder | 3.50 s | 7/9 | `566dc4f2dfe15ecd61e730ed357a723a1242e7aaf788d2f3bcabfbd6f3089ae9` |
+
+The standalone process fit within the bounded 4 GiB RSS and 3 GiB MLX gates,
+but failed pronunciation, real-time generation, streaming and interruption.
+The representative Qwen 9B coexistence run was therefore not attempted: memory
+coexistence cannot make an already rejected voice eligible and would add
+avoidable pressure to the 16 GB host. The GreekTTS-1.5 4-bit candidate is
+rejected as the default JARVIS backend, and the active backend was not changed.
