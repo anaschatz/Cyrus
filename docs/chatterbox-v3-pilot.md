@@ -149,3 +149,51 @@ consonant loss, so they remain non-production candidates.
 The third listening pair uses the macOS Reed and Samantha references. The
 converted outputs measure 115.1 Hz and 167.6 Hz median F0 respectively, retain
 the 2.24 s source duration and remain subject to the same consonant-loss gate.
+
+## STOMA F1 reference qualification (2026-08-13)
+
+STOMA does not publish a ready-to-run F1 TTS checkpoint. Therefore the original
+F1 recording cannot itself become the JARVIS backend. The bounded alternative
+used the already pinned Chatterbox Multilingual V3 model with the exact
+`Greek-F1-B2-03-14.wav` recording as its speaker reference. The reference has
+SHA-256
+`72826663025609f540344a4adbab494d89405d0dfc44fe6202e124e7b6a1c192`.
+No Piper-derived audio or checkpoint was used.
+
+The qualification harness pins twenty Greek system, number, consonant-cluster
+and long-sentence fixtures. It records RSS and MPS memory, keeps network access
+blocked during inference, and cannot promote a model without separate
+streaming, interruption, LLM-coexistence, offline ASR and human-listening
+evidence. The isolated dependency environment and the five hash-verified model
+artifacts occupied about 4 GiB on disk; model artifacts alone were
+3,207,031,761 bytes.
+
+The first run was stopped after two completed fixtures because MPS caching
+caused severe memory and swap growth. The harness was changed to sample peak
+MPS allocation, release each completed waveform, run garbage collection and
+empty the MPS cache after every speech unit. That change restored normal speed
+for the early units, but the second run still exhausted practical headroom:
+after four completed fixtures, free disk fell from about 10 GiB to 333 MiB as
+macOS expanded swap. The process was terminated before the fifth fixture could
+complete. RAM returned to 81% free when the worker exited, confirming that the
+pressure belonged to this standalone TTS process. Loading the local Qwen 9B at
+the same time was deliberately not attempted because the standalone gate had
+already failed.
+
+The four retained outputs were scored with the existing pinned offline
+`faster-whisper-base`. They produced 12 errors across 33 reference words, a
+36.4% micro WER:
+
+| Fixture | Duration | Word errors | SHA-256 |
+| --- | ---: | ---: | --- |
+| greeting | 3.16 s | 2/6 | `f9dd3540cda5d6b61a0fec71d73fd8dacb3736651ac55405526a8e105104df72` |
+| system status | 4.36 s | 2/9 | `119267d9c582be95981218745a12df52d84a4786948a9495f1668163ad3c0d09` |
+| calendar | 3.68 s | 4/9 | `b3a90334a646668a3263a9a9db0c0d027bc372632ccff998fffa3657cbe2f8c1` |
+| reminder | 4.36 s | 4/9 | `750dd59c495f9ac760432bcd506129a0363bd11d3258b1424b16334f1150327f` |
+
+This result rejects Chatterbox V3 with an STOMA F1 reference as the default
+backend for this 16 GB M3. It fails both pronunciation and standalone resource
+headroom before streaming, interruption or LLM coexistence can be considered.
+The active JARVIS TTS backend was not changed. After qualification, the
+temporary model and isolated environment were removed; WAV and evidence files
+were retained, and free disk returned to about 14 GiB.
