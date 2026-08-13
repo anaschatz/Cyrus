@@ -109,6 +109,13 @@ native F1 recording, whose SHA-256 is pinned. This separates accent and rhythm
 judgment from speaker preference and from Whisper's imperfect Greek WER. No
 checkpoint can continue until it wins this same-text native-reference gate.
 
+The first native-reference run rejected the `1e-6`, 25-step checkpoint: at
+temperature 0.4 it failed to emit end-of-speech on the pronunciation suite.
+The immutable GreekTTS-1.5 baseline completed all four reference texts at its
+qualified temperature 0.6. Further adaptation therefore restarts from the
+immutable adapter; the rejected checkpoint is retained only as diagnostic
+evidence and is never used as a continuation source.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
