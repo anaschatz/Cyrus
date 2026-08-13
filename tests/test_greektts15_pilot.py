@@ -38,10 +38,16 @@ from jarvis_voice.macos.greektts15_pilot import (
     run_greektts15_pilot,
     run_greektts15_quality_qualification,
     validate_greektts_model_root,
+    _native_adapter_config,
 )
 
 
 class GreekTts15PilotTests(unittest.TestCase):
+    def test_native_training_adapter_config_remains_rank_64(self) -> None:
+        config = _native_adapter_config()
+        self.assertEqual(config["lora_parameters"]["rank"], 64)
+        self.assertEqual(config["lora_parameters"]["scale"], 1.0)
+        self.assertEqual(len(config["lora_parameters"]["keys"]), 7)
     def test_network_guard_fails_closed_and_restores_socket(self) -> None:
         original_socket = socket.socket
 

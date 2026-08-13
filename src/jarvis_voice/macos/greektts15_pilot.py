@@ -782,6 +782,7 @@ def _run_greektts15_suite(
     seed: int = 10_001,
     base_variant: str = "4bit",
     speaker: str | None = None,
+    adapter_directory: str | Path | None = None,
 ) -> dict[str, object]:
     root = Path(model_root).expanduser()
     base = _select_base_variant(base_variant)
@@ -789,8 +790,20 @@ def _run_greektts15_suite(
     converted = validate_converted_adapter(root)
     if not upstream.ready:
         raise BackendError(upstream.code, "GreekTTS model root is not ready", subsystem="tts")
-    if not converted.ready:
+    if adapter_directory is None and not converted.ready:
         raise BackendError(converted.code, "GreekTTS adapter is not converted", subsystem="tts")
+    adapter_path = root / CONVERTED_DIRECTORY if adapter_directory is None else Path(adapter_directory).expanduser()
+    if (
+        not adapter_path.is_absolute()
+        or not adapter_path.is_dir()
+        or adapter_path.is_symlink()
+        or (adapter_path / "adapter_config.json").is_symlink()
+        or (adapter_path / "adapters.safetensors").is_symlink()
+        or _read_json(adapter_path / "adapter_config.json") != _native_adapter_config()
+        or not (adapter_path / "adapters.safetensors").is_file()
+    ):
+        raise BackendError("tts.greektts15.adapter_checkpoint_invalid", "GreekTTS adapter checkpoint is invalid", subsystem="tts")
+    adapter_hash = _sha256(adapter_path / "adapters.safetensors")
     if not all(_dependency_report().values()):
         raise BackendError("tts.greektts15.dependencies_missing", "GreekTTS dependencies are unavailable", subsystem="tts")
     output = Path(output_directory).expanduser()
@@ -818,7 +831,7 @@ def _run_greektts15_suite(
         load_started = time.perf_counter()
         model, tokenizer = load(
             str(root / base.directory),
-            adapter_path=str(root / CONVERTED_DIRECTORY),
+            adapter_path=str(adapter_path),
             lazy=False,
         )
         mx.synchronize()
@@ -914,7 +927,12 @@ def _run_greektts15_suite(
             "adapter": {"repo_id": ADAPTER_REPO_ID, "revision": ADAPTER_REVISION},
             "snac": {"repo_id": SNAC_REPO_ID, "revision": SNAC_REVISION},
         },
-        "adapter": {"lora_modules": lora_modules, "scale": 1.0},
+        "adapter": {
+            "lora_modules": lora_modules,
+            "scale": 1.0,
+            "checkpoint_sha256": adapter_hash,
+            "checkpoint_kind": "baseline" if adapter_directory is None else "training_candidate",
+        },
         "voice": {
             "mode": "experimental_foundation_prompt" if speaker is not None else "greek_adapter_default",
             "speaker": speaker,
@@ -966,6 +984,7 @@ def run_greektts15_quality_qualification(
     *,
     max_new_tokens: int = 1_200,
     seed: int = 10_001,
+    adapter_directory: str | Path | None = None,
 ) -> dict[str, object]:
     report = _run_greektts15_suite(
         model_root,
@@ -975,6 +994,7 @@ def run_greektts15_quality_qualification(
         seed=seed,
         base_variant="4bit",
         speaker=None,
+        adapter_directory=adapter_directory,
     )
     samples = report["samples"]
     realtime_factors = [float(sample["realtime_factor"]) for sample in samples]

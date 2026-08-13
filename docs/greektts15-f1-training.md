@@ -64,6 +64,12 @@ two independent 25-update branches from the immutable Greek adapter: AdamW at
 and gradient checkpointing. Each branch measures the same deterministic eight
 validation clips before and after training and saves to its own directory.
 
+Candidate rendering accepts a separate adapter directory only when it contains
+the exact native rank-64 configuration and a regular `adapters.safetensors`
+file. Reports record the checkpoint hash, so baseline and both pilot branches
+can be rendered with identical fixtures, seed, and sampling parameters without
+ever replacing the qualified baseline adapter.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
