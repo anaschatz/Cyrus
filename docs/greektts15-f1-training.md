@@ -125,6 +125,13 @@ name, shape, and dtype, and every blend records both source hashes. A blend is
 a listening experiment, never a training continuation source or production
 promotion by itself.
 
+The same native-reference suite at temperature 0.6 accepted the 25% blend: it
+completed all four texts and reduced mean standalone render RTF from about
+4.28 for the baseline to about 3.32. The 50% blend failed to emit
+end-of-speech and is rejected. This bounds the useful interpolation region
+close to the immutable adapter. Only the 25% blend advances to paired human
+listening; neither blend may seed subsequent training.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
