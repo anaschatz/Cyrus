@@ -332,6 +332,24 @@ Fixtures 01–03 completed with ordinary durations, but fixture 04 expanded to
 autoregressive drift. The checkpoint is not production-promotable regardless
 of isolated word gains; human listening remains diagnostic only.
 
+Human listening found that the combined word-focus checkpoint improved only
+`λειτουργούν`: `κατάσταση` still sounded like `κατάταση`, and fixture 04 ended
+in unintelligible output. The combined checkpoint is rejected. To preserve the
+one useful signal without repeating the reminder regression, two independent
+branches restart from exact-core and exclude every unrelated word crop.
+
+The operation branch trains MLP only at `2.5e-7` with ten exposures to the
+approved `λειτουργούν` crop and fifteen general F1 clips. Validation moves from
+5.105781 to 5.090269; checkpoint SHA-256 is
+`e6c06f0686811bf476dfe31d3266083e0f81d19a22c27d1c862983c1371419de`.
+Its four fixtures complete, though fixture 04 is 4.011 seconds. The state branch
+trains attention only at `1e-6` with fifteen exposures to the approved
+`κατάσταση` crop and ten general clips. Validation moves to 5.044958;
+checkpoint SHA-256 is
+`4df0aea5bf37845ea30dc15c53acec781ea107c97bf91aa5a7ac23f10c4f71c9`.
+All state-branch durations remain ordinary, including 3.157 seconds for
+fixture 04. Both branches require human listening and remain non-production.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
