@@ -298,6 +298,21 @@ validation loss moved from 5.198685 to 5.166773, peak MLX memory was
 The four unchanged quality fixtures completed at temperature 0.4 and seed
 10,001. Human listening remains mandatory and production promotion is false.
 
+Human listening rejected the 25-step MLP-only checkpoint: fixture 02 sounded
+unchanged and fixture 04 regressed. The `θυμ-` reminder proxy is therefore
+invalid for teaching the absent exact word and is removed from later training.
+No checkpoint was merged or selected for production.
+
+A longer `jarvis-exact-core` branch remains MLP-only at `2.5e-7` but applies
+100 updates: 15 exposures each to the exact real F1 forms `κατάσταση`,
+`λειτουργούν`, `σημαντικές`, and `εργασίες`, plus 40 general F1 clips. It has
+no reminder proxy. Validation loss moved from 5.198685 to 5.105781, peak MLX
+memory was 5,012,590,198 bytes, and checkpoint SHA-256 is
+`3b8b65e6df3c93374c23141430818ad5b1b9ab5e729dc1ff9b1c70b123d7dde1`.
+All four unchanged fixtures completed at temperature 0.4 and seed 10,001.
+Human listening must show a real fixture-02 gain without general regression;
+production promotion remains false.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
