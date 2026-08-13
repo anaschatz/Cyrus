@@ -71,6 +71,15 @@ the lower loss. The rescue experiment keeps the same 25 samples and gates but
 uses `5e-7` and `1e-6`, reflecting that this is continuation of a mature
 rank-64 language/voice adapter rather than training a fresh small LoRA.
 
+Both rescue branches passed all four deterministic end-of-speech fixtures.
+At `1e-6`, validation loss moved from 5.1987 to 4.9780 and render RTF was 7.14.
+At `5e-7`, validation loss moved to 5.0724 and render RTF was 5.17. The baseline
+render RTF was 3.19. These timings are standalone non-streaming diagnostics,
+not production latency approval. The `5e-7` branch is the conservative
+listening candidate; `1e-6` remains the stronger adaptation candidate. Human
+comparison of identical fixtures is required before either branch can continue
+to 50 updates.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
