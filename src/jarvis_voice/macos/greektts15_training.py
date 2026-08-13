@@ -53,6 +53,7 @@ TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {5e-7, 1e-6, 5e-6, 1e-5}
 ADAPTER_BLEND_FACTORS = {0.25, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
+PRONUNCIATION_ASR_LABELS = {"native", "baseline", "blend-25pct"}
 
 _LEADING_CONFUSABLES = str.maketrans(
     {
@@ -873,11 +874,14 @@ def _word_error_distance(reference: list[str], hypothesis: list[str]) -> int:
     return previous[-1]
 
 
-def score_candidate_transcripts(
+def _score_transcript_sets(
     references: dict[str, str],
     transcripts: dict[str, dict[str, str]],
+    *,
+    required_labels: set[str],
+    schema: str,
 ) -> dict[str, object]:
-    if set(transcripts) != ASR_CANDIDATE_LABELS or not references or any(set(items) != set(references) for items in transcripts.values()):
+    if set(transcripts) != required_labels or not references or any(set(items) != set(references) for items in transcripts.values()):
         raise BackendError("tts.greektts15.asr_transcripts_incomplete", "Candidate transcripts are incomplete", subsystem="tts")
     candidates: list[dict[str, object]] = []
     for label in sorted(transcripts):
@@ -910,12 +914,44 @@ def score_candidate_transcripts(
             }
         )
     return {
-        "schema": "jarvis.voice.greektts15-asr-comparison/1",
+        "schema": schema,
         "ready": True,
         "candidates": candidates,
         "human_listening_required": True,
         "promotion_allowed": False,
     }
+
+
+def score_candidate_transcripts(
+    references: dict[str, str],
+    transcripts: dict[str, dict[str, str]],
+) -> dict[str, object]:
+    return _score_transcript_sets(
+        references,
+        transcripts,
+        required_labels=ASR_CANDIDATE_LABELS,
+        schema="jarvis.voice.greektts15-asr-comparison/1",
+    )
+
+
+def score_pronunciation_transcripts(
+    references: dict[str, str],
+    transcripts: dict[str, dict[str, str]],
+) -> dict[str, object]:
+    """Score native, baseline, and conservative-blend pronunciation audio."""
+
+    report = _score_transcript_sets(
+        references,
+        transcripts,
+        required_labels=PRONUNCIATION_ASR_LABELS,
+        schema="jarvis.voice.greektts15-pronunciation-asr/1",
+    )
+    by_label = {item["label"]: item for item in report["candidates"]}
+    report["native_calibration_wer_percent"] = by_label["native"]["micro_wer_percent"]
+    report["blend_not_worse_than_baseline"] = (
+        by_label["blend-25pct"]["micro_wer_percent"] <= by_label["baseline"]["micro_wer_percent"]
+    )
+    return report
 
 
 def _corpus(filename: str) -> str:

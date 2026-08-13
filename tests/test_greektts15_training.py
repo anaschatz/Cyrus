@@ -24,6 +24,7 @@ from jarvis_voice.macos.greektts15_training import (
     load_cached_split,
     normalize_transcript,
     score_candidate_transcripts,
+    score_pronunciation_transcripts,
     _validated_gradient_probe,
 )
 from jarvis_voice.macos.greektts15_pilot import (
@@ -37,6 +38,18 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_pronunciation_asr_calibrates_against_native_f1(self) -> None:
+        references = {"one": "Καλημέρα κόσμε", "two": "Όλα λειτουργούν"}
+        transcripts = {
+            "native": dict(references),
+            "baseline": {"one": "Καλημέρα", "two": "Όλα λειτουργούν"},
+            "blend-25pct": dict(references),
+        }
+        report = score_pronunciation_transcripts(references, transcripts)
+        self.assertEqual(report["native_calibration_wer_percent"], 0.0)
+        self.assertTrue(report["blend_not_worse_than_baseline"])
+        self.assertFalse(report["promotion_allowed"])
+
     def test_adapter_blending_is_bounded_away_from_rejected_candidate(self) -> None:
         self.assertEqual(ADAPTER_BLEND_FACTORS, {0.25, 0.5})
         with self.assertRaises(BackendError) as raised:
