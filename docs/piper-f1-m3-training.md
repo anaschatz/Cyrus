@@ -169,6 +169,32 @@ stochastic articulation set plus human listening before any later epoch budget
 is authorized. Training must not run blindly to epoch 50 and the active JARVIS
 TTS backend remains unchanged.
 
+The bounded resume completed normally at epoch 29 (`max_epochs=30`). Its
+845,857,618-byte checkpoint has SHA-256
+`9fbaf507293c38c67145f351c8e7681b1e723712ac873e473a802f1224903f26`
+and an empty weights-only unsafe-global set. The exported 63,516,051-byte ONNX
+has SHA-256
+`0ef687f3255bc4544230e3a3ad9bac8a14ad706467e2ec12cdbae6f9f464af4e`
+and passed the structural Piper preflight, but it failed articulation.
+
+The same offline Whisper diagnostic was run against every retained resumed
+checkpoint. Deterministic WER on the fixed 15-word articulation sentence was
+26.7% at epoch 25, 46.7% at epochs 26 and 27, 33.3% at epoch 28, and 53.3% at
+epoch 29. Mean normal-sampling WER was respectively 53.3%, 48.9%, 82.2%, 53.3%
+and 51.1%. Epoch 25 was the least-bad deterministic result, but still failed the
+gate and remained sampling-sensitive.
+
+A final same-text control ruled out the local ASR as the source of the finding.
+For a real F1 recording and its verbatim transcript, the pinned local
+`faster-whisper-base` produced 0/11 word errors. Epoch 25 synthesis of that same
+text produced 2/11 deterministic errors and 1/11 errors in the sampled render,
+including phoneme-level corruptions such as `Ελπίζουμε` to `Ειπίζουμε` and
+`επόμενη` to `ριεπόμενη`. The 30-epoch run is rejected for production and must
+not be resumed further. Any future F1 attempt requires a new, explicitly
+approved training recipe—starting again from the pinned Greek warm-start with a
+substantially lower learning rate and perceptual/articulation gates from the
+first checkpoints—not additional epochs on this optimizer trajectory.
+
 When `model.mos_metric=none`, the safe training wrapper also removes exactly
 the pinned Piper `val_mos` checkpoint callback while retaining the `val_mel`
 and `last.ckpt` callback. A resume is accepted only from a regular, local
