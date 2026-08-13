@@ -25,6 +25,16 @@ Every entry records the source-audio hash, codec hash, revision, resampler, and
 exact Orpheus tokens. A retry reuses an entry only when that full signature
 still matches.
 
+An audit of all 2,602 recording edges found the first/last 50 ms to be silence
+or near-silence (median about -64 dBFS; only one edge above -35 dBFS). The cache
+therefore removes exactly 50 ms from each edge before resampling. This retains
+roughly half of STOMA's apparent 100 ms speech margin and avoids an aggressive
+VAD cut that could erase Greek unvoiced consonants.
+
+The first real M3 probe encoded one F1 clip into 798 valid Orpheus tokens and a
+second run reused the content-bound entry. Full caching must use the final
+50 ms trim signature, so the earlier untrimmed probe is intentionally invalidated.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash

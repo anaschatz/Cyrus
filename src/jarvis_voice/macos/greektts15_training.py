@@ -38,6 +38,7 @@ EXPECTED_ROWS = 1_301
 EXPECTED_SAMPLE_RATE = 44_100
 EXPECTED_CHANNELS = 1
 EXPECTED_SAMPLE_WIDTH = 2
+EDGE_TRIM_MILLISECONDS = 50
 SPLIT_SEED = "jarvis-greektts15-f1-v1"
 MLX_TUNE_REVISION = "9690fe1fed19c72f0810902b9c188d9a2625eb5b"
 BASE_REVISION = "b30aed4ecfa03c0177a5419b51919d14a105f183"
@@ -118,6 +119,7 @@ class TorchSnacEncoder:
             "model_sha256": _sha256(directory / "pytorch_model.bin"),
             "sample_rate": 24_000,
             "resampler": "soxr-vhq",
+            "edge_trim_ms": EDGE_TRIM_MILLISECONDS,
             "device": "cpu",
         }
 
@@ -125,6 +127,10 @@ class TorchSnacEncoder:
         waveform, sample_rate = self._sf.read(str(audio_path), dtype="float32", always_2d=False)
         if waveform.ndim != 1 or waveform.size == 0 or not self._np.isfinite(waveform).all():
             raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 waveform is invalid", subsystem="tts")
+        trim = round(sample_rate * EDGE_TRIM_MILLISECONDS / 1_000)
+        if waveform.size <= trim * 2:
+            raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 waveform is too short to trim", subsystem="tts")
+        waveform = waveform[trim:-trim]
         if sample_rate != 24_000:
             waveform = self._soxr.resample(waveform, sample_rate, 24_000, quality="VHQ")
         tensor = self._torch.from_numpy(self._np.asarray(waveform, dtype=self._np.float32)).reshape(1, 1, -1)
