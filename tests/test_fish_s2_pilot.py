@@ -15,6 +15,9 @@ from jarvis_voice.macos import fish_s2_pilot as pilot
 
 
 class FishS2PilotTests(unittest.TestCase):
+    def test_memory_gate_accounts_for_unified_mlx_allocations(self) -> None:
+        self.assertEqual(pilot.MAX_STANDALONE_MLX_BYTES, 7 * 1024**3)
+
     def test_network_guard_fails_closed_and_restores_socket(self) -> None:
         original_socket = socket.socket
 

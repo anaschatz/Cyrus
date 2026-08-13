@@ -37,6 +37,7 @@ FISH_LICENSE = "Fish Audio Research License"
 
 GIB = 1024**3
 MAX_STANDALONE_PEAK_RSS_BYTES = 7 * GIB
+MAX_STANDALONE_MLX_BYTES = 7 * GIB
 MAX_MEAN_REALTIME_FACTOR = 1.0
 MAX_ASR_MICRO_WER_PERCENT = 5.0
 
@@ -370,12 +371,14 @@ def run_pilot(
         )
 
     peak_rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    mlx_peak = int(mx.get_peak_memory())
     mean_rtf = sum(float(item["realtime_factor"]) for item in samples) / len(samples)
     automated_gates = {
         "pinned_safe_model_pack": True,
         "pinned_f1_reference": True,
         "all_selected_fixtures_generated": len(samples) == len(selected),
         "standalone_rss_within_limit": peak_rss <= MAX_STANDALONE_PEAK_RSS_BYTES,
+        "standalone_mlx_memory_within_limit": mlx_peak <= MAX_STANDALONE_MLX_BYTES,
         "mean_realtime_factor_within_limit": mean_rtf <= MAX_MEAN_REALTIME_FACTOR,
         "incremental_audio_streaming": False,
         "interrupt_during_generation": False,
@@ -393,7 +396,7 @@ def run_pilot(
         "voice": {"reference_sha256": F1_REFERENCE_SHA256, "reference_text_pinned": True},
         "sampling": {"temperature": 0.45, "top_p": 0.7, "top_k": 30, "speed": 1.0},
         "model_load_seconds": round(load_seconds, 4),
-        "mlx_peak_bytes": int(mx.get_peak_memory()),
+        "mlx_peak_bytes": mlx_peak,
         "peak_rss_bytes": peak_rss,
         "mean_realtime_factor": round(mean_rtf, 4),
         "samples": samples,
