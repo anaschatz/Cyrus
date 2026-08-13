@@ -28,6 +28,7 @@ from jarvis_voice.macos.chatterbox_pilot import (
     _validated_f1_reference_audio,
     _validated_audio_path,
     chatterbox_pilot_preflight,
+    score_f1_transcripts,
     validate_chatterbox_model_directory,
 )
 
@@ -204,6 +205,20 @@ class ChatterboxPilotTests(unittest.TestCase):
         self.assertFalse(qualification["automated_gates"]["incremental_audio_streaming"])
         self.assertFalse(qualification["automated_gates"]["interrupt_during_generation"])
         self.assertFalse(report["production_backend_changed"])
+
+    def test_f1_transcript_scoring_reports_micro_word_error_rate(self) -> None:
+        transcripts = {fixture_id: text for fixture_id, text in F1_QUALIFICATION_FIXTURES}
+        transcripts["greeting"] = "Καλημέρα. Είμαι έτοιμη να βοηθήσω."
+        report = score_f1_transcripts(transcripts)
+        self.assertEqual(report["fixture_count"], 20)
+        self.assertEqual(report["total_word_errors"], 1)
+        self.assertGreater(report["micro_wer_percent"], 0.0)
+        self.assertFalse(report["production_promotion_allowed"])
+
+    def test_f1_transcript_scoring_rejects_incomplete_sets(self) -> None:
+        with self.assertRaises(BackendError) as raised:
+            score_f1_transcripts({"greeting": "Καλημέρα"})
+        self.assertEqual(raised.exception.code, "tts.chatterbox.f1_transcripts_incomplete")
 
 
 if __name__ == "__main__":

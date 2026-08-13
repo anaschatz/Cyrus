@@ -22,6 +22,7 @@ from jarvis_voice.macos.chatterbox_pilot import (  # noqa: E402
     run_chatterbox_f1_qualification,
     run_chatterbox_pilot,
     run_chatterbox_voice_conversion_pilot,
+    score_chatterbox_f1_outputs,
 )
 from jarvis_voice.qualification import write_report  # noqa: E402
 
@@ -47,6 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     qualify_f1.add_argument("--output-dir", required=True)
     qualify_f1.add_argument("--report", required=True)
     qualify_f1.add_argument("--reference-audio", required=True)
+    score_f1 = commands.add_parser("score-f1")
+    score_f1.add_argument("--output-dir", required=True)
+    score_f1.add_argument("--whisper-model-dir", required=True)
+    score_f1.add_argument("--report", required=True)
     convert = commands.add_parser("voice-convert")
     convert.add_argument("--model-dir", required=True)
     convert.add_argument("--output-dir", required=True)
@@ -68,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
             report = run_chatterbox_pilot(args.model_dir, args.output_dir, args.reference_audio)
         elif args.command == "qualify-f1":
             report = run_chatterbox_f1_qualification(args.model_dir, args.output_dir, args.reference_audio)
+        elif args.command == "score-f1":
+            report = score_chatterbox_f1_outputs(args.output_dir, args.whisper_model_dir)
         else:
             report = run_chatterbox_voice_conversion_pilot(
                 args.model_dir,

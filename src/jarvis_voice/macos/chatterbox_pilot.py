@@ -14,12 +14,14 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import resource
 import shutil
 import socket
 import struct
 import sys
 import time
+import unicodedata
 import wave
 from dataclasses import dataclass
 from functools import wraps
@@ -649,6 +651,120 @@ def _add_f1_qualification_gates(report: dict[str, object]) -> dict[str, object]:
         "production_promotion_allowed": False,
     }
     report["production_backend_changed"] = False
+    return report
+
+
+def _normalized_words(text: str) -> list[str]:
+    normalized = unicodedata.normalize("NFC", text).casefold()
+    return re.findall(r"[^\W_]+", normalized, flags=re.UNICODE)
+
+
+def _word_error_distance(reference: list[str], hypothesis: list[str]) -> int:
+    previous = list(range(len(hypothesis) + 1))
+    for reference_index, reference_word in enumerate(reference, start=1):
+        current = [reference_index]
+        for hypothesis_index, hypothesis_word in enumerate(hypothesis, start=1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[hypothesis_index] + 1,
+                    previous[hypothesis_index - 1] + (reference_word != hypothesis_word),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def score_f1_transcripts(transcripts: dict[str, str]) -> dict[str, object]:
+    expected_ids = {fixture_id for fixture_id, _ in F1_QUALIFICATION_FIXTURES}
+    if set(transcripts) != expected_ids or any(not isinstance(value, str) for value in transcripts.values()):
+        raise BackendError(
+            "tts.chatterbox.f1_transcripts_incomplete",
+            "Chatterbox F1 qualification transcripts are incomplete",
+            subsystem="tts",
+        )
+    samples: list[dict[str, object]] = []
+    total_errors = 0
+    total_words = 0
+    for fixture_id, reference_text in F1_QUALIFICATION_FIXTURES:
+        reference_words = _normalized_words(reference_text)
+        hypothesis = transcripts[fixture_id]
+        errors = _word_error_distance(reference_words, _normalized_words(hypothesis))
+        total_errors += errors
+        total_words += len(reference_words)
+        samples.append(
+            {
+                "fixture_id": fixture_id,
+                "reference_words": len(reference_words),
+                "word_errors": errors,
+                "wer_percent": round(100.0 * errors / len(reference_words), 3),
+                "transcript": hypothesis,
+            }
+        )
+    micro_wer = 100.0 * total_errors / total_words
+    return {
+        "schema_version": 1,
+        "ready": True,
+        "code": "tts.chatterbox.f1_asr_scoring_completed",
+        "fixture_count": len(samples),
+        "total_reference_words": total_words,
+        "total_word_errors": total_errors,
+        "micro_wer_percent": round(micro_wer, 3),
+        "samples": samples,
+        "network_used": False,
+        "human_voice_approved": False,
+        "production_promotion_allowed": False,
+    }
+
+
+@_deny_network_during_pilot
+def score_chatterbox_f1_outputs(
+    output_directory: str | Path,
+    whisper_model_directory: str | Path,
+) -> dict[str, object]:
+    output = Path(output_directory).expanduser()
+    model_directory = Path(whisper_model_directory).expanduser()
+    if not output.is_absolute() or not output.is_dir() or output.is_symlink():
+        raise BackendError("tts.chatterbox.output_invalid", "Chatterbox pilot output is invalid", subsystem="tts")
+    if not model_directory.is_absolute() or not model_directory.is_dir() or model_directory.is_symlink():
+        raise BackendError(
+            "tts.chatterbox.whisper_model_invalid",
+            "Local Whisper model directory is invalid",
+            subsystem="tts",
+        )
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise BackendError(
+            "tts.chatterbox.whisper_dependency_missing",
+            "Local faster-whisper dependency is unavailable",
+            subsystem="tts",
+        ) from exc
+    model = WhisperModel(str(model_directory), device="cpu", compute_type="int8", local_files_only=True)
+    transcripts: dict[str, str] = {}
+    for index, (fixture_id, _) in enumerate(F1_QUALIFICATION_FIXTURES, start=1):
+        path = output / f"{index:02d}-{fixture_id}.wav"
+        try:
+            valid = path.is_file() and not path.is_symlink() and path.stat().st_size > 44
+        except OSError:
+            valid = False
+        if not valid:
+            raise BackendError(
+                "tts.chatterbox.f1_output_missing",
+                "Chatterbox F1 qualification output is missing",
+                subsystem="tts",
+            )
+        segments, _ = model.transcribe(
+            str(path),
+            language="el",
+            task="transcribe",
+            beam_size=5,
+            vad_filter=False,
+            condition_on_previous_text=False,
+        )
+        transcripts[fixture_id] = " ".join(segment.text.strip() for segment in segments).strip()
+    report = score_f1_transcripts(transcripts)
+    report["asr"] = {"backend": "faster_whisper", "model_path_explicit": True, "compute_type": "int8"}
     return report
 
 
