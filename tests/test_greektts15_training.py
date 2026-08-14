@@ -25,6 +25,8 @@ from jarvis_voice.macos.greektts15_training import (
     build_operation_morphology_curriculum_order,
     build_word_focus_bundle,
     build_singular_operation_crop,
+    build_approved_singular_operation_training_plan,
+    build_singular_operation_focus_curriculum_order,
     build_word_focus_curriculum_order,
     build_single_word_focus_curriculum_order,
     build_importance_focus_curriculum_order,
@@ -90,6 +92,66 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertTrue(manifest["human_approval_required"])
         self.assertEqual(manifest["sample"]["source_audio_sha256"], digest)
         self.assertAlmostEqual(manifest["sample"]["duration_seconds"], 0.92, places=2)
+
+    def test_approved_singular_crop_builds_bounded_retention_curriculum(self) -> None:
+        samples = [
+            {"split": "train", "filename": "state.wav", "text": "Η κατάσταση είναι καλή.", "corpus": "F1"},
+            {"split": "train", "filename": "plural.wav", "text": "Όλα λειτουργούν σωστά.", "corpus": "F1"},
+            {"split": "train", "filename": "important-a.wav", "text": "Σημαντικές αλλαγές.", "corpus": "F1"},
+            {"split": "train", "filename": "important-b.wav", "text": "Σημαντικές εργασίες.", "corpus": "F1"},
+        ]
+        samples.extend(
+            {"split": "train", "filename": f"general-{index}.wav", "text": f"Γενική πρόταση {index}.", "corpus": "F1"}
+            for index in range(15)
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            base_plan = root / "base-plan.json"
+            base_plan.write_text(
+                json.dumps({"schema": "jarvis.voice.greektts15-f1-plan/1", "samples": samples}),
+                encoding="utf-8",
+            )
+            crop = root / "crop"
+            audio_root = crop / "audio"
+            audio_root.mkdir(parents=True)
+            audio = audio_root / "word-focus-leitourgei.wav"
+            audio.write_bytes(b"approved-real-f1-crop")
+            digest = hashlib.sha256(audio.read_bytes()).hexdigest()
+            (crop / "singular-operation-crop-manifest.json").write_text(
+                json.dumps({
+                    "schema": "jarvis.voice.greektts15-singular-operation-crop/1",
+                    "ready": True,
+                    "review_only": True,
+                    "training_allowed": False,
+                    "human_approval_required": True,
+                    "sample": {
+                        "filename": audio.name,
+                        "text": "λειτουργεί",
+                        "audio_sha256": digest,
+                        "source_audio_sha256": "source-digest",
+                    },
+                }),
+                encoding="utf-8",
+            )
+            combined = root / "combined.json"
+            cache = root / "cache.json"
+            plan = build_approved_singular_operation_training_plan(
+                base_plan.resolve(), crop.resolve(), combined.resolve(), cache.resolve()
+            )
+            order, report = build_singular_operation_focus_curriculum_order(combined.resolve())
+            cache_plan = json.loads(cache.read_text(encoding="utf-8"))
+        self.assertTrue(plan["singular_operation_focus"]["human_approved"])
+        self.assertTrue(plan["singular_operation_focus"]["training_allowed"])
+        self.assertEqual(len(cache_plan["samples"]), 1)
+        self.assertEqual(order[:10], [19] * 10)
+        self.assertEqual(order[10:14], [0, 1, 2, 3])
+        self.assertEqual(len(order), 25)
+        self.assertEqual(len(set(order[14:])), 11)
+        self.assertTrue(all(4 <= index < 19 for index in order[14:]))
+        self.assertEqual(report["targeted_steps"], 10)
+        self.assertEqual(report["retention_steps"], 4)
+        self.assertEqual(report["general_steps"], 11)
+        self.assertTrue(report["approved_crop"])
 
     def test_f1_phrase_candidates_are_review_only_and_content_bound(self) -> None:
         names = (
@@ -289,6 +351,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
                 "jarvis-utterance-focus",
                 "jarvis-operation-morphology",
                 "jarvis-operation-morphology-mlp",
+                "jarvis-singular-operation-focus-mlp",
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",

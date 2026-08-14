@@ -70,6 +70,7 @@ TRAINING_SAMPLE_PROFILES = {
     "jarvis-utterance-focus",
     "jarvis-operation-morphology",
     "jarvis-operation-morphology-mlp",
+    "jarvis-singular-operation-focus-mlp",
     "jarvis-word-focus",
     "jarvis-operation-focus",
     "jarvis-state-focus",
@@ -100,6 +101,7 @@ OPERATION_MORPHOLOGY_EXPOSURES = {
     "other_operation_forms": 6,
     "importance_retention": 2,
 }
+SINGULAR_OPERATION_FOCUS_STEPS = 10
 WORD_FOCUS_CROPS = (
     ("katastasi", "Greek-F1-B2-51-22.wav", "κατάσταση", 3.92, 4.60, 0.972),
     ("leitourgoun", "Greek-F1-B2-51-06.wav", "λειτουργούν", 2.52, 3.24, 0.848),
@@ -310,6 +312,78 @@ def build_singular_operation_crop(
         encoding="utf-8",
     )
     return report
+
+
+def build_approved_singular_operation_training_plan(
+    base_plan_path: str | Path,
+    crop_root: str | Path,
+    combined_plan_path: str | Path,
+    cache_plan_path: str | Path,
+) -> dict[str, object]:
+    """Bind human approval to the exact crop and append it to the F1 plan."""
+
+    base_path = Path(base_plan_path).expanduser()
+    crop = Path(crop_root).expanduser()
+    combined_path = Path(combined_plan_path).expanduser()
+    cache_path = Path(cache_plan_path).expanduser()
+    if (
+        not base_path.is_absolute()
+        or not crop.is_absolute()
+        or not combined_path.is_absolute()
+        or not cache_path.is_absolute()
+        or combined_path.exists()
+        or cache_path.exists()
+        or crop.is_symlink()
+    ):
+        raise BackendError("tts.greektts15.singular_approval_path_invalid", "Singular approval paths are invalid", subsystem="tts")
+    try:
+        base = json.loads(base_path.read_text(encoding="utf-8"))
+        review = json.loads((crop / "singular-operation-crop-manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.singular_approval_invalid", "Singular approval evidence is unreadable", subsystem="tts") from exc
+    base_samples = base.get("samples") if isinstance(base, dict) else None
+    sample = review.get("sample") if isinstance(review, dict) else None
+    audio = crop / "audio" / "word-focus-leitourgei.wav"
+    if (
+        not isinstance(base, dict)
+        or base.get("schema") != PLAN_SCHEMA
+        or not isinstance(base_samples, list)
+        or not isinstance(review, dict)
+        or review.get("schema") != SINGULAR_OPERATION_CROP_SCHEMA
+        or review.get("ready") is not True
+        or review.get("review_only") is not True
+        or review.get("training_allowed") is not False
+        or review.get("human_approval_required") is not True
+        or not isinstance(sample, dict)
+        or sample.get("filename") != audio.name
+        or sample.get("text") != "λειτουργεί"
+        or audio.is_symlink()
+        or not audio.is_file()
+        or _sha256(audio) != sample.get("audio_sha256")
+        or any(item.get("filename") == audio.name for item in base_samples if isinstance(item, dict))
+    ):
+        raise BackendError("tts.greektts15.singular_approval_invalid", "Singular approval evidence is invalid", subsystem="tts")
+    approved_sample = {
+        **sample,
+        "split": "train",
+        "corpus": "STOMA-F1-singular-operation-focus",
+        "transcript_normalized": False,
+    }
+    cache_plan = {"schema": PLAN_SCHEMA, "samples": [approved_sample]}
+    combined = {
+        **base,
+        "samples": [*base_samples, approved_sample],
+        "singular_operation_focus": {
+            "schema": SINGULAR_OPERATION_CROP_SCHEMA,
+            "human_approved": True,
+            "training_allowed": True,
+            "audio_sha256": sample["audio_sha256"],
+            "source_audio_sha256": sample["source_audio_sha256"],
+        },
+    }
+    combined_path.write_text(json.dumps(combined, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    cache_path.write_text(json.dumps(cache_plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return combined
 
 
 def build_word_focus_bundle(
@@ -1001,6 +1075,75 @@ def build_operation_morphology_curriculum_order(
     }
 
 
+def build_singular_operation_focus_curriculum_order(
+    plan_path: str | Path,
+    *,
+    steps: int = PILOT_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Repair singular ``λειτουργεί`` while retaining approved morphology gates."""
+
+    import random
+
+    if steps != PILOT_STEPS:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Singular-focus step count is invalid", subsystem="tts")
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    approval = plan.get("singular_operation_focus") if isinstance(plan, dict) else None
+    if (
+        not isinstance(plan, dict)
+        or plan.get("schema") != PLAN_SCHEMA
+        or not isinstance(samples, list)
+        or not isinstance(approval, dict)
+        or approval.get("schema") != SINGULAR_OPERATION_CROP_SCHEMA
+        or approval.get("human_approved") is not True
+        or approval.get("training_allowed") is not True
+        or not isinstance(approval.get("audio_sha256"), str)
+    ):
+        raise BackendError("tts.greektts15.curriculum_invalid", "Singular-focus approval is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    words = [set(_normalized_words(sample.get("text", ""))) for sample in train_samples]
+    focus = [
+        index
+        for index, sample in enumerate(train_samples)
+        if sample.get("corpus") == "STOMA-F1-singular-operation-focus"
+        and sample.get("filename") == "word-focus-leitourgei.wav"
+        and sample.get("text") == "λειτουργεί"
+        and sample.get("audio_sha256") == approval["audio_sha256"]
+    ]
+    state = [index for index, sample_words in enumerate(words) if "κατασταση" in sample_words]
+    plural = [index for index, sample_words in enumerate(words) if "λειτουργουν" in sample_words]
+    importance = [index for index, sample_words in enumerate(words) if "σημαντικεσ" in sample_words]
+    if len(focus) != 1 or not state or len(plural) != 1 or len(importance) != 2:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Singular-focus retention coverage changed", subsystem="tts")
+
+    selected = [focus[0]] * SINGULAR_OPERATION_FOCUS_STEPS
+    selected.extend((state[0], plural[0], *importance))
+    excluded = set(focus + state + plural + importance)
+    general = [
+        index
+        for index, sample in enumerate(train_samples)
+        if index not in excluded and not str(sample.get("corpus", "")).startswith("STOMA-F1-")
+    ]
+    randomizer = random.Random(TRAINING_SEED)
+    randomizer.shuffle(general)
+    selected.extend(general[: steps - len(selected)])
+    if len(selected) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Singular-focus curriculum is incomplete", subsystem="tts")
+    return selected, {
+        "profile": "jarvis-singular-operation-focus-mlp",
+        "targeted_steps": SINGULAR_OPERATION_FOCUS_STEPS,
+        "retention_steps": 4,
+        "general_steps": steps - SINGULAR_OPERATION_FOCUS_STEPS - 4,
+        "target_counts": {"λειτουργει": SINGULAR_OPERATION_FOCUS_STEPS},
+        "retention_words": ["κατασταση", "λειτουργουν", "σημαντικεσ", "σημαντικεσ"],
+        "approved_crop": True,
+        "sample_filenames": [train_samples[index].get("filename") for index in selected],
+    }
+
+
 def build_word_focus_curriculum_order(
     plan_path: str | Path,
     *,
@@ -1386,6 +1529,10 @@ def run_training_pilot(
             sample_profile == "jarvis-operation-morphology-mlp"
             and (target_profile != "mlp-only" or learning_rate != 2.5e-7 or source_adapter_directory is None)
         )
+        or (
+            sample_profile == "jarvis-singular-operation-focus-mlp"
+            and (target_profile != "mlp-only" or learning_rate != 2.5e-7 or source_adapter_directory is None)
+        )
         or (sample_profile != "jarvis-general-stage" and general_stage_index != 0)
         or general_stage_index < 0
         or (sample_profile == "jarvis-word-focus" and target_profile != "mlp-only")
@@ -1400,6 +1547,7 @@ def run_training_pilot(
                 "jarvis-utterance-focus",
                 "jarvis-operation-morphology",
                 "jarvis-operation-morphology-mlp",
+                "jarvis-singular-operation-focus-mlp",
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",
@@ -1537,6 +1685,8 @@ def run_training_pilot(
                 profile=sample_profile,
                 steps=steps,
             )
+        elif sample_profile == "jarvis-singular-operation-focus-mlp":
+            order, curriculum = build_singular_operation_focus_curriculum_order(plan_path, steps=steps)
         elif sample_profile == "jarvis-word-focus":
             order, curriculum = build_word_focus_curriculum_order(plan_path, steps=steps)
         elif sample_profile in {"jarvis-operation-focus", "jarvis-state-focus"}:
