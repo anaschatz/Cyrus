@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import subprocess
 import sys
 import threading
@@ -16,6 +17,7 @@ from ..backends import SpeechUnit
 from ..config import VoiceConfig
 from ..errors import BackendError
 from ..native_qualification import evaluate_native_evidence
+from ..ptt import PttEventPublisher, PttTransition
 from ..qualification import write_report
 from .doctor import macos_doctor_report
 from .greektts15_runtime import (
@@ -27,12 +29,14 @@ from .greektts15_runtime import (
 from .interactive_smoke import MacSmokeLoopbackServer
 from .audio_capture import CoreAudioCapture
 from .native_collector import (
+    AcousticResult,
     AcousticCalibrationSampler,
     AcousticSilenceMonitor,
     MacNativeTelemetryCollector,
     derive_acoustic_threshold,
     mac_runtime_profile_fingerprint,
 )
+from .ptt import MacEventTapPttSource, mac_ptt_vkey
 from .runtime import MacVoiceRuntime
 from .system_tts import MacSystemTtsBackend
 
@@ -164,6 +168,126 @@ def calibrate_macos_acoustic_threshold(
         "network_used": False,
         "installation_performed": False,
     }
+
+
+def run_macos_acoustic_barge_in_sample(
+    config: VoiceConfig,
+    *,
+    silence_threshold_dbfs: float,
+    audio_path: str,
+    ptt_timeout_seconds: float = 30.0,
+    result_timeout_seconds: float = 3.0,
+    capture_factory: Callable[..., Any] = CoreAudioCapture,
+    tts_builder: Callable[..., Any] = create_macos_calibration_tts,
+    ptt_source_factory: Callable[..., Any] = MacEventTapPttSource,
+    monitor_factory: Callable[..., Any] = AcousticSilenceMonitor,
+    clock: Callable[[], float] = time.perf_counter,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> dict[str, object]:
+    """Measure one physical PTT-to-acoustic-silence sample without ASR timing."""
+
+    if sys.platform != "darwin":
+        raise BackendError("qualification.native_macos_required", "Acoustic barge-in requires macOS", subsystem="qualification")
+    if audio_path not in {"wired", "built_in"} or ptt_timeout_seconds <= 0 or result_timeout_seconds <= 0:
+        raise BackendError("qualification.native_collector_config_invalid", "Acoustic sample settings are invalid", subsystem="qualification")
+    monitor = monitor_factory(silence_threshold_dbfs=silence_threshold_dbfs)
+    started = threading.Event()
+    completed = threading.Event()
+    publisher = PttEventPublisher(
+        capacity=config.ptt_queue_capacity,
+        maximum_hold_seconds=config.maximum_hold_seconds,
+        ptt_vkey=mac_ptt_vkey(config.ptt_key),
+    )
+    ptt = ptt_source_factory(publisher, key=config.ptt_key)
+    capture = capture_factory(
+        queue_capacity=config.audio_queue_capacity,
+        maximum_utterance_seconds=config.maximum_utterance_seconds,
+        device=config.audio_input_device,
+        frame_observer=monitor.publish_audio,
+    )
+    tts = tts_builder(
+        config,
+        on_started=lambda _unit: started.set(),
+        on_completed=lambda _unit: completed.set(),
+    )
+    cancelled_at: float | None = None
+    cancel_call_ms: float | None = None
+    result: AcousticResult | None = None
+    try:
+        capture.start()
+        ptt.start()
+        tts.enqueue(
+            SpeechUnit(
+                response_id="acoustic-barge-in-sample",
+                epoch=1,
+                unit_index=1,
+                locale="el-GR",
+                text="Η φωνή λειτουργεί καθαρά και περιμένει την άμεση διακοπή.",
+            )
+        )
+        if not started.wait(timeout=60.0):
+            backend_error = getattr(tts, "last_error", None)
+            raise BackendError(
+                "qualification.acoustic_sample_tts_failed"
+                if isinstance(backend_error, BackendError)
+                else "qualification.acoustic_sample_tts_start_timeout",
+                "Acoustic sample playback did not start",
+                subsystem="qualification",
+                safe_context=(
+                    {"backend_error_code": backend_error.code}
+                    if isinstance(backend_error, BackendError)
+                    else None
+                ),
+            )
+        deadline = clock() + ptt_timeout_seconds
+        while clock() < deadline:
+            if completed.is_set():
+                raise BackendError("qualification.acoustic_sample_ptt_missed", "PTT was not pressed during playback", subsystem="qualification")
+            try:
+                event = publisher.events.get(timeout=min(0.05, max(0.001, deadline - clock())))
+            except queue.Empty:
+                continue
+            if event.transition != PttTransition.DOWN:
+                continue
+            monitor.arm(event.received_at)
+            cancelled_at = clock()
+            tts.cancel(2, "ptt_down")
+            cancel_call_ms = (clock() - cancelled_at) * 1000.0
+            break
+        if cancelled_at is None:
+            raise BackendError("qualification.acoustic_sample_ptt_timeout", "Physical PTT was not received", subsystem="qualification")
+        deadline = clock() + result_timeout_seconds
+        while clock() < deadline and result is None:
+            values = monitor.take_results()
+            if values:
+                result = values[0]
+                break
+            sleeper(0.01)
+        if result is None:
+            raise BackendError("qualification.acoustic_sample_result_timeout", "Acoustic silence result was not produced", subsystem="qualification")
+        return {
+            "ready": result.valid,
+            "code": result.code,
+            "audio_path": audio_path,
+            "ptt_key": config.ptt_key,
+            "ptt_to_acoustic_silence_ms": result.latency_ms,
+            "cancel_call_ms": round(float(cancel_call_ms or 0.0), 3),
+            "threshold_ms": 200.0,
+            "raw_audio_persisted": False,
+            "physical_ptt": True,
+            "physical_playback": True,
+            "microphone_opened": True,
+            "network_used": False,
+            "installation_performed": False,
+        }
+    finally:
+        try:
+            tts.cancel(2, "qualification_end")
+        finally:
+            ptt.stop()
+            capture.stop()
+            tts.close()
+            monitor.close()
 
 
 def current_process_rss_bytes(

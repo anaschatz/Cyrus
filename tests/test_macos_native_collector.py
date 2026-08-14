@@ -24,9 +24,11 @@ from jarvis_voice.macos.native_run import (
     create_macos_calibration_tts,
     current_process_rss_bytes,
     macos_native_collection_preflight,
+    run_macos_acoustic_barge_in_sample,
     run_macos_native_collection,
 )
 from jarvis_voice.native_qualification import evaluate_native_evidence
+from jarvis_voice.ptt import PttEvent, PttTransition
 
 
 class _FakeAcousticMonitor:
@@ -249,6 +251,59 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
 
 
 class MacNativeRunTests(unittest.TestCase):
+    def test_focused_acoustic_sample_cancels_on_physical_ptt_and_returns_latency(self) -> None:
+        state: dict[str, object] = {}
+
+        class Monitor:
+            def __init__(self, **kwargs): state["threshold"] = kwargs["silence_threshold_dbfs"]
+            def publish_audio(self, *args): pass
+            def arm(self, received_at):
+                state["armed_at"] = received_at
+                state["result"] = AcousticResult(True, 123.0, "qualification.acoustic_sample_valid")
+            def take_results(self):
+                result = state.pop("result", None)
+                return () if result is None else (result,)
+            def close(self): pass
+
+        class Capture:
+            def __init__(self, **kwargs): del kwargs
+            def start(self): state["capture_started"] = True
+            def stop(self): state["capture_stopped"] = True
+
+        class Ptt:
+            def __init__(self, publisher, **kwargs): self.publisher = publisher; del kwargs
+            def start(self): self.publisher.events.put_nowait(PttEvent(PttTransition.DOWN, time.perf_counter()))
+            def stop(self): state["ptt_stopped"] = True
+
+        class Tts:
+            def __init__(self, on_started): self.on_started = on_started; self.last_error = None
+            def enqueue(self, unit): self.on_started(unit)
+            def cancel(self, epoch, reason): state.setdefault("cancels", []).append((epoch, reason))
+            def close(self): state["tts_closed"] = True
+
+        def build_tts(_config, *, on_started, on_completed):
+            del on_completed
+            return Tts(on_started)
+
+        config = voice_config_from_mapping({"ptt_key": "CONTROL_OPTION"})
+        with mock.patch("jarvis_voice.macos.native_run.sys.platform", "darwin"):
+            report = run_macos_acoustic_barge_in_sample(
+                config,
+                silence_threshold_dbfs=-53.303,
+                audio_path="built_in",
+                capture_factory=Capture,
+                tts_builder=build_tts,
+                ptt_source_factory=Ptt,
+                monitor_factory=Monitor,
+            )
+        self.assertTrue(report["ready"])
+        self.assertEqual(report["ptt_to_acoustic_silence_ms"], 123.0)
+        self.assertEqual(state["cancels"], [(2, "ptt_down"), (2, "qualification_end")])
+        self.assertEqual(state["threshold"], -53.303)
+        self.assertTrue(state["capture_stopped"])
+        self.assertTrue(state["ptt_stopped"])
+        self.assertTrue(state["tts_closed"])
+
     def test_calibration_uses_a_short_bounded_phrase(self) -> None:
         observer = None
         spoken: list[str] = []
