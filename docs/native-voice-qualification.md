@@ -189,3 +189,21 @@ write. `cancel()` returned in 106.6 ms and the complete backend reached idle in
 hard-cancellation check. It does not yet set the acoustic barge-in gate: the
 ready threshold must still be measured from PTT activation to captured speaker
 silence with a physical microphone and wired/local audio path.
+
+### Built-in F1 acoustic calibration
+
+The selected digest-bound F1 backend was calibrated through the actual MacBook
+Air microphone and speakers without retaining PCM. The accepted run measured
+ambient p95 at -56.303 dBFS, audible playback p80 at -39.856 dBFS and 16.448 dB
+of separation. The resulting sustained-silence threshold is -53.303 dBFS with
+a 3 dB audible margin.
+
+An earlier run exposed that playback p20 was dominated by natural between-word
+pauses. Calibration now uses audible p80 speech frames and separately enforces
+ambient/playback separation; regression coverage includes a pause-heavy sample.
+
+The first 120-second physical collection attempt produced zero PTT turns with
+the MacBook F9 configuration even though the passive Input Monitoring doctor
+reported ready. The likely cause is the top-row media-key mapping. This run is
+blocked evidence, not an acoustic sample; the next source qualification attempt
+uses the already-supported Control+Option chord override.
