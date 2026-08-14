@@ -418,6 +418,18 @@ revoked. Runtime promotion and dependency materialization stop until a bounded
 full-utterance curriculum covers the real F1 forms `λειτουργεί`, `λειτουργούν`,
 `πρωτολειτούργησε`, `λειτουργία`, `λειτουργίας`, `λειτουργικής`, and `λειτουργός`.
 
+The bounded morphology continuation uses eight complete F1 exposures to
+`λειτουργεί`, four to `λειτουργούν`, six distinct complete utterances covering
+other operation-root forms, two `σημαντικές` retention utterances, and five
+general utterances. At 25 all-LoRA updates and `2.5e-7`, validation loss moved
+from 4.925621 to 4.894935 and produced checkpoint SHA-256
+`e1c178d874c43ff44fec0e320d5fd5258a96f657edc28f5823fcc859d1c2e6ea`.
+The singular, plural, and noun diagnostic fixtures completed, but the unchanged
+`σημαντικές εργασίες` fixture failed to emit end-of-speech before the 1,200-token
+limit. The checkpoint is rejected for runtime promotion regardless of any
+operation-root pronunciation gain; the three completed files are diagnostic
+listening material only.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
