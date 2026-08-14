@@ -158,3 +158,12 @@ decoding και CoreAudio playback. Ενδιάμεσο decode μπορεί να 
 bounded queue είναι γεμάτη, επειδή το επόμενο cumulative snapshot περιλαμβάνει
 όλα τα ακόμη μη εκπεμφθέντα stable samples· το τελικό decode και completion δεν
 παραλείπονται ποτέ.
+
+Το δεύτερο πραγματικό incremental CoreAudio smoke πέρασε μετά τον διαχωρισμό
+των τριών βαθμίδων: warm load 3.217 s, queue-to-first-PCM 11.441 s και συνεχές
+playback 4.037 s, με callbacks `started` και `completed`, χωρίς PortAudio
+underflow ή backend error. Το queue-to-audio βελτιώθηκε κατά περίπου 328 ms σε
+σχέση με το προηγούμενο full-sentence runtime smoke. Το automated pipeline gate
+πέρασε, αλλά το incremental quality gate παραμένει ανοικτό μέχρι ανθρώπινη
+ακρόαση για boundary clicks, ρομποτικό timbre ή pacing regression και μέχρι
+πραγματικό acoustic barge-in.
