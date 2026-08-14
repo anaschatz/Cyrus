@@ -24,6 +24,7 @@ from jarvis_voice.macos.greektts15_training import (
     build_utterance_focus_curriculum_order,
     build_operation_morphology_curriculum_order,
     build_word_focus_bundle,
+    build_singular_operation_crop,
     build_word_focus_curriculum_order,
     build_single_word_focus_curriculum_order,
     build_importance_focus_curriculum_order,
@@ -57,6 +58,39 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_singular_operation_crop_is_review_only_and_content_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            dataset = root / "dataset"
+            audio = dataset / "audio"
+            audio.mkdir(parents=True)
+            source = audio / "Greek-F1-B2-36-12.wav"
+            with wave.open(str(source), "wb") as stream:
+                stream.setnchannels(1)
+                stream.setsampwidth(2)
+                stream.setframerate(44_100)
+                stream.writeframes(b"\x01\x00" * round(7.5 * 44_100))
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            plan = root / "plan.json"
+            plan.write_text(json.dumps({
+                "schema": "jarvis.voice.greektts15-f1-plan/1",
+                "samples": [{
+                    "filename": source.name,
+                    "split": "train",
+                    "text": "λειτουργεί",
+                    "audio_sha256": digest,
+                }],
+            }))
+            output = root / "crop"
+            report = build_singular_operation_crop(plan.resolve(), dataset.resolve(), output.resolve())
+            manifest = json.loads((output / "singular-operation-crop-manifest.json").read_text())
+        self.assertTrue(report["ready"])
+        self.assertTrue(manifest["review_only"])
+        self.assertFalse(manifest["training_allowed"])
+        self.assertTrue(manifest["human_approval_required"])
+        self.assertEqual(manifest["sample"]["source_audio_sha256"], digest)
+        self.assertAlmostEqual(manifest["sample"]["duration_seconds"], 0.92, places=2)
+
     def test_f1_phrase_candidates_are_review_only_and_content_bound(self) -> None:
         names = (
             "word-focus-simantikes-a.wav",

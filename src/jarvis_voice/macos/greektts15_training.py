@@ -36,6 +36,7 @@ DATASET_SCHEMA = "jarvis.voice.stoma-f1-training-bundle/1"
 PLAN_SCHEMA = "jarvis.voice.greektts15-f1-plan/1"
 CACHE_SCHEMA = "jarvis.voice.greektts15-snac-cache/1"
 WORD_FOCUS_SCHEMA = "jarvis.voice.greektts15-word-focus/1"
+SINGULAR_OPERATION_CROP_SCHEMA = "jarvis.voice.greektts15-singular-operation-crop/1"
 EXPECTED_ROWS = 1_301
 EXPECTED_SAMPLE_RATE = 44_100
 EXPECTED_CHANNELS = 1
@@ -106,6 +107,7 @@ WORD_FOCUS_CROPS = (
     ("simantikes-b", "Greek-F1-C1-25-07.wav", "σημαντικές", 1.98, 2.62, 0.940),
     ("ergasies", "Greek-F1-C1-02-03.wav", "εργασίες", 0.34, 0.92, 0.845),
 )
+SINGULAR_OPERATION_CROP = ("Greek-F1-B2-36-12.wav", "λειτουργεί", 4.10, 4.82, 0.834)
 WORD_FOCUS_PADDING_SECONDS = 0.10
 PHRASE_EDGE_PADDING_SECONDS = 0.03
 PHRASE_GAP_SECONDS = 0.05
@@ -220,6 +222,94 @@ class TorchSnacEncoder:
         if len(values) != 3:
             raise BackendError("tts.greektts15.snac_shape_invalid", "SNAC returned the wrong layer count", subsystem="tts")
         return interleave_snac_codes(values[0], values[1], values[2])
+
+
+def build_singular_operation_crop(
+    plan_path: str | Path,
+    dataset_root: str | Path,
+    output_root: str | Path,
+) -> dict[str, object]:
+    """Create a review-only real-F1 crop for the exact singular form ``λειτουργεί``."""
+
+    plan_file = Path(plan_path).expanduser()
+    dataset = Path(dataset_root).expanduser()
+    output = Path(output_root).expanduser()
+    if (
+        not plan_file.is_absolute()
+        or not dataset.is_absolute()
+        or not output.is_absolute()
+        or output.exists()
+        or output.is_symlink()
+    ):
+        raise BackendError("tts.greektts15.singular_crop_path_invalid", "Singular crop paths are invalid", subsystem="tts")
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    source_name, text, word_start, word_end, confidence = SINGULAR_OPERATION_CROP
+    matches = [
+        sample
+        for sample in samples or []
+        if isinstance(sample, dict) and sample.get("filename") == source_name and sample.get("split") == "train"
+    ]
+    source = dataset / "audio" / source_name
+    if (
+        not isinstance(samples, list)
+        or plan.get("schema") != PLAN_SCHEMA
+        or len(matches) != 1
+        or source.is_symlink()
+        or not source.is_file()
+        or source.parent != dataset / "audio"
+        or _sha256(source) != matches[0].get("audio_sha256")
+    ):
+        raise BackendError("tts.greektts15.singular_crop_source_invalid", "Singular crop source is invalid", subsystem="tts")
+    crop_start = word_start - WORD_FOCUS_PADDING_SECONDS
+    crop_end = word_end + WORD_FOCUS_PADDING_SECONDS
+    with wave.open(str(source), "rb") as reader:
+        if (reader.getnchannels(), reader.getsampwidth(), reader.getframerate()) != (1, 2, EXPECTED_SAMPLE_RATE):
+            raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 waveform format is invalid", subsystem="tts")
+        start_frame = round(crop_start * EXPECTED_SAMPLE_RATE)
+        end_frame = round(crop_end * EXPECTED_SAMPLE_RATE)
+        if start_frame < 0 or end_frame > reader.getnframes() or end_frame <= start_frame:
+            raise BackendError("tts.greektts15.singular_crop_bounds_invalid", "Singular crop bounds are invalid", subsystem="tts")
+        reader.setpos(start_frame)
+        frames = reader.readframes(end_frame - start_frame)
+    audio_root = output / "audio"
+    audio_root.mkdir(mode=0o700, parents=True)
+    destination = audio_root / "word-focus-leitourgei.wav"
+    with wave.open(str(destination), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(EXPECTED_SAMPLE_RATE)
+        writer.writeframes(frames)
+    os.chmod(destination, 0o600)
+    report = {
+        "schema": SINGULAR_OPERATION_CROP_SCHEMA,
+        "ready": True,
+        "review_only": True,
+        "training_allowed": False,
+        "human_approval_required": True,
+        "sample": {
+            "filename": destination.name,
+            "text": text,
+            "audio_sha256": _sha256(destination),
+            "duration_seconds": round((end_frame - start_frame) / EXPECTED_SAMPLE_RATE, 6),
+            "source_filename": source_name,
+            "source_audio_sha256": matches[0]["audio_sha256"],
+            "word_start_seconds": word_start,
+            "word_end_seconds": word_end,
+            "crop_start_seconds": round(start_frame / EXPECTED_SAMPLE_RATE, 6),
+            "crop_end_seconds": round(end_frame / EXPECTED_SAMPLE_RATE, 6),
+            "alignment_backend": "faster-whisper-base-word-timestamps",
+            "alignment_confidence": confidence,
+        },
+    }
+    (output / "singular-operation-crop-manifest.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return report
 
 
 def build_word_focus_bundle(
