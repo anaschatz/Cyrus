@@ -24,6 +24,10 @@ from ..native_qualification import (
 )
 
 
+ACOUSTIC_AUDIBLE_MARGIN_DB = 3.0
+ACOUSTIC_MINIMUM_SEPARATION_DB = 6.0
+
+
 def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
     """Hash the stable runtime selection without persisting local paths."""
 
@@ -57,8 +61,9 @@ class AcousticResult:
 class AcousticCalibration:
     silence_threshold_dbfs: float
     ambient_p95_dbfs: float
-    playback_p20_dbfs: float
+    playback_p80_dbfs: float
     separation_db: float
+    audible_margin_db: float
     ambient_samples: int
     playback_samples: int
 
@@ -88,32 +93,39 @@ def derive_acoustic_threshold(
             },
         )
     ambient_p95 = _percentile(ambient_levels_dbfs, 0.95)
-    playback_p20 = _percentile(playback_levels_dbfs, 0.20)
-    separation = playback_p20 - ambient_p95
-    if separation < 12.0:
+    # Natural speech contains short pauses. A low playback percentile measures
+    # those pauses rather than the audible signal, so use a robust high speech
+    # percentile while retaining a separate ambient margin.
+    playback_p80 = _percentile(playback_levels_dbfs, 0.80)
+    separation = playback_p80 - ambient_p95
+    if separation < ACOUSTIC_MINIMUM_SEPARATION_DB:
         raise BackendError(
             "qualification.acoustic_calibration_separation",
             "Playback was not sufficiently audible at the microphone",
             subsystem="qualification",
             safe_context={
                 "ambient_p95_dbfs": round(ambient_p95, 3),
-                "playback_p20_dbfs": round(playback_p20, 3),
+                "playback_p20_dbfs": round(_percentile(playback_levels_dbfs, 0.20), 3),
                 "playback_p50_dbfs": round(_percentile(playback_levels_dbfs, 0.50), 3),
-                "playback_p80_dbfs": round(_percentile(playback_levels_dbfs, 0.80), 3),
+                "playback_p80_dbfs": round(playback_p80, 3),
                 "playback_p95_dbfs": round(_percentile(playback_levels_dbfs, 0.95), 3),
                 "separation_db": round(separation, 3),
-                "required_separation_db": 12.0,
+                "required_separation_db": ACOUSTIC_MINIMUM_SEPARATION_DB,
                 "ambient_samples": len(ambient_levels_dbfs),
                 "playback_samples": len(playback_levels_dbfs),
             },
         )
-    threshold = min(ambient_p95 + 6.0, playback_p20 - 6.0)
+    threshold = min(
+        ambient_p95 + ACOUSTIC_AUDIBLE_MARGIN_DB,
+        playback_p80 - ACOUSTIC_AUDIBLE_MARGIN_DB,
+    )
     threshold = max(-90.0, min(-10.0, threshold))
     return AcousticCalibration(
         silence_threshold_dbfs=round(threshold, 3),
         ambient_p95_dbfs=round(ambient_p95, 3),
-        playback_p20_dbfs=round(playback_p20, 3),
+        playback_p80_dbfs=round(playback_p80, 3),
         separation_db=round(separation, 3),
+        audible_margin_db=ACOUSTIC_AUDIBLE_MARGIN_DB,
         ambient_samples=len(ambient_levels_dbfs),
         playback_samples=len(playback_levels_dbfs),
     )
@@ -236,7 +248,7 @@ class AcousticSilenceMonitor:
         *,
         silence_threshold_dbfs: float,
         silence_hold_ms: int = 50,
-        audible_margin_db: float = 6.0,
+        audible_margin_db: float = ACOUSTIC_AUDIBLE_MARGIN_DB,
         pre_roll_ms: int = 250,
         capacity: int = 256,
     ) -> None:

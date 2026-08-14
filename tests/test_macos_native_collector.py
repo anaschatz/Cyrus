@@ -102,7 +102,16 @@ class AcousticSilenceMonitorTests(unittest.TestCase):
         self.assertEqual(calibration.ambient_samples, 10)
         self.assertEqual(calibration.playback_samples, 10)
         self.assertGreaterEqual(calibration.separation_db, 39.0)
-        self.assertLess(calibration.silence_threshold_dbfs, calibration.playback_p20_dbfs)
+        self.assertLess(calibration.silence_threshold_dbfs, calibration.playback_p80_dbfs)
+
+    def test_calibration_uses_audible_speech_frames_not_natural_pauses(self) -> None:
+        calibration = derive_acoustic_threshold(
+            [-60.0] * 10,
+            [-70.0, -70.0, -70.0, -30.0, -30.0, -30.0, -30.0, -30.0, -30.0, -30.0],
+        )
+        self.assertEqual(calibration.playback_p80_dbfs, -30.0)
+        self.assertEqual(calibration.silence_threshold_dbfs, -57.0)
+        self.assertEqual(calibration.audible_margin_db, 3.0)
 
     def test_calibration_worker_drains_small_queue_during_capture(self) -> None:
         sampler = AcousticCalibrationSampler(capacity=4)
@@ -125,18 +134,18 @@ class AcousticSilenceMonitorTests(unittest.TestCase):
 
     def test_calibration_separation_failure_exposes_only_aggregate_levels(self) -> None:
         with self.assertRaises(BackendError) as raised:
-            derive_acoustic_threshold([-30.0] * 10, [-20.0] * 10)
+            derive_acoustic_threshold([-30.0] * 10, [-26.0] * 10)
         self.assertEqual(raised.exception.code, "qualification.acoustic_calibration_separation")
         self.assertEqual(
             raised.exception.safe_context,
             {
                 "ambient_p95_dbfs": -30.0,
-                "playback_p20_dbfs": -20.0,
-                "playback_p50_dbfs": -20.0,
-                "playback_p80_dbfs": -20.0,
-                "playback_p95_dbfs": -20.0,
-                "separation_db": 10.0,
-                "required_separation_db": 12.0,
+                "playback_p20_dbfs": -26.0,
+                "playback_p50_dbfs": -26.0,
+                "playback_p80_dbfs": -26.0,
+                "playback_p95_dbfs": -26.0,
+                "separation_db": 4.0,
+                "required_separation_db": 6.0,
                 "ambient_samples": 10,
                 "playback_samples": 10,
             },
