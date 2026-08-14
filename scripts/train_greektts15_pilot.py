@@ -45,6 +45,8 @@ def main() -> int:
             "jarvis-operation-morphology",
             "jarvis-operation-morphology-mlp",
             "jarvis-singular-operation-focus-mlp",
+            "jarvis-singular-operation-crop-attention",
+            "jarvis-singular-operation-utterance-attention",
             "jarvis-word-focus",
             "jarvis-operation-focus",
             "jarvis-state-focus",

@@ -464,6 +464,16 @@ durations 3.840, 3.840, 2.304, and 5.632 seconds. This is a listening candidate
 only: the approval manifest and production runtime remain unchanged until a
 human confirms the singular onset and the three retention gates.
 
+Human listening rejected that MLP crop continuation: fixture 01 improved only
+slightly and remained unacceptable, while fixture 04 pronounced `εργασίες`
+approximately as `εικασίες`. The branch is not eligible for composition or
+runtime promotion. The next A/B restarts from SHA-256
+`2938261505586689598fb86ef79ed68a34432dcae37afbda691b86d01e26574a`
+and changes only the 224 attention LoRA groups at `2.5e-7`. Branch A repeats the
+complete original F1 utterance containing `λειτουργεί`; branch B repeats the
+approved crop. Both use the same four complete-utterance retention samples and
+eleven general F1 utterances, so source isolation is the only A/B difference.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash

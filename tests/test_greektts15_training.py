@@ -95,6 +95,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
 
     def test_approved_singular_crop_builds_bounded_retention_curriculum(self) -> None:
         samples = [
+            {"split": "train", "filename": "singular.wav", "text": "Το σύστημα λειτουργεί σωστά.", "corpus": "F1"},
             {"split": "train", "filename": "state.wav", "text": "Η κατάσταση είναι καλή.", "corpus": "F1"},
             {"split": "train", "filename": "plural.wav", "text": "Όλα λειτουργούν σωστά.", "corpus": "F1"},
             {"split": "train", "filename": "important-a.wav", "text": "Σημαντικές αλλαγές.", "corpus": "F1"},
@@ -139,19 +140,31 @@ class GreekTts15TrainingTests(unittest.TestCase):
                 base_plan.resolve(), crop.resolve(), combined.resolve(), cache.resolve()
             )
             order, report = build_singular_operation_focus_curriculum_order(combined.resolve())
+            crop_attention, crop_attention_report = build_singular_operation_focus_curriculum_order(
+                combined.resolve(), profile="jarvis-singular-operation-crop-attention"
+            )
+            utterance_attention, utterance_attention_report = build_singular_operation_focus_curriculum_order(
+                base_plan.resolve(), profile="jarvis-singular-operation-utterance-attention"
+            )
             cache_plan = json.loads(cache.read_text(encoding="utf-8"))
         self.assertTrue(plan["singular_operation_focus"]["human_approved"])
         self.assertTrue(plan["singular_operation_focus"]["training_allowed"])
         self.assertEqual(len(cache_plan["samples"]), 1)
-        self.assertEqual(order[:10], [19] * 10)
-        self.assertEqual(order[10:14], [0, 1, 2, 3])
+        self.assertEqual(order[:10], [20] * 10)
+        self.assertEqual(order[10:14], [1, 2, 3, 4])
         self.assertEqual(len(order), 25)
         self.assertEqual(len(set(order[14:])), 11)
-        self.assertTrue(all(4 <= index < 19 for index in order[14:]))
+        self.assertTrue(all(5 <= index < 20 for index in order[14:]))
         self.assertEqual(report["targeted_steps"], 10)
         self.assertEqual(report["retention_steps"], 4)
         self.assertEqual(report["general_steps"], 11)
         self.assertTrue(report["approved_crop"])
+        self.assertEqual(crop_attention, order)
+        self.assertEqual(crop_attention_report["focus_source"], "approved_crop")
+        self.assertEqual(utterance_attention[:10], [0] * 10)
+        self.assertEqual(utterance_attention[10:14], [1, 2, 3, 4])
+        self.assertEqual(utterance_attention_report["focus_source"], "complete_original_utterance")
+        self.assertFalse(utterance_attention_report["approved_crop"])
 
     def test_f1_phrase_candidates_are_review_only_and_content_bound(self) -> None:
         names = (
@@ -352,6 +365,8 @@ class GreekTts15TrainingTests(unittest.TestCase):
                 "jarvis-operation-morphology",
                 "jarvis-operation-morphology-mlp",
                 "jarvis-singular-operation-focus-mlp",
+                "jarvis-singular-operation-crop-attention",
+                "jarvis-singular-operation-utterance-attention",
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",

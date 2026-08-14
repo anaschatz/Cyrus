@@ -61,6 +61,10 @@ PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}
 TRAINING_TARGET_PROFILES = {"all", "freeze-output-layers", "attention-only", "mlp-only"}
+SINGULAR_OPERATION_ATTENTION_PROFILES = {
+    "jarvis-singular-operation-crop-attention",
+    "jarvis-singular-operation-utterance-attention",
+}
 TRAINING_SAMPLE_PROFILES = {
     "uniform",
     "jarvis-pronunciation",
@@ -71,6 +75,7 @@ TRAINING_SAMPLE_PROFILES = {
     "jarvis-operation-morphology",
     "jarvis-operation-morphology-mlp",
     "jarvis-singular-operation-focus-mlp",
+    *SINGULAR_OPERATION_ATTENTION_PROFILES,
     "jarvis-word-focus",
     "jarvis-operation-focus",
     "jarvis-state-focus",
@@ -1078,41 +1083,57 @@ def build_operation_morphology_curriculum_order(
 def build_singular_operation_focus_curriculum_order(
     plan_path: str | Path,
     *,
+    profile: str = "jarvis-singular-operation-focus-mlp",
     steps: int = PILOT_STEPS,
 ) -> tuple[list[int], dict[str, object]]:
     """Repair singular ``λειτουργεί`` while retaining approved morphology gates."""
 
     import random
 
-    if steps != PILOT_STEPS:
+    allowed_profiles = {"jarvis-singular-operation-focus-mlp", *SINGULAR_OPERATION_ATTENTION_PROFILES}
+    if profile not in allowed_profiles or steps != PILOT_STEPS:
         raise BackendError("tts.greektts15.curriculum_invalid", "Singular-focus step count is invalid", subsystem="tts")
     try:
         plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
     samples = plan.get("samples") if isinstance(plan, dict) else None
+    use_crop = profile != "jarvis-singular-operation-utterance-attention"
     approval = plan.get("singular_operation_focus") if isinstance(plan, dict) else None
     if (
         not isinstance(plan, dict)
         or plan.get("schema") != PLAN_SCHEMA
         or not isinstance(samples, list)
-        or not isinstance(approval, dict)
-        or approval.get("schema") != SINGULAR_OPERATION_CROP_SCHEMA
-        or approval.get("human_approved") is not True
-        or approval.get("training_allowed") is not True
-        or not isinstance(approval.get("audio_sha256"), str)
+        or (
+            use_crop
+            and (
+                not isinstance(approval, dict)
+                or approval.get("schema") != SINGULAR_OPERATION_CROP_SCHEMA
+                or approval.get("human_approved") is not True
+                or approval.get("training_allowed") is not True
+                or not isinstance(approval.get("audio_sha256"), str)
+            )
+        )
     ):
         raise BackendError("tts.greektts15.curriculum_invalid", "Singular-focus approval is invalid", subsystem="tts")
     train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
     words = [set(_normalized_words(sample.get("text", ""))) for sample in train_samples]
-    focus = [
+    full_singular = [
         index
         for index, sample in enumerate(train_samples)
-        if sample.get("corpus") == "STOMA-F1-singular-operation-focus"
-        and sample.get("filename") == "word-focus-leitourgei.wav"
-        and sample.get("text") == "λειτουργεί"
-        and sample.get("audio_sha256") == approval["audio_sha256"]
+        if not str(sample.get("corpus", "")).startswith("STOMA-F1-") and "λειτουργει" in words[index]
     ]
+    if use_crop:
+        focus = [
+            index
+            for index, sample in enumerate(train_samples)
+            if sample.get("corpus") == "STOMA-F1-singular-operation-focus"
+            and sample.get("filename") == "word-focus-leitourgei.wav"
+            and sample.get("text") == "λειτουργεί"
+            and sample.get("audio_sha256") == approval["audio_sha256"]
+        ]
+    else:
+        focus = full_singular
     state = [index for index, sample_words in enumerate(words) if "κατασταση" in sample_words]
     plural = [index for index, sample_words in enumerate(words) if "λειτουργουν" in sample_words]
     importance = [index for index, sample_words in enumerate(words) if "σημαντικεσ" in sample_words]
@@ -1121,7 +1142,7 @@ def build_singular_operation_focus_curriculum_order(
 
     selected = [focus[0]] * SINGULAR_OPERATION_FOCUS_STEPS
     selected.extend((state[0], plural[0], *importance))
-    excluded = set(focus + state + plural + importance)
+    excluded = set(focus + full_singular + state + plural + importance)
     general = [
         index
         for index, sample in enumerate(train_samples)
@@ -1133,13 +1154,15 @@ def build_singular_operation_focus_curriculum_order(
     if len(selected) != steps:
         raise BackendError("tts.greektts15.curriculum_invalid", "Singular-focus curriculum is incomplete", subsystem="tts")
     return selected, {
-        "profile": "jarvis-singular-operation-focus-mlp",
+        "profile": profile,
         "targeted_steps": SINGULAR_OPERATION_FOCUS_STEPS,
         "retention_steps": 4,
         "general_steps": steps - SINGULAR_OPERATION_FOCUS_STEPS - 4,
         "target_counts": {"λειτουργει": SINGULAR_OPERATION_FOCUS_STEPS},
         "retention_words": ["κατασταση", "λειτουργουν", "σημαντικεσ", "σημαντικεσ"],
-        "approved_crop": True,
+        "focus_source": "approved_crop" if use_crop else "complete_original_utterance",
+        "approved_crop": use_crop,
+        "complete_original_focus_utterance": not use_crop,
         "sample_filenames": [train_samples[index].get("filename") for index in selected],
     }
 
@@ -1506,7 +1529,11 @@ def run_training_pilot(
         )
         or target_profile not in TRAINING_TARGET_PROFILES
         or sample_profile not in TRAINING_SAMPLE_PROFILES
-        or (target_profile in {"freeze-output-layers", "attention-only"} and learning_rate != 1e-6)
+        or (
+            target_profile in {"freeze-output-layers", "attention-only"}
+            and learning_rate != 1e-6
+            and sample_profile not in SINGULAR_OPERATION_ATTENTION_PROFILES
+        )
         or (target_profile == "mlp-only" and learning_rate != 2.5e-7)
         or eos_loss_weight not in EOS_LOSS_WEIGHTS
         or (eos_loss_weight != 1 and target_profile != "attention-only")
@@ -1533,6 +1560,10 @@ def run_training_pilot(
             sample_profile == "jarvis-singular-operation-focus-mlp"
             and (target_profile != "mlp-only" or learning_rate != 2.5e-7 or source_adapter_directory is None)
         )
+        or (
+            sample_profile in SINGULAR_OPERATION_ATTENTION_PROFILES
+            and (target_profile != "attention-only" or learning_rate != 2.5e-7 or source_adapter_directory is None)
+        )
         or (sample_profile != "jarvis-general-stage" and general_stage_index != 0)
         or general_stage_index < 0
         or (sample_profile == "jarvis-word-focus" and target_profile != "mlp-only")
@@ -1548,6 +1579,7 @@ def run_training_pilot(
                 "jarvis-operation-morphology",
                 "jarvis-operation-morphology-mlp",
                 "jarvis-singular-operation-focus-mlp",
+                *SINGULAR_OPERATION_ATTENTION_PROFILES,
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",
@@ -1685,8 +1717,12 @@ def run_training_pilot(
                 profile=sample_profile,
                 steps=steps,
             )
-        elif sample_profile == "jarvis-singular-operation-focus-mlp":
-            order, curriculum = build_singular_operation_focus_curriculum_order(plan_path, steps=steps)
+        elif sample_profile in {"jarvis-singular-operation-focus-mlp", *SINGULAR_OPERATION_ATTENTION_PROFILES}:
+            order, curriculum = build_singular_operation_focus_curriculum_order(
+                plan_path,
+                profile=sample_profile,
+                steps=steps,
+            )
         elif sample_profile == "jarvis-word-focus":
             order, curriculum = build_word_focus_curriculum_order(plan_path, steps=steps)
         elif sample_profile in {"jarvis-operation-focus", "jarvis-state-focus"}:
