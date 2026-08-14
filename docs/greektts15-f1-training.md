@@ -430,6 +430,13 @@ limit. The checkpoint is rejected for runtime promotion regardless of any
 operation-root pronunciation gain; the three completed files are diagnostic
 listening material only.
 
+Human diagnostic listening found the singular, plural, and noun operation-root
+samples good, but fixture 02 regressed `κατάσταση` back to approximately
+`κατάταση`. This confirms that the all-LoRA morphology update changed an
+unrelated pronunciation path. The next bounded branch must restart from the
+fixture-approved utterance checkpoint and train the identical complete-sentence
+morphology curriculum on MLP LoRA only, leaving attention LoRA unchanged.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
