@@ -241,7 +241,10 @@ def run_macos_acoustic_barge_in_sample(
                     epoch=epoch,
                     unit_index=1,
                     locale="el-GR",
-                    text="Η φωνή λειτουργεί καθαρά και περιμένει την άμεση διακοπή.",
+                    text=(
+                        "Η φωνή λειτουργεί καθαρά και περιμένει τώρα να πατήσεις "
+                        "τα πλήκτρα για την άμεση διακοπή της αναπαραγωγής."
+                    ),
                 )
             )
             if not started.wait(timeout=60.0):
