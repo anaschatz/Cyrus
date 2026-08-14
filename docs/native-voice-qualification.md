@@ -207,3 +207,11 @@ the MacBook F9 configuration even though the passive Input Monitoring doctor
 reported ready. The likely cause is the top-row media-key mapping. This run is
 blocked evidence, not an acoustic sample; the next source qualification attempt
 uses the already-supported Control+Option chord override.
+
+The focused native harness then removed ASR and orchestrator timing from the
+measurement and waited only for one physical Control+Option press during active
+F1 playback. The first valid built-in-audio sample measured 57.861 ms from the
+physical event-tap receipt to microphone-observed sustained silence; the
+backend `cancel()` call returned in 104.432 ms. Both are below the 200 ms ready
+limit. No PCM was retained. This is one valid acoustic sample, so the strict
+gate remains open until 20 real samples pass with no invalid observation.
