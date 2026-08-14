@@ -4,6 +4,7 @@ import hashlib
 import json
 import tempfile
 import threading
+import time
 import unittest
 from array import array
 from pathlib import Path
@@ -133,6 +134,37 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertEqual(module.stream.writes, [b"\x01\x00" * 20])
         self.assertTrue(module.stream.aborted)
         self.assertTrue(module.stream.closed)
+
+    def test_coreaudio_abort_unblocks_a_blocking_pcm_write(self) -> None:
+        writing = threading.Event()
+        released = threading.Event()
+
+        class Stream:
+            def start(self): pass
+            def write(self, value):
+                del value
+                writing.set()
+                released.wait(1.0)
+                return False
+            def stop(self): pass
+            def abort(self): released.set()
+            def close(self): pass
+
+        class SoundDevice:
+            def CoreAudioSettings(self, **kwargs): return kwargs
+            def RawOutputStream(self, **kwargs):
+                del kwargs
+                return Stream()
+
+        playback = SoundDevicePcmPlayback(SoundDevice())
+        writer = threading.Thread(target=lambda: playback.write(PcmChunk(b"\x01\x00" * 20)))
+        writer.start()
+        self.assertTrue(writing.wait(1.0))
+        started = time.perf_counter()
+        playback.abort()
+        writer.join(1.0)
+        self.assertLess((time.perf_counter() - started) * 1000.0, 200.0)
+        self.assertFalse(writer.is_alive())
 
     def test_approved_manifest_is_bound_to_exact_adapter_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

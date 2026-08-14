@@ -167,3 +167,9 @@ underflow ή backend error. Το queue-to-audio βελτιώθηκε κατά π
 πέρασε, αλλά το incremental quality gate παραμένει ανοικτό μέχρι ανθρώπινη
 ακρόαση για boundary clicks, ρομποτικό timbre ή pacing regression και μέχρι
 πραγματικό acoustic barge-in.
+
+Human listening approved the second incremental smoke as clean and continuous,
+without a robotic boundary artifact. The approval manifest therefore records
+the incremental streaming gate as passed. Production promotion remains false;
+hard interruption, realtime factor and native scheduler qualification remain
+open.

@@ -452,7 +452,11 @@ class SoundDevicePcmPlayback:
         with self._lock:
             if self._closed:
                 return
-            underflowed = self._stream.write(chunk.pcm16)
+            stream = self._stream
+        underflowed = stream.write(chunk.pcm16)
+        with self._lock:
+            if self._closed:
+                return
         if underflowed:
             raise BackendError("tts.playback_underflow", "CoreAudio playback underflowed", subsystem="tts")
 
@@ -601,7 +605,8 @@ class GreekTtsF1Backend:
                     started.set()
                 playback.write(chunk)
         except Exception as exc:
-            errors.append(exc)
+            if not self._is_stale(unit, cancelled):
+                errors.append(exc)
             cancelled.set()
             playback.abort()
 

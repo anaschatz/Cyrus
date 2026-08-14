@@ -22,7 +22,7 @@
     "approval_evidence": "λειτουργεί has an audible initial lambda and σημαντικές εργασίες remains clear"
   },
   "remaining_runtime_gates": {
-    "incremental_audio_streaming": false,
+    "incremental_audio_streaming": true,
     "interrupt_during_generation": false,
     "mean_realtime_factor_within_limit": false,
     "native_scheduler_integration": false
