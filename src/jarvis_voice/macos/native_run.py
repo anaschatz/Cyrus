@@ -18,6 +18,12 @@ from ..errors import BackendError
 from ..native_qualification import evaluate_native_evidence
 from ..qualification import write_report
 from .doctor import macos_doctor_report
+from .greektts15_runtime import (
+    GreekTtsF1Backend,
+    MlxGreekTtsStreamingEngine,
+    SoundDevicePcmPlayback,
+    load_digest_bound_greektts_candidate,
+)
 from .interactive_smoke import MacSmokeLoopbackServer
 from .audio_capture import CoreAudioCapture
 from .native_collector import (
@@ -31,6 +37,36 @@ from .runtime import MacVoiceRuntime
 from .system_tts import MacSystemTtsBackend
 
 
+def create_macos_calibration_tts(
+    config: VoiceConfig,
+    *,
+    on_started: Callable[[SpeechUnit], None],
+    on_completed: Callable[[SpeechUnit], None],
+) -> Any:
+    """Construct the exact selected TTS backend for acoustic calibration."""
+
+    if config.macos.tts_backend == "greektts15_f1":
+        greek = config.macos.greektts15
+        candidate = load_digest_bound_greektts_candidate(
+            greek.approval_manifest_path or "",
+            greek.approval_manifest_sha256 or "",
+            greek.repository_root or "",
+        )
+        engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
+        return GreekTtsF1Backend(
+            engine=engine,
+            playback_factory=SoundDevicePcmPlayback,
+            on_started=on_started,
+            on_completed=on_completed,
+            warm_on_start=greek.warm_on_start,
+        )
+    return MacSystemTtsBackend(
+        voice_mapping=config.macos.system_voices,
+        on_started=on_started,
+        on_completed=on_completed,
+    )
+
+
 def calibrate_macos_acoustic_threshold(
     config: VoiceConfig,
     *,
@@ -38,7 +74,7 @@ def calibrate_macos_acoustic_threshold(
     ambient_seconds: float = 3.0,
     playback_timeout_seconds: float = 20.0,
     capture_factory: Callable[..., Any] = CoreAudioCapture,
-    tts_factory: Callable[..., Any] = MacSystemTtsBackend,
+    tts_factory: Callable[..., Any] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> dict[str, object]:
     """Measure ambient/playback separation through the real microphone path."""
@@ -65,10 +101,18 @@ def calibrate_macos_acoustic_threshold(
         device=config.audio_input_device,
         frame_observer=sampler.publish_audio,
     )
-    tts = tts_factory(
-        voice_mapping=config.macos.system_voices,
-        on_started=playback_started,
-        on_completed=playback_completed,
+    tts = (
+        create_macos_calibration_tts(
+            config,
+            on_started=playback_started,
+            on_completed=playback_completed,
+        )
+        if tts_factory is None
+        else tts_factory(
+            voice_mapping=config.macos.system_voices,
+            on_started=playback_started,
+            on_completed=playback_completed,
+        )
     )
     try:
         capture.start()

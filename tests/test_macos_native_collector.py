@@ -18,7 +18,9 @@ from jarvis_voice.macos.native_collector import (
     derive_acoustic_threshold,
     mac_runtime_profile_fingerprint,
 )
+from jarvis_voice.macos.greektts15_runtime import SoundDevicePcmPlayback
 from jarvis_voice.macos.native_run import (
+    create_macos_calibration_tts,
     current_process_rss_bytes,
     macos_native_collection_preflight,
     run_macos_native_collection,
@@ -237,6 +239,40 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
 
 
 class MacNativeRunTests(unittest.TestCase):
+    def test_calibration_uses_the_digest_bound_selected_f1_backend(self) -> None:
+        config = voice_config_from_mapping({
+            "vad": {"artifact": {"path": "/private/vad.onnx", "size": 1, "sha256": "1" * 64}},
+            "macos": {
+                "tts_backend": "greektts15_f1",
+                "greektts15": {
+                    "model_root": "/private/model",
+                    "approval_manifest_path": "/private/approved.json",
+                    "approval_manifest_sha256": "2" * 64,
+                    "repository_root": "/private/repository",
+                    "warm_on_start": True,
+                },
+            },
+        })
+        candidate = object()
+        engine = object()
+        backend = object()
+        started = lambda _unit: None
+        completed = lambda _unit: None
+        with (
+            mock.patch("jarvis_voice.macos.native_run.load_digest_bound_greektts_candidate", return_value=candidate) as load,
+            mock.patch("jarvis_voice.macos.native_run.MlxGreekTtsStreamingEngine", return_value=engine) as make_engine,
+            mock.patch("jarvis_voice.macos.native_run.GreekTtsF1Backend", return_value=backend) as make_backend,
+        ):
+            selected = create_macos_calibration_tts(config, on_started=started, on_completed=completed)
+        self.assertIs(selected, backend)
+        load.assert_called_once_with("/private/approved.json", "2" * 64, "/private/repository")
+        make_engine.assert_called_once_with(model_root="/private/model", candidate=candidate)
+        self.assertIs(make_backend.call_args.kwargs["engine"], engine)
+        self.assertIs(make_backend.call_args.kwargs["playback_factory"], SoundDevicePcmPlayback)
+        self.assertIs(make_backend.call_args.kwargs["on_started"], started)
+        self.assertIs(make_backend.call_args.kwargs["on_completed"], completed)
+        self.assertTrue(make_backend.call_args.kwargs["warm_on_start"])
+
     def test_preflight_is_passive_and_requires_explicit_calibration(self) -> None:
         config = voice_config_from_mapping(
             {
