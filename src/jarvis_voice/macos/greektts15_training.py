@@ -66,6 +66,7 @@ TRAINING_SAMPLE_PROFILES = {
     "jarvis-word-focus",
     "jarvis-operation-focus",
     "jarvis-state-focus",
+    "jarvis-importance-focus",
 }
 PRONUNCIATION_CURRICULUM_ROOTS = (
     ("system_state", "καταστα"),
@@ -95,6 +96,7 @@ WORD_FOCUS_PADDING_SECONDS = 0.10
 WORD_FOCUS_TARGETED_STEPS = 15
 OPERATION_FOCUS_TARGETED_STEPS = 10
 STATE_FOCUS_TARGETED_STEPS = 15
+IMPORTANCE_FOCUS_TARGETED_STEPS = 10
 ADAPTER_BLEND_FACTORS = {0.25, 0.375, 0.5}
 ASR_CANDIDATE_LABELS = {"baseline", "lr-5e-7", "lr-1e-6"}
 PRONUNCIATION_ASR_CANDIDATE_LABELS = {
@@ -721,6 +723,48 @@ def build_single_word_focus_curriculum_order(
     }
 
 
+def build_importance_focus_curriculum_order(
+    plan_path: str | Path,
+    *,
+    steps: int = PILOT_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Use only the two approved real pronunciations of ``σημαντικές``."""
+
+    import random
+
+    if steps != PILOT_STEPS:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Importance-focus step count is invalid", subsystem="tts")
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    filenames = ("word-focus-simantikes-a.wav", "word-focus-simantikes-b.wav")
+    focus_indices = [index for index, sample in enumerate(train_samples) if sample.get("filename") in filenames]
+    if len(focus_indices) != len(filenames) or any(
+        train_samples[index].get("corpus") != "STOMA-F1-word-focus" for index in focus_indices
+    ):
+        raise BackendError("tts.greektts15.curriculum_invalid", "Importance F1 crops are unavailable", subsystem="tts")
+    selected = [focus_indices[index % len(focus_indices)] for index in range(IMPORTANCE_FOCUS_TARGETED_STEPS)]
+    general = [
+        index for index, sample in enumerate(train_samples) if sample.get("corpus") != "STOMA-F1-word-focus"
+    ]
+    randomizer = random.Random(TRAINING_SEED)
+    randomizer.shuffle(general)
+    selected.extend(general[: steps - len(selected)])
+    return selected, {
+        "profile": "jarvis-importance-focus",
+        "targeted_steps": IMPORTANCE_FOCUS_TARGETED_STEPS,
+        "general_steps": steps - IMPORTANCE_FOCUS_TARGETED_STEPS,
+        "focus_filenames": list(filenames),
+        "unrelated_word_crops_excluded": True,
+        "sample_filenames": [train_samples[index].get("filename") for index in selected],
+    }
+
+
 def run_gradient_memory_probe(
     model_root: str | Path,
     plan_path: str | Path,
@@ -959,9 +1003,11 @@ def run_training_pilot(
         or (sample_profile == "jarvis-word-focus" and target_profile != "mlp-only")
         or (sample_profile == "jarvis-operation-focus" and target_profile != "mlp-only")
         or (sample_profile == "jarvis-state-focus" and target_profile != "attention-only")
+        or (sample_profile == "jarvis-importance-focus" and target_profile != "mlp-only")
         or (
             source_adapter_directory is not None
-            and sample_profile not in {"jarvis-word-focus", "jarvis-operation-focus", "jarvis-state-focus"}
+            and sample_profile
+            not in {"jarvis-word-focus", "jarvis-operation-focus", "jarvis-state-focus", "jarvis-importance-focus"}
         )
     ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
@@ -983,18 +1029,35 @@ def run_training_pilot(
         raise BackendError("tts.greektts15.training_source_invalid", "Training source adapter is invalid", subsystem="tts")
     if source_adapter != baseline_adapter:
         try:
-            source_manifest = json.loads((source_adapter / "training_manifest.json").read_text(encoding="utf-8"))
             source_config = json.loads((source_adapter / "adapter_config.json").read_text(encoding="utf-8"))
             baseline_config = json.loads((baseline_adapter / "adapter_config.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise BackendError("tts.greektts15.training_source_invalid", "Training source evidence is unreadable", subsystem="tts") from exc
-        if not (
-            source_manifest.get("schema") == "jarvis.voice.greektts15-training-pilot/1"
-            and source_manifest.get("ready") is True
-            and source_manifest.get("output_adapter_sha256") == _sha256(source_adapter / "adapters.safetensors")
-            and source_manifest.get("source_adapter_sha256") == _sha256(baseline_adapter / "adapters.safetensors")
-            and source_config == baseline_config
-        ):
+        source_hash = _sha256(source_adapter / "adapters.safetensors")
+        baseline_hash = _sha256(baseline_adapter / "adapters.safetensors")
+        training_manifest_path = source_adapter / "training_manifest.json"
+        composition_manifest_path = source_adapter / "composition_manifest.json"
+        try:
+            if training_manifest_path.is_file():
+                source_manifest = json.loads(training_manifest_path.read_text(encoding="utf-8"))
+                lineage_valid = (
+                    source_manifest.get("schema") == "jarvis.voice.greektts15-training-pilot/1"
+                    and source_manifest.get("ready") is True
+                    and source_manifest.get("output_adapter_sha256") == source_hash
+                    and source_manifest.get("source_adapter_sha256") == baseline_hash
+                )
+            else:
+                source_manifest = json.loads(composition_manifest_path.read_text(encoding="utf-8"))
+                lineage_valid = (
+                    source_manifest.get("schema") == "jarvis.voice.greektts15-disjoint-composition/1"
+                    and source_manifest.get("ready") is True
+                    and source_manifest.get("output_adapter_sha256") == source_hash
+                    and source_manifest.get("immutable_adapter_sha256") == baseline_hash
+                    and source_manifest.get("averaging_used") is False
+                )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BackendError("tts.greektts15.training_source_invalid", "Training source evidence is unreadable", subsystem="tts") from exc
+        if not lineage_valid or source_config != baseline_config:
             raise BackendError("tts.greektts15.training_source_invalid", "Training source lineage is invalid", subsystem="tts")
     output.mkdir(mode=0o700, parents=True)
     try:
@@ -1064,6 +1127,8 @@ def run_training_pilot(
             order, curriculum = build_word_focus_curriculum_order(plan_path, steps=steps)
         elif sample_profile in {"jarvis-operation-focus", "jarvis-state-focus"}:
             order, curriculum = build_single_word_focus_curriculum_order(plan_path, sample_profile, steps=steps)
+        elif sample_profile == "jarvis-importance-focus":
+            order, curriculum = build_importance_focus_curriculum_order(plan_path, steps=steps)
         else:
             order = list(range(len(train)))
             randomizer.shuffle(order)
@@ -1310,6 +1375,88 @@ def blend_adapter_checkpoint(
     (output / "blend_manifest.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+    )
+    return report
+
+
+def compose_disjoint_adapter_branches(
+    model_root: str | Path,
+    operation_directory: str | Path,
+    state_directory: str | Path,
+    output_directory: str | Path,
+) -> dict[str, object]:
+    """Compose approved disjoint MLP and attention updates without averaging."""
+
+    import shutil
+
+    root = Path(model_root).expanduser()
+    operation = Path(operation_directory).expanduser()
+    state = Path(state_directory).expanduser()
+    output = Path(output_directory).expanduser()
+    if any(not path.is_absolute() or not path.is_dir() or path.is_symlink() for path in (root, operation, state)) or (
+        not output.is_absolute() or output.exists() or output.is_symlink()
+    ):
+        raise BackendError("tts.greektts15.compose_path_invalid", "Adapter composition paths are invalid", subsystem="tts")
+    baseline = root / "mlx-adapter"
+    try:
+        operation_manifest = json.loads((operation / "training_manifest.json").read_text(encoding="utf-8"))
+        state_manifest = json.loads((state / "training_manifest.json").read_text(encoding="utf-8"))
+        operation_config = json.loads((operation / "adapter_config.json").read_text(encoding="utf-8"))
+        state_config = json.loads((state / "adapter_config.json").read_text(encoding="utf-8"))
+        baseline_config = json.loads((baseline / "adapter_config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.compose_source_invalid", "Adapter composition evidence is unreadable", subsystem="tts") from exc
+    operation_hash = _sha256(operation / "adapters.safetensors")
+    state_hash = _sha256(state / "adapters.safetensors")
+    parent_hash = operation_manifest.get("source_adapter_sha256")
+    if not (
+        operation_manifest.get("ready") is True
+        and operation_manifest.get("target_profile") == "mlp-only"
+        and operation_manifest.get("sample_profile") == "jarvis-operation-focus"
+        and operation_manifest.get("output_adapter_sha256") == operation_hash
+        and state_manifest.get("ready") is True
+        and state_manifest.get("target_profile") == "attention-only"
+        and state_manifest.get("sample_profile") == "jarvis-state-focus"
+        and state_manifest.get("output_adapter_sha256") == state_hash
+        and state_manifest.get("source_adapter_sha256") == parent_hash
+        and operation_config == state_config == baseline_config
+    ):
+        raise BackendError("tts.greektts15.compose_source_invalid", "Adapter branches are not composable", subsystem="tts")
+    try:
+        from safetensors.torch import load_file, save_file
+    except ImportError as exc:
+        raise BackendError("tts.greektts15.dependencies_missing", "Safetensors is unavailable", subsystem="tts") from exc
+    operation_tensors = load_file(str(operation / "adapters.safetensors"), device="cpu")
+    state_tensors = load_file(str(state / "adapters.safetensors"), device="cpu")
+    if set(operation_tensors) != set(state_tensors) or len(operation_tensors) != EXPECTED_LORA_GROUPS:
+        raise BackendError("tts.greektts15.compose_source_invalid", "Adapter tensor surfaces differ", subsystem="tts")
+    composed = {
+        name: operation_tensors[name] if ".mlp." in name else state_tensors[name]
+        for name in operation_tensors
+    }
+    if sum(".mlp." in name for name in composed) != MLP_ONLY_LORA_GROUPS or sum(
+        ".self_attn." in name for name in composed
+    ) != ATTENTION_ONLY_LORA_GROUPS:
+        raise BackendError("tts.greektts15.compose_surface_invalid", "Adapter composition surface is invalid", subsystem="tts")
+    output.mkdir(mode=0o700, parents=True)
+    save_file(composed, str(output / "adapters.safetensors"), metadata={"format": "mlx"})
+    shutil.copyfile(operation / "adapter_config.json", output / "adapter_config.json")
+    output_hash = _sha256(output / "adapters.safetensors")
+    report = {
+        "schema": "jarvis.voice.greektts15-disjoint-composition/1",
+        "ready": True,
+        "operation_adapter_sha256": operation_hash,
+        "state_adapter_sha256": state_hash,
+        "parent_adapter_sha256": parent_hash,
+        "immutable_adapter_sha256": _sha256(baseline / "adapters.safetensors"),
+        "output_adapter_sha256": output_hash,
+        "mlp_source": "jarvis-operation-focus",
+        "attention_source": "jarvis-state-focus",
+        "averaging_used": False,
+        "production_promotion_allowed": False,
+    }
+    (output / "composition_manifest.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     return report
 

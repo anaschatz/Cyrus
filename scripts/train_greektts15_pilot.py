@@ -43,6 +43,7 @@ def main() -> int:
             "jarvis-word-focus",
             "jarvis-operation-focus",
             "jarvis-state-focus",
+            "jarvis-importance-focus",
         ),
         default="uniform",
     )
