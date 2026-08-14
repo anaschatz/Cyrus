@@ -43,6 +43,7 @@ def main() -> int:
             "jarvis-general-stage",
             "jarvis-utterance-focus",
             "jarvis-operation-morphology",
+            "jarvis-operation-morphology-mlp",
             "jarvis-word-focus",
             "jarvis-operation-focus",
             "jarvis-state-focus",

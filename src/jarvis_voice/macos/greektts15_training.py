@@ -68,6 +68,7 @@ TRAINING_SAMPLE_PROFILES = {
     "jarvis-general-stage",
     "jarvis-utterance-focus",
     "jarvis-operation-morphology",
+    "jarvis-operation-morphology-mlp",
     "jarvis-word-focus",
     "jarvis-operation-focus",
     "jarvis-state-focus",
@@ -849,13 +850,14 @@ def build_utterance_focus_curriculum_order(
 def build_operation_morphology_curriculum_order(
     plan_path: str | Path,
     *,
+    profile: str = "jarvis-operation-morphology",
     steps: int = PILOT_STEPS,
 ) -> tuple[list[int], dict[str, object]]:
     """Cover the operation root across real inflections while retaining F1 quality."""
 
     import random
 
-    if steps != PILOT_STEPS:
+    if profile not in {"jarvis-operation-morphology", "jarvis-operation-morphology-mlp"} or steps != PILOT_STEPS:
         raise BackendError("tts.greektts15.curriculum_invalid", "Operation morphology step count is invalid", subsystem="tts")
     try:
         plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
@@ -899,7 +901,7 @@ def build_operation_morphology_curriculum_order(
     if len(selected) != steps:
         raise BackendError("tts.greektts15.curriculum_invalid", "Operation morphology curriculum is incomplete", subsystem="tts")
     return selected, {
-        "profile": "jarvis-operation-morphology",
+        "profile": profile,
         "targeted_steps": sum(OPERATION_MORPHOLOGY_EXPOSURES.values()),
         "general_steps": steps - sum(OPERATION_MORPHOLOGY_EXPOSURES.values()),
         "target_counts": dict(OPERATION_MORPHOLOGY_EXPOSURES),
@@ -1290,6 +1292,10 @@ def run_training_pilot(
             sample_profile == "jarvis-operation-morphology"
             and (target_profile != "all" or learning_rate != 2.5e-7 or source_adapter_directory is None)
         )
+        or (
+            sample_profile == "jarvis-operation-morphology-mlp"
+            and (target_profile != "mlp-only" or learning_rate != 2.5e-7 or source_adapter_directory is None)
+        )
         or (sample_profile != "jarvis-general-stage" and general_stage_index != 0)
         or general_stage_index < 0
         or (sample_profile == "jarvis-word-focus" and target_profile != "mlp-only")
@@ -1303,6 +1309,7 @@ def run_training_pilot(
                 "jarvis-general-stage",
                 "jarvis-utterance-focus",
                 "jarvis-operation-morphology",
+                "jarvis-operation-morphology-mlp",
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",
@@ -1434,8 +1441,12 @@ def run_training_pilot(
             )
         elif sample_profile == "jarvis-utterance-focus":
             order, curriculum = build_utterance_focus_curriculum_order(plan_path, steps=steps)
-        elif sample_profile == "jarvis-operation-morphology":
-            order, curriculum = build_operation_morphology_curriculum_order(plan_path, steps=steps)
+        elif sample_profile in {"jarvis-operation-morphology", "jarvis-operation-morphology-mlp"}:
+            order, curriculum = build_operation_morphology_curriculum_order(
+                plan_path,
+                profile=sample_profile,
+                steps=steps,
+            )
         elif sample_profile == "jarvis-word-focus":
             order, curriculum = build_word_focus_curriculum_order(plan_path, steps=steps)
         elif sample_profile in {"jarvis-operation-focus", "jarvis-state-focus"}:

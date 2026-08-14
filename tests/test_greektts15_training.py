@@ -254,6 +254,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
                 "jarvis-general-stage",
                 "jarvis-utterance-focus",
                 "jarvis-operation-morphology",
+                "jarvis-operation-morphology-mlp",
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",
@@ -346,6 +347,10 @@ class GreekTts15TrainingTests(unittest.TestCase):
             path = Path(temp) / "plan.json"
             path.write_text(json.dumps({"schema": "jarvis.voice.greektts15-f1-plan/1", "samples": samples}))
             order, report = build_operation_morphology_curriculum_order(path)
+            mlp_order, mlp_report = build_operation_morphology_curriculum_order(
+                path,
+                profile="jarvis-operation-morphology-mlp",
+            )
         self.assertEqual(order.count(0), 8)
         self.assertEqual(order.count(1), 4)
         self.assertEqual(sum(index in order for index in range(4, 10)), 6)
@@ -353,6 +358,8 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertNotIn(20, order)
         self.assertEqual(report["general_steps"], 5)
         self.assertTrue(report["complete_original_utterances_only"])
+        self.assertEqual(mlp_order, order)
+        self.assertEqual(mlp_report["profile"], "jarvis-operation-morphology-mlp")
 
     def test_lexical_curriculum_repeats_exact_real_examples_only(self) -> None:
         samples = []
