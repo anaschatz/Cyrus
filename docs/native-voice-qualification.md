@@ -139,3 +139,13 @@ callbacks `started` και `completed` και χωρίς backend error. Η σύ�
 είναι συνεπώς λειτουργική, αλλά το latency gate παραμένει ανοικτό μέχρι να
 αποκωδικοποιούνται και να παίζονται ασφαλή incremental SNAC chunks πριν
 ολοκληρωθεί ολόκληρη η πρόταση.
+
+Το πρώτο incremental profile χρησιμοποιεί cumulative SNAC decoding με 36
+frames αρχικό buffer, τέσσερα frames look-ahead, τέσσερα frames ανά επόμενο
+commit και boundary ramp 120 samples. Κάθε frame αντιστοιχεί σε 2.048 PCM
+samples στα 24 kHz. Η επιλογή προέκυψε από πραγματική μέτρηση του εγκεκριμένου
+checkpoint: generation RTF 3.587 και prefix drift περίπου 0.0006 ή χαμηλότερο
+με το επιλεγμένο look-ahead. Ξεχωριστός bounded playback worker επιτρέπει στη
+Metal generation να συνεχίζεται ενώ το blocking CoreAudio stream καταναλώνει
+PCM. Το profile παραμένει qualification candidate μέχρι πραγματικό listening,
+μηδενικό PortAudio underflow και επιτυχημένο hard barge-in.

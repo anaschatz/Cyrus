@@ -5,6 +5,7 @@ import json
 import tempfile
 import threading
 import unittest
+from array import array
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
@@ -17,6 +18,7 @@ from jarvis_voice.macos.greektts15_runtime import (
     SoundDevicePcmPlayback,
     load_approved_greektts_candidate,
     load_digest_bound_greektts_candidate,
+    incremental_pcm_slice,
 )
 
 
@@ -67,6 +69,23 @@ class FakePlayback:
 
 
 class GreekTts15RuntimeTests(unittest.TestCase):
+    def test_incremental_pcm_emits_only_new_stable_samples_and_smooths_boundary(self) -> None:
+        pcm = array("h", [100, 200, 300, 400, 500, 600]).tobytes()
+        chunk, emitted, last = incremental_pcm_slice(
+            pcm,
+            emitted_samples=2,
+            stable_samples=6,
+            previous_sample=-100,
+            ramp_samples=2,
+        )
+        values = array("h")
+        values.frombytes(chunk)
+        self.assertEqual(values.tolist(), [100, 400, 500, 600])
+        self.assertEqual(emitted, 6)
+        self.assertEqual(last, 600)
+        with self.assertRaisesRegex(BackendError, "tts.greektts15.incremental_pcm_invalid"):
+            incremental_pcm_slice(pcm, emitted_samples=4, stable_samples=7, previous_sample=None)
+
     def test_warm_load_runs_on_the_persistent_inference_worker(self) -> None:
         engine = FakeWarmEngine()
         caller_thread = threading.get_ident()
@@ -228,6 +247,32 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertTrue(backend.wait_idle())
         backend.close()
         self.assertEqual(order, ["started", "write", "write", "finish", "completed"])
+
+    def test_generation_continues_while_pcm_writer_is_blocked(self) -> None:
+        generated = threading.Event()
+        write_started = threading.Event()
+        release = threading.Event()
+
+        class StreamingEngine(FakeEngine):
+            def stream(self, unit: SpeechUnit, cancelled: threading.Event):
+                del unit, cancelled
+                yield PcmChunk(b"\x01\x00" * 20)
+                yield PcmChunk(b"\x02\x00" * 20)
+                generated.set()
+
+        class SlowPlayback(FakePlayback):
+            def write(self, chunk: PcmChunk) -> None:
+                write_started.set()
+                release.wait(1.0)
+                super().write(chunk)
+
+        backend = GreekTtsF1Backend(engine=StreamingEngine(), playback_factory=SlowPlayback)
+        backend.enqueue(SpeechUnit("r", 1, 1, "el-GR", "Δοκιμή."))
+        self.assertTrue(write_started.wait(1.0))
+        self.assertTrue(generated.wait(1.0))
+        release.set()
+        self.assertTrue(backend.wait_idle())
+        backend.close()
 
     def test_cancel_aborts_playback_and_rejects_every_late_chunk_and_completion(self) -> None:
         engine = FakeEngine()

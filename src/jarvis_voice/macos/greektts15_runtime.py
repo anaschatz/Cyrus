@@ -10,6 +10,7 @@ import queue
 import re
 import threading
 import time
+from array import array
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,12 @@ from .greektts15_pilot import (
 
 
 APPROVED_CANDIDATE_SCHEMA = "jarvis.voice.greektts15-approved-candidate/1"
+SNAC_FRAME_TOKENS = 7
+SNAC_FRAME_SAMPLES = 2_048
+INCREMENTAL_START_FRAMES = 36
+INCREMENTAL_STEP_FRAMES = 4
+INCREMENTAL_LOOKAHEAD_FRAMES = 4
+INCREMENTAL_BOUNDARY_RAMP_SAMPLES = 120
 
 
 def _sha256(path: Path) -> str:
@@ -150,6 +157,32 @@ class PcmChunk:
     channels: int = 1
 
 
+def incremental_pcm_slice(
+    cumulative_pcm16: bytes,
+    *,
+    emitted_samples: int,
+    stable_samples: int,
+    previous_sample: int | None,
+    ramp_samples: int = INCREMENTAL_BOUNDARY_RAMP_SAMPLES,
+) -> tuple[bytes, int, int | None]:
+    """Return only a stable PCM suffix and smooth cumulative-decode boundaries."""
+
+    if len(cumulative_pcm16) % 2 or emitted_samples < 0 or stable_samples < emitted_samples or ramp_samples < 0:
+        raise BackendError("tts.greektts15.incremental_pcm_invalid", "Incremental PCM bounds are invalid", subsystem="tts")
+    samples = array("h")
+    samples.frombytes(cumulative_pcm16)
+    if stable_samples > len(samples):
+        raise BackendError("tts.greektts15.incremental_pcm_invalid", "Stable PCM exceeds decoded audio", subsystem="tts")
+    chunk = array("h", samples[emitted_samples:stable_samples])
+    if chunk and previous_sample is not None and ramp_samples:
+        count = min(ramp_samples, len(chunk))
+        for index in range(count):
+            alpha = (index + 1) / count
+            chunk[index] = round(previous_sample * (1.0 - alpha) + chunk[index] * alpha)
+    last = int(chunk[-1]) if chunk else previous_sample
+    return chunk.tobytes(), stable_samples, last
+
+
 class GreekTtsStreamingEngine(Protocol):
     def warm(self) -> float: ...
     def stream(self, unit: SpeechUnit, cancelled: threading.Event) -> Iterable[PcmChunk]: ...
@@ -258,6 +291,31 @@ class MlxGreekTtsStreamingEngine:
         sampler = make_sampler(temp=self.candidate.temperature, top_p=self.candidate.top_p)
         processors = make_logits_processors(repetition_penalty=self.candidate.repetition_penalty)
         generated: list[int] = []
+        speech_started = False
+        audio_tokens = 0
+        emitted_samples = 0
+        previous_sample: int | None = None
+
+        def decode_increment(stable_frames: int) -> PcmChunk | None:
+            nonlocal emitted_samples, previous_sample
+            code_layers = extract_snac_codes(generated)
+            with torch.inference_mode():
+                codes = [torch.tensor(layer, dtype=torch.long).unsqueeze(0) for layer in code_layers]
+                waveform = snac_model.decode(codes)
+            tensor = waveform.detach().squeeze().to("cpu", dtype=torch.float32)
+            if tensor.ndim != 1 or tensor.numel() == 0 or not bool(torch.isfinite(tensor).all().item()):
+                raise BackendError("tts.greektts15.audio_invalid", "SNAC produced invalid audio", subsystem="tts")
+            pcm = tensor.clamp(-0.95, 0.95).mul(32_767.0).round().to(torch.int16).numpy().tobytes()
+            stable_samples = min(stable_frames * SNAC_FRAME_SAMPLES, int(tensor.numel()))
+            chunk, emitted_samples, previous_sample = incremental_pcm_slice(
+                pcm,
+                emitted_samples=emitted_samples,
+                stable_samples=stable_samples,
+                previous_sample=previous_sample,
+            )
+            del codes, waveform, tensor
+            return PcmChunk(chunk, SAMPLE_RATE, 1) if chunk else None
+
         for token, _ in generate_step(
             mx.array(prompt_ids),
             model,
@@ -269,30 +327,34 @@ class MlxGreekTtsStreamingEngine:
                 return
             token_id = int(token if isinstance(token, int) else token.item())
             generated.append(token_id)
+            if token_id == START_OF_SPEECH:
+                speech_started = True
+                continue
             if token_id == END_OF_SPEECH:
                 break
+            if speech_started:
+                audio_tokens += 1
+                if audio_tokens % SNAC_FRAME_TOKENS == 0:
+                    frames = audio_tokens // SNAC_FRAME_TOKENS
+                    if (
+                        frames >= INCREMENTAL_START_FRAMES
+                        and (frames - INCREMENTAL_START_FRAMES) % INCREMENTAL_STEP_FRAMES == 0
+                    ):
+                        stable_frames = frames - INCREMENTAL_LOOKAHEAD_FRAMES
+                        chunk = decode_increment(stable_frames)
+                        if chunk is not None:
+                            yield chunk
         mx.synchronize()
         if cancelled.is_set() or self._cancel_requested.is_set():
             return
         if not generated or START_OF_SPEECH not in generated or generated[-1] != END_OF_SPEECH:
             raise BackendError("tts.greektts15.end_of_speech_missing", "GreekTTS reached its sentence token limit", subsystem="tts")
-        code_layers = extract_snac_codes(generated)
-        with torch.inference_mode():
-            codes = [torch.tensor(layer, dtype=torch.long).unsqueeze(0) for layer in code_layers]
-            waveform = snac_model.decode(codes)
-        if cancelled.is_set() or self._cancel_requested.is_set():
-            return
-        tensor = waveform.detach().squeeze().to("cpu", dtype=torch.float32)
-        if tensor.ndim != 1 or tensor.numel() == 0 or not bool(torch.isfinite(tensor).all().item()):
-            raise BackendError("tts.greektts15.audio_invalid", "SNAC produced invalid audio", subsystem="tts")
-        peak = float(tensor.abs().max().item())
-        gain = min(1.0, 0.95 / peak) if peak > 0.0 else 1.0
-        pcm = (tensor * gain).clamp(-1.0, 1.0).mul(32_767.0).round().to(torch.int16).numpy().tobytes()
-        del codes, waveform, tensor
+        final_frames = audio_tokens // SNAC_FRAME_TOKENS
+        final_chunk = decode_increment(final_frames)
         gc.collect()
         mx.clear_cache()
-        if not cancelled.is_set() and not self._cancel_requested.is_set():
-            yield PcmChunk(pcm, SAMPLE_RATE, 1)
+        if final_chunk is not None and not cancelled.is_set() and not self._cancel_requested.is_set():
+            yield final_chunk
 
     def cancel(self) -> None:
         self._cancel_requested.set()
@@ -459,6 +521,47 @@ class GreekTtsF1Backend:
         with self._lock:
             return self._stop.is_set() or cancelled.is_set() or unit.epoch <= self._cancelled_through_epoch
 
+    def _play_chunks(
+        self,
+        unit: SpeechUnit,
+        cancelled: threading.Event,
+        playback: PcmPlayback,
+        chunks: queue.Queue[PcmChunk | None],
+        started: threading.Event,
+        errors: list[Exception],
+    ) -> None:
+        try:
+            while not self._is_stale(unit, cancelled):
+                chunk = chunks.get()
+                if chunk is None:
+                    playback.finish()
+                    return
+                if not started.is_set():
+                    self.on_started(unit)
+                    started.set()
+                playback.write(chunk)
+        except Exception as exc:
+            errors.append(exc)
+            cancelled.set()
+            playback.abort()
+
+    @staticmethod
+    def _queue_playback_item(
+        chunks: queue.Queue[PcmChunk | None],
+        item: PcmChunk | None,
+        writer: threading.Thread,
+        cancelled: threading.Event,
+        *,
+        allow_cancelled: bool = False,
+    ) -> bool:
+        while writer.is_alive() and (allow_cancelled or not cancelled.is_set()):
+            try:
+                chunks.put(item, timeout=0.02)
+                return True
+            except queue.Full:
+                continue
+        return False
+
     def _worker(self) -> None:
         if self._warm_on_start:
             try:
@@ -481,7 +584,10 @@ class GreekTtsF1Backend:
                 self._active = unit
                 self._active_cancel = cancelled
             playback: PcmPlayback | None = None
-            started = False
+            playback_chunks: queue.Queue[PcmChunk | None] | None = None
+            playback_thread: threading.Thread | None = None
+            playback_started = threading.Event()
+            playback_errors: list[Exception] = []
             try:
                 for chunk in self.engine.stream(unit, cancelled):
                     if self._is_stale(unit, cancelled):
@@ -490,20 +596,39 @@ class GreekTtsF1Backend:
                         raise BackendError("tts.audio_chunk_invalid", "GreekTTS emitted an invalid PCM chunk", subsystem="tts")
                     if playback is None:
                         playback = self.playback_factory()
+                        playback_chunks = queue.Queue(maxsize=8)
+                        playback_thread = threading.Thread(
+                            target=self._play_chunks,
+                            args=(unit, cancelled, playback, playback_chunks, playback_started, playback_errors),
+                            name="jarvis-greektts-playback",
+                            daemon=True,
+                        )
                         with self._lock:
                             self._playback = playback
+                        playback_thread.start()
                     if self._is_stale(unit, cancelled):
                         playback.abort()
                         break
-                    if not started and not self._is_stale(unit, cancelled):
-                        started = True
-                        self.on_started(unit)
-                    playback.write(chunk)
+                    assert playback_chunks is not None and playback_thread is not None
+                    if not self._queue_playback_item(playback_chunks, chunk, playback_thread, cancelled):
+                        break
                 stale = self._is_stale(unit, cancelled)
-                if playback is not None and not stale:
-                    playback.finish()
+                if playback_thread is not None and playback_chunks is not None:
+                    self._queue_playback_item(
+                        playback_chunks,
+                        None,
+                        playback_thread,
+                        cancelled,
+                        allow_cancelled=True,
+                    )
+                    playback_thread.join(timeout=10.0)
+                    if playback_thread.is_alive():
+                        playback.abort()
+                        raise BackendError("tts.playback_timeout", "GreekTTS playback did not drain", subsystem="tts")
+                if playback_errors:
+                    raise playback_errors[0]
                 stale = self._is_stale(unit, cancelled)
-                if started and not stale:
+                if playback_started.is_set() and not stale:
                     self.on_completed(unit)
             except Exception as exc:
                 self._error = BackendError("tts.greektts15.runtime_failed", "GreekTTS runtime failed", subsystem="tts")
