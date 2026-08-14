@@ -173,3 +173,19 @@ without a robotic boundary artifact. The approval manifest therefore records
 the incremental streaming gate as passed. Production promotion remains false;
 hard interruption, realtime factor and native scheduler qualification remain
 open.
+
+### Native F1 hard-cancellation smoke
+
+The first native cancellation run exposed a playback lifecycle defect: the
+CoreAudio stream stopped in 106.7 ms, but a single large blocking PCM write kept
+the playback worker alive until its 10-second timeout and produced
+`tts.greektts15.runtime_failed`. PCM delivery was therefore bounded to 480-sample
+(20 ms) CoreAudio writes before repeating the same test.
+
+The corrected native Metal/CoreAudio run cancelled 505.1 ms after the first PCM
+write. `cancel()` returned in 106.6 ms and the complete backend reached idle in
+112.9 ms. The callback sequence contained only `started`; there was no late
+`completed`, stale playback or runtime error. This passes the software
+hard-cancellation check. It does not yet set the acoustic barge-in gate: the
+ready threshold must still be measured from PTT activation to captured speaker
+silence with a physical microphone and wired/local audio path.
