@@ -107,3 +107,19 @@ python scripts/run_macos_native_collection.py calibrate \
 heartbeat gap προκαλεί ασφαλές abort του ενεργού turn και επανεκκίνηση τόσο του
 CoreAudio stream όσο και του listen-only event tap. Οι πραγματικές επιτυχίες ή
 αποτυχίες αυτών των recoveries γράφονται αυτόματα στο native evidence.
+
+## Εγκεκριμένο GreekTTS runtime profile
+
+Το macOS source runtime μπορεί να επιλέξει `macos.tts_backend =
+"greektts15_f1"`. Η επιλογή απαιτεί απόλυτα paths για model root, approval
+manifest και repository root, καθώς και το ακριβές SHA-256 του approval
+manifest. Ο loader επαληθεύει πρώτα το manifest, έπειτα το εγκεκριμένο adapter
+hash και τέλος το pinned local model pack. Δεν επιτρέπεται network fallback.
+
+Με `warm_on_start = true` το MLX model και ο SNAC decoder φορτώνονται πριν
+αρχίσει το event loop. Τα sentence commits περνούν από τον κοινό epoch-fenced
+TTS queue, επομένως conversation και scheduler χρησιμοποιούν την ίδια έξοδο,
+ενώ νέο physical `PTT_DOWN` ακυρώνει generation, απορρίπτει pending units και
+κάνει άμεσο CoreAudio `abort()`. Η ανθρώπινη έγκριση της φωνής δεν αλλάζει το
+native ready gate: acoustic barge-in, realtime factor, 200 turns και soak
+παραμένουν υποχρεωτικά.

@@ -16,6 +16,7 @@ from jarvis_voice.macos.greektts15_runtime import (
     PcmChunk,
     SoundDevicePcmPlayback,
     load_approved_greektts_candidate,
+    load_digest_bound_greektts_candidate,
 )
 
 
@@ -131,6 +132,34 @@ class GreekTts15RuntimeTests(unittest.TestCase):
             with self.assertRaises(BackendError) as raised:
                 load_approved_greektts_candidate(manifest.resolve(), root.resolve())
         self.assertEqual(raised.exception.code, "tts.greektts15.approval_manifest_invalid")
+
+    def test_runtime_config_binds_the_approval_manifest_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            checkpoint = root / "checkpoint"
+            checkpoint.mkdir()
+            adapter = checkpoint / "adapters.safetensors"
+            adapter.write_bytes(b"approved")
+            (checkpoint / "adapter_config.json").write_text("{}")
+            manifest = root / "approved.json"
+            manifest.write_text(json.dumps({
+                "schema": "jarvis.voice.greektts15-approved-candidate/1",
+                "status": "human_voice_approved",
+                "model": {
+                    "checkpoint_directory": "checkpoint",
+                    "checkpoint_sha256": hashlib.sha256(adapter.read_bytes()).hexdigest(),
+                    "sampling": {"temperature": 0.4, "top_p": 0.95, "repetition_penalty": 1.1},
+                },
+                "human_voice_approved": True,
+                "production_promotion_allowed": False,
+            }))
+            digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+            candidate = load_digest_bound_greektts_candidate(manifest.resolve(), digest, root.resolve())
+            manifest.write_text(manifest.read_text() + "\n")
+            with self.assertRaises(BackendError) as raised:
+                load_digest_bound_greektts_candidate(manifest.resolve(), digest, root.resolve())
+        self.assertEqual(candidate.checkpoint_sha256, hashlib.sha256(b"approved").hexdigest())
+        self.assertEqual(raised.exception.code, "tts.greektts15.approval_manifest_changed")
 
     def test_sentence_units_are_ordered_and_complete_only_after_playback(self) -> None:
         engine = FakeEngine()

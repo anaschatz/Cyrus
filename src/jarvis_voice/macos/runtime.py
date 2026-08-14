@@ -42,6 +42,12 @@ from .native_collector import mac_runtime_profile_fingerprint
 from .ptt import MacEventTapPttSource, mac_ptt_keycode, mac_ptt_vkey
 from .recovery import MacRecoveryRequest, MacRecoverySupervisor
 from .system_tts import MacSystemTtsBackend
+from .greektts15_runtime import (
+    GreekTtsF1Backend,
+    MlxGreekTtsStreamingEngine,
+    SoundDevicePcmPlayback,
+    load_digest_bound_greektts_candidate,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,15 +69,37 @@ class MacVoiceRuntime:
         if not artifact.path or artifact.size is None or not artifact.sha256:
             raise BackendError("vad.artifact_manifest_required", "Silero artifact manifest is required", subsystem="vad")
         mac_ptt_keycode(config.ptt_key)
-        if any(not config.macos.system_voices.get(locale) for locale in ("el-GR", "en-US")):
+        if config.macos.tts_backend == "system_say" and any(
+            not config.macos.system_voices.get(locale) for locale in ("el-GR", "en-US")
+        ):
             raise BackendError("tts.macos_voice_mapping_required", "Explicit Greek and English macOS voices are required", subsystem="tts")
         self.config = config
         self.callbacks: queue.Queue[BackendCallback] = queue.Queue()
-        self.tts = MacSystemTtsBackend(
-            voice_mapping=config.macos.system_voices,
-            on_started=lambda unit: self.callbacks.put_nowait(BackendCallback("started", unit)),
-            on_completed=lambda unit: self.callbacks.put_nowait(BackendCallback("completed", unit)),
-        )
+        started_callback = lambda unit: self.callbacks.put_nowait(BackendCallback("started", unit))
+        completed_callback = lambda unit: self.callbacks.put_nowait(BackendCallback("completed", unit))
+        tts_warm_load_ms: float | None = None
+        if config.macos.tts_backend == "greektts15_f1":
+            greek = config.macos.greektts15
+            candidate = load_digest_bound_greektts_candidate(
+                greek.approval_manifest_path or "",
+                greek.approval_manifest_sha256 or "",
+                greek.repository_root or "",
+            )
+            engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
+            if greek.warm_on_start:
+                tts_warm_load_ms = engine.warm()
+            self.tts = GreekTtsF1Backend(
+                engine=engine,
+                playback_factory=SoundDevicePcmPlayback,
+                on_started=started_callback,
+                on_completed=completed_callback,
+            )
+        else:
+            self.tts = MacSystemTtsBackend(
+                voice_mapping=config.macos.system_voices,
+                on_started=started_callback,
+                on_completed=completed_callback,
+            )
         self.asr = create_macos_asr_backend(config)
         self.delivery_journal = DeliveryDedupJournal(default_delivery_journal_path())
         self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
@@ -135,6 +163,8 @@ class MacVoiceRuntime:
         self._next_response_token = 1
         self.reliable = ReliableSubmissionManager(time.monotonic)
         self.recovery = MacRecoverySupervisor()
+        if tts_warm_load_ms is not None:
+            self._record_timing("tts_warm_ready", load_ms=tts_warm_load_ms)
 
     def _response_token(self, response_id: str | None) -> int:
         if response_id is None:

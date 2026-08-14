@@ -35,8 +35,12 @@ def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
         "asr_model_sha256": config.macos.whisper_cpp.model.sha256,
         "asr_executable_sha256": config.macos.whisper_cpp.executable.sha256,
         "vad_sha256": config.vad.artifact.sha256,
-        "tts_backend": "macos-system-say",
-        "tts_voice_mapping": dict(sorted(config.macos.system_voices.items())),
+        "tts_backend": config.macos.tts_backend,
+        "tts_profile": (
+            {"approval_manifest_sha256": config.macos.greektts15.approval_manifest_sha256}
+            if config.macos.tts_backend == "greektts15_f1"
+            else {"voice_mapping": dict(sorted(config.macos.system_voices.items()))}
+        ),
     }
     encoded = json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

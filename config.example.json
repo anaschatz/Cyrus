@@ -52,6 +52,7 @@
   "sapi_voices": {"el-GR": "", "en-US": ""},
   "macos": {
     "asr_backend": "whisper_cpp",
+    "tts_backend": "system_say",
     "whisper_cpp": {
       "revision": "v1.9.2",
       "executable": {"path": null, "size": null, "sha256": null},
@@ -61,6 +62,13 @@
       "startup_timeout_seconds": 30.0,
       "request_timeout_seconds": 120.0,
       "maximum_response_bytes": 1048576
+    },
+    "greektts15": {
+      "model_root": null,
+      "approval_manifest_path": null,
+      "approval_manifest_sha256": null,
+      "repository_root": null,
+      "warm_on_start": true
     },
     "system_voices": {"el-GR": "", "en-US": ""}
   },

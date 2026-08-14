@@ -17,6 +17,8 @@ from ..manifest import ManifestValidationResult, validate_model_directory
 from ..vad import validate_artifact
 from .ptt import CoreGraphicsEventTapAdapter, mac_ptt_keycode
 from .whisper_cpp import _validate_artifact
+from .greektts15_pilot import validate_greektts_model_root
+from .greektts15_runtime import load_digest_bound_greektts_candidate
 
 
 def _status(status: str, code: str, **details: object) -> dict[str, object]:
@@ -101,6 +103,8 @@ def macos_doctor_report(
     dependency_names = ["sounddevice", "soxr", "onnxruntime", "websockets"]
     if config.macos.asr_backend == "faster_whisper_cpu_smoke":
         dependency_names.extend(("faster-whisper", "ctranslate2", "numpy"))
+    if config.macos.tts_backend == "greektts15_f1":
+        dependency_names.extend(("mlx", "mlx-lm", "torch", "snac"))
     selected_dependencies: dict[str, Mapping[str, object]] = (
         dict(dependencies)
         if dependencies is not None
@@ -178,20 +182,40 @@ def macos_doctor_report(
             available = False
         audio = _status("ready" if available else "blocked", "audio.coreaudio_input_available" if available else "audio.coreaudio_probe_failed")
 
-    configured = config.macos.system_voices
-    required_locales = {"el-GR", "en-US"}
-    try:
-        installed = (voice_probe or _default_voice_probe)()
-    except Exception:
-        installed = set()
-    missing_locales = sorted(locale for locale in required_locales if not configured.get(locale) or configured.get(locale) not in installed)
-    tts = _status(
-        "ready" if not missing_locales else "blocked",
-        "tts.macos_voices_available" if not missing_locales else "tts.macos_configured_voice_missing",
-        configured_locales=sorted(configured),
-        missing_locales=missing_locales,
-        stdin_only=True,
-    )
+    if config.macos.tts_backend == "greektts15_f1":
+        greek = config.macos.greektts15
+        try:
+            candidate = load_digest_bound_greektts_candidate(
+                greek.approval_manifest_path or "",
+                greek.approval_manifest_sha256 or "",
+                greek.repository_root or "",
+            )
+            model_ready = validate_greektts_model_root(greek.model_root or "").ready
+            candidate_ready = candidate.checkpoint_sha256 != "" and model_ready
+        except Exception:
+            candidate_ready = False
+        tts = _status(
+            "ready" if candidate_ready else "blocked",
+            "tts.greektts15_approved_profile_ready" if candidate_ready else "tts.greektts15_approved_profile_invalid",
+            backend="greektts15_f1",
+            warm_on_start=greek.warm_on_start,
+            local_only=True,
+        )
+    else:
+        configured = config.macos.system_voices
+        required_locales = {"el-GR", "en-US"}
+        try:
+            installed = (voice_probe or _default_voice_probe)()
+        except Exception:
+            installed = set()
+        missing_locales = sorted(locale for locale in required_locales if not configured.get(locale) or configured.get(locale) not in installed)
+        tts = _status(
+            "ready" if not missing_locales else "blocked",
+            "tts.macos_voices_available" if not missing_locales else "tts.macos_configured_voice_missing",
+            configured_locales=sorted(configured),
+            missing_locales=missing_locales,
+            stdin_only=True,
+        )
 
     vad_artifact = config.vad.artifact
     vad_ok, vad_code = validate_artifact(vad_artifact.path, vad_artifact.size, vad_artifact.sha256)

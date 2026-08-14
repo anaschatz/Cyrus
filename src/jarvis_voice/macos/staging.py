@@ -211,17 +211,21 @@ def macos_staging_report(
         "staging.input_monitoring_ready" if permitted else "staging.input_monitoring_required",
         permission_prompted=False,
     )
-    configured = config.macos.system_voices
-    try:
-        installed = (voice_probe or _default_voice_probe)()
-    except Exception:
-        installed = set()
-    missing = sorted(locale for locale in ("el-GR", "en-US") if not configured.get(locale) or configured.get(locale) not in installed)
-    voices = _status(
-        "ready" if not missing else "blocked",
-        "staging.system_voices_ready" if not missing else "staging.system_voices_required",
-        missing_locales=missing,
-    )
+    if config.macos.tts_backend == "greektts15_f1":
+        missing: list[str] = []
+        voices = _status("ready", "staging.greektts15_profile_selected", missing_locales=missing)
+    else:
+        configured = config.macos.system_voices
+        try:
+            installed = (voice_probe or _default_voice_probe)()
+        except Exception:
+            installed = set()
+        missing = sorted(locale for locale in ("el-GR", "en-US") if not configured.get(locale) or configured.get(locale) not in installed)
+        voices = _status(
+            "ready" if not missing else "blocked",
+            "staging.system_voices_ready" if not missing else "staging.system_voices_required",
+            missing_locales=missing,
+        )
     checks = {"python": python, "wheelhouse": wheelhouse_check, "model": model, "vad": vad, "ptt": ptt, "voices": voices}
     ready = all(item["status"] == "ready" for item in checks.values())
     if python["status"] != "ready":

@@ -218,6 +218,23 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
         self.assertNotIn("Private", fingerprint)
         self.assertNotIn("/private", fingerprint)
 
+    def test_greektts_profile_fingerprint_uses_approval_digest_not_paths(self) -> None:
+        config = voice_config_from_mapping({
+            "vad": {"artifact": {"path": "/private/vad.onnx", "size": 1, "sha256": "1" * 64}},
+            "macos": {
+                "tts_backend": "greektts15_f1",
+                "greektts15": {
+                    "model_root": "/private/model",
+                    "approval_manifest_path": "/private/approved.json",
+                    "approval_manifest_sha256": "2" * 64,
+                    "repository_root": "/private/repository",
+                },
+            },
+        })
+        fingerprint = mac_runtime_profile_fingerprint(config)
+        self.assertEqual(len(fingerprint), 64)
+        self.assertNotIn("/private", fingerprint)
+
 
 class MacNativeRunTests(unittest.TestCase):
     def test_preflight_is_passive_and_requires_explicit_calibration(self) -> None:

@@ -86,9 +86,20 @@ class WhisperCppConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class GreekTts15Config:
+    model_root: str | None = None
+    approval_manifest_path: str | None = None
+    approval_manifest_sha256: str | None = None
+    repository_root: str | None = None
+    warm_on_start: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class MacosConfig:
     asr_backend: str = "whisper_cpp"
+    tts_backend: str = "system_say"
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
+    greektts15: GreekTts15Config = field(default_factory=GreekTts15Config)
     system_voices: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -152,6 +163,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     artifact_data = vad_data.get("artifact", {}) if isinstance(vad_data, Mapping) else None
     macos_data = data.get("macos", {})
     whisper_cpp_data = macos_data.get("whisper_cpp", {}) if isinstance(macos_data, Mapping) else None
+    greektts15_data = macos_data.get("greektts15", {}) if isinstance(macos_data, Mapping) else None
     executable_data = whisper_cpp_data.get("executable", {}) if isinstance(whisper_cpp_data, Mapping) else None
     mac_model_data = whisper_cpp_data.get("model", {}) if isinstance(whisper_cpp_data, Mapping) else None
     if not isinstance(vad_data, Mapping) or not isinstance(artifact_data, Mapping):
@@ -168,7 +180,9 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         "callback_qualification_path", "callback_qualification_sha256",
     }:
         raise BackendError("config.invalid_field", "Scheduler configuration is invalid", subsystem="config", safe_context={"field": "scheduler"})
-    if not isinstance(macos_data, Mapping) or set(macos_data) - {"asr_backend", "whisper_cpp", "system_voices"}:
+    if not isinstance(macos_data, Mapping) or set(macos_data) - {
+        "asr_backend", "tts_backend", "whisper_cpp", "greektts15", "system_voices"
+    }:
         raise BackendError("config.invalid_field", "macOS configuration has unknown fields", subsystem="config", safe_context={"field": "macos"})
     if not isinstance(whisper_cpp_data, Mapping) or set(whisper_cpp_data) - {
         "revision", "executable", "model", "language", "threads", "startup_timeout_seconds", "request_timeout_seconds", "maximum_response_bytes"
@@ -178,6 +192,10 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "whisper.cpp executable manifest is invalid", subsystem="config", safe_context={"field": "macos.whisper_cpp.executable"})
     if not isinstance(mac_model_data, Mapping) or set(mac_model_data) - {"path", "size", "sha256"}:
         raise BackendError("config.invalid_field", "whisper.cpp model manifest is invalid", subsystem="config", safe_context={"field": "macos.whisper_cpp.model"})
+    if not isinstance(greektts15_data, Mapping) or set(greektts15_data) - {
+        "model_root", "approval_manifest_path", "approval_manifest_sha256", "repository_root", "warm_on_start"
+    }:
+        raise BackendError("config.invalid_field", "GreekTTS runtime configuration is invalid", subsystem="config", safe_context={"field": "macos.greektts15"})
     url = str(data.get("orchestrator_url", "ws://127.0.0.1:8765"))
     if not is_loopback_websocket_url(url):
         raise BackendError("config.non_loopback_orchestrator", "Only loopback WebSocket URLs are permitted", subsystem="config", safe_context={"field": "orchestrator_url"})
@@ -246,6 +264,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         sapi_voices=dict(voices),
         macos=MacosConfig(
             asr_backend=str(macos_data.get("asr_backend", "whisper_cpp")).lower(),
+            tts_backend=str(macos_data.get("tts_backend", "system_say")).lower(),
             whisper_cpp=WhisperCppConfig(
                 revision=str(whisper_cpp_data.get("revision", "v1.9.2")),
                 executable=ArtifactConfig(executable_data.get("path"), executable_data.get("size"), executable_data.get("sha256")),
@@ -255,6 +274,13 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 startup_timeout_seconds=float(whisper_cpp_data.get("startup_timeout_seconds", 30.0)),
                 request_timeout_seconds=float(whisper_cpp_data.get("request_timeout_seconds", 120.0)),
                 maximum_response_bytes=_positive_int(whisper_cpp_data.get("maximum_response_bytes", 1_048_576), "macos.whisper_cpp.maximum_response_bytes"),
+            ),
+            greektts15=GreekTts15Config(
+                model_root=greektts15_data.get("model_root"),
+                approval_manifest_path=greektts15_data.get("approval_manifest_path"),
+                approval_manifest_sha256=greektts15_data.get("approval_manifest_sha256"),
+                repository_root=greektts15_data.get("repository_root"),
+                warm_on_start=_boolean(greektts15_data.get("warm_on_start", True), "macos.greektts15.warm_on_start"),
             ),
             system_voices=dict(macos_voices),
         ),
@@ -285,6 +311,17 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "ASR execution profile must be cpu or cuda", subsystem="config", safe_context={"field": "asr.execution_profile"})
     if config.asr.cuda.residency not in {"turn_scoped", "warm"}:
         raise BackendError("config.invalid_field", "CUDA residency must be turn_scoped or warm", subsystem="config", safe_context={"field": "asr.cuda.residency"})
+    if config.macos.tts_backend not in {"system_say", "greektts15_f1"}:
+        raise BackendError("config.invalid_field", "macOS TTS backend is invalid", subsystem="config", safe_context={"field": "macos.tts_backend"})
+    if config.macos.tts_backend == "greektts15_f1":
+        greek = config.macos.greektts15
+        paths = (greek.model_root, greek.approval_manifest_path, greek.repository_root)
+        if (
+            any(not isinstance(value, str) or not Path(value).is_absolute() for value in paths)
+            or not isinstance(greek.approval_manifest_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", greek.approval_manifest_sha256) is None
+        ):
+            raise BackendError("config.greektts15_profile_required", "GreekTTS requires absolute, digest-bound runtime paths", subsystem="config")
     if config.asr.execution_profile == "cuda" and (
         not isinstance(config.asr.cuda.device_index, int)
         or isinstance(config.asr.cuda.device_index, bool)

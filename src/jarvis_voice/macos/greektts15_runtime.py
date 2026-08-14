@@ -124,6 +124,25 @@ def load_approved_greektts_candidate(
     )
 
 
+def load_digest_bound_greektts_candidate(
+    manifest_path: str | Path,
+    expected_manifest_sha256: str,
+    repository_root: str | Path,
+) -> ApprovedGreekTtsCandidate:
+    """Verify the approval document itself before resolving its checkpoint."""
+
+    manifest = Path(manifest_path).expanduser()
+    if (
+        not manifest.is_absolute()
+        or manifest.is_symlink()
+        or not manifest.is_file()
+        or re.fullmatch(r"[0-9a-f]{64}", expected_manifest_sha256) is None
+        or _sha256(manifest) != expected_manifest_sha256
+    ):
+        raise BackendError("tts.greektts15.approval_manifest_changed", "Approved voice manifest changed", subsystem="tts")
+    return load_approved_greektts_candidate(manifest, repository_root)
+
+
 @dataclass(frozen=True, slots=True)
 class PcmChunk:
     pcm16: bytes
@@ -172,11 +191,13 @@ class MlxGreekTtsStreamingEngine:
         self._cancel_requested = threading.Event()
         self._load_lock = threading.Lock()
         self._runtime: tuple[object, ...] | None = None
+        self._warm_load_ms: float | None = None
 
     def _ensure_loaded(self) -> tuple[object, ...]:
         with self._load_lock:
             if self._runtime is not None:
                 return self._runtime
+            started = time.perf_counter()
             try:
                 import mlx.core as mx
                 import torch
@@ -212,7 +233,14 @@ class MlxGreekTtsStreamingEngine:
                 make_logits_processors,
                 make_sampler,
             )
+            self._warm_load_ms = (time.perf_counter() - started) * 1000.0
             return self._runtime
+
+    def warm(self) -> float:
+        """Materialize the offline model once and return its initial load time."""
+
+        self._ensure_loaded()
+        return float(self._warm_load_ms or 0.0)
 
     def stream(self, unit: SpeechUnit, cancelled: threading.Event) -> Iterable[PcmChunk]:
         self._cancel_requested.clear()

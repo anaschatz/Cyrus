@@ -447,6 +447,35 @@ class MacTtsTests(unittest.TestCase):
 
 
 class MacDoctorConfigTests(unittest.TestCase):
+    def test_greektts_runtime_profile_requires_absolute_digest_bound_paths(self) -> None:
+        digest = "a" * 64
+        config = voice_config_from_mapping({
+            "macos": {
+                "tts_backend": "greektts15_f1",
+                "greektts15": {
+                    "model_root": "/private/models/greektts15",
+                    "approval_manifest_path": "/private/approved.json",
+                    "approval_manifest_sha256": digest,
+                    "repository_root": "/private/repository",
+                    "warm_on_start": True,
+                },
+            },
+        })
+        self.assertEqual(config.macos.tts_backend, "greektts15_f1")
+        self.assertEqual(config.macos.greektts15.approval_manifest_sha256, digest)
+        with self.assertRaisesRegex(BackendError, "config.greektts15_profile_required"):
+            voice_config_from_mapping({
+                "macos": {
+                    "tts_backend": "greektts15_f1",
+                    "greektts15": {
+                        "model_root": "relative",
+                        "approval_manifest_path": "/private/approved.json",
+                        "approval_manifest_sha256": digest,
+                        "repository_root": "/private/repository",
+                    },
+                },
+            })
+
     def test_strict_config_and_ready_report_are_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
