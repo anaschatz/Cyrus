@@ -151,6 +151,7 @@ class PcmChunk:
 
 
 class GreekTtsStreamingEngine(Protocol):
+    def warm(self) -> float: ...
     def stream(self, unit: SpeechUnit, cancelled: threading.Event) -> Iterable[PcmChunk]: ...
     def cancel(self) -> None: ...
 
@@ -362,8 +363,10 @@ class GreekTtsF1Backend:
         on_completed: Callable[[SpeechUnit], None] | None = None,
         queue_capacity: int = 16,
         maximum_text_bytes: int = 16_384,
+        warm_on_start: bool = False,
+        warm_timeout_seconds: float = 60.0,
     ) -> None:
-        if queue_capacity < 1 or maximum_text_bytes < 1:
+        if queue_capacity < 1 or maximum_text_bytes < 1 or warm_timeout_seconds <= 0:
             raise ValueError("GreekTTS runtime bounds must be positive")
         self.engine = engine
         self.playback_factory = playback_factory
@@ -378,8 +381,19 @@ class GreekTtsF1Backend:
         self._active_cancel: threading.Event | None = None
         self._playback: PcmPlayback | None = None
         self._error: BackendError | None = None
+        self._warm_on_start = warm_on_start
+        self._warm_ready = threading.Event()
+        self._warm_load_ms: float | None = None
         self._thread = threading.Thread(target=self._worker, name="jarvis-greektts-f1", daemon=True)
         self._thread.start()
+        if warm_on_start:
+            if not self._warm_ready.wait(warm_timeout_seconds):
+                self.close()
+                raise BackendError("tts.greektts15.warm_timeout", "GreekTTS warm load timed out", subsystem="tts")
+            if self._error is not None:
+                error = self._error
+                self.close()
+                raise error
 
     def enqueue(self, unit: SpeechUnit) -> None:
         size = len(unit.text.encode("utf-8"))
@@ -424,6 +438,10 @@ class GreekTtsF1Backend:
     def last_error(self) -> BackendError | None:
         return self._error
 
+    @property
+    def warm_load_ms(self) -> float | None:
+        return self._warm_load_ms
+
     def wait_idle(self, timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -442,6 +460,15 @@ class GreekTtsF1Backend:
             return self._stop.is_set() or cancelled.is_set() or unit.epoch <= self._cancelled_through_epoch
 
     def _worker(self) -> None:
+        if self._warm_on_start:
+            try:
+                self._warm_load_ms = self.engine.warm()
+            except Exception as exc:
+                self._error = BackendError("tts.greektts15.warm_failed", "GreekTTS warm load failed", subsystem="tts")
+                self._error.__cause__ = exc
+                self._warm_ready.set()
+                return
+            self._warm_ready.set()
         while not self._stop.is_set():
             try:
                 unit = self._queue.get(timeout=0.02)

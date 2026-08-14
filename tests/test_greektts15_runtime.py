@@ -40,6 +40,16 @@ class FakeEngine:
         self.release.set()
 
 
+class FakeWarmEngine(FakeEngine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.warm_thread: int | None = None
+
+    def warm(self) -> float:
+        self.warm_thread = threading.get_ident()
+        return 12.5
+
+
 class FakePlayback:
     def __init__(self) -> None:
         self.chunks: list[bytes] = []
@@ -57,6 +67,21 @@ class FakePlayback:
 
 
 class GreekTts15RuntimeTests(unittest.TestCase):
+    def test_warm_load_runs_on_the_persistent_inference_worker(self) -> None:
+        engine = FakeWarmEngine()
+        caller_thread = threading.get_ident()
+        backend = GreekTtsF1Backend(
+            engine=engine,
+            playback_factory=FakePlayback,
+            warm_on_start=True,
+        )
+        try:
+            self.assertEqual(backend.warm_load_ms, 12.5)
+            self.assertIsNotNone(engine.warm_thread)
+            self.assertNotEqual(engine.warm_thread, caller_thread)
+        finally:
+            backend.close()
+
     def test_coreaudio_player_uses_low_latency_pcm_and_hard_abort(self) -> None:
         class Stream:
             def __init__(self, **kwargs):

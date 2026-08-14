@@ -117,7 +117,9 @@ manifest. Ο loader επαληθεύει πρώτα το manifest, έπειτα 
 hash και τέλος το pinned local model pack. Δεν επιτρέπεται network fallback.
 
 Με `warm_on_start = true` το MLX model και ο SNAC decoder φορτώνονται πριν
-αρχίσει το event loop. Τα sentence commits περνούν από τον κοινό epoch-fenced
+αρχίσει το event loop. Το warm load εκτελείται μέσα στο ίδιο μόνιμο inference
+worker που παράγει τα audio tokens, επειδή τα Metal streams της MLX είναι
+thread-local· timeout ή load failure σταματά κλειστά την εκκίνηση. Τα sentence commits περνούν από τον κοινό epoch-fenced
 TTS queue, επομένως conversation και scheduler χρησιμοποιούν την ίδια έξοδο,
 ενώ νέο physical `PTT_DOWN` ακυρώνει generation, απορρίπτει pending units και
 κάνει άμεσο CoreAudio `abort()`. Η ανθρώπινη έγκριση της φωνής δεν αλλάζει το

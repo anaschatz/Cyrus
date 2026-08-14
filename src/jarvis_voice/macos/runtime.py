@@ -86,14 +86,14 @@ class MacVoiceRuntime:
                 greek.repository_root or "",
             )
             engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
-            if greek.warm_on_start:
-                tts_warm_load_ms = engine.warm()
             self.tts = GreekTtsF1Backend(
                 engine=engine,
                 playback_factory=SoundDevicePcmPlayback,
                 on_started=started_callback,
                 on_completed=completed_callback,
+                warm_on_start=greek.warm_on_start,
             )
+            tts_warm_load_ms = self.tts.warm_load_ms
         else:
             self.tts = MacSystemTtsBackend(
                 voice_mapping=config.macos.system_voices,
