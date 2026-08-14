@@ -386,6 +386,21 @@ ordinary durations (2.475, 3.925, 2.816, and 3.157 seconds). Human listening
 for continuous phrasing and stable pronunciation remains mandatory; production
 promotion is false.
 
+Human listening accepted the overall continuity and pronunciation of stage 0.
+The remaining defects are narrowly localized: `σημαντικές` is poor across the
+entire word, while the initial `λ` in `λειτουργούν` is not audible. A 25-update
+continuation therefore repeats only the original complete F1 utterances that
+contain those exact word forms (ten exposures per word) and mixes five general
+full utterances. It uses all 392 LoRA groups at `2.5e-7`, never uses a word crop,
+and starts from stage-0 SHA-256
+`0e7da14cb9328298b650cb94d7acff6d635b5bbbec062a16905890df0d81c73a`.
+Validation loss moved from 4.955665 to 4.925621 in 161.265 seconds; the output
+checkpoint SHA-256 is
+`492f821f09cec8c640e02cdd9177ee78dde3f18e87f029cd34a8a158ea036f4b`.
+All four unchanged listening fixtures completed with ordinary durations. The
+candidate remains non-production until human listening confirms the complete
+word `σημαντικές`, the onset of `λειτουργούν`, and no regression elsewhere.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
