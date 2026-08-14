@@ -401,6 +401,15 @@ All four unchanged listening fixtures completed with ordinary durations. The
 candidate remains non-production until human listening confirms the complete
 word `σημαντικές`, the onset of `λειτουργούν`, and no regression elsewhere.
 
+Human listening subsequently approved all four fixtures: the phrases sound
+continuous, the complete word `σημαντικές` is clear, the initial `λ` in
+`λειτουργούν` is audible, and no regression was heard elsewhere. This locks
+checkpoint SHA-256
+`492f821f09cec8c640e02cdd9177ee78dde3f18e87f029cd34a8a158ea036f4b`
+as the approved F1 voice candidate. It is not yet a production backend because
+incremental streaming, interruption during generation, scheduler integration,
+and realtime-factor gates remain open.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
