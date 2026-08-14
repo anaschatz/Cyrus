@@ -350,6 +350,22 @@ checkpoint SHA-256 is
 All state-branch durations remain ordinary, including 3.157 seconds for
 fixture 04. Both branches require human listening and remain non-production.
 
+Human listening approved the isolated operation branch for `λειτουργούν` and
+the isolated state branch for `κατάσταση`. The state branch also preserved a
+clear `εργασίες`, but rendered `σημαντικές` approximately as `σπλίφτικες`.
+Because the approved branches modify disjoint tensor sets, their 168 MLP and
+224 attention tensors are composed exactly, with no averaging. The composed
+adapter SHA-256 is
+`b74a9914ed74f6ff8187996c4303f2356acafa63e40b80785e64f188c9ab4001`.
+
+An importance-only continuation uses the two human-approved real F1 crops of
+`σημαντικές` for ten MLP updates mixed with fifteen general F1 clips. It moves
+validation loss from 5.031099 to 5.017109 and produces checkpoint SHA-256
+`4ca679ca222b4adb5448175c2a0b7ce285776341aba29528d443710f72238a1c`.
+All four unchanged fixtures complete with ordinary durations; fixture 04 is
+2.987 seconds. Final human listening must confirm all three lexical fixes
+together. Production promotion remains false.
+
 Candidate rendering accepts a separate adapter directory only when it contains
 the exact native rank-64 configuration and a regular `adapters.safetensors`
 file. Reports record the checkpoint hash, so baseline and both pilot branches
