@@ -448,6 +448,22 @@ completed: `λειτουργεί`, the joint `κατάσταση`/`λειτου�
 3.840, 3.840, 2.389, and 3.072 seconds. Human listening must now confirm both
 operation-root onset and preservation of `κατάσταση` before any approval.
 
+Human listening preserved fixtures 02–04 but still found no audible initial
+`λ` in singular `λειτουργεί`. The exact 0.92-second F1 source crop was then
+reviewed separately and its onset was approved. A content-bound approval plan
+pins that crop by SHA-256
+`8118e8cee31e02e9b0ebc551aa4ac008caad4c3659d0ce5a6b5fce874eb251c3`.
+The resulting continuation starts from the MLP-isolated morphology checkpoint,
+keeps attention frozen, and uses ten crop exposures, four complete-utterance
+retention samples (`κατάσταση`, `λειτουργούν`, and both `σημαντικές` samples),
+plus eleven general F1 utterances. Its 25 updates at `2.5e-7` moved validation
+loss from 4.909754 to 4.901864 and produced checkpoint SHA-256
+`fe9bf5ef7079c94aca6b37a72f106ec02f557d57117d2f8386e7f95089f64bd2`.
+All four unchanged free-text fixtures emitted end-of-speech normally, with
+durations 3.840, 3.840, 2.304, and 5.632 seconds. This is a listening candidate
+only: the approval manifest and production runtime remain unchanged until a
+human confirms the singular onset and the three retention gates.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
