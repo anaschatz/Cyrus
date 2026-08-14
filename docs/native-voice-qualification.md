@@ -149,3 +149,12 @@ checkpoint: generation RTF 3.587 και prefix drift περίπου 0.0006 ή χ
 Metal generation να συνεχίζεται ενώ το blocking CoreAudio stream καταναλώνει
 PCM. Το profile παραμένει qualification candidate μέχρι πραγματικό listening,
 μηδενικό PortAudio underflow και επιτυχημένο hard barge-in.
+
+Το πρώτο native incremental smoke βρήκε PortAudio underflow πριν από το τελικό
+chunk. Η content-free χρονοσειρά έδειξε κενό 291 ms: το synchronous CPU decode
+σταματούσε προσωρινά τη Metal generation. Το pipeline χωρίστηκε συνεπώς σε
+τρεις bounded, cancellation-aware βαθμίδες — Metal token generation, CPU SNAC
+decoding και CoreAudio playback. Ενδιάμεσο decode μπορεί να παραλειφθεί όταν η
+bounded queue είναι γεμάτη, επειδή το επόμενο cumulative snapshot περιλαμβάνει
+όλα τα ακόμη μη εκπεμφθέντα stable samples· το τελικό decode και completion δεν
+παραλείπονται ποτέ.

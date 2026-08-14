@@ -295,10 +295,13 @@ class MlxGreekTtsStreamingEngine:
         audio_tokens = 0
         emitted_samples = 0
         previous_sample: int | None = None
+        decode_jobs: queue.Queue[tuple[list[int], int] | None] = queue.Queue(maxsize=2)
+        decoded: queue.Queue[PcmChunk | Exception | None] = queue.Queue(maxsize=8)
+        decoder_cancelled = threading.Event()
 
-        def decode_increment(stable_frames: int) -> PcmChunk | None:
+        def decode_increment(snapshot: list[int], stable_frames: int) -> PcmChunk | None:
             nonlocal emitted_samples, previous_sample
-            code_layers = extract_snac_codes(generated)
+            code_layers = extract_snac_codes(snapshot)
             with torch.inference_mode():
                 codes = [torch.tensor(layer, dtype=torch.long).unsqueeze(0) for layer in code_layers]
                 waveform = snac_model.decode(codes)
@@ -316,45 +319,102 @@ class MlxGreekTtsStreamingEngine:
             del codes, waveform, tensor
             return PcmChunk(chunk, SAMPLE_RATE, 1) if chunk else None
 
-        for token, _ in generate_step(
-            mx.array(prompt_ids),
-            model,
-            max_tokens=self.maximum_new_tokens,
-            sampler=sampler,
-            logits_processors=processors,
-        ):
+        def decoder_worker() -> None:
+            try:
+                while not decoder_cancelled.is_set():
+                    try:
+                        job = decode_jobs.get(timeout=0.02)
+                    except queue.Empty:
+                        continue
+                    if job is None:
+                        break
+                    snapshot, stable_frames = job
+                    chunk = decode_increment(snapshot, stable_frames)
+                    if chunk is not None:
+                        decoded.put(chunk)
+            except Exception as exc:
+                decoded.put(exc)
+            finally:
+                decoded.put(None)
+
+        decoder = threading.Thread(target=decoder_worker, name="jarvis-greektts-snac", daemon=True)
+        decoder.start()
+        decoder_finished = False
+        try:
+            for token, _ in generate_step(
+                mx.array(prompt_ids),
+                model,
+                max_tokens=self.maximum_new_tokens,
+                sampler=sampler,
+                logits_processors=processors,
+            ):
+                if cancelled.is_set() or self._cancel_requested.is_set():
+                    return
+                token_id = int(token if isinstance(token, int) else token.item())
+                generated.append(token_id)
+                if token_id == START_OF_SPEECH:
+                    speech_started = True
+                elif token_id == END_OF_SPEECH:
+                    break
+                elif speech_started:
+                    audio_tokens += 1
+                    if audio_tokens % SNAC_FRAME_TOKENS == 0:
+                        frames = audio_tokens // SNAC_FRAME_TOKENS
+                        if (
+                            frames >= INCREMENTAL_START_FRAMES
+                            and (frames - INCREMENTAL_START_FRAMES) % INCREMENTAL_STEP_FRAMES == 0
+                        ):
+                            stable_frames = frames - INCREMENTAL_LOOKAHEAD_FRAMES
+                            try:
+                                decode_jobs.put_nowait((list(generated), stable_frames))
+                            except queue.Full:
+                                pass
+                while True:
+                    try:
+                        result = decoded.get_nowait()
+                    except queue.Empty:
+                        break
+                    if result is None:
+                        decoder_finished = True
+                    elif isinstance(result, Exception):
+                        raise result
+                    else:
+                        yield result
+            mx.synchronize()
             if cancelled.is_set() or self._cancel_requested.is_set():
                 return
-            token_id = int(token if isinstance(token, int) else token.item())
-            generated.append(token_id)
-            if token_id == START_OF_SPEECH:
-                speech_started = True
-                continue
-            if token_id == END_OF_SPEECH:
-                break
-            if speech_started:
-                audio_tokens += 1
-                if audio_tokens % SNAC_FRAME_TOKENS == 0:
-                    frames = audio_tokens // SNAC_FRAME_TOKENS
-                    if (
-                        frames >= INCREMENTAL_START_FRAMES
-                        and (frames - INCREMENTAL_START_FRAMES) % INCREMENTAL_STEP_FRAMES == 0
-                    ):
-                        stable_frames = frames - INCREMENTAL_LOOKAHEAD_FRAMES
-                        chunk = decode_increment(stable_frames)
-                        if chunk is not None:
-                            yield chunk
-        mx.synchronize()
-        if cancelled.is_set() or self._cancel_requested.is_set():
-            return
-        if not generated or START_OF_SPEECH not in generated or generated[-1] != END_OF_SPEECH:
-            raise BackendError("tts.greektts15.end_of_speech_missing", "GreekTTS reached its sentence token limit", subsystem="tts")
-        final_frames = audio_tokens // SNAC_FRAME_TOKENS
-        final_chunk = decode_increment(final_frames)
-        gc.collect()
-        mx.clear_cache()
-        if final_chunk is not None and not cancelled.is_set() and not self._cancel_requested.is_set():
-            yield final_chunk
+            if not generated or START_OF_SPEECH not in generated or generated[-1] != END_OF_SPEECH:
+                raise BackendError("tts.greektts15.end_of_speech_missing", "GreekTTS reached its sentence token limit", subsystem="tts")
+            final_frames = audio_tokens // SNAC_FRAME_TOKENS
+            while not cancelled.is_set() and not self._cancel_requested.is_set():
+                try:
+                    decode_jobs.put((list(generated), final_frames), timeout=0.02)
+                    break
+                except queue.Full:
+                    continue
+            while decoder.is_alive():
+                try:
+                    decode_jobs.put(None, timeout=0.02)
+                    break
+                except queue.Full:
+                    continue
+            while not decoder_finished:
+                result = decoded.get(timeout=1.0)
+                if result is None:
+                    decoder_finished = True
+                elif isinstance(result, Exception):
+                    raise result
+                else:
+                    yield result
+            gc.collect()
+            mx.clear_cache()
+        finally:
+            decoder_cancelled.set()
+            try:
+                decode_jobs.put_nowait(None)
+            except queue.Full:
+                pass
+            decoder.join(timeout=2.0)
 
     def cancel(self) -> None:
         self._cancel_requested.set()
