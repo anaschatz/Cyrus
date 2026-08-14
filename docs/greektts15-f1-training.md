@@ -474,6 +474,17 @@ complete original F1 utterance containing `λειτουργεί`; branch B repea
 approved crop. Both use the same four complete-utterance retention samples and
 eleven general F1 utterances, so source isolation is the only A/B difference.
 
+Both attention branches completed their 25 updates. The complete-utterance
+branch moved validation loss from 4.909754 to 4.894163 and produced SHA-256
+`f05e15b9d290a475cbd22e2f68c0d2893be3c45f047514ae06cbc2eba630c5fc`,
+but fixture 02 failed to emit end-of-speech after fixture 01 completed. It is
+rejected before human listening. The crop branch moved validation loss to
+4.901753 and produced SHA-256
+`3659aacbcebede6ad5dc1d0654730f4f5f48b531da47cee85808ae541f6ec531`.
+All four fixtures completed at 3.840, 4.181, 2.560, and 3.157 seconds. Only the
+crop-attention branch advances to human listening, still without changing the
+approved manifest or production runtime.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
