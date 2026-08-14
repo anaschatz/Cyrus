@@ -14,6 +14,7 @@ from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.greektts15_runtime import (
     GreekTtsF1Backend,
     PcmChunk,
+    SoundDevicePcmPlayback,
     load_approved_greektts_candidate,
 )
 
@@ -55,6 +56,39 @@ class FakePlayback:
 
 
 class GreekTts15RuntimeTests(unittest.TestCase):
+    def test_coreaudio_player_uses_low_latency_pcm_and_hard_abort(self) -> None:
+        class Stream:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.started = False
+                self.aborted = False
+                self.closed = False
+                self.writes: list[bytes] = []
+
+            def start(self): self.started = True
+            def write(self, value): self.writes.append(value); return False
+            def stop(self): pass
+            def abort(self): self.aborted = True
+            def close(self): self.closed = True
+
+        class SoundDevice:
+            def __init__(self): self.stream: Stream | None = None; self.settings = None
+            def CoreAudioSettings(self, **kwargs): self.settings = kwargs; return kwargs
+            def RawOutputStream(self, **kwargs): self.stream = Stream(**kwargs); return self.stream
+
+        module = SoundDevice()
+        playback = SoundDevicePcmPlayback(module)
+        playback.write(PcmChunk(b"\x01\x00" * 20))
+        playback.abort()
+        self.assertIsNotNone(module.stream)
+        assert module.stream is not None
+        self.assertTrue(module.stream.started)
+        self.assertEqual(module.stream.kwargs["latency"], "low")
+        self.assertEqual(module.stream.kwargs["blocksize"], 0)
+        self.assertEqual(module.stream.writes, [b"\x01\x00" * 20])
+        self.assertTrue(module.stream.aborted)
+        self.assertTrue(module.stream.closed)
+
     def test_approved_manifest_is_bound_to_exact_adapter_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

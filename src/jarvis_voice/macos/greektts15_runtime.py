@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
+import os
 import queue
 import re
 import threading
@@ -15,6 +17,18 @@ from typing import Protocol
 
 from ..backends import SpeechUnit
 from ..errors import BackendError
+from .greektts15_pilot import (
+    END_OF_HUMAN,
+    END_OF_SPEECH,
+    END_OF_TEXT,
+    SAMPLE_RATE,
+    SNAC_DIRECTORY,
+    START_OF_HUMAN,
+    START_OF_SPEECH,
+    _native_adapter_config,
+    extract_snac_codes,
+    validate_greektts_model_root,
+)
 
 
 APPROVED_CANDIDATE_SCHEMA = "jarvis.voice.greektts15-approved-candidate/1"
@@ -126,6 +140,186 @@ class PcmPlayback(Protocol):
     def write(self, chunk: PcmChunk) -> None: ...
     def finish(self) -> None: ...
     def abort(self) -> None: ...
+
+
+class MlxGreekTtsStreamingEngine:
+    """Warm, offline MLX/SNAC engine with token-boundary cancellation checks."""
+
+    def __init__(
+        self,
+        *,
+        model_root: str | Path,
+        candidate: ApprovedGreekTtsCandidate,
+        seed: int = 10_001,
+        maximum_new_tokens: int = 1_200,
+    ) -> None:
+        root = Path(model_root).expanduser()
+        if (
+            not root.is_absolute()
+            or root.is_symlink()
+            or not root.is_dir()
+            or not validate_greektts_model_root(root).ready
+            or json.loads((candidate.checkpoint_directory / "adapter_config.json").read_text(encoding="utf-8"))
+            != _native_adapter_config()
+        ):
+            raise BackendError("tts.greektts15.runtime_profile_invalid", "GreekTTS runtime profile is invalid", subsystem="tts")
+        if maximum_new_tokens < 7 or maximum_new_tokens > 1_200:
+            raise BackendError("tts.greektts15.runtime_profile_invalid", "GreekTTS token bound is invalid", subsystem="tts")
+        self.model_root = root
+        self.candidate = candidate
+        self.seed = seed
+        self.maximum_new_tokens = maximum_new_tokens
+        self._cancel_requested = threading.Event()
+        self._load_lock = threading.Lock()
+        self._runtime: tuple[object, ...] | None = None
+
+    def _ensure_loaded(self) -> tuple[object, ...]:
+        with self._load_lock:
+            if self._runtime is not None:
+                return self._runtime
+            try:
+                import mlx.core as mx
+                import torch
+                from mlx_lm import load
+                from mlx_lm.generate import generate_step
+                from mlx_lm.sample_utils import make_logits_processors, make_sampler
+                from snac import SNAC
+            except ImportError as exc:
+                raise BackendError("tts.greektts15.dependencies_missing", "GreekTTS runtime dependencies are missing", subsystem="tts") from exc
+            previous = {name: os.environ.get(name) for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")}
+            os.environ.update({name: "1" for name in previous})
+            try:
+                model, tokenizer = load(
+                    str(self.model_root / "base"),
+                    adapter_path=str(self.candidate.checkpoint_directory),
+                    lazy=False,
+                )
+                mx.synchronize()
+                snac_model = SNAC.from_pretrained(str(self.model_root / SNAC_DIRECTORY)).to("cpu").eval()
+            finally:
+                for name, value in previous.items():
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
+            self._runtime = (
+                mx,
+                torch,
+                model,
+                tokenizer,
+                snac_model,
+                generate_step,
+                make_logits_processors,
+                make_sampler,
+            )
+            return self._runtime
+
+    def stream(self, unit: SpeechUnit, cancelled: threading.Event) -> Iterable[PcmChunk]:
+        self._cancel_requested.clear()
+        if cancelled.is_set():
+            return
+        mx, torch, model, tokenizer, snac_model, generate_step, make_logits_processors, make_sampler = self._ensure_loaded()
+        if cancelled.is_set() or self._cancel_requested.is_set():
+            return
+        mx.random.seed(self.seed)
+        text_ids = list(tokenizer.encode(unit.text, add_special_tokens=True))
+        if not text_ids or text_ids[0] != 128_000:
+            raise BackendError("tts.greektts15.tokenizer_invalid", "Tokenizer did not emit start-of-text", subsystem="tts")
+        prompt_ids = [START_OF_HUMAN, *text_ids, END_OF_TEXT, END_OF_HUMAN]
+        sampler = make_sampler(temp=self.candidate.temperature, top_p=self.candidate.top_p)
+        processors = make_logits_processors(repetition_penalty=self.candidate.repetition_penalty)
+        generated: list[int] = []
+        for token, _ in generate_step(
+            mx.array(prompt_ids),
+            model,
+            max_tokens=self.maximum_new_tokens,
+            sampler=sampler,
+            logits_processors=processors,
+        ):
+            if cancelled.is_set() or self._cancel_requested.is_set():
+                return
+            token_id = int(token if isinstance(token, int) else token.item())
+            generated.append(token_id)
+            if token_id == END_OF_SPEECH:
+                break
+        mx.synchronize()
+        if cancelled.is_set() or self._cancel_requested.is_set():
+            return
+        if not generated or START_OF_SPEECH not in generated or generated[-1] != END_OF_SPEECH:
+            raise BackendError("tts.greektts15.end_of_speech_missing", "GreekTTS reached its sentence token limit", subsystem="tts")
+        code_layers = extract_snac_codes(generated)
+        with torch.inference_mode():
+            codes = [torch.tensor(layer, dtype=torch.long).unsqueeze(0) for layer in code_layers]
+            waveform = snac_model.decode(codes)
+        if cancelled.is_set() or self._cancel_requested.is_set():
+            return
+        tensor = waveform.detach().squeeze().to("cpu", dtype=torch.float32)
+        if tensor.ndim != 1 or tensor.numel() == 0 or not bool(torch.isfinite(tensor).all().item()):
+            raise BackendError("tts.greektts15.audio_invalid", "SNAC produced invalid audio", subsystem="tts")
+        peak = float(tensor.abs().max().item())
+        gain = min(1.0, 0.95 / peak) if peak > 0.0 else 1.0
+        pcm = (tensor * gain).clamp(-1.0, 1.0).mul(32_767.0).round().to(torch.int16).numpy().tobytes()
+        del codes, waveform, tensor
+        gc.collect()
+        mx.clear_cache()
+        if not cancelled.is_set() and not self._cancel_requested.is_set():
+            yield PcmChunk(pcm, SAMPLE_RATE, 1)
+
+    def cancel(self) -> None:
+        self._cancel_requested.set()
+
+
+class SoundDevicePcmPlayback:
+    """One low-latency CoreAudio PCM stream with immediate abort semantics."""
+
+    def __init__(self, sounddevice_module: object | None = None) -> None:
+        if sounddevice_module is None:
+            try:
+                import sounddevice as sounddevice_module
+            except ImportError as exc:
+                raise BackendError("tts.playback_dependency_missing", "sounddevice is unavailable", subsystem="tts") from exc
+        self._lock = threading.Lock()
+        self._closed = False
+        settings = sounddevice_module.CoreAudioSettings(
+            change_device_parameters=False,
+            fail_if_conversion_required=False,
+            conversion_quality="max",
+        )
+        self._stream = sounddevice_module.RawOutputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="int16",
+            blocksize=0,
+            latency="low",
+            extra_settings=settings,
+        )
+        self._stream.start()
+
+    def write(self, chunk: PcmChunk) -> None:
+        if chunk.sample_rate != SAMPLE_RATE or chunk.channels != 1 or not chunk.pcm16:
+            raise BackendError("tts.audio_chunk_invalid", "Playback chunk format is invalid", subsystem="tts")
+        with self._lock:
+            if self._closed:
+                return
+            underflowed = self._stream.write(chunk.pcm16)
+        if underflowed:
+            raise BackendError("tts.playback_underflow", "CoreAudio playback underflowed", subsystem="tts")
+
+    def finish(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._stream.stop()
+            self._stream.close()
+
+    def abort(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._stream.abort()
+            self._stream.close()
 
 
 class GreekTtsF1Backend:
