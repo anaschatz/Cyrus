@@ -23,6 +23,7 @@ from jarvis_voice.macos.greektts15_runtime import (
     load_digest_bound_greektts_candidate,
     incremental_pcm_slice,
 )
+from jarvis_voice.macos.greektts15_pilot import SAMPLE_RATE
 
 
 class FakeEngine:
@@ -164,13 +165,12 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         class Stream:
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
+                self.callback = kwargs["callback"]
                 self.started = False
                 self.aborted = False
                 self.closed = False
-                self.writes: list[bytes] = []
 
             def start(self): self.started = True
-            def write(self, value): self.writes.append(value); return False
             def stop(self): pass
             def abort(self): self.aborted = True
             def close(self): self.closed = True
@@ -183,26 +183,21 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         module = SoundDevice()
         playback = SoundDevicePcmPlayback(module)
         playback.write(PcmChunk(b"\x01\x00" * 20))
-        playback.abort()
         self.assertIsNotNone(module.stream)
         assert module.stream is not None
         self.assertTrue(module.stream.started)
         self.assertEqual(module.stream.kwargs["latency"], "low")
         self.assertEqual(module.stream.kwargs["blocksize"], 0)
-        self.assertEqual(module.stream.writes, [b"\x01\x00" * 20])
+        rendered = bytearray(40)
+        module.stream.callback(rendered, 20, None, None)
+        self.assertEqual(rendered, b"\x01\x00" * 20)
+        playback.abort()
         self.assertTrue(module.stream.aborted)
         self.assertTrue(module.stream.closed)
 
-    def test_coreaudio_abort_waits_only_for_the_current_bounded_pcm_write(self) -> None:
-        writing = threading.Event()
-
+    def test_coreaudio_abort_unblocks_buffer_backpressure(self) -> None:
         class Stream:
             def start(self): pass
-            def write(self, value):
-                del value
-                writing.set()
-                time.sleep(0.02)
-                return False
             def stop(self): pass
             def abort(self): pass
             def close(self): pass
@@ -214,36 +209,44 @@ class GreekTts15RuntimeTests(unittest.TestCase):
                 return Stream()
 
         playback = SoundDevicePcmPlayback(SoundDevice())
-        writer = threading.Thread(target=lambda: playback.write(PcmChunk(b"\x01\x00" * 20)))
+        writer = threading.Thread(target=lambda: playback.write(PcmChunk(b"\x01\x00" * (SAMPLE_RATE * 3))))
         writer.start()
-        self.assertTrue(writing.wait(1.0))
+        time.sleep(0.02)
+        self.assertTrue(writer.is_alive())
         started = time.perf_counter()
         playback.abort()
         writer.join(1.0)
         self.assertLess((time.perf_counter() - started) * 1000.0, 200.0)
         self.assertFalse(writer.is_alive())
 
-    def test_coreaudio_splits_generated_audio_into_twenty_millisecond_writes(self) -> None:
+    def test_coreaudio_callback_renders_generated_audio_in_device_blocks(self) -> None:
         class Stream:
-            def __init__(self): self.writes: list[bytes] = []
+            def __init__(self, callback): self.callback = callback
             def start(self): pass
-            def write(self, value): self.writes.append(value); return False
             def stop(self): pass
             def abort(self): pass
             def close(self): pass
 
         class SoundDevice:
-            def __init__(self): self.stream = Stream()
+            def __init__(self): self.stream = None
             def CoreAudioSettings(self, **kwargs): return kwargs
             def RawOutputStream(self, **kwargs):
-                del kwargs
+                self.stream = Stream(kwargs["callback"])
                 return self.stream
 
         module = SoundDevice()
         playback = SoundDevicePcmPlayback(module)
         playback.write(PcmChunk(b"\x01\x00" * 1_000))
+        assert module.stream is not None
+        first = bytearray(960)
+        second = bytearray(960)
+        third = bytearray(960)
+        module.stream.callback(first, 480, None, None)
+        module.stream.callback(second, 480, None, None)
+        module.stream.callback(third, 480, None, None)
         playback.finish()
-        self.assertEqual([len(value) for value in module.stream.writes], [960, 960, 80])
+        self.assertEqual(first + second + third[:80], b"\x01\x00" * 1_000)
+        self.assertEqual(third[80:], b"\x00" * 880)
 
     def test_approved_manifest_is_bound_to_exact_adapter_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
