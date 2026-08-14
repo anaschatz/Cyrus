@@ -40,6 +40,7 @@ def main() -> int:
             "jarvis-pronunciation",
             "jarvis-lexical",
             "jarvis-exact-core",
+            "jarvis-general-stage",
             "jarvis-word-focus",
             "jarvis-operation-focus",
             "jarvis-state-focus",
@@ -48,6 +49,7 @@ def main() -> int:
         default="uniform",
     )
     parser.add_argument("--source-adapter-directory")
+    parser.add_argument("--general-stage-index", type=int, default=0)
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     try:
@@ -63,6 +65,7 @@ def main() -> int:
             eos_loss_weight=args.eos_loss_weight,
             sample_profile=args.sample_profile,
             source_adapter_directory=args.source_adapter_directory,
+            general_stage_index=args.general_stage_index,
         )
     except BackendError as exc:
         report = {"ready": False, "code": exc.code}

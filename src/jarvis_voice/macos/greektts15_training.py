@@ -55,6 +55,7 @@ EOS_LOSS_WEIGHTS = {1, 16}
 MAX_GRADIENT_PROBE_MLX_BYTES = 6 * 1024**3
 PILOT_STEPS = 25
 EXACT_CORE_STEPS = 100
+GENERAL_STAGE_STEPS = 100
 PILOT_VALIDATION_SAMPLES = 8
 TRAINING_SEED = 10_001
 PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}
@@ -64,6 +65,7 @@ TRAINING_SAMPLE_PROFILES = {
     "jarvis-pronunciation",
     "jarvis-lexical",
     "jarvis-exact-core",
+    "jarvis-general-stage",
     "jarvis-word-focus",
     "jarvis-operation-focus",
     "jarvis-state-focus",
@@ -732,6 +734,52 @@ def build_exact_core_curriculum_order(
     }
 
 
+def build_general_stage_curriculum_order(
+    plan_path: str | Path,
+    *,
+    stage_index: int = 0,
+    steps: int = GENERAL_STAGE_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Select one deterministic, non-overlapping stage of full F1 utterances."""
+
+    import random
+
+    if steps != GENERAL_STAGE_STEPS or stage_index < 0:
+        raise BackendError("tts.greektts15.curriculum_invalid", "General stage configuration is invalid", subsystem="tts")
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    general = [
+        index
+        for index, sample in enumerate(train_samples)
+        if sample.get("corpus") != "STOMA-F1-word-focus"
+        and isinstance(sample.get("text"), str)
+        and sample["text"].strip()
+    ]
+    randomizer = random.Random(TRAINING_SEED)
+    randomizer.shuffle(general)
+    start = stage_index * steps
+    selected = general[start : start + steps]
+    if len(selected) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "General F1 stage is incomplete", subsystem="tts")
+    filenames = [train_samples[index].get("filename") for index in selected]
+    if len(set(selected)) != steps or len(set(filenames)) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "General F1 stage contains duplicates", subsystem="tts")
+    return selected, {
+        "profile": "jarvis-general-stage",
+        "stage_index": stage_index,
+        "general_steps": steps,
+        "unique_full_utterances": True,
+        "word_focus_crops_excluded": True,
+        "sample_filenames": filenames,
+    }
+
+
 def build_word_focus_curriculum_order(
     plan_path: str | Path,
     *,
@@ -1074,6 +1122,7 @@ def run_training_pilot(
     eos_loss_weight: int = 1,
     sample_profile: str = "uniform",
     source_adapter_directory: str | Path | None = None,
+    general_stage_index: int = 0,
 ) -> dict[str, object]:
     """Train one deterministic pilot branch from the immutable Greek adapter."""
 
@@ -1084,7 +1133,13 @@ def run_training_pilot(
 
     if (
         learning_rate not in PILOT_LEARNING_RATES
-        or (steps != PILOT_STEPS and not (steps == EXACT_CORE_STEPS and sample_profile == "jarvis-exact-core"))
+        or (
+            steps != PILOT_STEPS
+            and not (
+                steps == EXACT_CORE_STEPS
+                and sample_profile in {"jarvis-exact-core", "jarvis-general-stage"}
+            )
+        )
         or target_profile not in TRAINING_TARGET_PROFILES
         or sample_profile not in TRAINING_SAMPLE_PROFILES
         or (target_profile in {"freeze-output-layers", "attention-only"} and learning_rate != 1e-6)
@@ -1094,6 +1149,12 @@ def run_training_pilot(
         or (sample_profile == "jarvis-pronunciation" and target_profile != "attention-only")
         or (sample_profile == "jarvis-lexical" and target_profile != "mlp-only")
         or (sample_profile == "jarvis-exact-core" and target_profile != "mlp-only")
+        or (
+            sample_profile == "jarvis-general-stage"
+            and (target_profile != "all" or learning_rate != 2.5e-7 or source_adapter_directory is None)
+        )
+        or (sample_profile != "jarvis-general-stage" and general_stage_index != 0)
+        or general_stage_index < 0
         or (sample_profile == "jarvis-word-focus" and target_profile != "mlp-only")
         or (sample_profile == "jarvis-operation-focus" and target_profile != "mlp-only")
         or (sample_profile == "jarvis-state-focus" and target_profile != "attention-only")
@@ -1101,7 +1162,13 @@ def run_training_pilot(
         or (
             source_adapter_directory is not None
             and sample_profile
-            not in {"jarvis-word-focus", "jarvis-operation-focus", "jarvis-state-focus", "jarvis-importance-focus"}
+            not in {
+                "jarvis-general-stage",
+                "jarvis-word-focus",
+                "jarvis-operation-focus",
+                "jarvis-state-focus",
+                "jarvis-importance-focus",
+            }
         )
     ):
         raise BackendError("tts.greektts15.pilot_config_invalid", "Training pilot configuration is not approved", subsystem="tts")
@@ -1138,7 +1205,10 @@ def run_training_pilot(
                     source_manifest.get("schema") == "jarvis.voice.greektts15-training-pilot/1"
                     and source_manifest.get("ready") is True
                     and source_manifest.get("output_adapter_sha256") == source_hash
-                    and source_manifest.get("source_adapter_sha256") == baseline_hash
+                    and (
+                        source_manifest.get("immutable_adapter_sha256") == baseline_hash
+                        or source_manifest.get("source_adapter_sha256") == baseline_hash
+                    )
                 )
             else:
                 source_manifest = json.loads(composition_manifest_path.read_text(encoding="utf-8"))
@@ -1217,6 +1287,12 @@ def run_training_pilot(
             order, curriculum = build_lexical_curriculum_order(plan_path, steps=steps)
         elif sample_profile == "jarvis-exact-core":
             order, curriculum = build_exact_core_curriculum_order(plan_path, steps=steps)
+        elif sample_profile == "jarvis-general-stage":
+            order, curriculum = build_general_stage_curriculum_order(
+                plan_path,
+                stage_index=general_stage_index,
+                steps=steps,
+            )
         elif sample_profile == "jarvis-word-focus":
             order, curriculum = build_word_focus_curriculum_order(plan_path, steps=steps)
         elif sample_profile in {"jarvis-operation-focus", "jarvis-state-focus"}:
@@ -1324,6 +1400,7 @@ def run_training_pilot(
             "saved_adapter_groups": len(complete_adapter),
             "trainable_parameters": sum(int(value.size) for _, value in trainable),
             "source_adapter_sha256": source_hash,
+            "immutable_adapter_sha256": _sha256(baseline_adapter / "adapters.safetensors"),
             "source_adapter_kind": "immutable_baseline" if source_adapter == baseline_adapter else "training_checkpoint",
             "output_adapter_sha256": output_hash,
             "gradient_gate_peak_mlx_bytes": gate["peak_mlx_bytes"],

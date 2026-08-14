@@ -20,6 +20,7 @@ from jarvis_voice.macos.greektts15_training import (
     build_pronunciation_curriculum_order,
     build_lexical_curriculum_order,
     build_exact_core_curriculum_order,
+    build_general_stage_curriculum_order,
     build_word_focus_bundle,
     build_word_focus_curriculum_order,
     build_single_word_focus_curriculum_order,
@@ -248,6 +249,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
                 "jarvis-pronunciation",
                 "jarvis-lexical",
                 "jarvis-exact-core",
+                "jarvis-general-stage",
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",
@@ -258,6 +260,40 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertIn('sample_profile == "jarvis-pronunciation" and target_profile != "attention-only"', source)
         self.assertIn('sample_profile == "jarvis-lexical" and target_profile != "mlp-only"', source)
         self.assertIn('sample_profile == "jarvis-exact-core" and target_profile != "mlp-only"', source)
+        self.assertIn('sample_profile == "jarvis-general-stage"', source)
+
+    def test_general_stages_are_unique_disjoint_full_f1_utterances(self) -> None:
+        samples = [
+            {
+                "split": "train",
+                "filename": f"general-{index}.wav",
+                "text": f"Ολόκληρη πρόταση αριθμός {index}",
+                "corpus": "F1",
+            }
+            for index in range(210)
+        ]
+        samples.extend(
+            {
+                "split": "train",
+                "filename": f"crop-{index}.wav",
+                "text": "λέξη",
+                "corpus": "STOMA-F1-word-focus",
+            }
+            for index in range(5)
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "plan.json"
+            path.write_text(json.dumps({"schema": "jarvis.voice.greektts15-f1-plan/1", "samples": samples}))
+            first, first_report = build_general_stage_curriculum_order(path, stage_index=0)
+            repeated, _ = build_general_stage_curriculum_order(path, stage_index=0)
+            second, second_report = build_general_stage_curriculum_order(path, stage_index=1)
+        self.assertEqual(first, repeated)
+        self.assertEqual(len(first), 100)
+        self.assertEqual(len(set(first)), 100)
+        self.assertTrue(set(first).isdisjoint(second))
+        self.assertTrue(first_report["unique_full_utterances"])
+        self.assertTrue(first_report["word_focus_crops_excluded"])
+        self.assertEqual(second_report["stage_index"], 1)
 
     def test_lexical_curriculum_repeats_exact_real_examples_only(self) -> None:
         samples = []
@@ -438,7 +474,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
         source = Path("src/jarvis_voice/macos/greektts15_training.py").read_text(encoding="utf-8")
         self.assertIn('learning_rate not in PILOT_LEARNING_RATES', source)
         self.assertIn('PILOT_LEARNING_RATES = {2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5}', source)
-        self.assertIn('steps == EXACT_CORE_STEPS and sample_profile == "jarvis-exact-core"', source)
+        self.assertIn('sample_profile in {"jarvis-exact-core", "jarvis-general-stage"}', source)
         self.assertIn('random.Random(TRAINING_SEED)', source)
 
     def test_cached_split_builds_completion_offset(self) -> None:
