@@ -372,6 +372,20 @@ file. Reports record the checkpoint hash, so baseline and both pilot branches
 can be rendered with identical fixtures, seed, and sampling parameters without
 ever replacing the qualified baseline adapter.
 
+Human listening rejected the review-only waveform joins because the words did
+not sound like one clean, continuous phrase. The next checkpoint therefore
+continues from the accepted exact-core branch using 100 unique, complete F1
+utterances, with every word-focus crop excluded. All 392 LoRA groups train
+together at `2.5e-7`; deterministic stage indices select non-overlapping groups
+of 100 utterances so later stages remain resumable. Stage 0 reduced validation
+loss from 5.105781 to 4.955665 in 736.43 seconds, used 5,445,379,410 bytes peak
+MLX memory, and produced checkpoint SHA-256
+`0e7da14cb9328298b650cb94d7acff6d635b5bbbec062a16905890df0d81c73a`.
+All four unchanged seed-10,001 fixtures completed at temperature 0.4 with
+ordinary durations (2.475, 3.925, 2.816, and 3.157 seconds). Human listening
+for continuous phrasing and stable pronunciation remains mandatory; production
+promotion is false.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
