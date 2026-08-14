@@ -72,7 +72,7 @@ def calibrate_macos_acoustic_threshold(
     *,
     audio_path: str,
     ambient_seconds: float = 3.0,
-    playback_timeout_seconds: float = 20.0,
+    playback_timeout_seconds: float = 60.0,
     capture_factory: Callable[..., Any] = CoreAudioCapture,
     tts_factory: Callable[..., Any] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
@@ -125,13 +125,25 @@ def calibrate_macos_acoustic_threshold(
                 epoch=1,
                 unit_index=1,
                 locale="el-GR",
-                text="Η βαθμονόμηση της φωνής ολοκληρώνεται με καθαρή και σταθερή ομιλία.",
+                text="Η φωνή λειτουργεί καθαρά.",
             )
         )
         if not started.wait(timeout=playback_timeout_seconds):
             raise BackendError("qualification.acoustic_calibration_tts_start", "Calibration playback did not start", subsystem="qualification")
         if not completed.wait(timeout=playback_timeout_seconds):
-            raise BackendError("qualification.acoustic_calibration_tts_timeout", "Calibration playback did not complete", subsystem="qualification")
+            backend_error = getattr(tts, "last_error", None)
+            raise BackendError(
+                "qualification.acoustic_calibration_tts_failed"
+                if isinstance(backend_error, BackendError)
+                else "qualification.acoustic_calibration_tts_timeout",
+                "Calibration playback did not complete",
+                subsystem="qualification",
+                safe_context=(
+                    {"backend_error_code": backend_error.code}
+                    if isinstance(backend_error, BackendError)
+                    else None
+                ),
+            )
     finally:
         sampler.end()
         capture.stop()

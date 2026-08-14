@@ -20,6 +20,7 @@ from jarvis_voice.macos.native_collector import (
 )
 from jarvis_voice.macos.greektts15_runtime import SoundDevicePcmPlayback
 from jarvis_voice.macos.native_run import (
+    calibrate_macos_acoustic_threshold,
     create_macos_calibration_tts,
     current_process_rss_bytes,
     macos_native_collection_preflight,
@@ -239,6 +240,50 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
 
 
 class MacNativeRunTests(unittest.TestCase):
+    def test_calibration_uses_a_short_bounded_phrase(self) -> None:
+        observer = None
+        spoken: list[str] = []
+
+        class Capture:
+            def __init__(self, *, frame_observer, **kwargs):
+                nonlocal observer
+                del kwargs
+                observer = frame_observer
+            def start(self): pass
+            def stop(self): pass
+
+        class Tts:
+            def __init__(self, *, on_started, on_completed, **kwargs):
+                del kwargs
+                self.on_started = on_started
+                self.on_completed = on_completed
+                self.last_error = None
+            def enqueue(self, unit):
+                spoken.append(unit.text)
+                self.on_started(unit)
+                assert observer is not None
+                for index in range(10):
+                    observer(array("f", [0.1] * 960).tobytes(), 48_000, 2.0 + index * 0.02)
+                self.on_completed(unit)
+            def close(self): pass
+
+        def capture_ambient(_seconds: float) -> None:
+            assert observer is not None
+            for index in range(10):
+                observer(array("f", [0.001] * 960).tobytes(), 48_000, 1.0 + index * 0.02)
+
+        config = voice_config_from_mapping({"macos": {"system_voices": {"el-GR": "A", "en-US": "B"}}})
+        with mock.patch("jarvis_voice.macos.native_run.sys.platform", "darwin"):
+            report = calibrate_macos_acoustic_threshold(
+                config,
+                audio_path="built_in",
+                capture_factory=Capture,
+                tts_factory=Tts,
+                sleeper=capture_ambient,
+            )
+        self.assertTrue(report["ready"])
+        self.assertEqual(spoken, ["Η φωνή λειτουργεί καθαρά."])
+
     def test_calibration_uses_the_digest_bound_selected_f1_backend(self) -> None:
         config = voice_config_from_mapping({
             "vad": {"artifact": {"path": "/private/vad.onnx", "size": 1, "sha256": "1" * 64}},
