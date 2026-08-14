@@ -15,6 +15,7 @@ from jarvis_voice.backends import SpeechUnit
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.greektts15_runtime import (
     GreekTtsF1Backend,
+    MlxGreekTtsStreamingEngine,
     PcmChunk,
     SoundDevicePcmPlayback,
     load_approved_greektts_candidate,
@@ -70,6 +71,15 @@ class FakePlayback:
 
 
 class GreekTts15RuntimeTests(unittest.TestCase):
+    def test_quarantined_decoder_refuses_reuse_before_loading_the_model(self) -> None:
+        engine = object.__new__(MlxGreekTtsStreamingEngine)
+        engine._cancel_requested = threading.Event()
+        engine._decoder_quarantined = threading.Event()
+        engine._decoder_quarantined.set()
+        unit = SpeechUnit("r", 1, 1, "el-GR", "Δοκιμή.")
+        with self.assertRaisesRegex(BackendError, "tts.greektts15.decoder_quarantined"):
+            list(engine.stream(unit, threading.Event()))
+
     def test_incremental_pcm_emits_only_new_stable_samples_and_smooths_boundary(self) -> None:
         pcm = array("h", [100, 200, 300, 400, 500, 600]).tobytes()
         chunk, emitted, last = incremental_pcm_slice(

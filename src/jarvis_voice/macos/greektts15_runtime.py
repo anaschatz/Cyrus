@@ -224,6 +224,7 @@ class MlxGreekTtsStreamingEngine:
         self.seed = seed
         self.maximum_new_tokens = maximum_new_tokens
         self._cancel_requested = threading.Event()
+        self._decoder_quarantined = threading.Event()
         self._load_lock = threading.Lock()
         self._runtime: tuple[object, ...] | None = None
         self._warm_load_ms: float | None = None
@@ -279,6 +280,12 @@ class MlxGreekTtsStreamingEngine:
 
     def stream(self, unit: SpeechUnit, cancelled: threading.Event) -> Iterable[PcmChunk]:
         self._cancel_requested.clear()
+        if self._decoder_quarantined.is_set():
+            raise BackendError(
+                "tts.greektts15.decoder_quarantined",
+                "GreekTTS decoder did not stop cleanly",
+                subsystem="tts",
+            )
         if cancelled.is_set():
             return
         mx, torch, model, tokenizer, snac_model, generate_step, make_logits_processors, make_sampler = self._ensure_loaded()
@@ -299,6 +306,15 @@ class MlxGreekTtsStreamingEngine:
         decode_jobs: queue.Queue[tuple[list[int], int] | None] = queue.Queue(maxsize=2)
         decoded: queue.Queue[PcmChunk | Exception | None] = queue.Queue(maxsize=8)
         decoder_cancelled = threading.Event()
+
+        def publish_decoded(value: PcmChunk | Exception | None) -> bool:
+            while not decoder_cancelled.is_set():
+                try:
+                    decoded.put(value, timeout=0.02)
+                    return True
+                except queue.Full:
+                    continue
+            return False
 
         def decode_increment(snapshot: list[int], stable_frames: int) -> PcmChunk | None:
             nonlocal emitted_samples, previous_sample
@@ -331,12 +347,12 @@ class MlxGreekTtsStreamingEngine:
                         break
                     snapshot, stable_frames = job
                     chunk = decode_increment(snapshot, stable_frames)
-                    if chunk is not None:
-                        decoded.put(chunk)
+                    if chunk is not None and not publish_decoded(chunk):
+                        return
             except Exception as exc:
-                decoded.put(exc)
+                publish_decoded(exc)
             finally:
-                decoded.put(None)
+                publish_decoded(None)
 
         decoder = threading.Thread(target=decoder_worker, name="jarvis-greektts-snac", daemon=True)
         decoder.start()
@@ -411,11 +427,18 @@ class MlxGreekTtsStreamingEngine:
             mx.clear_cache()
         finally:
             decoder_cancelled.set()
+            while True:
+                try:
+                    decoded.get_nowait()
+                except queue.Empty:
+                    break
             try:
                 decode_jobs.put_nowait(None)
             except queue.Full:
                 pass
-            decoder.join(timeout=2.0)
+            decoder.join(timeout=15.0)
+            if decoder.is_alive():
+                self._decoder_quarantined.set()
 
     def cancel(self) -> None:
         self._cancel_requested.set()
