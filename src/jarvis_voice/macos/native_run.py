@@ -183,12 +183,21 @@ def run_macos_acoustic_barge_in_sample(
     monitor_factory: Callable[..., Any] = AcousticSilenceMonitor,
     clock: Callable[[], float] = time.perf_counter,
     sleeper: Callable[[float], None] = time.sleep,
+    sample_count: int = 1,
+    progress_sink: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
-    """Measure one physical PTT-to-acoustic-silence sample without ASR timing."""
+    """Measure physical PTT-to-acoustic-silence samples without ASR timing."""
 
     if sys.platform != "darwin":
         raise BackendError("qualification.native_macos_required", "Acoustic barge-in requires macOS", subsystem="qualification")
-    if audio_path not in {"wired", "built_in"} or ptt_timeout_seconds <= 0 or result_timeout_seconds <= 0:
+    if (
+        audio_path not in {"wired", "built_in"}
+        or ptt_timeout_seconds <= 0
+        or result_timeout_seconds <= 0
+        or not isinstance(sample_count, int)
+        or isinstance(sample_count, bool)
+        or not 1 <= sample_count <= 20
+    ):
         raise BackendError("qualification.native_collector_config_invalid", "Acoustic sample settings are invalid", subsystem="qualification")
     monitor = monitor_factory(silence_threshold_dbfs=silence_threshold_dbfs)
     started = threading.Event()
@@ -210,68 +219,127 @@ def run_macos_acoustic_barge_in_sample(
         on_started=lambda _unit: started.set(),
         on_completed=lambda _unit: completed.set(),
     )
-    cancelled_at: float | None = None
-    cancel_call_ms: float | None = None
-    result: AcousticResult | None = None
+    samples: list[dict[str, object]] = []
     try:
         capture.start()
         ptt.start()
-        tts.enqueue(
-            SpeechUnit(
-                response_id="acoustic-barge-in-sample",
-                epoch=1,
-                unit_index=1,
-                locale="el-GR",
-                text="Η φωνή λειτουργεί καθαρά και περιμένει την άμεση διακοπή.",
+        for sample_index in range(1, sample_count + 1):
+            started.clear()
+            completed.clear()
+            while True:
+                try:
+                    publisher.events.get_nowait()
+                except queue.Empty:
+                    break
+            epoch = sample_index * 2 - 1
+            cancellation_epoch = epoch + 1
+            tts.enqueue(
+                SpeechUnit(
+                    response_id=f"acoustic-barge-in-sample-{sample_index}",
+                    epoch=epoch,
+                    unit_index=1,
+                    locale="el-GR",
+                    text="Η φωνή λειτουργεί καθαρά και περιμένει την άμεση διακοπή.",
+                )
             )
-        )
-        if not started.wait(timeout=60.0):
-            backend_error = getattr(tts, "last_error", None)
-            raise BackendError(
-                "qualification.acoustic_sample_tts_failed"
-                if isinstance(backend_error, BackendError)
-                else "qualification.acoustic_sample_tts_start_timeout",
-                "Acoustic sample playback did not start",
-                subsystem="qualification",
-                safe_context=(
-                    {"backend_error_code": backend_error.code}
+            if not started.wait(timeout=60.0):
+                backend_error = getattr(tts, "last_error", None)
+                raise BackendError(
+                    "qualification.acoustic_sample_tts_failed"
                     if isinstance(backend_error, BackendError)
-                    else None
-                ),
-            )
-        deadline = clock() + ptt_timeout_seconds
-        while clock() < deadline:
-            if completed.is_set():
-                raise BackendError("qualification.acoustic_sample_ptt_missed", "PTT was not pressed during playback", subsystem="qualification")
-            try:
-                event = publisher.events.get(timeout=min(0.05, max(0.001, deadline - clock())))
-            except queue.Empty:
-                continue
-            if event.transition != PttTransition.DOWN:
-                continue
-            monitor.arm(event.received_at)
-            cancelled_at = clock()
-            tts.cancel(2, "ptt_down")
-            cancel_call_ms = (clock() - cancelled_at) * 1000.0
-            break
-        if cancelled_at is None:
-            raise BackendError("qualification.acoustic_sample_ptt_timeout", "Physical PTT was not received", subsystem="qualification")
-        deadline = clock() + result_timeout_seconds
-        while clock() < deadline and result is None:
-            values = monitor.take_results()
-            if values:
-                result = values[0]
+                    else "qualification.acoustic_sample_tts_start_timeout",
+                    "Acoustic sample playback did not start",
+                    subsystem="qualification",
+                    safe_context=(
+                        {"backend_error_code": backend_error.code, "sample_index": sample_index}
+                        if isinstance(backend_error, BackendError)
+                        else {"sample_index": sample_index}
+                    ),
+                )
+            cancelled_at: float | None = None
+            cancel_call_ms: float | None = None
+            deadline = clock() + ptt_timeout_seconds
+            while clock() < deadline:
+                if completed.is_set():
+                    raise BackendError(
+                        "qualification.acoustic_sample_ptt_missed",
+                        "PTT was not pressed during playback",
+                        subsystem="qualification",
+                        safe_context={"sample_index": sample_index},
+                    )
+                try:
+                    event = publisher.events.get(timeout=min(0.05, max(0.001, deadline - clock())))
+                except queue.Empty:
+                    continue
+                if event.transition != PttTransition.DOWN:
+                    continue
+                monitor.arm(event.received_at)
+                cancelled_at = clock()
+                tts.cancel(cancellation_epoch, "ptt_down")
+                cancel_call_ms = (clock() - cancelled_at) * 1000.0
                 break
-            sleeper(0.01)
-        if result is None:
-            raise BackendError("qualification.acoustic_sample_result_timeout", "Acoustic silence result was not produced", subsystem="qualification")
-        return {
-            "ready": result.valid,
-            "code": result.code,
+            if cancelled_at is None:
+                raise BackendError(
+                    "qualification.acoustic_sample_ptt_timeout",
+                    "Physical PTT was not received",
+                    subsystem="qualification",
+                    safe_context={"sample_index": sample_index},
+                )
+            result: AcousticResult | None = None
+            deadline = clock() + result_timeout_seconds
+            while clock() < deadline and result is None:
+                values = monitor.take_results()
+                if values:
+                    result = values[0]
+                    break
+                sleeper(0.01)
+            if result is None:
+                raise BackendError(
+                    "qualification.acoustic_sample_result_timeout",
+                    "Acoustic silence result was not produced",
+                    subsystem="qualification",
+                    safe_context={"sample_index": sample_index},
+                )
+            sample = {
+                "sample_index": sample_index,
+                "valid": result.valid,
+                "code": result.code,
+                "ptt_to_acoustic_silence_ms": result.latency_ms,
+                "cancel_call_ms": round(float(cancel_call_ms or 0.0), 3),
+            }
+            samples.append(sample)
+            if progress_sink is not None:
+                progress_sink(dict(sample))
+            wait_idle = getattr(tts, "wait_idle", None)
+            if callable(wait_idle) and not wait_idle(timeout=5.0):
+                raise BackendError(
+                    "qualification.acoustic_sample_tts_not_idle",
+                    "Cancelled TTS did not become idle",
+                    subsystem="qualification",
+                    safe_context={"sample_index": sample_index},
+                )
+            if not result.valid:
+                break
+        latencies = [
+            float(sample["ptt_to_acoustic_silence_ms"])
+            for sample in samples
+            if isinstance(sample["ptt_to_acoustic_silence_ms"], (int, float))
+        ]
+        ready = (
+            len(samples) == sample_count
+            and all(sample["valid"] is True for sample in samples)
+            and len(latencies) == sample_count
+            and max(latencies, default=200.0) < 200.0
+        )
+        common = {
+            "ready": ready,
+            "code": (
+                samples[0]["code"]
+                if sample_count == 1 and samples
+                else "qualification.acoustic_batch_valid" if ready else "qualification.acoustic_batch_failed"
+            ),
             "audio_path": audio_path,
             "ptt_key": config.ptt_key,
-            "ptt_to_acoustic_silence_ms": result.latency_ms,
-            "cancel_call_ms": round(float(cancel_call_ms or 0.0), 3),
             "threshold_ms": 200.0,
             "raw_audio_persisted": False,
             "physical_ptt": True,
@@ -280,9 +348,18 @@ def run_macos_acoustic_barge_in_sample(
             "network_used": False,
             "installation_performed": False,
         }
+        if sample_count == 1 and samples:
+            return {**common, **{key: value for key, value in samples[0].items() if key != "sample_index" and key != "valid"}}
+        return {
+            **common,
+            "requested_samples": sample_count,
+            "valid_samples": sum(sample["valid"] is True for sample in samples),
+            "maximum_ptt_to_acoustic_silence_ms": max(latencies) if latencies else None,
+            "samples": samples,
+        }
     finally:
         try:
-            tts.cancel(2, "qualification_end")
+            tts.cancel(sample_count * 2 + 1, "qualification_end")
         finally:
             ptt.stop()
             capture.stop()

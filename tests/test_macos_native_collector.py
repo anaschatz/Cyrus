@@ -272,13 +272,16 @@ class MacNativeRunTests(unittest.TestCase):
 
         class Ptt:
             def __init__(self, publisher, **kwargs): self.publisher = publisher; del kwargs
-            def start(self): self.publisher.events.put_nowait(PttEvent(PttTransition.DOWN, time.perf_counter()))
+            def start(self): state["publisher"] = self.publisher
             def stop(self): state["ptt_stopped"] = True
 
         class Tts:
             def __init__(self, on_started): self.on_started = on_started; self.last_error = None
-            def enqueue(self, unit): self.on_started(unit)
+            def enqueue(self, unit):
+                self.on_started(unit)
+                state["publisher"].events.put_nowait(PttEvent(PttTransition.DOWN, time.perf_counter()))
             def cancel(self, epoch, reason): state.setdefault("cancels", []).append((epoch, reason))
+            def wait_idle(self, timeout): del timeout; return True
             def close(self): state["tts_closed"] = True
 
         def build_tts(_config, *, on_started, on_completed):
@@ -298,11 +301,74 @@ class MacNativeRunTests(unittest.TestCase):
             )
         self.assertTrue(report["ready"])
         self.assertEqual(report["ptt_to_acoustic_silence_ms"], 123.0)
-        self.assertEqual(state["cancels"], [(2, "ptt_down"), (2, "qualification_end")])
+        self.assertEqual(state["cancels"], [(2, "ptt_down"), (3, "qualification_end")])
         self.assertEqual(state["threshold"], -53.303)
         self.assertTrue(state["capture_stopped"])
         self.assertTrue(state["ptt_stopped"])
         self.assertTrue(state["tts_closed"])
+
+    def test_focused_acoustic_batch_reuses_runtime_and_advances_epochs(self) -> None:
+        state: dict[str, object] = {"arms": 0}
+
+        class Monitor:
+            def __init__(self, **kwargs): del kwargs
+            def publish_audio(self, *args): pass
+            def arm(self, received_at):
+                del received_at
+                state["arms"] = int(state["arms"]) + 1
+                state["result"] = AcousticResult(
+                    True,
+                    100.0 + int(state["arms"]),
+                    "qualification.acoustic_sample_valid",
+                )
+            def take_results(self):
+                result = state.pop("result", None)
+                return () if result is None else (result,)
+            def close(self): pass
+
+        class Capture:
+            def __init__(self, **kwargs): del kwargs
+            def start(self): pass
+            def stop(self): pass
+
+        class Ptt:
+            def __init__(self, publisher, **kwargs): state["publisher"] = publisher; del kwargs
+            def start(self): pass
+            def stop(self): pass
+
+        class Tts:
+            last_error = None
+            def __init__(self, on_started): self.on_started = on_started
+            def enqueue(self, unit):
+                self.on_started(unit)
+                state["publisher"].events.put_nowait(PttEvent(PttTransition.DOWN, time.perf_counter()))
+            def cancel(self, epoch, reason): state.setdefault("cancels", []).append((epoch, reason))
+            def wait_idle(self, timeout): del timeout; return True
+            def close(self): pass
+
+        def build_tts(_config, *, on_started, on_completed):
+            del on_completed
+            return Tts(on_started)
+
+        progress: list[dict[str, object]] = []
+        config = voice_config_from_mapping({"ptt_key": "CONTROL_OPTION"})
+        with mock.patch("jarvis_voice.macos.native_run.sys.platform", "darwin"):
+            report = run_macos_acoustic_barge_in_sample(
+                config,
+                silence_threshold_dbfs=-53.303,
+                audio_path="built_in",
+                sample_count=2,
+                progress_sink=progress.append,
+                capture_factory=Capture,
+                tts_builder=build_tts,
+                ptt_source_factory=Ptt,
+                monitor_factory=Monitor,
+            )
+        self.assertTrue(report["ready"])
+        self.assertEqual(report["valid_samples"], 2)
+        self.assertEqual(report["maximum_ptt_to_acoustic_silence_ms"], 102.0)
+        self.assertEqual([item["sample_index"] for item in progress], [1, 2])
+        self.assertEqual(state["cancels"], [(2, "ptt_down"), (4, "ptt_down"), (5, "qualification_end")])
 
     def test_calibration_uses_a_short_bounded_phrase(self) -> None:
         observer = None
