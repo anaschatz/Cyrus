@@ -177,6 +177,7 @@ def run_macos_acoustic_barge_in_sample(
     audio_path: str,
     ptt_timeout_seconds: float = 30.0,
     result_timeout_seconds: float = 3.0,
+    tts_idle_timeout_seconds: float = 15.0,
     capture_factory: Callable[..., Any] = CoreAudioCapture,
     tts_builder: Callable[..., Any] = create_macos_calibration_tts,
     ptt_source_factory: Callable[..., Any] = MacEventTapPttSource,
@@ -194,6 +195,7 @@ def run_macos_acoustic_barge_in_sample(
         audio_path not in {"wired", "built_in"}
         or ptt_timeout_seconds <= 0
         or result_timeout_seconds <= 0
+        or tts_idle_timeout_seconds <= 0
         or not isinstance(sample_count, int)
         or isinstance(sample_count, bool)
         or not 1 <= sample_count <= 20
@@ -307,17 +309,27 @@ def run_macos_acoustic_barge_in_sample(
                 "ptt_to_acoustic_silence_ms": result.latency_ms,
                 "cancel_call_ms": round(float(cancel_call_ms or 0.0), 3),
             }
+            wait_idle = getattr(tts, "wait_idle", None)
+            if callable(wait_idle):
+                if not wait_idle(timeout=tts_idle_timeout_seconds):
+                    raise BackendError(
+                        "qualification.acoustic_sample_tts_not_idle",
+                        "Cancelled TTS did not become idle",
+                        subsystem="qualification",
+                        safe_context={"sample_index": sample_index},
+                    )
+                sample["cancel_to_backend_idle_ms"] = round((clock() - cancelled_at) * 1000.0, 3)
+            backend_error = getattr(tts, "last_error", None)
+            if isinstance(backend_error, BackendError):
+                raise BackendError(
+                    "qualification.acoustic_sample_tts_failed",
+                    "Cancelled TTS reported a runtime error",
+                    subsystem="qualification",
+                    safe_context={"backend_error_code": backend_error.code, "sample_index": sample_index},
+                )
             samples.append(sample)
             if progress_sink is not None:
                 progress_sink(dict(sample))
-            wait_idle = getattr(tts, "wait_idle", None)
-            if callable(wait_idle) and not wait_idle(timeout=5.0):
-                raise BackendError(
-                    "qualification.acoustic_sample_tts_not_idle",
-                    "Cancelled TTS did not become idle",
-                    subsystem="qualification",
-                    safe_context={"sample_index": sample_index},
-                )
             if not result.valid:
                 break
         latencies = [
