@@ -410,6 +410,14 @@ as the approved F1 voice candidate. It is not yet a production backend because
 incremental streaming, interruption during generation, scheduler integration,
 and realtime-factor gates remain open.
 
+A subsequent native free-text runtime smoke exposed a morphology generalization
+failure: the approved fixture form `λειτουργούν` was clear, but `λειτουργεί`
+was rendered without an audible initial `λ`. The prior human approval is now
+scoped strictly to the four fixed fixtures; general free-text voice approval is
+revoked. Runtime promotion and dependency materialization stop until a bounded
+full-utterance curriculum covers the real F1 forms `λειτουργεί`, `λειτουργούν`,
+`πρωτολειτούργησε`, `λειτουργία`, `λειτουργίας`, `λειτουργικής`, and `λειτουργός`.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash

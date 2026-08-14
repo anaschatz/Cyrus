@@ -1,6 +1,6 @@
 {
   "schema": "jarvis.voice.greektts15-approved-candidate/1",
-  "status": "human_voice_approved",
+  "status": "fixture_only_approval",
   "model": {
     "checkpoint_directory": "artifacts/greektts15-training/checkpoints/f1-utterance-focus-from-general-stage-000",
     "checkpoint_sha256": "492f821f09cec8c640e02cdd9177ee78dde3f18e87f029cd34a8a158ea036f4b",
@@ -16,7 +16,9 @@
     "general_pronunciation_approved": true,
     "significant_word_approved": true,
     "operation_word_initial_lambda_approved": true,
-    "regression_heard_elsewhere": false
+    "regression_heard_elsewhere": false,
+    "free_text_morphology_approved": false,
+    "observed_free_text_failure": "λειτουργεί was rendered without an audible initial lambda"
   },
   "remaining_runtime_gates": {
     "incremental_audio_streaming": false,
@@ -24,6 +26,6 @@
     "mean_realtime_factor_within_limit": false,
     "native_scheduler_integration": false
   },
-  "human_voice_approved": true,
+  "human_voice_approved": false,
   "production_promotion_allowed": false
 }

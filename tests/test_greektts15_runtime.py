@@ -117,6 +117,21 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertEqual(candidate.checkpoint_sha256, digest)
         self.assertEqual(raised.exception.code, "tts.greektts15.approved_checkpoint_invalid")
 
+    def test_fixture_only_manifest_is_rejected_by_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = root / "fixture-only.json"
+            manifest.write_text(json.dumps({
+                "schema": "jarvis.voice.greektts15-approved-candidate/1",
+                "status": "fixture_only_approval",
+                "model": {},
+                "human_voice_approved": False,
+                "production_promotion_allowed": False,
+            }))
+            with self.assertRaises(BackendError) as raised:
+                load_approved_greektts_candidate(manifest.resolve(), root.resolve())
+        self.assertEqual(raised.exception.code, "tts.greektts15.approval_manifest_invalid")
+
     def test_sentence_units_are_ordered_and_complete_only_after_playback(self) -> None:
         engine = FakeEngine()
         engine.release.set()
