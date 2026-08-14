@@ -39,6 +39,7 @@ INCREMENTAL_START_FRAMES = 36
 INCREMENTAL_STEP_FRAMES = 4
 INCREMENTAL_LOOKAHEAD_FRAMES = 4
 INCREMENTAL_BOUNDARY_RAMP_SAMPLES = 120
+COREAUDIO_WRITE_BLOCK_SAMPLES = 480
 
 
 def _sha256(path: Path) -> str:
@@ -447,18 +448,20 @@ class SoundDevicePcmPlayback:
         self._stream.start()
 
     def write(self, chunk: PcmChunk) -> None:
-        if chunk.sample_rate != SAMPLE_RATE or chunk.channels != 1 or not chunk.pcm16:
+        if chunk.sample_rate != SAMPLE_RATE or chunk.channels != 1 or not chunk.pcm16 or len(chunk.pcm16) % 2:
             raise BackendError("tts.audio_chunk_invalid", "Playback chunk format is invalid", subsystem="tts")
-        with self._lock:
-            if self._closed:
-                return
-            stream = self._stream
-        underflowed = stream.write(chunk.pcm16)
-        with self._lock:
-            if self._closed:
-                return
-        if underflowed:
-            raise BackendError("tts.playback_underflow", "CoreAudio playback underflowed", subsystem="tts")
+        block_bytes = COREAUDIO_WRITE_BLOCK_SAMPLES * 2
+        for offset in range(0, len(chunk.pcm16), block_bytes):
+            with self._lock:
+                if self._closed:
+                    return
+                stream = self._stream
+            underflowed = stream.write(chunk.pcm16[offset : offset + block_bytes])
+            with self._lock:
+                if self._closed:
+                    return
+            if underflowed:
+                raise BackendError("tts.playback_underflow", "CoreAudio playback underflowed", subsystem="tts")
 
     def finish(self) -> None:
         with self._lock:

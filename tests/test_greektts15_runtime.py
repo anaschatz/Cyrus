@@ -166,6 +166,28 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertLess((time.perf_counter() - started) * 1000.0, 200.0)
         self.assertFalse(writer.is_alive())
 
+    def test_coreaudio_splits_generated_audio_into_twenty_millisecond_writes(self) -> None:
+        class Stream:
+            def __init__(self): self.writes: list[bytes] = []
+            def start(self): pass
+            def write(self, value): self.writes.append(value); return False
+            def stop(self): pass
+            def abort(self): pass
+            def close(self): pass
+
+        class SoundDevice:
+            def __init__(self): self.stream = Stream()
+            def CoreAudioSettings(self, **kwargs): return kwargs
+            def RawOutputStream(self, **kwargs):
+                del kwargs
+                return self.stream
+
+        module = SoundDevice()
+        playback = SoundDevicePcmPlayback(module)
+        playback.write(PcmChunk(b"\x01\x00" * 1_000))
+        playback.finish()
+        self.assertEqual([len(value) for value in module.stream.writes], [960, 960, 80])
+
     def test_approved_manifest_is_bound_to_exact_adapter_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
