@@ -357,14 +357,15 @@ class MlxGreekTtsStreamingEngine:
         decoder = threading.Thread(target=decoder_worker, name="jarvis-greektts-snac", daemon=True)
         decoder.start()
         decoder_finished = False
+        generation = generate_step(
+            mx.array(prompt_ids),
+            model,
+            max_tokens=self.maximum_new_tokens,
+            sampler=sampler,
+            logits_processors=processors,
+        )
         try:
-            for token, _ in generate_step(
-                mx.array(prompt_ids),
-                model,
-                max_tokens=self.maximum_new_tokens,
-                sampler=sampler,
-                logits_processors=processors,
-            ):
+            for token, _ in generation:
                 if cancelled.is_set() or self._cancel_requested.is_set():
                     return
                 token_id = int(token if isinstance(token, int) else token.item())
@@ -423,9 +424,10 @@ class MlxGreekTtsStreamingEngine:
                     raise result
                 else:
                     yield result
-            gc.collect()
-            mx.clear_cache()
         finally:
+            close_generation = getattr(generation, "close", None)
+            if callable(close_generation):
+                close_generation()
             decoder_cancelled.set()
             while True:
                 try:
@@ -439,6 +441,9 @@ class MlxGreekTtsStreamingEngine:
             decoder.join(timeout=15.0)
             if decoder.is_alive():
                 self._decoder_quarantined.set()
+            mx.synchronize()
+            gc.collect()
+            mx.clear_cache()
 
     def cancel(self) -> None:
         self._cancel_requested.set()

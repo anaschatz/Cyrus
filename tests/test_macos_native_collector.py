@@ -370,6 +370,53 @@ class MacNativeRunTests(unittest.TestCase):
         self.assertEqual([item["sample_index"] for item in progress], [1, 2])
         self.assertEqual(state["cancels"], [(2, "ptt_down"), (4, "ptt_down"), (5, "qualification_end")])
 
+    def test_focused_acoustic_batch_stops_when_latency_reaches_threshold(self) -> None:
+        state: dict[str, object] = {}
+
+        class Monitor:
+            def __init__(self, **kwargs): del kwargs
+            def publish_audio(self, *args): pass
+            def arm(self, received_at): del received_at
+            def take_results(self): return (AcousticResult(True, 200.0, "qualification.acoustic_sample_valid"),)
+            def close(self): pass
+
+        class Capture:
+            def __init__(self, **kwargs): del kwargs
+            def start(self): pass
+            def stop(self): pass
+
+        class Ptt:
+            def __init__(self, publisher, **kwargs): state["publisher"] = publisher; del kwargs
+            def start(self): pass
+            def stop(self): pass
+
+        class Tts:
+            last_error = None
+            def __init__(self, on_started): self.on_started = on_started
+            def enqueue(self, unit):
+                self.on_started(unit)
+                state["publisher"].events.put_nowait(PttEvent(PttTransition.DOWN, time.perf_counter()))
+            def cancel(self, epoch, reason): del epoch, reason
+            def wait_idle(self, timeout): del timeout; return True
+            def close(self): pass
+
+        config = voice_config_from_mapping({"ptt_key": "CONTROL_OPTION"})
+        with mock.patch("jarvis_voice.macos.native_run.sys.platform", "darwin"):
+            report = run_macos_acoustic_barge_in_sample(
+                config,
+                silence_threshold_dbfs=-53.303,
+                audio_path="built_in",
+                sample_count=2,
+                capture_factory=Capture,
+                tts_builder=lambda _config, *, on_started, on_completed: Tts(on_started),
+                ptt_source_factory=Ptt,
+                monitor_factory=Monitor,
+            )
+        self.assertFalse(report["ready"])
+        self.assertEqual(report["valid_samples"], 0)
+        self.assertEqual(len(report["samples"]), 1)
+        self.assertEqual(report["samples"][0]["code"], "qualification.acoustic_sample_threshold_exceeded")
+
     def test_calibration_uses_a_short_bounded_phrase(self) -> None:
         observer = None
         spoken: list[str] = []

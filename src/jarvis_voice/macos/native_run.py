@@ -304,8 +304,12 @@ def run_macos_acoustic_barge_in_sample(
                 )
             sample = {
                 "sample_index": sample_index,
-                "valid": result.valid,
-                "code": result.code,
+                "valid": result.valid and result.latency_ms is not None and result.latency_ms < 200.0,
+                "code": (
+                    "qualification.acoustic_sample_threshold_exceeded"
+                    if result.valid and result.latency_ms is not None and result.latency_ms >= 200.0
+                    else result.code
+                ),
                 "ptt_to_acoustic_silence_ms": result.latency_ms,
                 "cancel_call_ms": round(float(cancel_call_ms or 0.0), 3),
             }
@@ -330,7 +334,7 @@ def run_macos_acoustic_barge_in_sample(
             samples.append(sample)
             if progress_sink is not None:
                 progress_sink(dict(sample))
-            if not result.valid:
+            if sample["valid"] is not True:
                 break
         latencies = [
             float(sample["ptt_to_acoustic_silence_ms"])

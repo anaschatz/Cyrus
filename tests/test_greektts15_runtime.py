@@ -8,6 +8,7 @@ import time
 import unittest
 from array import array
 from pathlib import Path
+from types import SimpleNamespace
 
 import _bootstrap  # noqa: F401
 
@@ -71,6 +72,53 @@ class FakePlayback:
 
 
 class GreekTts15RuntimeTests(unittest.TestCase):
+    def test_cancelled_generation_is_closed_and_metal_is_synchronized(self) -> None:
+        cancelled = threading.Event()
+        state = {"closed": False, "synchronized": 0, "cleared": 0}
+
+        class Random:
+            def seed(self, value): del value
+
+        class Mx:
+            random = Random()
+            def array(self, value): return value
+            def synchronize(self): state["synchronized"] += 1
+            def clear_cache(self): state["cleared"] += 1
+
+        class Tokenizer:
+            def encode(self, text, add_special_tokens): del text, add_special_tokens; return [128_000]
+
+        def generate_step(*args, **kwargs):
+            del args, kwargs
+            try:
+                cancelled.set()
+                yield 1, None
+            finally:
+                state["closed"] = True
+
+        engine = object.__new__(MlxGreekTtsStreamingEngine)
+        engine.seed = 1
+        engine.maximum_new_tokens = 10
+        engine.candidate = SimpleNamespace(temperature=0.4, top_p=0.95, repetition_penalty=1.1)
+        engine._cancel_requested = threading.Event()
+        engine._decoder_quarantined = threading.Event()
+        engine._load_lock = threading.Lock()
+        mx = Mx()
+        engine._runtime = (
+            mx,
+            object(),
+            object(),
+            Tokenizer(),
+            object(),
+            generate_step,
+            lambda **kwargs: kwargs,
+            lambda **kwargs: kwargs,
+        )
+        self.assertEqual(list(engine.stream(SpeechUnit("r", 1, 1, "el-GR", "Δοκιμή."), cancelled)), [])
+        self.assertTrue(state["closed"])
+        self.assertEqual(state["synchronized"], 1)
+        self.assertEqual(state["cleared"], 1)
+
     def test_quarantined_decoder_refuses_reuse_before_loading_the_model(self) -> None:
         engine = object.__new__(MlxGreekTtsStreamingEngine)
         engine._cancel_requested = threading.Event()
