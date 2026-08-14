@@ -437,6 +437,17 @@ unrelated pronunciation path. The next bounded branch must restart from the
 fixture-approved utterance checkpoint and train the identical complete-sentence
 morphology curriculum on MLP LoRA only, leaving attention LoRA unchanged.
 
+The MLP-isolated morphology branch repeats the identical curriculum from the
+same utterance-focus parent while freezing all 224 attention LoRA groups. Its
+25 updates at `2.5e-7` changed only 168 MLP groups, moved validation loss from
+4.925621 to 4.909754, and produced checkpoint SHA-256
+`2938261505586689598fb86ef79ed68a34432dcae37afbda691b86d01e26574a`.
+Unlike the rejected all-LoRA branch, all four free-text morphology fixtures
+completed: `λειτουργεί`, the joint `κατάσταση`/`λειτουργούν` sentence,
+`λειτουργία`, and the retained `σημαντικές εργασίες`. Their durations were
+3.840, 3.840, 2.389, and 3.072 seconds. Human listening must now confirm both
+operation-root onset and preservation of `κατάσταση` before any approval.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
