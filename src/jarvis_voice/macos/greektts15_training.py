@@ -66,6 +66,7 @@ TRAINING_SAMPLE_PROFILES = {
     "jarvis-lexical",
     "jarvis-exact-core",
     "jarvis-general-stage",
+    "jarvis-utterance-focus",
     "jarvis-word-focus",
     "jarvis-operation-focus",
     "jarvis-state-focus",
@@ -88,6 +89,8 @@ LEXICAL_CURRICULUM_TARGETS = (
 )
 EXACT_CORE_TARGETS = tuple(target for target in LEXICAL_CURRICULUM_TARGETS if target[0] != "reminder")
 EXACT_CORE_TARGETED_STEPS = 60
+UTTERANCE_FOCUS_TARGETS = ("λειτουργουν", "σημαντικεσ")
+UTTERANCE_FOCUS_TARGETED_STEPS = 20
 WORD_FOCUS_CROPS = (
     ("katastasi", "Greek-F1-B2-51-22.wav", "κατάσταση", 3.92, 4.60, 0.972),
     ("leitourgoun", "Greek-F1-B2-51-06.wav", "λειτουργούν", 2.52, 3.24, 0.848),
@@ -780,6 +783,62 @@ def build_general_stage_curriculum_order(
     }
 
 
+def build_utterance_focus_curriculum_order(
+    plan_path: str | Path,
+    *,
+    steps: int = PILOT_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Repeat exact target words only inside their original complete F1 utterances."""
+
+    import random
+
+    if steps != PILOT_STEPS:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Utterance-focus step count is invalid", subsystem="tts")
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    words = [set(_normalized_words(str(sample.get("text", "")))) for sample in train_samples]
+    matches = {
+        target: [
+            index
+            for index, sample_words in enumerate(words)
+            if target in sample_words and train_samples[index].get("corpus") != "STOMA-F1-word-focus"
+        ]
+        for target in UTTERANCE_FOCUS_TARGETS
+    }
+    if len(matches["λειτουργουν"]) != 1 or len(matches["σημαντικεσ"]) != 2:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Exact word coverage changed", subsystem="tts")
+    selected: list[int] = []
+    for round_index in range(UTTERANCE_FOCUS_TARGETED_STEPS // 2):
+        selected.append(matches["λειτουργουν"][0])
+        selected.append(matches["σημαντικεσ"][round_index % 2])
+    targeted = {index for indices in matches.values() for index in indices}
+    general = [
+        index
+        for index, sample in enumerate(train_samples)
+        if index not in targeted and sample.get("corpus") != "STOMA-F1-word-focus"
+    ]
+    randomizer = random.Random(TRAINING_SEED)
+    randomizer.shuffle(general)
+    selected.extend(general[: steps - len(selected)])
+    if len(selected) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Utterance-focus curriculum is incomplete", subsystem="tts")
+    return selected, {
+        "profile": "jarvis-utterance-focus",
+        "targeted_steps": UTTERANCE_FOCUS_TARGETED_STEPS,
+        "general_steps": steps - UTTERANCE_FOCUS_TARGETED_STEPS,
+        "target_counts": {"λειτουργούν": 10, "σημαντικές": 10},
+        "complete_original_utterances_only": True,
+        "word_focus_crops_excluded": True,
+        "sample_filenames": [train_samples[index].get("filename") for index in selected],
+    }
+
+
 def build_word_focus_curriculum_order(
     plan_path: str | Path,
     *,
@@ -1153,6 +1212,10 @@ def run_training_pilot(
             sample_profile == "jarvis-general-stage"
             and (target_profile != "all" or learning_rate != 2.5e-7 or source_adapter_directory is None)
         )
+        or (
+            sample_profile == "jarvis-utterance-focus"
+            and (target_profile != "all" or learning_rate != 2.5e-7 or source_adapter_directory is None)
+        )
         or (sample_profile != "jarvis-general-stage" and general_stage_index != 0)
         or general_stage_index < 0
         or (sample_profile == "jarvis-word-focus" and target_profile != "mlp-only")
@@ -1164,6 +1227,7 @@ def run_training_pilot(
             and sample_profile
             not in {
                 "jarvis-general-stage",
+                "jarvis-utterance-focus",
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",
@@ -1293,6 +1357,8 @@ def run_training_pilot(
                 stage_index=general_stage_index,
                 steps=steps,
             )
+        elif sample_profile == "jarvis-utterance-focus":
+            order, curriculum = build_utterance_focus_curriculum_order(plan_path, steps=steps)
         elif sample_profile == "jarvis-word-focus":
             order, curriculum = build_word_focus_curriculum_order(plan_path, steps=steps)
         elif sample_profile in {"jarvis-operation-focus", "jarvis-state-focus"}:

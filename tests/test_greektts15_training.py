@@ -21,6 +21,7 @@ from jarvis_voice.macos.greektts15_training import (
     build_lexical_curriculum_order,
     build_exact_core_curriculum_order,
     build_general_stage_curriculum_order,
+    build_utterance_focus_curriculum_order,
     build_word_focus_bundle,
     build_word_focus_curriculum_order,
     build_single_word_focus_curriculum_order,
@@ -250,6 +251,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
                 "jarvis-lexical",
                 "jarvis-exact-core",
                 "jarvis-general-stage",
+                "jarvis-utterance-focus",
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",
@@ -294,6 +296,30 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertTrue(first_report["unique_full_utterances"])
         self.assertTrue(first_report["word_focus_crops_excluded"])
         self.assertEqual(second_report["stage_index"], 1)
+
+    def test_utterance_focus_uses_exact_words_in_complete_original_utterances(self) -> None:
+        samples = [
+            {"split": "train", "filename": "operation.wav", "text": "Τα συστήματα λειτουργούν σωστά.", "corpus": "F1"},
+            {"split": "train", "filename": "important-a.wav", "text": "Αυτές είναι σημαντικές αλλαγές.", "corpus": "F1"},
+            {"split": "train", "filename": "important-b.wav", "text": "Έχουμε σημαντικές εργασίες.", "corpus": "F1"},
+        ]
+        samples.extend(
+            {"split": "train", "filename": f"general-{index}.wav", "text": f"Γενική πρόταση {index}.", "corpus": "F1"}
+            for index in range(10)
+        )
+        samples.append(
+            {"split": "train", "filename": "crop.wav", "text": "λειτουργούν", "corpus": "STOMA-F1-word-focus"}
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "plan.json"
+            path.write_text(json.dumps({"schema": "jarvis.voice.greektts15-f1-plan/1", "samples": samples}))
+            order, report = build_utterance_focus_curriculum_order(path)
+        self.assertEqual(order[:20:2], [0] * 10)
+        self.assertEqual(order[1:20:2], [1, 2] * 5)
+        self.assertEqual(len(set(order[20:])), 5)
+        self.assertNotIn(13, order)
+        self.assertTrue(report["complete_original_utterances_only"])
+        self.assertTrue(report["word_focus_crops_excluded"])
 
     def test_lexical_curriculum_repeats_exact_real_examples_only(self) -> None:
         samples = []

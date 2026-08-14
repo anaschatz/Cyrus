@@ -41,6 +41,7 @@ def main() -> int:
             "jarvis-lexical",
             "jarvis-exact-core",
             "jarvis-general-stage",
+            "jarvis-utterance-focus",
             "jarvis-word-focus",
             "jarvis-operation-focus",
             "jarvis-state-focus",
