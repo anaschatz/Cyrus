@@ -699,8 +699,9 @@ class GreekTtsF1Backend:
                 if playback_started.is_set() and not stale:
                     self.on_completed(unit)
             except Exception as exc:
-                self._error = BackendError("tts.greektts15.runtime_failed", "GreekTTS runtime failed", subsystem="tts")
-                self._error.__cause__ = exc
+                if not self._is_stale(unit, cancelled):
+                    self._error = BackendError("tts.greektts15.runtime_failed", "GreekTTS runtime failed", subsystem="tts")
+                    self._error.__cause__ = exc
                 if playback is not None:
                     playback.abort()
             finally:

@@ -348,6 +348,24 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertEqual(len(playback.chunks), 1)
         self.assertEqual(completed, [])
 
+    def test_expected_late_backend_exception_after_cancel_is_not_a_runtime_error(self) -> None:
+        class LateFailureEngine(FakeEngine):
+            def stream(self, unit: SpeechUnit, cancelled: threading.Event):
+                del unit, cancelled
+                yield PcmChunk(b"\x01\x00" * 20)
+                self.first_chunk.set()
+                self.release.wait(1.0)
+                raise RuntimeError("abort released the backend")
+
+        engine = LateFailureEngine()
+        backend = GreekTtsF1Backend(engine=engine, playback_factory=FakePlayback)
+        backend.enqueue(SpeechUnit("r", 1, 1, "el-GR", "Ενεργή πρόταση."))
+        self.assertTrue(engine.first_chunk.wait(1.0))
+        backend.cancel(1, "ptt_down")
+        self.assertTrue(backend.wait_idle())
+        self.assertIsNone(backend.last_error)
+        backend.close()
+
     def test_queue_overflow_is_fail_closed(self) -> None:
         engine = FakeEngine()
         backend = GreekTtsF1Backend(engine=engine, playback_factory=FakePlayback, queue_capacity=1)
