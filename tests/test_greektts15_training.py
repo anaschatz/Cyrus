@@ -24,6 +24,7 @@ from jarvis_voice.macos.greektts15_training import (
     build_word_focus_curriculum_order,
     build_single_word_focus_curriculum_order,
     build_importance_focus_curriculum_order,
+    build_f1_phrase_candidates,
     build_word_focus_training_plan,
     blend_adapter_checkpoint,
     build_orpheus_training_sequence,
@@ -53,6 +54,39 @@ from jarvis_voice.macos.greektts15_pilot import (
 
 
 class GreekTts15TrainingTests(unittest.TestCase):
+    def test_f1_phrase_candidates_are_review_only_and_content_bound(self) -> None:
+        names = (
+            "word-focus-simantikes-a.wav",
+            "word-focus-simantikes-b.wav",
+            "word-focus-ergasies.wav",
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            focus = root / "focus"
+            audio = focus / "audio"
+            audio.mkdir(parents=True)
+            samples = []
+            for index, name in enumerate(names, start=1):
+                path = audio / name
+                with wave.open(str(path), "wb") as stream:
+                    stream.setnchannels(1)
+                    stream.setsampwidth(2)
+                    stream.setframerate(44_100)
+                    stream.writeframes((index.to_bytes(2, "little", signed=True)) * 44_100)
+                samples.append({"filename": name, "audio_sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+            (focus / "word-focus-manifest.json").write_text(
+                json.dumps({"schema": "jarvis.voice.greektts15-word-focus/1", "ready": True, "samples": samples})
+            )
+            output = root / "phrases"
+            report = build_f1_phrase_candidates(focus.resolve(), output.resolve())
+            with wave.open(str(output / report["samples"][0]["filename"]), "rb") as stream:
+                duration = stream.getnframes() / stream.getframerate()
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["review_only"])
+        self.assertFalse(report["training_allowed"])
+        self.assertEqual(len(report["samples"]), 2)
+        self.assertAlmostEqual(duration, 1.77, places=2)
+
     def test_word_focus_bundle_crops_only_hash_verified_real_audio(self) -> None:
         from jarvis_voice.macos.greektts15_training import WORD_FOCUS_CROPS
 

@@ -14,6 +14,7 @@ import os
 import re
 import unicodedata
 import wave
+from array import array
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -93,6 +94,9 @@ WORD_FOCUS_CROPS = (
     ("ergasies", "Greek-F1-C1-02-03.wav", "εργασίες", 0.34, 0.92, 0.845),
 )
 WORD_FOCUS_PADDING_SECONDS = 0.10
+PHRASE_EDGE_PADDING_SECONDS = 0.03
+PHRASE_GAP_SECONDS = 0.05
+PHRASE_FADE_SECONDS = 0.01
 WORD_FOCUS_TARGETED_STEPS = 15
 OPERATION_FOCUS_TARGETED_STEPS = 10
 STATE_FOCUS_TARGETED_STEPS = 15
@@ -355,6 +359,96 @@ def build_word_focus_training_plan(
     }
     output.write_text(json.dumps(combined, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return combined
+
+
+def build_f1_phrase_candidates(
+    word_focus_root: str | Path,
+    output_root: str | Path,
+) -> dict[str, object]:
+    """Join approved real-F1 word crops into review-only phrase candidates."""
+
+    focus = Path(word_focus_root).expanduser()
+    output = Path(output_root).expanduser()
+    if not focus.is_absolute() or not focus.is_dir() or focus.is_symlink() or not output.is_absolute() or output.exists():
+        raise BackendError("tts.greektts15.phrase_path_invalid", "F1 phrase paths are invalid", subsystem="tts")
+    try:
+        manifest = json.loads((focus / "word-focus-manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.phrase_source_invalid", "Word-focus evidence is unreadable", subsystem="tts") from exc
+    samples = manifest.get("samples") if isinstance(manifest, dict) else None
+    if manifest.get("schema") != WORD_FOCUS_SCHEMA or manifest.get("ready") is not True or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.phrase_source_invalid", "Word-focus evidence is invalid", subsystem="tts")
+    by_name = {sample.get("filename"): sample for sample in samples if isinstance(sample, dict)}
+    importance_names = ("word-focus-simantikes-a.wav", "word-focus-simantikes-b.wav")
+    work_name = "word-focus-ergasies.wav"
+
+    def read_verified(name: str) -> array[int]:
+        evidence = by_name.get(name)
+        path = focus / "audio" / name
+        if (
+            not isinstance(evidence, dict)
+            or path.is_symlink()
+            or not path.is_file()
+            or _sha256(path) != evidence.get("audio_sha256")
+        ):
+            raise BackendError("tts.greektts15.phrase_source_invalid", "Approved word crop changed", subsystem="tts")
+        with wave.open(str(path), "rb") as reader:
+            if (reader.getnchannels(), reader.getsampwidth(), reader.getframerate()) != (1, 2, EXPECTED_SAMPLE_RATE):
+                raise BackendError("tts.greektts15.phrase_source_invalid", "Approved word crop format changed", subsystem="tts")
+            values = array("h")
+            values.frombytes(reader.readframes(reader.getnframes()))
+        trim = round((WORD_FOCUS_PADDING_SECONDS - PHRASE_EDGE_PADDING_SECONDS) * EXPECTED_SAMPLE_RATE)
+        if len(values) <= trim * 2:
+            raise BackendError("tts.greektts15.phrase_source_invalid", "Approved word crop is too short", subsystem="tts")
+        return values[trim:-trim]
+
+    def faded(values: array[int]) -> array[int]:
+        result = array("h", values)
+        fade = min(round(PHRASE_FADE_SECONDS * EXPECTED_SAMPLE_RATE), len(result) // 2)
+        for index in range(fade):
+            result[index] = round(result[index] * index / fade)
+            result[-1 - index] = round(result[-1 - index] * index / fade)
+        return result
+
+    work = faded(read_verified(work_name))
+    silence = array("h", [0]) * round(PHRASE_GAP_SECONDS * EXPECTED_SAMPLE_RATE)
+    output.mkdir(mode=0o700, parents=True)
+    results: list[dict[str, object]] = []
+    for label, importance_name in zip(("a", "b"), importance_names, strict=True):
+        importance = faded(read_verified(importance_name))
+        waveform = importance + silence + work
+        filename = f"f1-phrase-simantikes-ergasies-{label}.wav"
+        destination = output / filename
+        with wave.open(str(destination), "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(2)
+            writer.setframerate(EXPECTED_SAMPLE_RATE)
+            writer.writeframes(waveform.tobytes())
+        os.chmod(destination, 0o600)
+        results.append(
+            {
+                "filename": filename,
+                "text": "σημαντικές εργασίες",
+                "audio_sha256": _sha256(destination),
+                "duration_seconds": round(len(waveform) / EXPECTED_SAMPLE_RATE, 6),
+                "importance_source": importance_name,
+                "work_source": work_name,
+            }
+        )
+    report = {
+        "schema": "jarvis.voice.greektts15-f1-phrase-candidates/1",
+        "ready": True,
+        "review_only": True,
+        "training_allowed": False,
+        "edge_padding_seconds": PHRASE_EDGE_PADDING_SECONDS,
+        "gap_seconds": PHRASE_GAP_SECONDS,
+        "fade_seconds": PHRASE_FADE_SECONDS,
+        "samples": results,
+    }
+    (output / "phrase-candidates-manifest.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return report
 
 
 def interleave_snac_codes(
