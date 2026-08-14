@@ -1,10 +1,10 @@
 {
   "schema": "jarvis.voice.greektts15-approved-candidate/1",
-  "status": "fixture_only_approval",
+  "status": "human_voice_approved",
   "model": {
-    "checkpoint_directory": "artifacts/greektts15-training/checkpoints/f1-utterance-focus-from-general-stage-000",
-    "checkpoint_sha256": "492f821f09cec8c640e02cdd9177ee78dde3f18e87f029cd34a8a158ea036f4b",
-    "source_checkpoint_sha256": "0e7da14cb9328298b650cb94d7acff6d635b5bbbec062a16905890df0d81c73a",
+    "checkpoint_directory": "artifacts/greektts15-training/checkpoints/f1-singular-operation-crop-attention-from-morphology-mlp",
+    "checkpoint_sha256": "3659aacbcebede6ad5dc1d0654730f4f5f48b531da47cee85808ae541f6ec531",
+    "source_checkpoint_sha256": "2938261505586689598fb86ef79ed68a34432dcae37afbda691b86d01e26574a",
     "sampling": {
       "temperature": 0.4,
       "top_p": 0.95,
@@ -17,8 +17,9 @@
     "significant_word_approved": true,
     "operation_word_initial_lambda_approved": true,
     "regression_heard_elsewhere": false,
-    "free_text_morphology_approved": false,
-    "observed_free_text_failure": "λειτουργεί was rendered without an audible initial lambda"
+    "free_text_morphology_approved": true,
+    "retention_phrase_approved": true,
+    "approval_evidence": "λειτουργεί has an audible initial lambda and σημαντικές εργασίες remains clear"
   },
   "remaining_runtime_gates": {
     "incremental_audio_streaming": false,
@@ -26,6 +27,6 @@
     "mean_realtime_factor_within_limit": false,
     "native_scheduler_integration": false
   },
-  "human_voice_approved": false,
+  "human_voice_approved": true,
   "production_promotion_allowed": false
 }

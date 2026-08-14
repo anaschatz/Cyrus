@@ -524,19 +524,24 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertFalse(manifest["qualification"]["human_robotic_artifact_approved"])
         self.assertEqual(len(manifest["model"]["checkpoint_sha256"]), 64)
 
-    def test_fixture_approved_f1_voice_revokes_free_text_runtime_promotion(self) -> None:
+    def test_human_approved_f1_voice_keeps_production_runtime_gated(self) -> None:
         manifest = json.loads(Path("docs/greektts15-f1-approved-candidate.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["schema"], "jarvis.voice.greektts15-approved-candidate/1")
-        self.assertEqual(manifest["status"], "fixture_only_approval")
-        self.assertFalse(manifest["human_voice_approved"])
+        self.assertEqual(manifest["status"], "human_voice_approved")
+        self.assertTrue(manifest["human_voice_approved"])
         self.assertTrue(manifest["human_listening"]["full_phrase_continuity_approved"])
         self.assertTrue(manifest["human_listening"]["general_pronunciation_approved"])
         self.assertTrue(manifest["human_listening"]["significant_word_approved"])
         self.assertTrue(manifest["human_listening"]["operation_word_initial_lambda_approved"])
         self.assertFalse(manifest["human_listening"]["regression_heard_elsewhere"])
-        self.assertFalse(manifest["human_listening"]["free_text_morphology_approved"])
+        self.assertTrue(manifest["human_listening"]["free_text_morphology_approved"])
+        self.assertTrue(manifest["human_listening"]["retention_phrase_approved"])
         self.assertFalse(manifest["production_promotion_allowed"])
         self.assertFalse(any(manifest["remaining_runtime_gates"].values()))
+        self.assertEqual(
+            manifest["model"]["checkpoint_sha256"],
+            "3659aacbcebede6ad5dc1d0654730f4f5f48b531da47cee85808ae541f6ec531",
+        )
         self.assertEqual(len(manifest["model"]["checkpoint_sha256"]), 64)
 
     def test_eos_weighting_is_bounded_to_attention_only_training(self) -> None:

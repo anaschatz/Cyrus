@@ -485,6 +485,15 @@ All four fixtures completed at 3.840, 4.181, 2.560, and 3.157 seconds. Only the
 crop-attention branch advances to human listening, still without changing the
 approved manifest or production runtime.
 
+Human listening approved the crop-attention branch: singular `λειτουργεί` now
+has an audible initial `λ`, while the retained `σημαντικές εργασίες` phrase
+remains clear. Checkpoint SHA-256
+`3659aacbcebede6ad5dc1d0654730f4f5f48b531da47cee85808ae541f6ec531`
+is therefore the new human-approved F1 voice candidate. The approval manifest
+now permits the guarded local runtime to load this exact content-bound adapter,
+but `production_promotion_allowed` remains false until the streaming,
+interruption, realtime-factor, and native scheduler gates are completed.
+
 Run the preflight with the repository on `PYTHONPATH`:
 
 ```bash
