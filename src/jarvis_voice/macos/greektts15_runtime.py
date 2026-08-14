@@ -483,9 +483,7 @@ class SoundDevicePcmPlayback:
             with self._lock:
                 if self._closed:
                     return
-                stream = self._stream
-            underflowed = stream.write(chunk.pcm16[offset : offset + block_bytes])
-            with self._lock:
+                underflowed = self._stream.write(chunk.pcm16[offset : offset + block_bytes])
                 if self._closed:
                     return
             if underflowed:
@@ -727,7 +725,8 @@ class GreekTtsF1Backend:
                 if playback_started.is_set() and not stale:
                     self.on_completed(unit)
             except Exception as exc:
-                if not self._is_stale(unit, cancelled):
+                playback_unsafe = isinstance(exc, BackendError) and exc.code == "tts.playback_timeout"
+                if playback_unsafe or not self._is_stale(unit, cancelled):
                     self._error = BackendError("tts.greektts15.runtime_failed", "GreekTTS runtime failed", subsystem="tts")
                     self._error.__cause__ = exc
                 if playback is not None:

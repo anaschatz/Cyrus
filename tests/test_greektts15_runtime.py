@@ -193,19 +193,18 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertTrue(module.stream.aborted)
         self.assertTrue(module.stream.closed)
 
-    def test_coreaudio_abort_unblocks_a_blocking_pcm_write(self) -> None:
+    def test_coreaudio_abort_waits_only_for_the_current_bounded_pcm_write(self) -> None:
         writing = threading.Event()
-        released = threading.Event()
 
         class Stream:
             def start(self): pass
             def write(self, value):
                 del value
                 writing.set()
-                released.wait(1.0)
+                time.sleep(0.02)
                 return False
             def stop(self): pass
-            def abort(self): released.set()
+            def abort(self): pass
             def close(self): pass
 
         class SoundDevice:
