@@ -133,3 +133,9 @@ callbacks. Μία μεγαλύτερη, μη εγκεκριμένη διαγνω
 queue-to-audio latency παραμένουν ανοικτά qualification gates. Το playback
 `started` callback εκπέμπεται πριν από το πρώτο blocking PCM write, ώστε οι
 native μετρήσεις να περιλαμβάνουν ολόκληρη την πραγματική διάρκεια ήχου.
+Η επαναληπτική μέτρηση μετά τη διόρθωση πέρασε με warm load 3.135 s,
+queue-to-first-PCM 11.769 s και πραγματικό playback 4.053 s, με ακολουθία
+callbacks `started` και `completed` και χωρίς backend error. Η σύνδεση runtime
+είναι συνεπώς λειτουργική, αλλά το latency gate παραμένει ανοικτό μέχρι να
+αποκωδικοποιούνται και να παίζονται ασφαλή incremental SNAC chunks πριν
+ολοκληρωθεί ολόκληρη η πρόταση.
