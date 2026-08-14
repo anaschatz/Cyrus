@@ -67,6 +67,7 @@ TRAINING_SAMPLE_PROFILES = {
     "jarvis-exact-core",
     "jarvis-general-stage",
     "jarvis-utterance-focus",
+    "jarvis-operation-morphology",
     "jarvis-word-focus",
     "jarvis-operation-focus",
     "jarvis-state-focus",
@@ -91,6 +92,12 @@ EXACT_CORE_TARGETS = tuple(target for target in LEXICAL_CURRICULUM_TARGETS if ta
 EXACT_CORE_TARGETED_STEPS = 60
 UTTERANCE_FOCUS_TARGETS = ("λειτουργουν", "σημαντικεσ")
 UTTERANCE_FOCUS_TARGETED_STEPS = 20
+OPERATION_MORPHOLOGY_EXPOSURES = {
+    "λειτουργει": 8,
+    "λειτουργουν": 4,
+    "other_operation_forms": 6,
+    "importance_retention": 2,
+}
 WORD_FOCUS_CROPS = (
     ("katastasi", "Greek-F1-B2-51-22.wav", "κατάσταση", 3.92, 4.60, 0.972),
     ("leitourgoun", "Greek-F1-B2-51-06.wav", "λειτουργούν", 2.52, 3.24, 0.848),
@@ -839,6 +846,69 @@ def build_utterance_focus_curriculum_order(
     }
 
 
+def build_operation_morphology_curriculum_order(
+    plan_path: str | Path,
+    *,
+    steps: int = PILOT_STEPS,
+) -> tuple[list[int], dict[str, object]]:
+    """Cover the operation root across real inflections while retaining F1 quality."""
+
+    import random
+
+    if steps != PILOT_STEPS:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Operation morphology step count is invalid", subsystem="tts")
+    try:
+        plan = json.loads(Path(plan_path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is unreadable", subsystem="tts") from exc
+    samples = plan.get("samples") if isinstance(plan, dict) else None
+    if not isinstance(plan, dict) or plan.get("schema") != PLAN_SCHEMA or not isinstance(samples, list):
+        raise BackendError("tts.greektts15.plan_invalid", "Training plan is invalid", subsystem="tts")
+    train_samples = [sample for sample in samples if isinstance(sample, dict) and sample.get("split") == "train"]
+    words = [set(_normalized_words(str(sample.get("text", "")))) for sample in train_samples]
+    eligible = [
+        index for index, sample in enumerate(train_samples) if sample.get("corpus") != "STOMA-F1-word-focus"
+    ]
+    exact_singular = [index for index in eligible if "λειτουργει" in words[index]]
+    exact_plural = [index for index in eligible if "λειτουργουν" in words[index]]
+    importance = [index for index in eligible if "σημαντικεσ" in words[index]]
+    exact_set = set(exact_singular + exact_plural)
+    variants = [
+        index
+        for index in eligible
+        if index not in exact_set and any(word.startswith("λειτουργ") or word.startswith("πρωτολειτουργ") for word in words[index])
+    ]
+    if len(exact_singular) != 1 or len(exact_plural) != 1 or len(importance) != 2 or len(variants) < 6:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Operation morphology coverage changed", subsystem="tts")
+    randomizer = random.Random(TRAINING_SEED)
+    randomizer.shuffle(variants)
+    variants = variants[: OPERATION_MORPHOLOGY_EXPOSURES["other_operation_forms"]]
+    selected: list[int] = []
+    for round_index in range(OPERATION_MORPHOLOGY_EXPOSURES["λειτουργει"]):
+        selected.append(exact_singular[0])
+        if round_index < OPERATION_MORPHOLOGY_EXPOSURES["λειτουργουν"]:
+            selected.append(exact_plural[0])
+        if round_index < len(variants):
+            selected.append(variants[round_index])
+        if round_index < OPERATION_MORPHOLOGY_EXPOSURES["importance_retention"]:
+            selected.append(importance[round_index])
+    targeted = set(exact_singular + exact_plural + importance + variants)
+    general = [index for index in eligible if index not in targeted]
+    randomizer.shuffle(general)
+    selected.extend(general[: steps - len(selected)])
+    if len(selected) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Operation morphology curriculum is incomplete", subsystem="tts")
+    return selected, {
+        "profile": "jarvis-operation-morphology",
+        "targeted_steps": sum(OPERATION_MORPHOLOGY_EXPOSURES.values()),
+        "general_steps": steps - sum(OPERATION_MORPHOLOGY_EXPOSURES.values()),
+        "target_counts": dict(OPERATION_MORPHOLOGY_EXPOSURES),
+        "complete_original_utterances_only": True,
+        "word_focus_crops_excluded": True,
+        "sample_filenames": [train_samples[index].get("filename") for index in selected],
+    }
+
+
 def build_word_focus_curriculum_order(
     plan_path: str | Path,
     *,
@@ -1216,6 +1286,10 @@ def run_training_pilot(
             sample_profile == "jarvis-utterance-focus"
             and (target_profile != "all" or learning_rate != 2.5e-7 or source_adapter_directory is None)
         )
+        or (
+            sample_profile == "jarvis-operation-morphology"
+            and (target_profile != "all" or learning_rate != 2.5e-7 or source_adapter_directory is None)
+        )
         or (sample_profile != "jarvis-general-stage" and general_stage_index != 0)
         or general_stage_index < 0
         or (sample_profile == "jarvis-word-focus" and target_profile != "mlp-only")
@@ -1228,6 +1302,7 @@ def run_training_pilot(
             not in {
                 "jarvis-general-stage",
                 "jarvis-utterance-focus",
+                "jarvis-operation-morphology",
                 "jarvis-word-focus",
                 "jarvis-operation-focus",
                 "jarvis-state-focus",
@@ -1359,6 +1434,8 @@ def run_training_pilot(
             )
         elif sample_profile == "jarvis-utterance-focus":
             order, curriculum = build_utterance_focus_curriculum_order(plan_path, steps=steps)
+        elif sample_profile == "jarvis-operation-morphology":
+            order, curriculum = build_operation_morphology_curriculum_order(plan_path, steps=steps)
         elif sample_profile == "jarvis-word-focus":
             order, curriculum = build_word_focus_curriculum_order(plan_path, steps=steps)
         elif sample_profile in {"jarvis-operation-focus", "jarvis-state-focus"}:
