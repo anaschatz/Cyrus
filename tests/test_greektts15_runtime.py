@@ -204,6 +204,31 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertEqual(completed, [1, 2])
         self.assertTrue(all(playback.finished for playback in playbacks))
 
+    def test_started_callback_precedes_the_first_blocking_pcm_write(self) -> None:
+        engine = FakeEngine()
+        engine.release.set()
+        order: list[str] = []
+
+        class OrderedPlayback(FakePlayback):
+            def write(self, chunk: PcmChunk) -> None:
+                order.append("write")
+                super().write(chunk)
+
+            def finish(self) -> None:
+                order.append("finish")
+                super().finish()
+
+        backend = GreekTtsF1Backend(
+            engine=engine,
+            playback_factory=OrderedPlayback,
+            on_started=lambda unit: order.append("started"),
+            on_completed=lambda unit: order.append("completed"),
+        )
+        backend.enqueue(SpeechUnit("r", 1, 1, "el-GR", "Δοκιμή."))
+        self.assertTrue(backend.wait_idle())
+        backend.close()
+        self.assertEqual(order, ["started", "write", "write", "finish", "completed"])
+
     def test_cancel_aborts_playback_and_rejects_every_late_chunk_and_completion(self) -> None:
         engine = FakeEngine()
         playback = FakePlayback()

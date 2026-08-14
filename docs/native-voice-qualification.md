@@ -125,3 +125,11 @@ TTS queue, επομένως conversation και scheduler χρησιμοποιο
 κάνει άμεσο CoreAudio `abort()`. Η ανθρώπινη έγκριση της φωνής δεν αλλάζει το
 native ready gate: acoustic barge-in, realtime factor, 200 turns και soak
 παραμένουν υποχρεωτικά.
+
+Το πρώτο πραγματικό approved-checkpoint smoke φόρτωσε warm το μοντέλο σε περίπου
+2.9 s και ολοκλήρωσε κανονικά CoreAudio playback με `started` και `completed`
+callbacks. Μία μεγαλύτερη, μη εγκεκριμένη διαγνωστική πρόταση απέτυχε κλειστά
+στο EOS gate και δεν έπαιξε καθόλου· επομένως sentence robustness και
+queue-to-audio latency παραμένουν ανοικτά qualification gates. Το playback
+`started` callback εκπέμπεται πριν από το πρώτο blocking PCM write, ώστε οι
+native μετρήσεις να περιλαμβάνουν ολόκληρη την πραγματική διάρκεια ήχου.

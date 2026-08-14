@@ -495,10 +495,10 @@ class GreekTtsF1Backend:
                     if self._is_stale(unit, cancelled):
                         playback.abort()
                         break
-                    playback.write(chunk)
                     if not started and not self._is_stale(unit, cancelled):
                         started = True
                         self.on_started(unit)
+                    playback.write(chunk)
                 stale = self._is_stale(unit, cancelled)
                 if playback is not None and not stale:
                     playback.finish()
