@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+
+import _bootstrap  # noqa: F401
+
+from jarvis_voice.backends import SpeechUnit
+from jarvis_voice.errors import BackendError
+from jarvis_voice.macos.greektts15_runtime import (
+    GreekTtsF1Backend,
+    PcmChunk,
+    load_approved_greektts_candidate,
+)
+
+
+class FakeEngine:
+    def __init__(self) -> None:
+        self.units: list[SpeechUnit] = []
+        self.cancelled = False
+        self.first_chunk = threading.Event()
+        self.release = threading.Event()
+
+    def stream(self, unit: SpeechUnit, cancelled: threading.Event):
+        self.units.append(unit)
+        yield PcmChunk(b"\x01\x00" * 20)
+        self.first_chunk.set()
+        self.release.wait(1.0)
+        if not cancelled.is_set():
+            yield PcmChunk(b"\x02\x00" * 20)
+
+    def cancel(self) -> None:
+        self.cancelled = True
+        self.release.set()
+
+
+class FakePlayback:
+    def __init__(self) -> None:
+        self.chunks: list[bytes] = []
+        self.finished = False
+        self.aborted = False
+
+    def write(self, chunk: PcmChunk) -> None:
+        self.chunks.append(chunk.pcm16)
+
+    def finish(self) -> None:
+        self.finished = True
+
+    def abort(self) -> None:
+        self.aborted = True
+
+
+class GreekTts15RuntimeTests(unittest.TestCase):
+    def test_approved_manifest_is_bound_to_exact_adapter_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            checkpoint = root / "checkpoints" / "approved"
+            checkpoint.mkdir(parents=True)
+            adapter = checkpoint / "adapters.safetensors"
+            adapter.write_bytes(b"approved-adapter")
+            (checkpoint / "adapter_config.json").write_text("{}")
+            digest = hashlib.sha256(adapter.read_bytes()).hexdigest()
+            manifest = root / "approved.json"
+            manifest.write_text(json.dumps({
+                "schema": "jarvis.voice.greektts15-approved-candidate/1",
+                "status": "human_voice_approved",
+                "model": {
+                    "checkpoint_directory": "checkpoints/approved",
+                    "checkpoint_sha256": digest,
+                    "sampling": {"temperature": 0.4, "top_p": 0.95, "repetition_penalty": 1.1},
+                },
+                "human_voice_approved": True,
+                "production_promotion_allowed": False,
+            }))
+            candidate = load_approved_greektts_candidate(manifest.resolve(), root.resolve())
+            adapter.write_bytes(b"changed")
+            with self.assertRaises(BackendError) as raised:
+                load_approved_greektts_candidate(manifest.resolve(), root.resolve())
+        self.assertEqual(candidate.checkpoint_sha256, digest)
+        self.assertEqual(raised.exception.code, "tts.greektts15.approved_checkpoint_invalid")
+
+    def test_sentence_units_are_ordered_and_complete_only_after_playback(self) -> None:
+        engine = FakeEngine()
+        engine.release.set()
+        playbacks: list[FakePlayback] = []
+        completed: list[int] = []
+        backend = GreekTtsF1Backend(
+            engine=engine,
+            playback_factory=lambda: playbacks.append(FakePlayback()) or playbacks[-1],
+            on_completed=lambda unit: completed.append(unit.unit_index),
+        )
+        backend.enqueue(SpeechUnit("r", 1, 1, "el-GR", "Πρώτη πρόταση."))
+        backend.enqueue(SpeechUnit("r", 1, 2, "el-GR", "Δεύτερη πρόταση."))
+        self.assertTrue(backend.wait_idle())
+        backend.close()
+        self.assertEqual([unit.unit_index for unit in engine.units], [1, 2])
+        self.assertEqual(completed, [1, 2])
+        self.assertTrue(all(playback.finished for playback in playbacks))
+
+    def test_cancel_aborts_playback_and_rejects_every_late_chunk_and_completion(self) -> None:
+        engine = FakeEngine()
+        playback = FakePlayback()
+        completed: list[int] = []
+        backend = GreekTtsF1Backend(
+            engine=engine,
+            playback_factory=lambda: playback,
+            on_completed=lambda unit: completed.append(unit.unit_index),
+        )
+        backend.enqueue(SpeechUnit("r", 1, 1, "el-GR", "Ενεργή πρόταση."))
+        self.assertTrue(engine.first_chunk.wait(1.0))
+        backend.enqueue(SpeechUnit("r", 1, 2, "el-GR", "Επόμενη πρόταση."))
+        backend.cancel(1, "ptt_down")
+        self.assertTrue(backend.wait_idle())
+        backend.close()
+        self.assertTrue(engine.cancelled)
+        self.assertTrue(playback.aborted)
+        self.assertEqual(len(playback.chunks), 1)
+        self.assertEqual(completed, [])
+
+    def test_queue_overflow_is_fail_closed(self) -> None:
+        engine = FakeEngine()
+        backend = GreekTtsF1Backend(engine=engine, playback_factory=FakePlayback, queue_capacity=1)
+        backend.enqueue(SpeechUnit("r", 1, 1, "el-GR", "Πρώτη."))
+        self.assertTrue(engine.first_chunk.wait(1.0))
+        backend.enqueue(SpeechUnit("r", 1, 2, "el-GR", "Δεύτερη."))
+        with self.assertRaises(BackendError) as raised:
+            backend.enqueue(SpeechUnit("r", 1, 3, "el-GR", "Τρίτη."))
+        backend.cancel(1, "test")
+        backend.close()
+        self.assertEqual(raised.exception.code, "tts.queue_overflow")
+
+
+if __name__ == "__main__":
+    unittest.main()
