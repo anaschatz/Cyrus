@@ -11,7 +11,6 @@ import re
 import threading
 import time
 from array import array
-from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,7 +39,7 @@ INCREMENTAL_START_FRAMES = 36
 INCREMENTAL_STEP_FRAMES = 4
 INCREMENTAL_LOOKAHEAD_FRAMES = 4
 INCREMENTAL_BOUNDARY_RAMP_SAMPLES = 120
-COREAUDIO_BUFFER_SECONDS = 2
+COREAUDIO_WRITE_BLOCK_SAMPLES = 480
 
 
 def _sha256(path: Path) -> str:
@@ -451,7 +450,7 @@ class MlxGreekTtsStreamingEngine:
 
 
 class SoundDevicePcmPlayback:
-    """Callback-driven CoreAudio PCM stream with immediate abort semantics."""
+    """One low-latency CoreAudio PCM stream with serialized native calls."""
 
     def __init__(self, sounddevice_module: object | None = None) -> None:
         if sounddevice_module is None:
@@ -459,12 +458,9 @@ class SoundDevicePcmPlayback:
                 import sounddevice as sounddevice_module
             except ImportError as exc:
                 raise BackendError("tts.playback_dependency_missing", "sounddevice is unavailable", subsystem="tts") from exc
-        self._condition = threading.Condition()
+        self._lock = threading.Lock()
+        self._abort_requested = threading.Event()
         self._closed = False
-        self._buffers: deque[bytes] = deque()
-        self._buffer_offset = 0
-        self._buffered_bytes = 0
-        self._maximum_buffered_bytes = SAMPLE_RATE * 2 * COREAUDIO_BUFFER_SECONDS
         settings = sounddevice_module.CoreAudioSettings(
             change_device_parameters=False,
             fail_if_conversion_required=False,
@@ -477,70 +473,39 @@ class SoundDevicePcmPlayback:
             blocksize=0,
             latency="low",
             extra_settings=settings,
-            callback=self._callback,
         )
         self._stream.start()
-
-    def _callback(self, outdata: object, frames: int, time_info: object, status: object) -> None:
-        del time_info, status
-        requested = frames * 2
-        output = memoryview(outdata).cast("B")
-        output[:requested] = b"\x00" * requested
-        written = 0
-        with self._condition:
-            while written < requested and self._buffers:
-                current = self._buffers[0]
-                available = len(current) - self._buffer_offset
-                count = min(requested - written, available)
-                output[written : written + count] = current[self._buffer_offset : self._buffer_offset + count]
-                written += count
-                self._buffer_offset += count
-                self._buffered_bytes -= count
-                if self._buffer_offset == len(current):
-                    self._buffers.popleft()
-                    self._buffer_offset = 0
-            self._condition.notify_all()
 
     def write(self, chunk: PcmChunk) -> None:
         if chunk.sample_rate != SAMPLE_RATE or chunk.channels != 1 or not chunk.pcm16 or len(chunk.pcm16) % 2:
             raise BackendError("tts.audio_chunk_invalid", "Playback chunk format is invalid", subsystem="tts")
-        offset = 0
-        with self._condition:
-            while offset < len(chunk.pcm16):
-                while not self._closed and self._buffered_bytes >= self._maximum_buffered_bytes:
-                    self._condition.wait(timeout=0.02)
-                if self._closed:
+        block_bytes = COREAUDIO_WRITE_BLOCK_SAMPLES * 2
+        for offset in range(0, len(chunk.pcm16), block_bytes):
+            if self._abort_requested.is_set():
+                return
+            with self._lock:
+                if self._closed or self._abort_requested.is_set():
                     return
-                available = self._maximum_buffered_bytes - self._buffered_bytes
-                count = min(len(chunk.pcm16) - offset, available)
-                value = chunk.pcm16[offset : offset + count]
-                self._buffers.append(value)
-                self._buffered_bytes += count
-                offset += count
+                underflowed = self._stream.write(chunk.pcm16[offset : offset + block_bytes])
+            if underflowed:
+                raise BackendError("tts.playback_underflow", "CoreAudio playback underflowed", subsystem="tts")
 
     def finish(self) -> None:
-        with self._condition:
-            if self._closed:
-                return
-            while self._buffered_bytes and not self._closed:
-                self._condition.wait(timeout=0.02)
+        with self._lock:
             if self._closed:
                 return
             self._closed = True
-        self._stream.stop()
-        self._stream.close()
+            self._stream.stop()
+            self._stream.close()
 
     def abort(self) -> None:
-        with self._condition:
+        self._abort_requested.set()
+        with self._lock:
             if self._closed:
                 return
             self._closed = True
-            self._buffers.clear()
-            self._buffer_offset = 0
-            self._buffered_bytes = 0
-            self._condition.notify_all()
-        self._stream.abort()
-        self._stream.close()
+            self._stream.abort()
+            self._stream.close()
 
 
 class GreekTtsF1Backend:
