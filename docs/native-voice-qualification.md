@@ -264,3 +264,12 @@ integration step. It stages one fixed scheduler speech record through the real
 helper, and retains only callback timings, receipt states and the final journal
 state. Passing this focused smoke does not unlock the native scheduler gate;
 the scheduler TTS capability still requires the full 200-turn and soak evidence.
+
+The focused scheduler playback smoke passed on the M3 qualification machine on
+2026-08-17. The real controller emitted `PLAYING` then `COMPLETED`, the journal
+ended in `COMPLETED`, and the user confirmed that the audible result was clean.
+Queue-to-start was 4,809.468 ms and playback duration was 1,718.243 ms; the
+startup delay remains consistent with the separately blocked real-time-factor
+gate. No audio was retained. The result is recorded in
+`docs/evidence/macos-f1-scheduler-playback-smoke-20260817.json`; the full native
+scheduler gate remains open pending 200 real turns and the eight-hour soak.

@@ -1,0 +1,35 @@
+{
+  "schema": "jarvis.voice.macos-f1-scheduler-playback-smoke/1",
+  "result": "pass",
+  "collected_at": "2026-08-17",
+  "platform": "macOS arm64 M3 16GB",
+  "source_commit": "4649844",
+  "approval_manifest_sha256": "de5acd20e18929cb6831389a3c93b2cf3506ec677a46dc3c26f9965197113c8b",
+  "checkpoint_sha256": "3659aacbcebede6ad5dc1d0654730f4f5f48b531da47cee85808ae541f6ec531",
+  "method": {
+    "scheduler_controller_real": true,
+    "f1_backend_real": true,
+    "coreaudio_playback_real": true,
+    "playback_process_isolated": true,
+    "raw_audio_persisted": false,
+    "network_used": false,
+    "installation_performed": false,
+    "human_audio_quality_confirmed": true
+  },
+  "summary": {
+    "speech_units": 1,
+    "queue_to_started_ms": 4809.468,
+    "started_to_completed_ms": 1718.243,
+    "receipts": ["PLAYING", "COMPLETED"],
+    "journal_state": "COMPLETED",
+    "duplicates": 0,
+    "stale_playback": 0,
+    "crashes": 0
+  },
+  "conclusion": {
+    "focused_scheduler_playback_smoke_passed": true,
+    "native_scheduler_gate_passed": false,
+    "production_promotion_allowed": false,
+    "remaining_requirements": ["200_real_voice_turns", "8_hour_soak"]
+  }
+}
