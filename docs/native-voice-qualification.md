@@ -242,3 +242,10 @@ and source-report digests are recorded in
 `docs/evidence/macos-f1-acoustic-qualification-20260817.json`. This closes the
 F1 `interrupt_during_generation` runtime gate; production promotion remains
 blocked by the real-time-factor and native scheduler gates.
+
+The real-time-factor gate is measured separately by
+`scripts/run_macos_f1_rtf_qualification.py`. It consumes the exact incremental
+runtime PCM without opening an output device or retaining audio, excludes warm
+model load from synthesis time, and hard-limits each process to two fixed
+quality fixtures. The four-fixture result is aggregated from two fresh
+processes before changing the manifest gate.
