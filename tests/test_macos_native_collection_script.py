@@ -63,6 +63,21 @@ class MacosNativeCollectionScriptTests(unittest.TestCase):
                 _arguments(f1_worker_python=Path("/private/python")),
             )
 
+    def test_malformed_sidecar_digest_fails_before_runtime(self) -> None:
+        with self.assertRaisesRegex(BackendError, "qualification.f1_sidecar_profile_invalid"):
+            MODULE.apply_f1_sidecar_profile(
+                voice_config_from_mapping({}),
+                _arguments(
+                    f1_worker_python=Path("/private/python"),
+                    f1_worker_python_size=49_968,
+                    f1_worker_python_sha256="short",
+                    f1_model_root=Path("/private/model"),
+                    f1_approval_manifest=Path("/private/approved.json"),
+                    f1_approval_manifest_sha256="b" * 64,
+                    f1_repository_root=Path("/private/repository"),
+                ),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

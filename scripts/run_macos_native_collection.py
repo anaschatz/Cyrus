@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -77,6 +78,18 @@ def apply_f1_sidecar_profile(config: VoiceConfig, args: argparse.Namespace) -> V
         raise BackendError(
             "qualification.f1_sidecar_profile_incomplete",
             "F1 sidecar qualification profile is incomplete",
+            subsystem="qualification",
+        )
+    if (
+        not isinstance(args.f1_worker_python_size, int)
+        or isinstance(args.f1_worker_python_size, bool)
+        or args.f1_worker_python_size < 1
+        or re.fullmatch(r"[0-9a-f]{64}", str(args.f1_worker_python_sha256)) is None
+        or re.fullmatch(r"[0-9a-f]{64}", str(args.f1_approval_manifest_sha256)) is None
+    ):
+        raise BackendError(
+            "qualification.f1_sidecar_profile_invalid",
+            "F1 sidecar qualification profile is invalid",
             subsystem="qualification",
         )
     greek = replace(
