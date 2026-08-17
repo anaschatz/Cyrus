@@ -223,3 +223,9 @@ SNAC and CoreAudio are fully unloaded before the next batch. Run `calibrate`
 after an environment or output-volume change, then use its exact
 `silence_threshold_dbfs` for each two-sample batch. Twenty-sample evidence must
 come from ten successful bounded processes; a failed batch resets the gate.
+
+On the qualified MacBook Air, PortAudio's symbolic `latency="low"` negotiated
+131.5 ms of CoreAudio output buffering. The F1 playback profile therefore asks
+for 5 ms explicitly; the device negotiated 56.9 ms in the native probe. The
+ready gate still uses microphone-observed silence rather than this advertised
+latency, and any audible underflow or degradation invalidates the profile.

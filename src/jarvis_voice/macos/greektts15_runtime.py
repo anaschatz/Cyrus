@@ -40,6 +40,7 @@ INCREMENTAL_STEP_FRAMES = 4
 INCREMENTAL_LOOKAHEAD_FRAMES = 4
 INCREMENTAL_BOUNDARY_RAMP_SAMPLES = 120
 COREAUDIO_WRITE_BLOCK_SAMPLES = 480
+COREAUDIO_REQUESTED_LATENCY_SECONDS = 0.005
 
 
 def _sha256(path: Path) -> str:
@@ -471,7 +472,7 @@ class SoundDevicePcmPlayback:
             channels=1,
             dtype="int16",
             blocksize=0,
-            latency="low",
+            latency=COREAUDIO_REQUESTED_LATENCY_SECONDS,
             extra_settings=settings,
         )
         self._stream.start()
