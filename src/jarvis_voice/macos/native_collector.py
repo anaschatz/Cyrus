@@ -414,6 +414,14 @@ class MacNativeTelemetryCollector:
         self._acoustic_invalid = 0
         self._pass("stable_runtime_profile")
 
+    @property
+    def real_voice_turn_count(self) -> int:
+        return len(self.transcript_cycles)
+
+    @property
+    def completed_playback_count(self) -> int:
+        return len(self.completed_responses)
+
     def _pass(self, name: str) -> None:
         self.cases[name]["status"] = "pass"
         self.cases[name]["attempts"] += 1

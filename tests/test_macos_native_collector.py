@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import time
+import tempfile
+import threading
 import unittest
 from array import array
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -184,6 +187,8 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
         self.assertEqual(acoustic.armed, [0.3])
         self.assertEqual(evidence["counters"]["real_voice_turns"], 200)
         self.assertEqual(evidence["acoustic_barge_in"]["samples"], 20)
+        self.assertEqual(collector.real_voice_turn_count, 200)
+        self.assertEqual(collector.completed_playback_count, 1)
 
     def test_runtime_recovery_events_update_native_gate_without_manual_marking(self) -> None:
         collector = MacNativeTelemetryCollector(
@@ -537,6 +542,74 @@ class MacNativeRunTests(unittest.TestCase):
                 silence_threshold_dbfs=-40.0,
                 audio_path="wired",
                 duration_seconds=1.0,
+            )
+
+    def test_native_collection_stops_only_after_bounded_turn_playback_completes(self) -> None:
+        class Runtime:
+            def __init__(self, _config, **kwargs):
+                del kwargs
+                self.stopped = threading.Event()
+                self.timings = (
+                    _event("audio_stream_started", 1.0),
+                    _event("ptt_source_started", 1.1),
+                    _event("ptt_down_received", 1.2, output_active=False, ptt_cycle=1),
+                    _event("ptt_up_received", 1.3, ptt_cycle=1, forced=False, reason="event_tap"),
+                    _event("transcript_final_created", 1.4, ptt_cycle=1, language="el"),
+                    _event("tts_unit_started", 1.5, response_token=1, unit_index=1, locale="el-GR"),
+                    _event("playback_completed_created", 1.6, response_token=1),
+                )
+
+            def run(self):
+                self.stopped.wait(timeout=2.0)
+
+            def request_stop(self):
+                self.stopped.set()
+
+            def timing_snapshot(self):
+                return self.timings
+
+        class Server:
+            def __init__(self, _url): pass
+            def start(self): pass
+            def stop(self): pass
+
+        config = voice_config_from_mapping({})
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "jarvis_voice.macos.native_run.sys.platform",
+            "darwin",
+        ):
+            report = run_macos_native_collection(
+                config,
+                output=Path(directory) / "evidence.json",
+                silence_threshold_dbfs=-40.0,
+                audio_path="built_in",
+                duration_seconds=2.0,
+                rss_interval_seconds=1.0,
+                maximum_real_voice_turns=1,
+                threshold_calibrated=True,
+                runtime_factory=Runtime,
+                server_factory=Server,
+                rss_probe=lambda: 100_000_000,
+            )
+        self.assertTrue(report["turn_batch_completed"])
+        self.assertEqual(report["collection_stop_reason"], "turn_batch_complete")
+        self.assertEqual(report["maximum_real_voice_turns"], 1)
+        self.assertFalse(report["ready"])
+
+    def test_native_collection_rejects_oversized_turn_batch(self) -> None:
+        config = voice_config_from_mapping({})
+        with mock.patch("jarvis_voice.macos.native_run.sys.platform", "darwin"), self.assertRaisesRegex(
+            BackendError,
+            "qualification.native_turn_batch_invalid",
+        ):
+            run_macos_native_collection(
+                config,
+                output="/tmp/unused-native-evidence.json",
+                silence_threshold_dbfs=-40.0,
+                audio_path="built_in",
+                duration_seconds=1.0,
+                maximum_real_voice_turns=6,
+                threshold_calibrated=True,
             )
 
 

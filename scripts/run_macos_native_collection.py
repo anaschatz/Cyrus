@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--output", type=Path, required=True)
     run.add_argument("--duration-seconds", type=float, default=28_800.0)
     run.add_argument("--rss-interval-seconds", type=float, default=300.0)
+    run.add_argument(
+        "--maximum-real-voice-turns",
+        type=int,
+        choices=range(1, 6),
+        help="Stop after 1-5 transcripts have also completed playback.",
+    )
     calibrate = commands.add_parser("calibrate")
     calibrate.add_argument("--config", type=Path, required=True)
     calibrate.add_argument("--audio-path", choices=("wired", "built_in"), required=True)
@@ -69,10 +75,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.output is not None:
                 write_report(args.output.resolve(), report)
         else:
-            print(
-                "Native collection started. Use physical PTT normally; press Ctrl-C for a blocked partial report.",
-                flush=True,
-            )
+            if args.maximum_real_voice_turns is None:
+                message = "Native collection started. Use physical PTT normally; press Ctrl-C for a blocked partial report."
+            else:
+                message = (
+                    f"Bounded native batch started. Complete {args.maximum_real_voice_turns} physical PTT turn(s); "
+                    "the process exits after their playback completes."
+                )
+            print(message, flush=True)
             report = run_macos_native_collection(
                 config,
                 output=args.output.resolve(),
@@ -80,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
                 audio_path=args.audio_path,
                 duration_seconds=args.duration_seconds,
                 rss_interval_seconds=args.rss_interval_seconds,
+                maximum_real_voice_turns=args.maximum_real_voice_turns,
                 threshold_calibrated=args.threshold_calibrated,
                 progress_sink=lambda value: print(json.dumps(value, sort_keys=True), flush=True),
             )
@@ -91,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         if output is not None:
             write_report(output.resolve(), report)
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if report.get("ready") else 2
+    return 0 if report.get("ready") or report.get("turn_batch_completed") else 2
 
 
 if __name__ == "__main__":

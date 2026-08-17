@@ -460,6 +460,7 @@ def run_macos_native_collection(
     audio_path: str,
     duration_seconds: float = 28_800.0,
     rss_interval_seconds: float = 300.0,
+    maximum_real_voice_turns: int | None = None,
     threshold_calibrated: bool = False,
     runtime_factory: Callable[..., MacVoiceRuntime] = MacVoiceRuntime,
     server_factory: Callable[[str], MacSmokeLoopbackServer] = MacSmokeLoopbackServer,
@@ -478,6 +479,16 @@ def run_macos_native_collection(
         raise BackendError("qualification.native_duration_invalid", "Native collection duration is invalid", subsystem="qualification")
     if rss_interval_seconds < 1.0 or rss_interval_seconds > 600.0:
         raise BackendError("qualification.native_rss_interval_invalid", "RSS interval is invalid", subsystem="qualification")
+    if maximum_real_voice_turns is not None and (
+        not isinstance(maximum_real_voice_turns, int)
+        or isinstance(maximum_real_voice_turns, bool)
+        or not 1 <= maximum_real_voice_turns <= 5
+    ):
+        raise BackendError(
+            "qualification.native_turn_batch_invalid",
+            "Native turn batch size is invalid",
+            subsystem="qualification",
+        )
     monitor = AcousticSilenceMonitor(silence_threshold_dbfs=silence_threshold_dbfs)
     collector = MacNativeTelemetryCollector(
         profile_fingerprint=mac_runtime_profile_fingerprint(config),
@@ -503,6 +514,7 @@ def run_macos_native_collection(
     next_rss = started
     next_progress = started
     interrupted = False
+    turn_batch_completed = False
     try:
         server.start()
         thread.start()
@@ -511,6 +523,13 @@ def run_macos_native_collection(
             collector.feed_many(snapshot[cursor:])
             cursor = len(snapshot)
             collector.poll_acoustic()
+            if (
+                maximum_real_voice_turns is not None
+                and collector.real_voice_turn_count >= maximum_real_voice_turns
+                and collector.completed_playback_count >= maximum_real_voice_turns
+            ):
+                turn_batch_completed = True
+                break
             now = clock()
             if now >= next_rss:
                 collector.sample_rss(rss_probe(), timestamp=now)
@@ -554,6 +573,17 @@ def run_macos_native_collection(
     return {
         **report,
         "interrupted": interrupted,
+        "turn_batch_completed": turn_batch_completed,
+        "maximum_real_voice_turns": maximum_real_voice_turns,
+        "collection_stop_reason": (
+            "turn_batch_complete"
+            if turn_batch_completed
+            else "interrupted"
+            if interrupted
+            else "runtime_failed"
+            if runtime_errors
+            else "duration_elapsed"
+        ),
         "evidence_written": True,
         "orchestrator_loopback_only": True,
         "voice_layer_mocks_used": False,

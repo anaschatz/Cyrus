@@ -60,5 +60,12 @@ event tap after a wake-sized heartbeat gap. The strict gate still requires a
 real disconnect, a real sleep/resume, 200 physical turns, 20 acoustic samples
 below 200 ms and the full eight-hour soak; unit tests cannot satisfy it.
 
+On a memory-constrained qualification machine, add
+`--maximum-real-voice-turns 1` through `5` to produce a bounded partial run.
+The collector exits only after the requested number of physical transcripts
+also have matching completed playbacks, then unloads the native runtime. A
+bounded batch is never reported as the 200-turn or eight-hour production gate,
+and separate soak durations must not be added together.
+
 Packaging, Developer ID signing, notarization, hardened runtime entitlements
 and packaged-app TCC testing remain a separate qualification profile.
