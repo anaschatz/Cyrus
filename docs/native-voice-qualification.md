@@ -257,3 +257,10 @@ mean RTF 3.4548 (maximum 3.9447) against the required 1.0. The runtime therefore
 keeps `mean_realtime_factor_within_limit=false`; neither the token bound nor the
 human-approved sampling profile was relaxed. Content-free evidence is recorded
 in `docs/evidence/macos-f1-rtf-qualification-20260817.json`.
+
+`scripts/run_macos_f1_scheduler_playback_smoke.py` provides the next bounded
+integration step. It stages one fixed scheduler speech record through the real
+`SchedulerPlaybackController`, approved F1 backend and isolated CoreAudio
+helper, and retains only callback timings, receipt states and the final journal
+state. Passing this focused smoke does not unlock the native scheduler gate;
+the scheduler TTS capability still requires the full 200-turn and soak evidence.
