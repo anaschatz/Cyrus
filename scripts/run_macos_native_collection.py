@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--audio-path", choices=("wired", "built_in"), required=True)
         command.add_argument("--silence-threshold-dbfs", type=float, required=True)
         command.add_argument("--threshold-calibrated", action="store_true")
+        command.add_argument("--loopback-port", type=int)
         command.add_argument("--f1-worker-python", type=Path)
         command.add_argument("--f1-worker-python-size", type=int)
         command.add_argument("--f1-worker-python-sha256")
@@ -108,12 +109,25 @@ def apply_f1_sidecar_profile(config: VoiceConfig, args: argparse.Namespace) -> V
     return replace(config, macos=replace(config.macos, tts_backend="greektts15_f1", greektts15=greek))
 
 
+def apply_loopback_port(config: VoiceConfig, port: int | None) -> VoiceConfig:
+    if port is None:
+        return config
+    if not isinstance(port, int) or isinstance(port, bool) or not 1_024 <= port <= 65_535:
+        raise BackendError(
+            "qualification.loopback_port_invalid",
+            "Qualification loopback port is invalid",
+            subsystem="qualification",
+        )
+    return replace(config, orchestrator_url=f"ws://127.0.0.1:{port}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         config = load_voice_config(args.config)
         if args.command in {"preflight", "run"}:
             config = apply_f1_sidecar_profile(config, args)
+            config = apply_loopback_port(config, args.loopback_port)
         if args.command == "calibrate":
             print("Acoustic calibration started. Keep the room quiet until the test phrase plays.", flush=True)
             report = calibrate_macos_acoustic_threshold(

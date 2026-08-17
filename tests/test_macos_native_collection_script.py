@@ -78,6 +78,14 @@ class MacosNativeCollectionScriptTests(unittest.TestCase):
                 ),
             )
 
+    def test_loopback_port_override_is_bounded_and_non_mutating(self) -> None:
+        config = voice_config_from_mapping({"orchestrator_url": "ws://127.0.0.1:8765"})
+        selected = MODULE.apply_loopback_port(config, 18_765)
+        self.assertEqual(config.orchestrator_url, "ws://127.0.0.1:8765")
+        self.assertEqual(selected.orchestrator_url, "ws://127.0.0.1:18765")
+        with self.assertRaisesRegex(BackendError, "qualification.loopback_port_invalid"):
+            MODULE.apply_loopback_port(config, 80)
+
 
 if __name__ == "__main__":
     unittest.main()

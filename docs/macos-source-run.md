@@ -76,5 +76,9 @@ control events and content-free callbacks. A missing field, changed interpreter
 digest, malformed callback order or dead pipe fails closed. The private config
 is not modified by these overrides.
 
+If the configured loopback orchestrator is already running, pass an unused
+`--loopback-port` between 1024 and 65535. The qualification server binds only
+to `127.0.0.1`; the runner never terminates or replaces the existing service.
+
 Packaging, Developer ID signing, notarization, hardened runtime entitlements
 and packaged-app TCC testing remain a separate qualification profile.
