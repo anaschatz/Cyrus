@@ -223,3 +223,11 @@ SNAC and CoreAudio are fully unloaded before the next batch. Run `calibrate`
 after an environment or output-volume change, then use its exact
 `silence_threshold_dbfs` for each two-sample batch. Twenty-sample evidence must
 come from ten successful bounded processes; a failed batch resets the gate.
+
+The approved F1 runtime keeps MLX/SNAC inference in the client process but owns
+PortAudio/CoreAudio playback in a disposable `spawn` helper. PCM crosses an
+anonymous process pipe and is never persisted. Barge-in terminates and joins
+the helper instead of invoking `RawOutputStream.abort()` concurrently with a
+blocking native write. A fresh helper is created for the next speech unit, so
+late audio and a native playback fault cannot escape the response epoch or
+crash the main voice client.

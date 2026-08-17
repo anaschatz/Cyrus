@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import multiprocessing
 import os
 import queue
 import re
@@ -40,6 +41,11 @@ INCREMENTAL_STEP_FRAMES = 4
 INCREMENTAL_LOOKAHEAD_FRAMES = 4
 INCREMENTAL_BOUNDARY_RAMP_SAMPLES = 120
 COREAUDIO_WRITE_BLOCK_SAMPLES = 480
+PLAYBACK_HELPER_READY = b"R"
+PLAYBACK_HELPER_DATA = b"D"
+PLAYBACK_HELPER_FINISH = b"F"
+PLAYBACK_HELPER_DONE = b"C"
+PLAYBACK_HELPER_ERROR = b"E"
 
 
 def _sha256(path: Path) -> str:
@@ -507,6 +513,119 @@ class SoundDevicePcmPlayback:
             self._stream.abort()
             self._stream.close()
 
+
+def _coreaudio_playback_worker(connection: object) -> None:
+    """Own PortAudio entirely inside a disposable spawned process."""
+
+    playback: SoundDevicePcmPlayback | None = None
+    try:
+        playback = SoundDevicePcmPlayback()
+        connection.send_bytes(PLAYBACK_HELPER_READY)
+        while True:
+            message = connection.recv_bytes()
+            kind, payload = message[:1], message[1:]
+            if kind == PLAYBACK_HELPER_DATA and payload:
+                playback.write(PcmChunk(payload))
+            elif kind == PLAYBACK_HELPER_FINISH and not payload:
+                playback.finish()
+                playback = None
+                connection.send_bytes(PLAYBACK_HELPER_DONE)
+                return
+            else:
+                raise BackendError("tts.playback_protocol_invalid", "Playback helper message is invalid", subsystem="tts")
+    except EOFError:
+        pass
+    except Exception:
+        try:
+            connection.send_bytes(PLAYBACK_HELPER_ERROR)
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+    finally:
+        if playback is not None:
+            playback.abort()
+        connection.close()
+
+
+class IsolatedSoundDevicePcmPlayback:
+    """Proxy PCM to a disposable process so hard abort cannot crash the client."""
+
+    def __init__(
+        self,
+        *,
+        process_context: object | None = None,
+        startup_timeout_seconds: float = 5.0,
+        shutdown_timeout_seconds: float = 10.0,
+    ) -> None:
+        if startup_timeout_seconds <= 0 or shutdown_timeout_seconds <= 0:
+            raise ValueError("Playback helper timeouts must be positive")
+        context = process_context or multiprocessing.get_context("spawn")
+        self._connection, child_connection = context.Pipe(duplex=True)
+        self._process = context.Process(
+            target=_coreaudio_playback_worker,
+            args=(child_connection,),
+            name="jarvis-coreaudio-playback",
+            daemon=True,
+        )
+        self._aborted = threading.Event()
+        self._shutdown_timeout_seconds = shutdown_timeout_seconds
+        self._process.start()
+        child_connection.close()
+        if not self._connection.poll(startup_timeout_seconds):
+            self.abort()
+            raise BackendError("tts.playback_helper_start_timeout", "CoreAudio helper did not start", subsystem="tts")
+        try:
+            message = self._connection.recv_bytes()
+        except (EOFError, OSError) as exc:
+            self.abort()
+            raise BackendError("tts.playback_helper_start_failed", "CoreAudio helper failed to start", subsystem="tts") from exc
+        if message != PLAYBACK_HELPER_READY:
+            self.abort()
+            raise BackendError("tts.playback_helper_start_failed", "CoreAudio helper failed to start", subsystem="tts")
+
+    def write(self, chunk: PcmChunk) -> None:
+        if chunk.sample_rate != SAMPLE_RATE or chunk.channels != 1 or not chunk.pcm16 or len(chunk.pcm16) % 2:
+            raise BackendError("tts.audio_chunk_invalid", "Playback chunk format is invalid", subsystem="tts")
+        if self._aborted.is_set():
+            return
+        try:
+            self._connection.send_bytes(PLAYBACK_HELPER_DATA + chunk.pcm16)
+        except (BrokenPipeError, EOFError, OSError) as exc:
+            if self._aborted.is_set():
+                return
+            raise BackendError("tts.playback_helper_failed", "CoreAudio helper stopped", subsystem="tts") from exc
+
+    def finish(self) -> None:
+        if self._aborted.is_set():
+            return
+        try:
+            self._connection.send_bytes(PLAYBACK_HELPER_FINISH)
+            if not self._connection.poll(self._shutdown_timeout_seconds):
+                raise BackendError("tts.playback_helper_finish_timeout", "CoreAudio helper did not finish", subsystem="tts")
+            message = self._connection.recv_bytes()
+            if message != PLAYBACK_HELPER_DONE:
+                raise BackendError("tts.playback_helper_failed", "CoreAudio helper stopped", subsystem="tts")
+            self._process.join(timeout=1.0)
+            if self._process.is_alive():
+                raise BackendError("tts.playback_helper_exit_timeout", "CoreAudio helper did not exit", subsystem="tts")
+            self._connection.close()
+        except BackendError:
+            self.abort()
+            raise
+        except (BrokenPipeError, EOFError, OSError) as exc:
+            self.abort()
+            raise BackendError("tts.playback_helper_failed", "CoreAudio helper stopped", subsystem="tts") from exc
+
+    def abort(self) -> None:
+        if self._aborted.is_set():
+            return
+        self._aborted.set()
+        if self._process.is_alive():
+            self._process.terminate()
+            self._process.join(timeout=1.0)
+        if self._process.is_alive():
+            self._process.kill()
+            self._process.join(timeout=1.0)
+        self._connection.close()
 
 class GreekTtsF1Backend:
     """Serialize sentence units and fence every generated chunk by output epoch."""

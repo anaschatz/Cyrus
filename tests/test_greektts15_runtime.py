@@ -16,6 +16,7 @@ from jarvis_voice.backends import SpeechUnit
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.greektts15_runtime import (
     GreekTtsF1Backend,
+    IsolatedSoundDevicePcmPlayback,
     MlxGreekTtsStreamingEngine,
     PcmChunk,
     SoundDevicePcmPlayback,
@@ -72,6 +73,78 @@ class FakePlayback:
 
 
 class GreekTts15RuntimeTests(unittest.TestCase):
+    @staticmethod
+    def _fake_playback_process_context():
+        class Connection:
+            def __init__(self, *, child=False):
+                self.child = child
+                self.incoming = [] if child else [b"R"]
+                self.sent: list[bytes] = []
+                self.closed = False
+
+            def poll(self, timeout):
+                del timeout
+                return bool(self.incoming)
+
+            def recv_bytes(self):
+                return self.incoming.pop(0)
+
+            def send_bytes(self, value):
+                self.sent.append(value)
+                if value == b"F":
+                    self.incoming.append(b"C")
+
+            def close(self):
+                self.closed = True
+
+        class Process:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.alive = False
+                self.terminated = False
+                self.killed = False
+
+            def start(self): self.alive = True
+            def is_alive(self): return self.alive
+            def terminate(self): self.terminated = True; self.alive = False
+            def kill(self): self.killed = True; self.alive = False
+            def join(self, timeout=None): del timeout; self.alive = False
+
+        class Context:
+            def __init__(self):
+                self.parent = Connection()
+                self.child = Connection(child=True)
+                self.process = None
+
+            def Pipe(self, duplex):
+                self.duplex = duplex
+                return self.parent, self.child
+
+            def Process(self, **kwargs):
+                self.process = Process(**kwargs)
+                return self.process
+
+        return Context()
+
+    def test_isolated_coreaudio_proxies_pcm_and_finishes_helper(self) -> None:
+        context = self._fake_playback_process_context()
+        playback = IsolatedSoundDevicePcmPlayback(process_context=context)
+        playback.write(PcmChunk(b"\x01\x00" * 20))
+        playback.finish()
+        self.assertEqual(context.parent.sent, [b"D" + b"\x01\x00" * 20, b"F"])
+        self.assertTrue(context.child.closed)
+        self.assertTrue(context.parent.closed)
+        self.assertFalse(context.process.is_alive())
+        self.assertEqual(context.process.kwargs["target"].__name__, "_coreaudio_playback_worker")
+
+    def test_isolated_coreaudio_abort_terminates_helper_without_native_abort(self) -> None:
+        context = self._fake_playback_process_context()
+        playback = IsolatedSoundDevicePcmPlayback(process_context=context)
+        playback.abort()
+        self.assertTrue(context.process.terminated)
+        self.assertFalse(context.process.killed)
+        self.assertTrue(context.parent.closed)
+
     def test_cancelled_generation_is_closed_and_metal_is_synchronized(self) -> None:
         cancelled = threading.Event()
         state = {"closed": False, "synchronized": 0, "cleared": 0}

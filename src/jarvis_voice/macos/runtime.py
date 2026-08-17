@@ -44,8 +44,8 @@ from .recovery import MacRecoveryRequest, MacRecoverySupervisor
 from .system_tts import MacSystemTtsBackend
 from .greektts15_runtime import (
     GreekTtsF1Backend,
+    IsolatedSoundDevicePcmPlayback,
     MlxGreekTtsStreamingEngine,
-    SoundDevicePcmPlayback,
     load_digest_bound_greektts_candidate,
 )
 
@@ -88,7 +88,7 @@ class MacVoiceRuntime:
             engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
             self.tts = GreekTtsF1Backend(
                 engine=engine,
-                playback_factory=SoundDevicePcmPlayback,
+                playback_factory=IsolatedSoundDevicePcmPlayback,
                 on_started=started_callback,
                 on_completed=completed_callback,
                 warm_on_start=greek.warm_on_start,

@@ -22,8 +22,8 @@ from ..qualification import write_report
 from .doctor import macos_doctor_report
 from .greektts15_runtime import (
     GreekTtsF1Backend,
+    IsolatedSoundDevicePcmPlayback,
     MlxGreekTtsStreamingEngine,
-    SoundDevicePcmPlayback,
     load_digest_bound_greektts_candidate,
 )
 from .interactive_smoke import MacSmokeLoopbackServer
@@ -59,7 +59,7 @@ def create_macos_calibration_tts(
         engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
         return GreekTtsF1Backend(
             engine=engine,
-            playback_factory=SoundDevicePcmPlayback,
+            playback_factory=IsolatedSoundDevicePcmPlayback,
             on_started=on_started,
             on_completed=on_completed,
             warm_on_start=greek.warm_on_start,

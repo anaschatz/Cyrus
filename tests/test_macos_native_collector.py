@@ -18,7 +18,7 @@ from jarvis_voice.macos.native_collector import (
     derive_acoustic_threshold,
     mac_runtime_profile_fingerprint,
 )
-from jarvis_voice.macos.greektts15_runtime import SoundDevicePcmPlayback
+from jarvis_voice.macos.greektts15_runtime import IsolatedSoundDevicePcmPlayback
 from jarvis_voice.macos.native_run import (
     calibrate_macos_acoustic_threshold,
     create_macos_calibration_tts,
@@ -490,7 +490,7 @@ class MacNativeRunTests(unittest.TestCase):
         load.assert_called_once_with("/private/approved.json", "2" * 64, "/private/repository")
         make_engine.assert_called_once_with(model_root="/private/model", candidate=candidate)
         self.assertIs(make_backend.call_args.kwargs["engine"], engine)
-        self.assertIs(make_backend.call_args.kwargs["playback_factory"], SoundDevicePcmPlayback)
+        self.assertIs(make_backend.call_args.kwargs["playback_factory"], IsolatedSoundDevicePcmPlayback)
         self.assertIs(make_backend.call_args.kwargs["on_started"], started)
         self.assertIs(make_backend.call_args.kwargs["on_completed"], completed)
         self.assertTrue(make_backend.call_args.kwargs["warm_on_start"])
