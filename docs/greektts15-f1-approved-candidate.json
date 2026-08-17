@@ -23,9 +23,15 @@
   },
   "remaining_runtime_gates": {
     "incremental_audio_streaming": true,
-    "interrupt_during_generation": false,
+    "interrupt_during_generation": true,
     "mean_realtime_factor_within_limit": false,
     "native_scheduler_integration": false
+  },
+  "runtime_qualification_evidence": {
+    "acoustic_barge_in": "docs/evidence/macos-f1-acoustic-qualification-20260817.json",
+    "valid_samples": 20,
+    "maximum_ptt_to_acoustic_silence_ms": 172.462,
+    "threshold_ms": 200.0
   },
   "human_voice_approved": true,
   "production_promotion_allowed": false

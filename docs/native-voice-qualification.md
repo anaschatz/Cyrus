@@ -231,3 +231,14 @@ the helper instead of invoking `RawOutputStream.abort()` concurrently with a
 blocking native write. A fresh helper is created for the next speech unit, so
 late audio and a native playback fault cannot escape the response epoch or
 crash the main voice client.
+
+The final built-in-audio gate passed on 2026-08-17 with ten independent
+two-sample processes and the exact isolated F1 runtime. All 20/20 physical
+Control+Option interruptions were valid and below 200 ms: mean 87.931 ms,
+nearest-rank p95 161.573 ms, and maximum 172.462 ms. The maximum synchronous
+cancel call was 5.73 ms. There were no duplicate completions, stale playback or
+crashes, and the user confirmed clean audio quality. The content-free aggregate
+and source-report digests are recorded in
+`docs/evidence/macos-f1-acoustic-qualification-20260817.json`. This closes the
+F1 `interrupt_during_generation` runtime gate; production promotion remains
+blocked by the real-time-factor and native scheduler gates.

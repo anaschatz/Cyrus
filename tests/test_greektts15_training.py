@@ -538,9 +538,14 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertTrue(manifest["human_listening"]["retention_phrase_approved"])
         self.assertFalse(manifest["production_promotion_allowed"])
         self.assertTrue(manifest["remaining_runtime_gates"]["incremental_audio_streaming"])
-        self.assertFalse(manifest["remaining_runtime_gates"]["interrupt_during_generation"])
+        self.assertTrue(manifest["remaining_runtime_gates"]["interrupt_during_generation"])
         self.assertFalse(manifest["remaining_runtime_gates"]["mean_realtime_factor_within_limit"])
         self.assertFalse(manifest["remaining_runtime_gates"]["native_scheduler_integration"])
+        evidence = json.loads(Path(manifest["runtime_qualification_evidence"]["acoustic_barge_in"]).read_text(encoding="utf-8"))
+        self.assertEqual(evidence["result"], "pass")
+        self.assertEqual(evidence["summary"]["valid_samples"], 20)
+        self.assertLess(evidence["summary"]["maximum_ptt_to_acoustic_silence_ms"], 200.0)
+        self.assertEqual(evidence["summary"]["crashes"], 0)
         self.assertEqual(
             manifest["model"]["checkpoint_sha256"],
             "3659aacbcebede6ad5dc1d0654730f4f5f48b531da47cee85808ae541f6ec531",

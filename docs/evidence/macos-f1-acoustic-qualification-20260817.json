@@ -1,0 +1,52 @@
+{
+  "schema": "jarvis.voice.macos-f1-acoustic-qualification/1",
+  "result": "pass",
+  "collected_at": "2026-08-17",
+  "platform": "macOS arm64 M3 16GB",
+  "audio_path": "built_in",
+  "ptt_key": "CONTROL_OPTION",
+  "output_volume_percent": 80,
+  "profile_fingerprint_sha256": "431addb003295d5161ad698f69dafcae71aa9b9bcc33d72fbdc68a630bdeac54",
+  "checkpoint_sha256": "3659aacbcebede6ad5dc1d0654730f4f5f48b531da47cee85808ae541f6ec531",
+  "calibration": {
+    "source_sha256": "baa5d77a40f78c2016b2f412e0e9ace5b470164b2993398921ccb1b6811b4823",
+    "ambient_p95_dbfs": -45.348,
+    "playback_p80_dbfs": -30.377,
+    "separation_db": 14.971,
+    "silence_threshold_dbfs": -42.348
+  },
+  "method": {
+    "playback_process_isolated": true,
+    "maximum_samples_per_process": 2,
+    "audible_preroll_required": true,
+    "sustained_silence_hold_ms": 50,
+    "raw_audio_persisted": false,
+    "human_audio_quality_confirmed": true
+  },
+  "summary": {
+    "ready_batches": 10,
+    "requested_batches": 10,
+    "valid_samples": 20,
+    "requested_samples": 20,
+    "mean_ptt_to_acoustic_silence_ms": 87.931,
+    "p95_nearest_rank_ptt_to_acoustic_silence_ms": 161.573,
+    "maximum_ptt_to_acoustic_silence_ms": 172.462,
+    "maximum_cancel_call_ms": 5.73,
+    "threshold_ms": 200.0,
+    "duplicates": 0,
+    "stale_playback": 0,
+    "crashes": 0
+  },
+  "batches": [
+    {"index": 1, "source_sha256": "da60baf08f53baa6fdb47ffc99cbd3e6dba1f692ce621930a6c47ae23c172f5a", "latencies_ms": [119.189, 88.882]},
+    {"index": 2, "source_sha256": "49badae2fba97e8e8e9d64f7889161b41786dced1195400e97416d3a39585bd3", "latencies_ms": [102.087, 172.462]},
+    {"index": 3, "source_sha256": "313f52c13a934821a4eef722b8472690c01bcf1fbb1745e661c534e2f4970593", "latencies_ms": [161.573, 84.071]},
+    {"index": 4, "source_sha256": "ec3ca724cb1e2b5e0485bef430470693692fa621500e7631d2500b292a4ef170", "latencies_ms": [107.68, 0.0]},
+    {"index": 5, "source_sha256": "d2258ca14871efdd144ba39a965ceed36889d4bc7462de3b9ec791966e84eca6", "latencies_ms": [111.688, 111.991]},
+    {"index": 6, "source_sha256": "a0c2f68f6c00cec80180986ee2a73f7faa94ba483fa4fb6ad21ef05ae247f065", "latencies_ms": [0.0, 46.092]},
+    {"index": 7, "source_sha256": "8c5a31c3a45e410aed6cf266edcbbda080821d4c27a84ef0b838792734eff16a", "latencies_ms": [10.672, 104.41]},
+    {"index": 8, "source_sha256": "0104c61fc3bd81e912a4fe1c7e279d8924d796537d5a82c898b4d0219edb7be2", "latencies_ms": [98.789, 103.92]},
+    {"index": 9, "source_sha256": "94405596317a39e7070f605c667f58a496a8202ff2db61d37c4bf936f1ee4bc4", "latencies_ms": [118.853, 97.512]},
+    {"index": 10, "source_sha256": "d6402c09eec06ad971afefdb17931dce256c74efb06fc1b9fc36452420770f9f", "latencies_ms": [0.0, 118.748]}
+  ]
+}
