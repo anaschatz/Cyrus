@@ -215,3 +215,11 @@ physical event-tap receipt to microphone-observed sustained silence; the
 backend `cancel()` call returned in 104.432 ms. Both are below the 200 ms ready
 limit. No PCM was retained. This is one valid acoustic sample, so the strict
 gate remains open until 20 real samples pass with no invalid observation.
+
+For the 16 GB M3 qualification machine, `scripts/run_macos_f1_acoustic_qualification.py`
+is the required F1 acoustic entry point. Its `batch` command hard-limits each
+process to two samples, writes atomic content-free evidence, and exits so MLX,
+SNAC and CoreAudio are fully unloaded before the next batch. Run `calibrate`
+after an environment or output-volume change, then use its exact
+`silence_threshold_dbfs` for each two-sample batch. Twenty-sample evidence must
+come from ten successful bounded processes; a failed batch resets the gate.
