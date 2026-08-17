@@ -186,7 +186,7 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertIsNotNone(module.stream)
         assert module.stream is not None
         self.assertTrue(module.stream.started)
-        self.assertEqual(module.stream.kwargs["latency"], 0.005)
+        self.assertEqual(module.stream.kwargs["latency"], "low")
         self.assertEqual(module.stream.kwargs["blocksize"], 0)
         playback.abort()
         self.assertEqual(module.stream.writes, [b"\x01\x00" * 20])
