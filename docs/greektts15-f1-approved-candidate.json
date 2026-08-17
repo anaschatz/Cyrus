@@ -29,6 +29,7 @@
   },
   "runtime_qualification_evidence": {
     "acoustic_barge_in": "docs/evidence/macos-f1-acoustic-qualification-20260817.json",
+    "realtime_factor": "docs/evidence/macos-f1-rtf-qualification-20260817.json",
     "valid_samples": 20,
     "maximum_ptt_to_acoustic_silence_ms": 172.462,
     "threshold_ms": 200.0

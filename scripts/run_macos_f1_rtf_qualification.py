@@ -55,12 +55,20 @@ def measure_rtf_batch(
             started = clock()
             first_pcm_at: float | None = None
             pcm_bytes = 0
-            for chunk in engine.stream(SpeechUnit(f"rtf-{fixture_id}", index, 1, "el-GR", text), cancelled):
-                if not isinstance(chunk, PcmChunk) or chunk.sample_rate != SAMPLE_RATE or chunk.channels != 1:
-                    raise BackendError("tts.greektts15.rtf_chunk_invalid", "RTF runtime emitted invalid PCM", subsystem="tts")
-                if first_pcm_at is None:
-                    first_pcm_at = clock()
-                pcm_bytes += len(chunk.pcm16)
+            try:
+                for chunk in engine.stream(SpeechUnit(f"rtf-{fixture_id}", index, 1, "el-GR", text), cancelled):
+                    if not isinstance(chunk, PcmChunk) or chunk.sample_rate != SAMPLE_RATE or chunk.channels != 1:
+                        raise BackendError("tts.greektts15.rtf_chunk_invalid", "RTF runtime emitted invalid PCM", subsystem="tts")
+                    if first_pcm_at is None:
+                        first_pcm_at = clock()
+                    pcm_bytes += len(chunk.pcm16)
+            except BackendError as exc:
+                raise BackendError(
+                    exc.code,
+                    "RTF fixture failed",
+                    subsystem="tts",
+                    safe_context={"fixture_id": fixture_id, "fixture_index": index, "completed_samples": len(samples)},
+                ) from exc
             completed = clock()
             if first_pcm_at is None or pcm_bytes <= 0 or pcm_bytes % 2:
                 raise BackendError("tts.greektts15.rtf_audio_missing", "RTF runtime emitted no PCM", subsystem="tts")

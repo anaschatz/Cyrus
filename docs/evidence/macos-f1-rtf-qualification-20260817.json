@@ -1,0 +1,29 @@
+{
+  "schema": "jarvis.voice.macos-f1-rtf-qualification/1",
+  "result": "blocked",
+  "collected_at": "2026-08-17",
+  "platform": "macOS arm64 M3 16GB",
+  "checkpoint_sha256": "3659aacbcebede6ad5dc1d0654730f4f5f48b531da47cee85808ae541f6ec531",
+  "incremental_runtime": {
+    "source_sha256": "83e0aeb2844a1bb3b111f060f5e38ff9e374f9f831e2e54eca8e5c3333d90b2a",
+    "fixture_index": 0,
+    "fixture_id": "greeting",
+    "maximum_new_tokens": 1200,
+    "result": "tts.greektts15.end_of_speech_missing"
+  },
+  "exact_checkpoint_standalone_reference": {
+    "source_sha256": "876a6e1ee3747841d3c146e4d53aeb78cc0e6274d3b38753870bfa6b595eca60",
+    "samples": 4,
+    "mean_realtime_factor": 3.4548,
+    "maximum_realtime_factor": 3.9447,
+    "mean_realtime_factor_limit": 1.0
+  },
+  "conclusion": {
+    "mean_realtime_factor_within_limit": false,
+    "production_promotion_allowed": false,
+    "token_limit_relaxed": false,
+    "sampling_changed": false,
+    "installation_performed": false,
+    "raw_audio_persisted": false
+  }
+}

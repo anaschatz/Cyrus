@@ -249,3 +249,11 @@ runtime PCM without opening an output device or retaining audio, excludes warm
 model load from synthesis time, and hard-limits each process to two fixed
 quality fixtures. The four-fixture result is aggregated from two fresh
 processes before changing the manifest gate.
+
+The 2026-08-17 M3 measurement did not close this gate. The first generic
+incremental fixture reached the fixed 1,200-token safety bound without
+end-of-speech. Independent exact-checkpoint standalone evidence also measured
+mean RTF 3.4548 (maximum 3.9447) against the required 1.0. The runtime therefore
+keeps `mean_realtime_factor_within_limit=false`; neither the token bound nor the
+human-approved sampling profile was relaxed. Content-free evidence is recorded
+in `docs/evidence/macos-f1-rtf-qualification-20260817.json`.

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import _bootstrap  # noqa: F401
 
+from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.greektts15_runtime import PcmChunk
 
 
@@ -47,6 +48,21 @@ class MacosF1RtfQualificationScriptTests(unittest.TestCase):
         self.assertEqual(MODULE._bounded_sample_count("2"), 2)
         with self.assertRaises(argparse.ArgumentTypeError):
             MODULE._bounded_sample_count("3")
+
+    def test_fixture_failure_exposes_only_safe_identity_and_progress(self) -> None:
+        class FailingEngine(FakeEngine):
+            def stream(self, unit, cancelled):
+                del unit, cancelled
+                raise BackendError("tts.greektts15.end_of_speech_missing", "private", subsystem="tts")
+                yield
+
+        with self.assertRaises(BackendError) as raised:
+            MODULE.measure_rtf_batch(FailingEngine(), (("greeting", "Private text"),))
+        self.assertEqual(raised.exception.code, "tts.greektts15.end_of_speech_missing")
+        self.assertEqual(
+            raised.exception.safe_context,
+            {"fixture_id": "greeting", "fixture_index": 1, "completed_samples": 0},
+        )
 
 
 if __name__ == "__main__":
