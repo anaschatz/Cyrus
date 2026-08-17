@@ -577,6 +577,12 @@ def run_macos_native_collection(
         monitor.close()
 
     report = evaluate_native_evidence(evidence)
+    runtime_error_codes = sorted(
+        {
+            exc.code if isinstance(exc, BackendError) else "runtime.macos_native_failed"
+            for exc in runtime_errors
+        }
+    )
     return {
         **report,
         "interrupted": interrupted,
@@ -591,6 +597,7 @@ def run_macos_native_collection(
             if runtime_errors
             else "duration_elapsed"
         ),
+        "runtime_error_codes": runtime_error_codes,
         "evidence_written": True,
         "orchestrator_loopback_only": True,
         "voice_layer_mocks_used": False,

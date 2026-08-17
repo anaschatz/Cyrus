@@ -594,6 +594,7 @@ class MacNativeRunTests(unittest.TestCase):
         self.assertTrue(report["turn_batch_completed"])
         self.assertEqual(report["collection_stop_reason"], "turn_batch_complete")
         self.assertEqual(report["maximum_real_voice_turns"], 1)
+        self.assertEqual(report["runtime_error_codes"], [])
         self.assertFalse(report["ready"])
 
     def test_native_collection_rejects_oversized_turn_batch(self) -> None:
@@ -611,6 +612,38 @@ class MacNativeRunTests(unittest.TestCase):
                 maximum_real_voice_turns=6,
                 threshold_calibrated=True,
             )
+
+    def test_native_collection_reports_content_free_runtime_error_code(self) -> None:
+        class Runtime:
+            def __init__(self, _config, **kwargs): del kwargs
+            def run(self): raise BackendError("runtime.test_failure", "private details", subsystem="runtime")
+            def request_stop(self): pass
+            def timing_snapshot(self): return ()
+
+        class Server:
+            def __init__(self, _url): pass
+            def start(self): pass
+            def stop(self): pass
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch(
+            "jarvis_voice.macos.native_run.sys.platform",
+            "darwin",
+        ):
+            report = run_macos_native_collection(
+                voice_config_from_mapping({}),
+                output=Path(directory) / "evidence.json",
+                silence_threshold_dbfs=-40.0,
+                audio_path="built_in",
+                duration_seconds=1.0,
+                rss_interval_seconds=1.0,
+                threshold_calibrated=True,
+                runtime_factory=Runtime,
+                server_factory=Server,
+                rss_probe=lambda: 100_000_000,
+            )
+        self.assertEqual(report["collection_stop_reason"], "runtime_failed")
+        self.assertEqual(report["runtime_error_codes"], ["runtime.test_failure"])
+        self.assertNotIn("private details", str(report))
 
 
 if __name__ == "__main__":

@@ -26,6 +26,9 @@ from jarvis_voice.macos.native_run import (  # noqa: E402
 from jarvis_voice.qualification import write_report  # noqa: E402
 
 
+PTT_KEYS = ("CONTROL_OPTION", "RIGHT_OPTION", *(f"F{index}" for index in range(1, 25) if index not in {10, 11}))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -36,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--silence-threshold-dbfs", type=float, required=True)
         command.add_argument("--threshold-calibrated", action="store_true")
         command.add_argument("--loopback-port", type=int)
+        command.add_argument("--ptt-key", choices=PTT_KEYS)
         command.add_argument("--f1-worker-python", type=Path)
         command.add_argument("--f1-worker-python-size", type=int)
         command.add_argument("--f1-worker-python-sha256")
@@ -121,6 +125,10 @@ def apply_loopback_port(config: VoiceConfig, port: int | None) -> VoiceConfig:
     return replace(config, orchestrator_url=f"ws://127.0.0.1:{port}")
 
 
+def apply_ptt_key(config: VoiceConfig, key: str | None) -> VoiceConfig:
+    return config if key is None else replace(config, ptt_key=key)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -128,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in {"preflight", "run"}:
             config = apply_f1_sidecar_profile(config, args)
             config = apply_loopback_port(config, args.loopback_port)
+            config = apply_ptt_key(config, args.ptt_key)
         if args.command == "calibrate":
             print("Acoustic calibration started. Keep the room quiet until the test phrase plays.", flush=True)
             report = calibrate_macos_acoustic_threshold(

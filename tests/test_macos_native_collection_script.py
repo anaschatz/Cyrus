@@ -86,6 +86,12 @@ class MacosNativeCollectionScriptTests(unittest.TestCase):
         with self.assertRaisesRegex(BackendError, "qualification.loopback_port_invalid"):
             MODULE.apply_loopback_port(config, 80)
 
+    def test_ptt_override_is_process_local(self) -> None:
+        config = voice_config_from_mapping({"ptt_key": "F9"})
+        selected = MODULE.apply_ptt_key(config, "CONTROL_OPTION")
+        self.assertEqual(config.ptt_key, "F9")
+        self.assertEqual(selected.ptt_key, "CONTROL_OPTION")
+
 
 if __name__ == "__main__":
     unittest.main()
