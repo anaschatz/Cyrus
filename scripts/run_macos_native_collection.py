@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -14,7 +15,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from jarvis_voice.config import load_voice_config  # noqa: E402
+from jarvis_voice.config import ArtifactConfig, VoiceConfig, load_voice_config  # noqa: E402
 from jarvis_voice.errors import BackendError  # noqa: E402
 from jarvis_voice.macos.native_run import (  # noqa: E402
     calibrate_macos_acoustic_threshold,
@@ -33,6 +34,13 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--audio-path", choices=("wired", "built_in"), required=True)
         command.add_argument("--silence-threshold-dbfs", type=float, required=True)
         command.add_argument("--threshold-calibrated", action="store_true")
+        command.add_argument("--f1-worker-python", type=Path)
+        command.add_argument("--f1-worker-python-size", type=int)
+        command.add_argument("--f1-worker-python-sha256")
+        command.add_argument("--f1-model-root", type=Path)
+        command.add_argument("--f1-approval-manifest", type=Path)
+        command.add_argument("--f1-approval-manifest-sha256")
+        command.add_argument("--f1-repository-root", type=Path)
     preflight = commands.choices["preflight"]
     preflight.add_argument("--output", type=Path)
     run = commands.choices["run"]
@@ -53,10 +61,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def apply_f1_sidecar_profile(config: VoiceConfig, args: argparse.Namespace) -> VoiceConfig:
+    values = (
+        args.f1_worker_python,
+        args.f1_worker_python_size,
+        args.f1_worker_python_sha256,
+        args.f1_model_root,
+        args.f1_approval_manifest,
+        args.f1_approval_manifest_sha256,
+        args.f1_repository_root,
+    )
+    if all(value is None for value in values):
+        return config
+    if any(value is None for value in values):
+        raise BackendError(
+            "qualification.f1_sidecar_profile_incomplete",
+            "F1 sidecar qualification profile is incomplete",
+            subsystem="qualification",
+        )
+    greek = replace(
+        config.macos.greektts15,
+        model_root=str(args.f1_model_root.resolve()),
+        approval_manifest_path=str(args.f1_approval_manifest.resolve()),
+        approval_manifest_sha256=args.f1_approval_manifest_sha256,
+        repository_root=str(args.f1_repository_root.resolve()),
+        warm_on_start=True,
+        worker_python=ArtifactConfig(
+            str(args.f1_worker_python.expanduser().absolute()),
+            args.f1_worker_python_size,
+            args.f1_worker_python_sha256,
+        ),
+    )
+    return replace(config, macos=replace(config.macos, tts_backend="greektts15_f1", greektts15=greek))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         config = load_voice_config(args.config)
+        if args.command in {"preflight", "run"}:
+            config = apply_f1_sidecar_profile(config, args)
         if args.command == "calibrate":
             print("Acoustic calibration started. Keep the room quiet until the test phrase plays.", flush=True)
             report = calibrate_macos_acoustic_threshold(

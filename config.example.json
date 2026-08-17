@@ -68,7 +68,12 @@
       "approval_manifest_path": null,
       "approval_manifest_sha256": null,
       "repository_root": null,
-      "warm_on_start": true
+      "warm_on_start": true,
+      "worker_python": {
+        "path": null,
+        "size": null,
+        "sha256": null
+      }
     },
     "system_voices": {"el-GR": "", "en-US": ""}
   },

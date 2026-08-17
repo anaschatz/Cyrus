@@ -92,6 +92,7 @@ class GreekTts15Config:
     approval_manifest_sha256: str | None = None
     repository_root: str | None = None
     warm_on_start: bool = True
+    worker_python: ArtifactConfig = field(default_factory=ArtifactConfig)
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +165,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     macos_data = data.get("macos", {})
     whisper_cpp_data = macos_data.get("whisper_cpp", {}) if isinstance(macos_data, Mapping) else None
     greektts15_data = macos_data.get("greektts15", {}) if isinstance(macos_data, Mapping) else None
+    greektts15_worker_data = greektts15_data.get("worker_python", {}) if isinstance(greektts15_data, Mapping) else None
     executable_data = whisper_cpp_data.get("executable", {}) if isinstance(whisper_cpp_data, Mapping) else None
     mac_model_data = whisper_cpp_data.get("model", {}) if isinstance(whisper_cpp_data, Mapping) else None
     if not isinstance(vad_data, Mapping) or not isinstance(artifact_data, Mapping):
@@ -193,9 +195,11 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     if not isinstance(mac_model_data, Mapping) or set(mac_model_data) - {"path", "size", "sha256"}:
         raise BackendError("config.invalid_field", "whisper.cpp model manifest is invalid", subsystem="config", safe_context={"field": "macos.whisper_cpp.model"})
     if not isinstance(greektts15_data, Mapping) or set(greektts15_data) - {
-        "model_root", "approval_manifest_path", "approval_manifest_sha256", "repository_root", "warm_on_start"
+        "model_root", "approval_manifest_path", "approval_manifest_sha256", "repository_root", "warm_on_start", "worker_python"
     }:
         raise BackendError("config.invalid_field", "GreekTTS runtime configuration is invalid", subsystem="config", safe_context={"field": "macos.greektts15"})
+    if not isinstance(greektts15_worker_data, Mapping) or set(greektts15_worker_data) - {"path", "size", "sha256"}:
+        raise BackendError("config.invalid_field", "GreekTTS worker manifest is invalid", subsystem="config", safe_context={"field": "macos.greektts15.worker_python"})
     url = str(data.get("orchestrator_url", "ws://127.0.0.1:8765"))
     if not is_loopback_websocket_url(url):
         raise BackendError("config.non_loopback_orchestrator", "Only loopback WebSocket URLs are permitted", subsystem="config", safe_context={"field": "orchestrator_url"})
@@ -281,6 +285,11 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 approval_manifest_sha256=greektts15_data.get("approval_manifest_sha256"),
                 repository_root=greektts15_data.get("repository_root"),
                 warm_on_start=_boolean(greektts15_data.get("warm_on_start", True), "macos.greektts15.warm_on_start"),
+                worker_python=ArtifactConfig(
+                    greektts15_worker_data.get("path"),
+                    greektts15_worker_data.get("size"),
+                    greektts15_worker_data.get("sha256"),
+                ),
             ),
             system_voices=dict(macos_voices),
         ),
@@ -322,6 +331,18 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
             or re.fullmatch(r"[0-9a-f]{64}", greek.approval_manifest_sha256) is None
         ):
             raise BackendError("config.greektts15_profile_required", "GreekTTS requires absolute, digest-bound runtime paths", subsystem="config")
+        worker = greek.worker_python
+        worker_values = (worker.path, worker.size, worker.sha256)
+        if any(value is not None for value in worker_values) and (
+            not isinstance(worker.path, str)
+            or not Path(worker.path).is_absolute()
+            or not isinstance(worker.size, int)
+            or isinstance(worker.size, bool)
+            or worker.size < 1
+            or not isinstance(worker.sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", worker.sha256) is None
+        ):
+            raise BackendError("config.greektts15_worker_required", "GreekTTS worker requires an absolute digest-bound interpreter", subsystem="config")
     if config.asr.execution_profile == "cuda" and (
         not isinstance(config.asr.cuda.device_index, int)
         or isinstance(config.asr.cuda.device_index, bool)

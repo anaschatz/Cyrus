@@ -67,5 +67,14 @@ also have matching completed playbacks, then unloads the native runtime. A
 bounded batch is never reported as the 200-turn or eight-hour production gate,
 and separate soak durations must not be added together.
 
+The approved F1 can be qualified without installing MLX into the voice
+environment. Supply the complete `--f1-*` override set to `preflight` and
+`run`: the existing voice interpreter remains responsible for capture, VAD,
+ASR and transport, while the digest-bound F1 interpreter runs MLX, SNAC and
+CoreAudio in a local process group. The parent accepts only bounded JSONL
+control events and content-free callbacks. A missing field, changed interpreter
+digest, malformed callback order or dead pipe fails closed. The private config
+is not modified by these overrides.
+
 Packaging, Developer ID signing, notarization, hardened runtime entitlements
 and packaged-app TCC testing remain a separate qualification profile.

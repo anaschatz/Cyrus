@@ -48,6 +48,7 @@ from .greektts15_runtime import (
     MlxGreekTtsStreamingEngine,
     load_digest_bound_greektts_candidate,
 )
+from .greektts15_sidecar import GreekTtsF1SidecarBackend
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,19 +81,26 @@ class MacVoiceRuntime:
         tts_warm_load_ms: float | None = None
         if config.macos.tts_backend == "greektts15_f1":
             greek = config.macos.greektts15
-            candidate = load_digest_bound_greektts_candidate(
-                greek.approval_manifest_path or "",
-                greek.approval_manifest_sha256 or "",
-                greek.repository_root or "",
-            )
-            engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
-            self.tts = GreekTtsF1Backend(
-                engine=engine,
-                playback_factory=IsolatedSoundDevicePcmPlayback,
-                on_started=started_callback,
-                on_completed=completed_callback,
-                warm_on_start=greek.warm_on_start,
-            )
+            if greek.worker_python.path is not None:
+                self.tts = GreekTtsF1SidecarBackend(
+                    config=greek,
+                    on_started=started_callback,
+                    on_completed=completed_callback,
+                )
+            else:
+                candidate = load_digest_bound_greektts_candidate(
+                    greek.approval_manifest_path or "",
+                    greek.approval_manifest_sha256 or "",
+                    greek.repository_root or "",
+                )
+                engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
+                self.tts = GreekTtsF1Backend(
+                    engine=engine,
+                    playback_factory=IsolatedSoundDevicePcmPlayback,
+                    on_started=started_callback,
+                    on_completed=completed_callback,
+                    warm_on_start=greek.warm_on_start,
+                )
             tts_warm_load_ms = self.tts.warm_load_ms
         else:
             self.tts = MacSystemTtsBackend(

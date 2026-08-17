@@ -41,7 +41,14 @@ def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
         "vad_sha256": config.vad.artifact.sha256,
         "tts_backend": config.macos.tts_backend,
         "tts_profile": (
-            {"approval_manifest_sha256": config.macos.greektts15.approval_manifest_sha256}
+            (
+                {
+                    "approval_manifest_sha256": config.macos.greektts15.approval_manifest_sha256,
+                    "worker_python_sha256": config.macos.greektts15.worker_python.sha256,
+                }
+                if config.macos.greektts15.worker_python.path is not None
+                else {"approval_manifest_sha256": config.macos.greektts15.approval_manifest_sha256}
+            )
             if config.macos.tts_backend == "greektts15_f1"
             else {"voice_mapping": dict(sorted(config.macos.system_voices.items()))}
         ),

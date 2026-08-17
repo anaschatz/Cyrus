@@ -19,6 +19,7 @@ from .ptt import CoreGraphicsEventTapAdapter, mac_ptt_keycode
 from .whisper_cpp import _validate_artifact
 from .greektts15_pilot import validate_greektts_model_root
 from .greektts15_runtime import load_digest_bound_greektts_candidate
+from .greektts15_sidecar import validate_worker_python
 
 
 def _status(status: str, code: str, **details: object) -> dict[str, object]:
@@ -104,7 +105,8 @@ def macos_doctor_report(
     if config.macos.asr_backend == "faster_whisper_cpu_smoke":
         dependency_names.extend(("faster-whisper", "ctranslate2", "numpy"))
     if config.macos.tts_backend == "greektts15_f1":
-        dependency_names.extend(("mlx", "mlx-lm", "torch", "snac"))
+        if config.macos.greektts15.worker_python.path is None:
+            dependency_names.extend(("mlx", "mlx-lm", "torch", "snac"))
     selected_dependencies: dict[str, Mapping[str, object]] = (
         dict(dependencies)
         if dependencies is not None
@@ -191,7 +193,8 @@ def macos_doctor_report(
                 greek.repository_root or "",
             )
             model_ready = validate_greektts_model_root(greek.model_root or "").ready
-            candidate_ready = candidate.checkpoint_sha256 != "" and model_ready
+            worker_ready = greek.worker_python.path is None or validate_worker_python(greek.worker_python).is_file()
+            candidate_ready = candidate.checkpoint_sha256 != "" and model_ready and worker_ready
         except Exception:
             candidate_ready = False
         tts = _status(
@@ -200,6 +203,7 @@ def macos_doctor_report(
             backend="greektts15_f1",
             warm_on_start=greek.warm_on_start,
             local_only=True,
+            process_isolated=greek.worker_python.path is not None,
         )
     else:
         configured = config.macos.system_voices

@@ -26,6 +26,7 @@ from .greektts15_runtime import (
     MlxGreekTtsStreamingEngine,
     load_digest_bound_greektts_candidate,
 )
+from .greektts15_sidecar import GreekTtsF1SidecarBackend
 from .interactive_smoke import MacSmokeLoopbackServer
 from .audio_capture import CoreAudioCapture
 from .native_collector import (
@@ -51,6 +52,12 @@ def create_macos_calibration_tts(
 
     if config.macos.tts_backend == "greektts15_f1":
         greek = config.macos.greektts15
+        if greek.worker_python.path is not None:
+            return GreekTtsF1SidecarBackend(
+                config=greek,
+                on_started=on_started,
+                on_completed=on_completed,
+            )
         candidate = load_digest_bound_greektts_candidate(
             greek.approval_manifest_path or "",
             greek.approval_manifest_sha256 or "",
