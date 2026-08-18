@@ -69,6 +69,13 @@ class ActionApprovalV1Tests(unittest.TestCase):
                 row = journal._connection.execute("SELECT state FROM action_decisions WHERE decision_event_id=?", (decision.event_id,)).fetchone()
             self.assertEqual(row["state"], "PENDING")
 
+    def test_journal_close_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            journal = ActionApprovalJournal(Path(directory) / "journal.sqlite3")
+            journal.close()
+            journal.close()
+            self.assertTrue(journal._closed)
+
 
 if __name__ == "__main__":
     unittest.main()

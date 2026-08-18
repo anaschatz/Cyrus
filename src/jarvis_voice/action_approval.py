@@ -281,6 +281,7 @@ class ActionApprovalJournal:
         self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._closed = False
         self._connection.executescript(
             """
             PRAGMA journal_mode=WAL;
@@ -302,6 +303,12 @@ class ActionApprovalJournal:
             ON action_decisions(approval_id,presentation_id);
             """
         )
+
+    def close(self) -> None:
+        with self._lock:
+            if not self._closed:
+                self._connection.close()
+                self._closed = True
 
     def observe(self, event: ActionApprovalEnvelope) -> bool:
         payload = event.payload
