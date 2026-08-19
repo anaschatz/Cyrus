@@ -92,7 +92,21 @@ class CoreGraphicsEventTapAdapter:
 
     def __init__(self) -> None:
         self._run_loop: int | None = None
+        self._event_tap: int | None = None
         self._core_foundation: ctypes.CDLL | None = None
+
+    def _reenable_event_tap(self, cg: ctypes.CDLL) -> None:
+        """Re-enable the owned CFMachPort, never the callback proxy.
+
+        ``CGEventTapCallBack`` receives a ``CGEventTapProxy`` as its first
+        argument.  Although both values are opaque pointers, that proxy is not
+        the ``CFMachPortRef`` required by ``CGEventTapEnable``.  Passing it as
+        the tap trips CoreFoundation's PAC/type check on current macOS.
+        """
+
+        tap = self._event_tap
+        if tap is not None:
+            cg.CGEventTapEnable(ctypes.c_void_p(tap), True)
 
     @staticmethod
     def _framework(name: str) -> ctypes.CDLL:
@@ -150,7 +164,7 @@ class CoreGraphicsEventTapAdapter:
             received_at = time.perf_counter()
             if event_type in {CG_EVENT_TAP_DISABLED_BY_TIMEOUT, CG_EVENT_TAP_DISABLED_BY_USER_INPUT}:
                 callback(event_type, -1, False, received_at)
-                cg.CGEventTapEnable(_proxy, True)
+                self._reenable_event_tap(cg)
                 return event
             if event_type == CG_EVENT_FLAGS_CHANGED:
                 flags = int(cg.CGEventGetFlags(event))
@@ -188,8 +202,10 @@ class CoreGraphicsEventTapAdapter:
         tap = cg.CGEventTapCreate(0, 0, 1, mask, native_callback, None)
         if not tap:
             raise BackendError("input.macos_event_tap_unavailable", "Passive event tap could not start", subsystem="input")
+        self._event_tap = int(tap)
         source = cf.CFMachPortCreateRunLoopSource(None, tap, 0)
         if not source:
+            self._event_tap = None
             cf.CFMachPortInvalidate(tap)
             cf.CFRelease(tap)
             raise BackendError("input.macos_event_tap_unavailable", "Passive event tap could not start", subsystem="input")
@@ -203,6 +219,7 @@ class CoreGraphicsEventTapAdapter:
             cf.CFRunLoopRun()
         finally:
             self._run_loop = None
+            self._event_tap = None
             cf.CFMachPortInvalidate(tap)
             cf.CFRelease(source)
             cf.CFRelease(tap)

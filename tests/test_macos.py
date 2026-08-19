@@ -30,6 +30,7 @@ from jarvis_voice.macos.ptt import (
     CG_EVENT_TAP_DISABLED_BY_TIMEOUT,
     MAC_CONTROL_OPTION_KEYCODE,
     MAC_RIGHT_OPTION_KEYCODE,
+    CoreGraphicsEventTapAdapter,
     MacEventTapPttSource,
     mac_function_keycode,
     mac_ptt_keycode,
@@ -185,6 +186,20 @@ class MacPttTests(unittest.TestCase):
         denied = MacEventTapPttSource(self.publisher(), key="F9", adapter=FakeTapAdapter(False))
         with mock.patch("jarvis_voice.macos.ptt.sys.platform", "darwin"), self.assertRaisesRegex(BackendError, "input.macos_listen_permission_required"):
             denied.start()
+
+    def test_disabled_tap_reenable_uses_owned_mach_port_not_callback_proxy(self) -> None:
+        calls: list[tuple[object, bool]] = []
+        cg = SimpleNamespace(
+            CGEventTapEnable=lambda tap, enabled: calls.append((tap, enabled))
+        )
+        adapter = CoreGraphicsEventTapAdapter()
+        adapter._event_tap = 0xCAFE
+
+        adapter._reenable_event_tap(cg)  # type: ignore[arg-type]
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0].value, 0xCAFE)  # type: ignore[union-attr]
+        self.assertTrue(calls[0][1])
 
     def test_control_option_chord_publishes_passive_transitions(self) -> None:
         publisher = PttEventPublisher(
