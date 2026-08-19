@@ -51,6 +51,7 @@ from .greektts15_runtime import (
     load_digest_bound_greektts_candidate,
 )
 from .greektts15_sidecar import GreekTtsF1SidecarBackend
+from .language_policy import MacSessionLanguagePolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,7 @@ class MacVoiceRuntime:
                 on_completed=completed_callback,
             )
         self.asr = create_macos_asr_backend(config)
+        self.language_policy = MacSessionLanguagePolicy()
         self.delivery_journal = DeliveryDedupJournal(
             journal_paths[0],
             trusted_boundary=state_boundary,
@@ -339,7 +341,8 @@ class MacVoiceRuntime:
         if outcome is None:
             return
         if outcome.error is None and outcome.result is not None:
-            event = self.core.complete_transcription(outcome.turn_id, outcome.result)
+            stabilized = self.language_policy.stabilize(outcome.result)
+            event = self.core.complete_transcription(outcome.turn_id, stabilized)
         elif outcome.error is not None and outcome.error.code == "asr.empty_transcript":
             event = self.core.complete_no_speech(outcome.turn_id, "asr_empty_transcript")
         else:
