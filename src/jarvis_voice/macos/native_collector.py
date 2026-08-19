@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import queue
+import stat
 import sys
 import threading
 import time
@@ -13,6 +14,7 @@ from array import array
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from .. import PROTOCOL_VERSION, __version__
 from ..config import VoiceConfig
@@ -29,6 +31,48 @@ ACOUSTIC_AUDIBLE_MARGIN_DB = 3.0
 ACOUSTIC_MINIMUM_SEPARATION_DB = 6.0
 
 
+def mac_source_runtime_sha256(repository_root: str | Path | None = None) -> str:
+    """Bind source qualification to importable Voice code and launch scripts."""
+
+    root = Path(__file__).resolve().parents[3] if repository_root is None else Path(repository_root).resolve()
+    package_root = root / "src" / "jarvis_voice"
+    candidates = [
+        path
+        for path in package_root.rglob("*.py")
+        if path.stem.isidentifier()
+        and all(part.isidentifier() for part in path.relative_to(package_root).parent.parts)
+    ]
+    candidates.extend(
+        root / "scripts" / name
+        for name in (
+            "run_greektts15_sidecar_worker.py",
+            "run_macos_native_collection.py",
+        )
+    )
+    candidates = sorted(candidates, key=lambda path: path.relative_to(root).as_posix())
+    if not candidates:
+        raise BackendError("qualification.native_source_identity_invalid", "Runtime source identity is unavailable", subsystem="qualification")
+    digest = hashlib.sha256()
+    for path in candidates:
+        try:
+            metadata = path.lstat()
+            if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+                raise OSError
+            content = path.read_bytes()
+            relative = path.relative_to(root).as_posix().encode("utf-8")
+        except (OSError, ValueError):
+            raise BackendError(
+                "qualification.native_source_identity_invalid",
+                "Runtime source identity is unavailable",
+                subsystem="qualification",
+            ) from None
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()
+
+
 def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
     """Hash the stable runtime selection without persisting local paths."""
 
@@ -36,6 +80,7 @@ def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
         "product_version": __version__,
         "protocol_version": PROTOCOL_VERSION,
         "voice_auth_protocol": AUTH_PROTOCOL,
+        "source_runtime_sha256": mac_source_runtime_sha256(),
         "ptt_key": config.ptt_key,
         "asr_backend": config.macos.asr_backend,
         "asr_model_sha256": config.macos.whisper_cpp.model.sha256,

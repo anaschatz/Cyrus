@@ -20,6 +20,7 @@ from jarvis_voice.macos.native_collector import (
     MacNativeTelemetryCollector,
     derive_acoustic_threshold,
     mac_runtime_profile_fingerprint,
+    mac_source_runtime_sha256,
 )
 from jarvis_voice.macos.greektts15_runtime import IsolatedSoundDevicePcmPlayback
 from jarvis_voice.macos.native_run import (
@@ -162,6 +163,42 @@ class AcousticSilenceMonitorTests(unittest.TestCase):
                 "playback_samples": 10,
             },
         )
+
+
+class MacSourceIdentityTests(unittest.TestCase):
+    def make_source_tree(self, root: Path) -> None:
+        package = root / "src" / "jarvis_voice" / "macos"
+        scripts = root / "scripts"
+        package.mkdir(parents=True)
+        scripts.mkdir()
+        (root / "src" / "jarvis_voice" / "__init__.py").write_text("VERSION = 1\n", encoding="utf-8")
+        (package / "runtime.py").write_text("RUNTIME = 1\n", encoding="utf-8")
+        (package / "runtime 2.py").write_text("IGNORED = True\n", encoding="utf-8")
+        (scripts / "run_greektts15_sidecar_worker.py").write_text("WORKER = 1\n", encoding="utf-8")
+        (scripts / "run_macos_native_collection.py").write_text("COLLECTOR = 1\n", encoding="utf-8")
+
+    def test_source_identity_changes_with_runtime_but_ignores_duplicate_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_source_tree(root)
+            initial = mac_source_runtime_sha256(root)
+
+            duplicate = root / "src" / "jarvis_voice" / "macos" / "runtime 2.py"
+            duplicate.write_text("IGNORED = False\n", encoding="utf-8")
+            self.assertEqual(mac_source_runtime_sha256(root), initial)
+
+            runtime = root / "src" / "jarvis_voice" / "macos" / "runtime.py"
+            runtime.write_text("RUNTIME = 2\n", encoding="utf-8")
+            self.assertNotEqual(mac_source_runtime_sha256(root), initial)
+
+    def test_source_identity_fails_closed_on_missing_launch_script(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_source_tree(root)
+            (root / "scripts" / "run_macos_native_collection.py").unlink()
+
+            with self.assertRaisesRegex(BackendError, "qualification.native_source_identity_invalid"):
+                mac_source_runtime_sha256(root)
 
 
 class MacNativeTelemetryCollectorTests(unittest.TestCase):
