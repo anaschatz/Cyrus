@@ -50,8 +50,9 @@ inbox.
 ## Privacy and content handling
 
 Scheduler frames, previews, notification bodies, and speech payloads are stored
-only through `scheduler-content-aead/1`, using a Voice-specific key. macOS uses
-the Data Protection Keychain and Windows uses current-user DPAPI. Notification
+only through `scheduler-content-aead/1`, using a Voice-specific key. The macOS
+source-run uses a dedicated versioned current-user login-Keychain service and
+Windows uses current-user DPAPI. Notification
 content is sent to native helper processes over stdin, never through command-line
 arguments or a plaintext temporary file.
 

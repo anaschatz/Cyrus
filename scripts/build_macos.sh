@@ -34,7 +34,7 @@ trap 'rm -rf "$build_root"' EXIT
 export JARVIS_MACOS_BUILD_PROFILE="$build_root/jarvis-macos-runtime-profile.json"
 export JARVIS_MACOS_ACTION_HELPER_MANIFEST="$build_root/jarvis-action-helper.json"
 export JARVIS_MACOS_SCHEDULER_HELPER_MANIFEST="$build_root/jarvis-scheduler-helper.json"
-export PYTHONPATH="$repo_root/src:$repo_root/orchestrator/src"
+export PYTHONPATH="$repo_root/src:$repo_root/orchestrator/src:$repo_root/inference/src:$repo_root/anamnesis/src:$repo_root/research/src"
 
 /usr/bin/swift build \
   --package-path "$repo_root/native/macos_action_host" \
@@ -75,7 +75,10 @@ python3.11 scripts/build_macos_profile.py \
   --pyinstaller-version "$pyinstaller_version" \
   --output "$JARVIS_MACOS_BUILD_PROFILE"
 python3.11 -m unittest discover -s tests -v
-python3.11 -m compileall -q src tests packaging
+python3.11 -m unittest discover -s orchestrator/tests -v
+python3.11 -m compileall -q \
+  src tests packaging \
+  orchestrator/src orchestrator/tests
 python3.11 -m PyInstaller --clean --noconfirm packaging/jarvis_voice_macos.spec
 
 app="$repo_root/dist/JARVIS Voice.app"

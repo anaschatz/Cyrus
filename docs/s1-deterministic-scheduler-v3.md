@@ -38,7 +38,7 @@ Restart recovery returns leased scheduler outbox rows to pending, restores prese
 
 ## Encrypted content
 
-All scheduler content at rest uses `scheduler-content-aead/1`: AES-256-GCM (`cryptography==49.0.0`), a random 96-bit nonce per record, a database uniqueness constraint on `(key_version, nonce)`, and JCS AAD binding record type/id, role, job/revision, content hash, and key version. Orchestrator and Voice use distinct namespaces/keys. macOS uses the Data Protection Keychain with `AfterFirstUnlockThisDeviceOnly`; Windows uses current-user DPAPI without machine scope or UI fallback.
+All scheduler content at rest uses `scheduler-content-aead/1`: AES-256-GCM (`cryptography==49.0.0`), a random 96-bit nonce per record, a database uniqueness constraint on `(key_version, nonce)`, and JCS AAD binding record type/id, role, job/revision, content hash, and key version. Orchestrator and Voice use distinct namespaces/keys. The macOS source-run uses a dedicated versioned service in the current user's login Keychain because unsigned Python receives `-34018` from the Data Protection Keychain; Windows uses current-user DPAPI without machine scope or UI fallback.
 
 Missing keys and invalid tags fail closed. No preview ACK, dispatch, or speech is permitted. Metadata remains listable/cancellable. Ciphertext is retained while live and until 24 hours after the terminal job, then cryptographically erased from the active database row; hashes and content-free ledger metadata remain.
 

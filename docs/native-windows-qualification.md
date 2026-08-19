@@ -22,14 +22,30 @@ The required sample counts are:
 
 Any failed sample blocks release, even when the minimum passing count is met.
 
-## Create and record the sample file
+## Finalize the artifact, then create and record the sample file
 
-Create the file once outside the application bundle:
+First finish signing/timestamping and regenerate the distribution manifest.
+Then create the file once outside the application bundle, bound to that exact
+verified manifest:
 
 ```powershell
 $env:PYTHONPATH = (Resolve-Path .\src)
-py -3.11 -m jarvis_voice qualification-template --output C:\JARVIS-Evidence\cpu-samples.json
+py -3.11 -m jarvis_voice qualification-template `
+  --distribution C:\JARVIS-Dist\JARVIS-Voice `
+  --output C:\JARVIS-Evidence\cpu-samples.json
 ```
+
+Create the Windows native template with the same distribution binding:
+
+```powershell
+py -3.11 .\scripts\run_native_voice_qualification.py template `
+  --platform windows `
+  --distribution C:\JARVIS-Dist\JARVIS-Voice `
+  --output C:\JARVIS-Evidence\native-hardware.json
+```
+
+Every package or manifest change invalidates both files; regenerate and rerun
+the physical cases instead of editing their identity fields.
 
 Record content-free outcomes. Greek and English turn samples require all three shown latency metrics:
 
@@ -46,11 +62,13 @@ Barge-in samples require `ptt_down_to_purge_dispatch_ms`. Recovery/no-speech cas
 
 ## Frozen and final qualification
 
-After the M3 build, signing/timestamping and post-sign manifest regeneration are complete, run:
+After the samples and native collection are complete for that exact package,
+run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\qualify_windows.ps1 `
   -Config C:\JARVIS-Config\voice.json `
+  -Distribution C:\JARVIS-Dist\JARVIS-Voice `
   -Samples C:\JARVIS-Evidence\cpu-samples.json `
   -NativeEvidence C:\JARVIS-Evidence\native-hardware.json `
   -Output C:\JARVIS-Evidence\release-qualification.json
@@ -62,8 +80,8 @@ The script first asks the packaged EXE to write its own redacted doctor report. 
 2. source doctor with the exact local configuration;
 3. strict M3 distribution manifest and its SHA-256;
 4. `signtool verify /pa /all /tw` exit code `0` for every `.exe`, `.dll` and `.pyd`;
-5. matching frozen product/protocol version, `onedir`, DLL hardening, external mutable paths and tray/host readiness;
-6. required functional samples and latency distributions.
+5. matching frozen product/protocol/auth version, authenticated loopback transport, `onedir`, DLL hardening, external mutable paths and tray/host readiness;
+6. required functional samples, latency distributions and exact distribution-manifest binding;
 7. at least 200 real hardware turns, zero duplicate transcript/playback, zero stuck PTT, acoustic barge-in below 200 ms, microphone/sleep recovery and an eight-hour stable-memory soak.
 
 SignTool output is captured and discarded; it is never copied into the report. Exit code `2` is a warning according to Microsoft and is deliberately treated as release-blocking. The report contains no artifact paths or signer identity.

@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=84,<85"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "jarvis-voice"
-version = "0.7.0"
+version = "0.8.0"
 description = "Local-first JARVIS voice interface"
 requires-python = ">=3.11"
 dependencies = ["cryptography==49.0.0"]
+license-files = []
 
 [project.optional-dependencies]
 asr = ["faster-whisper==1.2.1"]
@@ -25,6 +26,9 @@ jarvis-voice = "jarvis_voice.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["jarvis_voice", "jarvis_voice.*"]
+namespaces = false

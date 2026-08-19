@@ -39,7 +39,7 @@ class ModelFailureGateTests(unittest.TestCase):
         self.path = Path(temporary.name) / "orchestrator.sqlite3"
 
     def config(self, *, timeout: float) -> OrchestratorConfig:
-        return OrchestratorConfig.from_mapping(
+        return OrchestratorConfig.from_test_mapping(
             {
                 "database_path": str(self.path),
                 "control_bearer_token": "control-private",

@@ -81,18 +81,12 @@ class ResearchStoreTests(StoreCase, unittest.TestCase):
             self.assertEqual(store._connection.execute("SELECT COUNT(*) FROM research_runs").fetchone()[0], 0)
             self.assertEqual(store._connection.execute("SELECT COUNT(*) FROM research_documents").fetchone()[0], 0)
 
-    def test_v2_database_migrates_through_research_to_current_schema_v7(self) -> None:
+    def test_current_schema_v10_contains_research_tables(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.sqlite3"
-            first = OrchestratorStore(path)
-            with first._lock:
-                first._connection.execute("DROP TABLE research_documents")
-                first._connection.execute("DROP TABLE research_runs")
-                first._connection.execute("UPDATE schema_meta SET value='2' WHERE key='schema_version'")
-            first.close()
             second = OrchestratorStore(path)
             self.addCleanup(second.close)
-            self.assertEqual(second._connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0], "7")
+            self.assertEqual(second._connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0], "10")
             tables = {row[0] for row in second._connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertTrue({"research_runs", "research_documents"} <= tables)
 

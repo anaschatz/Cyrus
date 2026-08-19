@@ -8,11 +8,52 @@ The voice layer only captures, validates, transcribes, transports, speaks, and c
 
 The new [`orchestrator/`](orchestrator/) package is Python 3.11 source-run code with a hash-bearing cross-platform `uv.lock`. It uses `pydantic-ai-slim[openai]==2.27.0`, but its public and durable domain schemas remain framework-independent. See the [Orchestrator runbook](orchestrator/README.md) and [Core v1 contract map](docs/orchestrator-core-v1.md).
 
-A strict `jarvis-private-stack/1` manifest now provides one private operator
+A strict `jarvis-private-stack/2` manifest now provides one private operator
 entry point for the real voice, Orchestrator and qualified inference configs.
 It validates their cross-component bindings without printing secrets and can
 run a real local-model WebSocket-to-speech-commit probe. See the
-[private stack runbook](docs/private-stack-run.md).
+[private stack runbook](docs/private-stack-run.md). For the bounded,
+foreground-only Mac hardware turn, use the
+[macOS technical-beta operator runbook](docs/macos-technical-beta-operator.md).
+
+## Authenticated single-host boundary
+
+Voice 0.8.0 and the Orchestrator require `jarvis.voice-auth/1` before the first
+`jarvis.voice/1` frame. Create one per-install key outside the repository; the
+parent directory must already exist and the destination must not exist:
+
+```zsh
+PYTHONPATH=src python3.11 -m jarvis_voice create-auth-key \
+  --output /absolute/private/path/voice-auth.json
+```
+
+Set the exact same absolute path in both private component configs:
+
+```json
+"voice_auth_key_file": "/absolute/private/path/voice-auth.json"
+```
+
+The creator uses schema `jarvis.voice-auth-key/1`, creates the file
+exclusively, applies mode `0600` on POSIX or a restricted owner DACL on
+Windows, and never prints the secret. The checked-in examples deliberately use
+`null` and therefore fail closed until materialized.
+
+Voice, the Orchestrator and the local inference appliance form one machine-local
+deployment. The Voice WebSocket and inference endpoints stay on loopback; a Mac
+Voice client must not be paired with a PC Orchestrator, or the reverse. The
+shared-key handshake authenticates the two local Voice peers and binds the
+exact hello frame. It does not encrypt WebSocket traffic, provide TLS, authorize
+later application operations, sandbox processes or protect against malware
+already running as the same user.
+
+There is no dual-key/live rotation: stop Voice and Orchestrator, create a new
+key at a new path, update both configs, restart Orchestrator then Voice, and
+require authenticated `status`, `e2e` and one native PTT turn before retiring
+the old key. This is
+also a qualification boundary: pre-auth Voice 0.7 packages/evidence and `/1`
+operational transport evidence do not qualify the current runtime. See the
+[private stack runbook](docs/private-stack-run.md) for the exact rotation and
+evidence compatibility rules.
 
 An off-by-default Anamnesis adapter now provides qualified local retrospective
 recall for explicit completed statements. Durable memory remains in
@@ -33,18 +74,23 @@ PYTHONPATH=src python3 -m jarvis_voice doctor --config config.example.json
 
 cd orchestrator
 uv sync --frozen --python 3.11
-PYTHONPATH=src:../src:../inference/src:../anamnesis/src uv run --frozen python -m unittest discover -s tests -v
+PYTHONPATH=src:../src:../inference/src uv run --frozen python -m unittest discover -s tests -v
 ```
 
-The safe example intentionally selects CPU and contains no machine-specific paths or GPU identifier.
+The safe example intentionally selects CPU and contains no machine-specific
+paths, authentication key or GPU identifier. Its doctor result is expected to
+remain blocked; use a private materialized config for a readiness claim.
 
 ## macOS CPU readiness
 
-The passive command below accepts the already-local CTranslate2 model through an absolute path, validates its exact four-file manifest and never loads it:
+The passive command below accepts the already-local CTranslate2 model through
+an absolute path, validates its exact four-file manifest and never loads it.
+For a readiness result, replace the example config with a private config that
+also contains the external `voice_auth_key_file`:
 
 ```zsh
 PYTHONPATH=src python3 -m jarvis_voice doctor-macos-cpu \
-  --config config.example.json \
+  --config /absolute/private/path/voice.local.json \
   --model-dir /absolute/local/model/snapshot \
   --output /absolute/private/macos-cpu-doctor.json
 ```

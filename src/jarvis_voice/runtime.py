@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from .asr_factory import AsrBackendFactory
 from .audio import resample_audio
 from .backends import SpeechUnit
-from .config import VoiceConfig
+from .config import VoiceConfig, configured_voice_auth_key
 from .core import VoiceCore
 from .cloud_approval import (
     CloudApprovalController,
@@ -28,6 +28,7 @@ from .action_approval import (
 from .delivery_journal import DeliveryDedupJournal, default_delivery_journal_path
 from .errors import BackendError
 from .ptt import ApprovalKeyPublisher, PttEvent, PttEventPublisher, PttTransition, function_key_vkey
+from .private_state import default_voice_state_boundary, prepare_voice_journal_state
 from .reliable import ReliableSubmissionManager
 from .transport import LoopbackWebSocketTransport
 from .transcription import AsyncTranscriptionCoordinator
@@ -50,11 +51,24 @@ class WindowsVoiceRuntime:
     def __init__(self, config: VoiceConfig, *, asr_factory: AsrBackendFactory | None = None) -> None:
         if sys.platform != "win32":
             raise BackendError("runtime.windows_only", "The source runtime requires native Windows", subsystem="runtime")
+        voice_auth_key = configured_voice_auth_key(config)
         artifact = config.vad.artifact
         if not artifact.path or artifact.size is None or not artifact.sha256:
             raise BackendError("vad.artifact_manifest_required", "Silero artifact manifest is required", subsystem="vad")
         if not config.whisper_model_directory:
             raise BackendError("asr.model_directory_required", "Whisper model directory is required", subsystem="asr")
+        journal_paths = (
+            default_delivery_journal_path(),
+            default_cloud_approval_journal_path(),
+            default_action_approval_journal_path(),
+        )
+        state_boundary = default_voice_state_boundary()
+        # Validate/harden the entire state family before any journal connects
+        # or an expensive native backend is initialized.
+        prepare_voice_journal_state(
+            journal_paths,
+            trusted_boundary=state_boundary,
+        )
         self.config = config
         self.callbacks: queue.Queue[BackendCallback] = queue.Queue()
         self.tts = SapiTtsBackend(
@@ -63,11 +77,20 @@ class WindowsVoiceRuntime:
             on_completed=lambda unit: self.callbacks.put_nowait(BackendCallback("completed", unit)),
         )
         self.asr = (asr_factory or AsrBackendFactory()).create(config)
-        self.delivery_journal = DeliveryDedupJournal(default_delivery_journal_path())
+        self.delivery_journal = DeliveryDedupJournal(
+            journal_paths[0],
+            trusted_boundary=state_boundary,
+        )
         self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
-        self.cloud_journal = CloudApprovalJournal(default_cloud_approval_journal_path())
+        self.cloud_journal = CloudApprovalJournal(
+            journal_paths[1],
+            trusted_boundary=state_boundary,
+        )
         self.cloud_approval = CloudApprovalController(session_id=self.core.session_id, journal=self.cloud_journal)
-        self.action_journal = ActionApprovalJournal(default_action_approval_journal_path())
+        self.action_journal = ActionApprovalJournal(
+            journal_paths[2],
+            trusted_boundary=state_boundary,
+        )
         self.action_approval = ActionApprovalController(
             session_id=self.core.session_id,
             journal=self.action_journal,
@@ -96,7 +119,10 @@ class WindowsVoiceRuntime:
             minimum_speech_ms=config.vad.minimum_speech_ms,
             padding_ms=config.vad.padding_ms,
         )
-        self.transport = LoopbackWebSocketTransport(config.orchestrator_url)
+        self.transport = LoopbackWebSocketTransport(
+            config.orchestrator_url,
+            auth_key=voice_auth_key,
+        )
         self.publisher = PttEventPublisher(
             capacity=config.ptt_queue_capacity,
             maximum_hold_seconds=config.maximum_hold_seconds,

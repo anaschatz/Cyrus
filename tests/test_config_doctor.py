@@ -20,12 +20,52 @@ class StaticInventory:
 
 class ConfigDoctorTests(unittest.TestCase):
     def test_only_loopback_websockets_are_allowed(self) -> None:
-        for url in ("ws://127.0.0.1:8765", "ws://localhost:1", "ws://[::1]:8765"):
+        for url in ("ws://127.0.0.1:8765", "ws://127.0.0.1:8765/"):
             self.assertTrue(is_loopback_websocket_url(url))
-        for url in ("https://127.0.0.1", "ws://192.168.1.10:8765", "wss://example.com"):
+        for url in (
+            "https://127.0.0.1",
+            "wss://127.0.0.1:8765",
+            "ws://localhost:8765",
+            "ws://[::1]:8765",
+            "ws://127.0.0.2:8765",
+            "ws://192.168.1.10:8765",
+            "ws://user:password@127.0.0.1:8765",
+            "ws://127.0.0.1:8765/voice",
+            "ws://127.0.0.1:8765/?mode=voice",
+            "ws://127.0.0.1:8765/#voice",
+            "ws://127.0.0.1:0",
+            "ws://127.0.0.1:65536",
+        ):
             self.assertFalse(is_loopback_websocket_url(url))
             with self.assertRaisesRegex(BackendError, "config.non_loopback_orchestrator"):
                 voice_config_from_mapping({"orchestrator_url": url})
+
+    def test_voice_auth_key_tilde_is_normalized_to_an_absolute_path(self) -> None:
+        configured = "~/.jarvis-test/voice-auth.json"
+        config = voice_config_from_mapping({"voice_auth_key_file": configured})
+
+        self.assertEqual(
+            config.voice_auth_key_file,
+            str(Path(configured).expanduser()),
+        )
+        self.assertTrue(Path(config.voice_auth_key_file).is_absolute())
+
+    def test_doctor_distinguishes_missing_configuration_from_invalid_key(self) -> None:
+        missing = doctor_report_config(voice_config_from_mapping({}))
+        invalid = doctor_report_config(
+            voice_config_from_mapping(
+                {"voice_auth_key_file": "/absolute/missing/voice-auth.json"}
+            )
+        )
+
+        self.assertEqual(
+            missing["checks"]["transport"]["code"],
+            "transport.authentication_key_required",
+        )
+        self.assertEqual(
+            invalid["checks"]["transport"]["code"],
+            "transport.authentication_key_invalid",
+        )
 
     def test_safe_example_shape_round_trips(self) -> None:
         config = load_voice_config(Path(__file__).resolve().parents[1] / "config.example.json")

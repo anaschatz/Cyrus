@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from email.message import Message
 from pathlib import Path
+from unittest.mock import patch
 
 import _bootstrap  # noqa: F401
 
@@ -23,7 +24,7 @@ class ControlSecurityTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         path = Path(self.temporary.name) / "state.sqlite3"
-        config = OrchestratorConfig.from_mapping({
+        config = OrchestratorConfig.from_test_mapping({
             "database_path": str(path),
             "control_bearer_token": "control-private",
             "inference_bearer_token": "inference-private",
@@ -31,7 +32,9 @@ class ControlSecurityTests(unittest.TestCase):
         store = OrchestratorStore(path)
         self.addCleanup(store.close)
         service = OrchestratorService(config, store, BudgetedModelPort(store, FakeModel()))
-        self.handler_type = handler_factory(ControlApplication(config, service))
+        self.service = service
+        self.application = ControlApplication(config, service)
+        self.handler_type = handler_factory(self.application)
 
     def handler(self, headers: list[tuple[str, str]] | None = None):
         result = self.handler_type.__new__(self.handler_type)
@@ -83,6 +86,96 @@ class ControlSecurityTests(unittest.TestCase):
         oversized.rfile = io.BytesIO()
         with self.assertRaisesRegex(OrchestratorError, "request_too_large"):
             oversized._post_body()
+
+    def test_beta_session_reports_real_voice_connection_and_disabled_scope(self) -> None:
+        with patch.object(
+            self.service,
+            "readiness_snapshot",
+            wraps=self.service.readiness_snapshot,
+        ) as readiness_snapshot:
+            status, before = self.application.get("/v1/beta-session")
+        self.assertEqual(status, 200)
+        readiness_snapshot.assert_called_once_with()
+        self.assertFalse(before["voice_client_connected"])
+        self.assertEqual(
+            before["schema_version"], "jarvis-orchestrator-beta-session/2"
+        )
+        self.assertEqual(
+            before["effective_capabilities"],
+            {
+                "cloud": False,
+                "memory_retrospective": False,
+                "memory_shadow": False,
+                "research": False,
+                "tools": False,
+            },
+        )
+        self.service.attach_client("connection-1")
+        try:
+            _, connected = self.application.get("/v1/beta-session")
+            self.assertTrue(connected["voice_client_connected"])
+        finally:
+            self.service.detach_client("connection-1")
+
+    def test_disabled_memory_is_reported_disabled_without_live_probe(self) -> None:
+        with patch.object(
+            self.service.store,
+            "memory_crypto_readiness",
+            side_effect=AssertionError("disabled memory must not probe provider"),
+        ) as memory_probe:
+            status, readiness = self.application.get("/v1/readiness")
+
+        self.assertEqual(status, 200)
+        self.assertFalse(readiness["memory_ready"])
+        self.assertEqual(readiness["memory_state"], "DISABLED")
+        memory_probe.assert_not_called()
+
+    def test_beta_session_records_voice_topology_changes_without_ids(
+        self,
+    ) -> None:
+        status, before = self.application.get("/v1/beta-session")
+        self.assertEqual(status, 200)
+        self.assertFalse(before["voice_client_connected"])
+        self.assertEqual(before["voice_connection_generation"], 0)
+        self.assertEqual(
+            before["schema_version"],
+            "jarvis-orchestrator-beta-session/2",
+        )
+        tracker_id = before["voice_connection_tracker_id"]
+        self.assertRegex(
+            tracker_id,
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        )
+
+        self.service.attach_client("private-connection-id")
+        _, connected = self.application.get("/v1/beta-session")
+        self.assertTrue(connected["voice_client_connected"])
+        self.assertEqual(connected["voice_connection_generation"], 1)
+        self.assertEqual(
+            connected["voice_connection_tracker_id"],
+            tracker_id,
+        )
+        self.service.attach_client("private-connection-id")
+        self.service.detach_client("unknown-connection-id")
+        _, unchanged = self.application.get("/v1/beta-session")
+        self.assertEqual(unchanged["voice_connection_generation"], 1)
+
+        self.service.detach_client("private-connection-id")
+        _, disconnected = self.application.get("/v1/beta-session")
+        self.assertFalse(disconnected["voice_client_connected"])
+        self.assertEqual(disconnected["voice_connection_generation"], 2)
+        self.assertNotIn("private-connection-id", str(disconnected))
+
+        replacement = OrchestratorService(
+            self.service.config,
+            self.service.store,
+            self.service.model,
+        )
+        _, replacement_tracker_id, replacement_generation = (
+            replacement.voice_connection_state()
+        )
+        self.assertNotEqual(replacement_tracker_id, tracker_id)
+        self.assertEqual(replacement_generation, 0)
 
 
 if __name__ == "__main__":

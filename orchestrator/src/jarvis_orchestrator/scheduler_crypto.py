@@ -16,7 +16,6 @@ from typing import Protocol
 
 from .jcs import domain_sha256, jcs_bytes
 
-
 AEAD_CONTRACT = "scheduler-content-aead/1"
 NONCE_BYTES = 12
 KEY_BYTES = 32
@@ -93,7 +92,9 @@ class InMemorySchedulerKeyProvider:
         try:
             return self._keys[version]
         except KeyError as exc:
-            raise SchedulerKeyUnavailable("scheduler key version is unavailable") from exc
+            raise SchedulerKeyUnavailable(
+                "scheduler key version is unavailable"
+            ) from exc
 
     def create_next(self) -> tuple[int, bytes]:
         self._active += 1
@@ -106,7 +107,10 @@ class _WindowsDpapiKeyProvider:
     """Current-user DPAPI wrapped keys; no machine-scope or UI fallback."""
 
     class _Blob(ctypes.Structure):
-        _fields_ = [("cbData", ctypes.c_ulong), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
+        _fields_ = [
+            ("cbData", ctypes.c_ulong),
+            ("pbData", ctypes.POINTER(ctypes.c_ubyte)),
+        ]
 
     CRYPTPROTECT_UI_FORBIDDEN = 0x1
 
@@ -136,9 +140,11 @@ class _WindowsDpapiKeyProvider:
         return self.create_next()[0]
 
     @classmethod
-    def _blob(cls, value: bytes) -> tuple["_WindowsDpapiKeyProvider._Blob", object]:
+    def _blob(cls, value: bytes) -> tuple[_WindowsDpapiKeyProvider._Blob, object]:
         buffer = (ctypes.c_ubyte * len(value)).from_buffer_copy(value)
-        return cls._Blob(len(value), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))), buffer
+        return cls._Blob(
+            len(value), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
+        ), buffer
 
     def _protect(self, value: bytes) -> bytes:
         source, keepalive = self._blob(value)
@@ -208,7 +214,12 @@ class _WindowsDpapiKeyProvider:
 
 
 class _MacOSKeychainKeyProvider:
-    """Data Protection Keychain with AfterFirstUnlockThisDeviceOnly items."""
+    """Current-user login Keychain provider for source-run macOS.
+
+    The namespace is versioned and disjoint from the signed-app Data
+    Protection Keychain contract because an unsigned Python process receives
+    OSStatus -34018 when it requests ``kSecUseDataProtectionKeychain``.
+    """
 
     def __init__(self, namespace: str) -> None:
         self.namespace = namespace
@@ -225,21 +236,43 @@ class _MacOSKeychainKeyProvider:
 
     def _configure_ffi(self) -> None:
         self._cf.CFDictionaryCreateMutable.restype = ctypes.c_void_p
-        self._cf.CFDictionaryCreateMutable.argtypes = [ctypes.c_void_p, ctypes.c_long,
-                                                        ctypes.c_void_p, ctypes.c_void_p]
-        self._cf.CFDictionarySetValue.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+        self._cf.CFDictionaryCreateMutable.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_long,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        self._cf.CFDictionarySetValue.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
         self._cf.CFStringCreateWithCString.restype = ctypes.c_void_p
-        self._cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+        self._cf.CFStringCreateWithCString.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+        ]
         self._cf.CFDataCreate.restype = ctypes.c_void_p
-        self._cf.CFDataCreate.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_long]
+        self._cf.CFDataCreate.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_ubyte),
+            ctypes.c_long,
+        ]
         self._cf.CFDataGetLength.restype = ctypes.c_long
         self._cf.CFDataGetLength.argtypes = [ctypes.c_void_p]
         self._cf.CFDataGetBytePtr.restype = ctypes.POINTER(ctypes.c_ubyte)
         self._cf.CFDataGetBytePtr.argtypes = [ctypes.c_void_p]
         self._cf.CFRelease.argtypes = [ctypes.c_void_p]
-        self._security.SecItemAdd.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+        self._security.SecItemAdd.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
         self._security.SecItemAdd.restype = ctypes.c_int32
-        self._security.SecItemCopyMatching.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+        self._security.SecItemCopyMatching.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
         self._security.SecItemCopyMatching.restype = ctypes.c_int32
         self._security.SecItemUpdate.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
         self._security.SecItemUpdate.restype = ctypes.c_int32
@@ -251,7 +284,9 @@ class _MacOSKeychainKeyProvider:
         return ctypes.c_void_p.in_dll(self._cf, "kCFBooleanTrue")
 
     def _string(self, value: str) -> ctypes.c_void_p:
-        result = self._cf.CFStringCreateWithCString(None, value.encode("utf-8"), 0x08000100)
+        result = self._cf.CFStringCreateWithCString(
+            None, value.encode("utf-8"), 0x08000100
+        )
         if not result:
             raise SchedulerKeyUnavailable("macOS Keychain string allocation failed")
         return ctypes.c_void_p(result)
@@ -263,7 +298,9 @@ class _MacOSKeychainKeyProvider:
             raise SchedulerKeyUnavailable("macOS Keychain data allocation failed")
         return ctypes.c_void_p(result)
 
-    def _dictionary(self, pairs: list[tuple[ctypes.c_void_p, ctypes.c_void_p]]) -> ctypes.c_void_p:
+    def _dictionary(
+        self, pairs: list[tuple[ctypes.c_void_p, ctypes.c_void_p]]
+    ) -> ctypes.c_void_p:
         result = self._cf.CFDictionaryCreateMutable(None, 0, None, None)
         if not result:
             raise SchedulerKeyUnavailable("macOS Keychain dictionary allocation failed")
@@ -272,7 +309,9 @@ class _MacOSKeychainKeyProvider:
             self._cf.CFDictionarySetValue(dictionary, key, value)
         return dictionary
 
-    def _query(self, account: str, *, return_data: bool) -> tuple[ctypes.c_void_p, list[ctypes.c_void_p]]:
+    def _query(
+        self, account: str, *, return_data: bool
+    ) -> tuple[ctypes.c_void_p, list[ctypes.c_void_p]]:
         service = self._string(self.namespace)
         account_value = self._string(account)
         owned = [service, account_value]
@@ -280,13 +319,17 @@ class _MacOSKeychainKeyProvider:
             (self._constant("kSecClass"), self._constant("kSecClassGenericPassword")),
             (self._constant("kSecAttrService"), service),
             (self._constant("kSecAttrAccount"), account_value),
-            (self._constant("kSecUseDataProtectionKeychain"), self._boolean_true()),
         ]
         if return_data:
-            pairs.extend([
-                (self._constant("kSecReturnData"), self._boolean_true()),
-                (self._constant("kSecMatchLimit"), self._constant("kSecMatchLimitOne")),
-            ])
+            pairs.extend(
+                [
+                    (self._constant("kSecReturnData"), self._boolean_true()),
+                    (
+                        self._constant("kSecMatchLimit"),
+                        self._constant("kSecMatchLimitOne"),
+                    ),
+                ]
+            )
         return self._dictionary(pairs), owned
 
     def _release_all(self, values: list[ctypes.c_void_p]) -> None:
@@ -339,20 +382,19 @@ class _MacOSKeychainKeyProvider:
     def _store_secret(self, account: str, secret: bytes) -> None:
         query, owned = self._query(account, return_data=False)
         value = self._data(secret)
-        accessible = self._constant("kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly")
-        additions = self._dictionary([
-            (self._constant("kSecValueData"), value),
-            (self._constant("kSecAttrAccessible"), accessible),
-        ])
+        additions = self._dictionary([(self._constant("kSecValueData"), value)])
         try:
-            add_dictionary = self._dictionary([
-                (self._constant("kSecClass"), self._constant("kSecClassGenericPassword")),
-                (self._constant("kSecAttrService"), owned[0]),
-                (self._constant("kSecAttrAccount"), owned[1]),
-                (self._constant("kSecUseDataProtectionKeychain"), self._boolean_true()),
-                (self._constant("kSecValueData"), value),
-                (self._constant("kSecAttrAccessible"), accessible),
-            ])
+            add_dictionary = self._dictionary(
+                [
+                    (
+                        self._constant("kSecClass"),
+                        self._constant("kSecClassGenericPassword"),
+                    ),
+                    (self._constant("kSecAttrService"), owned[0]),
+                    (self._constant("kSecAttrAccount"), owned[1]),
+                    (self._constant("kSecValueData"), value),
+                ]
+            )
             try:
                 status = self._security.SecItemAdd(add_dictionary, None)
             finally:
@@ -374,7 +416,7 @@ class _MacOSKeychainKeyProvider:
 
 
 def platform_key_provider(*, store_role: str, state_root: Path) -> SchedulerKeyProvider:
-    namespace = f"com.jarvis.{store_role}.scheduler-content"
+    namespace = f"com.jarvis.{store_role}.scheduler-content.login-keychain-v1"
     if sys.platform == "darwin":
         return _MacOSKeychainKeyProvider(namespace)
     if sys.platform == "win32":
@@ -396,7 +438,9 @@ class SchedulerContentCipher:
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         except ImportError as exc:
-            raise SchedulerKeyUnavailable("cryptography AES-GCM runtime is unavailable") from exc
+            raise SchedulerKeyUnavailable(
+                "cryptography AES-GCM runtime is unavailable"
+            ) from exc
         version = self.provider.active_version()
         key = self.provider.load(version)
         if len(key) != KEY_BYTES:
@@ -409,7 +453,9 @@ class SchedulerContentCipher:
         try:
             from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         except ImportError as exc:
-            raise SchedulerKeyUnavailable("cryptography AES-GCM runtime is unavailable") from exc
+            raise SchedulerKeyUnavailable(
+                "cryptography AES-GCM runtime is unavailable"
+            ) from exc
         return AESGCM(key)
 
     def encrypt(self, plaintext: bytes, binding: ContentBinding) -> EncryptedContent:
@@ -417,7 +463,9 @@ class SchedulerContentCipher:
         key = self.provider.load(version)
         if len(key) != KEY_BYTES:
             raise SchedulerKeyUnavailable("scheduler key has invalid length")
-        content_sha256 = domain_sha256("scheduler-content-plaintext/1", plaintext.decode("utf-8"))
+        content_sha256 = domain_sha256(
+            "scheduler-content-plaintext/1", plaintext.decode("utf-8")
+        )
         aad_value = binding.aad(content_sha256=content_sha256, key_version=version)
         aad = jcs_bytes(aad_value)
         nonce = os.urandom(NONCE_BYTES)
@@ -449,7 +497,12 @@ class SchedulerContentCipher:
         except SchedulerCryptoError:
             raise
         except Exception as exc:
-            raise SchedulerContentInvalid("scheduler content authentication failed") from exc
-        if domain_sha256("scheduler-content-plaintext/1", decoded) != encrypted.content_sha256:
+            raise SchedulerContentInvalid(
+                "scheduler content authentication failed"
+            ) from exc
+        if (
+            domain_sha256("scheduler-content-plaintext/1", decoded)
+            != encrypted.content_sha256
+        ):
             raise SchedulerContentInvalid("scheduler plaintext digest mismatch")
         return plaintext

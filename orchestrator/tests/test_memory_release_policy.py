@@ -71,7 +71,7 @@ class MemoryReleasePolicyTests(StoreCase, unittest.TestCase):
                 "automatic_side_effects"
             ] = True
         with self.assertRaisesRegex(ValueError, "memory_release_policy"):
-            OrchestratorConfig.from_mapping(
+            OrchestratorConfig.from_test_mapping(
                 {
                     "database_path": "/tmp/jarvis-memory-release-test.sqlite3",
                     "control_bearer_token": "control-private",

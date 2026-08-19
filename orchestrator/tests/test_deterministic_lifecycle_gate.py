@@ -235,7 +235,7 @@ class DeterministicLifecycleGateTests(StoreCase, unittest.TestCase):
             fallback,
             gate=DeterministicLifecycleGateV3(),
         )
-        config = OrchestratorConfig.from_mapping(
+        config = OrchestratorConfig.from_test_mapping(
             {
                 "database_path": str(store.path),
                 "control_bearer_token": "control-private",

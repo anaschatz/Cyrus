@@ -3,6 +3,31 @@ revision = 3
 requires-python = "==3.11.*"
 
 [[package]]
+name = "anamnesis-memory-eval"
+version = "0.1.0"
+source = { directory = "../anamnesis" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastembed", marker = "extra == 'dev'", specifier = ">=0.7,<0.8" },
+    { name = "fastembed", marker = "extra == 'eval'", specifier = ">=0.7,<0.8" },
+    { name = "hatchling", marker = "extra == 'dev'", specifier = "==1.27.0" },
+    { name = "inspect-ai", marker = "extra == 'dev'", specifier = ">=0.3.150,<0.4" },
+    { name = "inspect-ai", marker = "extra == 'eval'", specifier = ">=0.3.150,<0.4" },
+    { name = "numpy", marker = "extra == 'dev'", specifier = ">=2.0,<3" },
+    { name = "numpy", marker = "extra == 'eval'", specifier = ">=2.0,<3" },
+    { name = "openai", marker = "extra == 'dev'", specifier = ">=2.45,<3" },
+    { name = "openai", marker = "extra == 'eval'", specifier = ">=2.45,<3" },
+    { name = "pydantic", specifier = ">=2.10,<3" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<9" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
+]
+provides-extras = ["eval", "dev"]
+
+[[package]]
 name = "annotated-types"
 version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -242,18 +267,22 @@ name = "jarvis-orchestrator"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anamnesis-memory-eval" },
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pydantic-ai-slim", extra = ["openai"] },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "tzdata" },
     { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "anamnesis-memory-eval", directory = "../anamnesis" },
     { name = "cryptography", specifier = "==49.0.0" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "pydantic-ai-slim", extras = ["openai"], specifier = "==2.27.0" },
+    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=311" },
     { name = "tzdata", specifier = "==2026.3" },
     { name = "websockets", specifier = ">=15,<16" },
 ]
@@ -425,6 +454,16 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/80/50/ed9203338db139ef6d3f94814f6d6b2f6bce4042bb2278299b9ccb307a90/pydantic_graph-2.27.0.tar.gz", hash = "sha256:b124bd5d329d0e01d3b8c4070366a71db198ea9befc8453e56275fb1656da78b", size = 45181, upload-time = "2026-08-08T04:02:49.907Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/ce/6ecafa2680d70ce34b8c3fdc1667228896f1cd19df2f236dd7fa54214117/pydantic_graph-2.27.0-py3-none-any.whl", hash = "sha256:f80a9f1cfbd3c07b64b032b45fa0710315d6d7e2ae35afc142d4992d99498a4d", size = 52661, upload-time = "2026-08-08T04:02:43.282Z" },
+]
+
+[[package]]
+name = "pywin32"
+version = "312"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/f5/10a6e845a00fc5e7afd0a988b744f403d4d57162a28d160a093c4d9322f0/pywin32-312-cp311-cp311-win32.whl", hash = "sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c", size = 6362659, upload-time = "2026-06-04T07:49:21.349Z" },
+    { url = "https://files.pythonhosted.org/packages/35/c4/dcd2d62b5944b6d5db53413a5899016ccd57ffcb7278f3f81655d25d2027/pywin32-312-cp311-cp311-win_amd64.whl", hash = "sha256:d11417d84412f859b722fad0841b3614459ed0047f7542d8362e77884f6b6e8a", size = 6928825, upload-time = "2026-06-04T07:49:23.934Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/56/3cbb433fe4501cdba2eb9040f56a4e1a8243faa4186b25295564d1a7a79d/pywin32-312-cp311-cp311-win_arm64.whl", hash = "sha256:b2200a054ca6d6625c4842fc56a4976a4b47f96b73dbe5538c3f813a80359f47", size = 6721875, upload-time = "2026-06-04T07:49:26.416Z" },
 ]
 
 [[package]]

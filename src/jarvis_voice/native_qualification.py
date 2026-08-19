@@ -15,11 +15,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from . import PROTOCOL_VERSION, __version__
 from .errors import BackendError
 from .qualification import write_report
+from .voice_auth import AUTH_PROTOCOL
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MINIMUM_REAL_VOICE_TURNS = 200
 MAX_PTT_TO_ACOUSTIC_SILENCE_MS = 200.0
 MINIMUM_ACOUSTIC_SAMPLES = 20
@@ -67,7 +69,12 @@ def _pending_case() -> dict[str, object]:
     return {"status": "pending", "attempts": 0}
 
 
-def native_evidence_template(platform_name: str, *, run_id: str | None = None) -> dict[str, object]:
+def native_evidence_template(
+    platform_name: str,
+    *,
+    run_id: str | None = None,
+    runtime_profile_sha256: str | None = None,
+) -> dict[str, object]:
     """Create a strict pending template; it is never evidence of a pass."""
 
     if platform_name not in PLATFORMS:
@@ -79,8 +86,16 @@ def native_evidence_template(platform_name: str, *, run_id: str | None = None) -
         raise _error("qualification.native_run_id_invalid") from exc
     if parsed.version != 4 or str(parsed) != identifier:
         raise _error("qualification.native_run_id_invalid")
+    if runtime_profile_sha256 is not None and (
+        not isinstance(runtime_profile_sha256, str)
+        or _SHA256.fullmatch(runtime_profile_sha256) is None
+    ):
+        raise _error("qualification.native_profile_invalid")
     return {
         "schema_version": SCHEMA_VERSION,
+        "product_version": __version__,
+        "protocol_version": PROTOCOL_VERSION,
+        "voice_auth_protocol": AUTH_PROTOCOL,
         "run_id": identifier,
         "platform": platform_name,
         "provenance": {
@@ -117,8 +132,14 @@ def native_evidence_template(platform_name: str, *, run_id: str | None = None) -
             "rss_slope_bytes_per_hour": None,
         },
         "runtime_profile": {
-            "mode": "pending",
-            "fingerprint_sha256": None,
+            "mode": (
+                "signed_package"
+                if runtime_profile_sha256 is not None and platform_name == "windows"
+                else "source"
+                if runtime_profile_sha256 is not None
+                else "pending"
+            ),
+            "fingerprint_sha256": runtime_profile_sha256,
             "stable": False,
             "signed": False,
         },
@@ -151,6 +172,9 @@ def _finite_nonnegative(value: object) -> bool:
 def validate_native_evidence(raw: Any) -> dict[str, object]:
     top_keys = {
         "schema_version",
+        "product_version",
+        "protocol_version",
+        "voice_auth_protocol",
         "run_id",
         "platform",
         "provenance",
@@ -161,7 +185,13 @@ def validate_native_evidence(raw: Any) -> dict[str, object]:
         "runtime_profile",
         "privacy",
     }
-    if not _exact_keys(raw, top_keys) or raw.get("schema_version") != SCHEMA_VERSION:
+    if (
+        not _exact_keys(raw, top_keys)
+        or raw.get("schema_version") != SCHEMA_VERSION
+        or raw.get("product_version") != __version__
+        or raw.get("protocol_version") != PROTOCOL_VERSION
+        or raw.get("voice_auth_protocol") != AUTH_PROTOCOL
+    ):
         raise _error("qualification.native_schema_invalid")
     platform_name = raw.get("platform")
     if platform_name not in PLATFORMS:
@@ -282,7 +312,19 @@ def _gate(ready: bool, ready_code: str, blocked_code: str, **details: object) ->
     return {"status": "ready" if ready else "blocked", "code": ready_code if ready else blocked_code, **details}
 
 
-def evaluate_native_evidence(raw: Any) -> dict[str, object]:
+def evaluate_native_evidence(
+    raw: Any,
+    *,
+    expected_runtime_profile_sha256: str | None = None,
+) -> dict[str, object]:
+    if (
+        expected_runtime_profile_sha256 is not None
+        and (
+            not isinstance(expected_runtime_profile_sha256, str)
+            or _SHA256.fullmatch(expected_runtime_profile_sha256) is None
+        )
+    ):
+        raise _error("qualification.native_profile_invalid")
     evidence = validate_native_evidence(raw)
     provenance = evidence["provenance"]
     cases = evidence["cases"]
@@ -336,7 +378,7 @@ def evaluate_native_evidence(raw: Any) -> dict[str, object]:
         and counters["crashes"] == 0
         and memory_stable
     )
-    profile_ready = (
+    profile_is_stable = (
         profile["stable"] is True
         and isinstance(profile["fingerprint_sha256"], str)
         and (
@@ -348,6 +390,11 @@ def evaluate_native_evidence(raw: Any) -> dict[str, object]:
             )
         )
     )
+    profile_matches = (
+        expected_runtime_profile_sha256 is None
+        or profile["fingerprint_sha256"] == expected_runtime_profile_sha256
+    )
+    profile_ready = profile_is_stable and profile_matches
     privacy_ready = all(privacy[name] is False for name in privacy)
 
     checks = {
@@ -382,12 +429,23 @@ def evaluate_native_evidence(raw: Any) -> dict[str, object]:
             memory_stable=memory_stable,
             crashes=counters["crashes"],
         ),
-        "runtime_profile": _gate(profile_ready, "qualification.native_profile_stable", "qualification.native_profile_required"),
+        "runtime_profile": _gate(
+            profile_ready,
+            "qualification.native_profile_stable",
+            (
+                "qualification.native_profile_mismatch"
+                if profile_is_stable and not profile_matches
+                else "qualification.native_profile_required"
+            ),
+        ),
         "privacy": _gate(privacy_ready, "qualification.native_privacy_passed", "qualification.native_privacy_failed"),
     }
     ready = all(check["status"] == "ready" for check in checks.values())
     return {
         "schema_version": SCHEMA_VERSION,
+        "product_version": __version__,
+        "protocol_version": PROTOCOL_VERSION,
+        "voice_auth_protocol": AUTH_PROTOCOL,
         "ready": ready,
         "code": "qualification.native_ready" if ready else "qualification.native_blocked",
         "platform": platform_name,
@@ -405,5 +463,16 @@ def load_native_evidence(path: str | Path) -> dict[str, object]:
     return validate_native_evidence(raw)
 
 
-def write_native_evidence_template(path: str | Path, platform_name: str) -> Path:
-    return write_report(path, native_evidence_template(platform_name))
+def write_native_evidence_template(
+    path: str | Path,
+    platform_name: str,
+    *,
+    runtime_profile_sha256: str | None = None,
+) -> Path:
+    return write_report(
+        path,
+        native_evidence_template(
+            platform_name,
+            runtime_profile_sha256=runtime_profile_sha256,
+        ),
+    )

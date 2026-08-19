@@ -5,6 +5,7 @@ import unittest
 
 import _bootstrap  # noqa: F401
 
+from jarvis_voice import PROTOCOL_VERSION, __version__
 from jarvis_voice.errors import BackendError
 from jarvis_voice.native_qualification import (
     MAX_PTT_TO_ACOUSTIC_SILENCE_MS,
@@ -14,6 +15,7 @@ from jarvis_voice.native_qualification import (
     native_evidence_template,
     validate_native_evidence,
 )
+from jarvis_voice.voice_auth import AUTH_PROTOCOL
 
 
 def ready_evidence(platform_name: str) -> dict[str, object]:
@@ -64,6 +66,10 @@ def ready_evidence(platform_name: str) -> dict[str, object]:
 class NativeQualificationTests(unittest.TestCase):
     def test_pending_template_is_strict_and_never_ready(self) -> None:
         evidence = native_evidence_template("macos")
+        self.assertEqual(evidence["schema_version"], 2)
+        self.assertEqual(evidence["product_version"], __version__)
+        self.assertEqual(evidence["protocol_version"], PROTOCOL_VERSION)
+        self.assertEqual(evidence["voice_auth_protocol"], AUTH_PROTOCOL)
         report = evaluate_native_evidence(evidence)
         self.assertFalse(report["ready"])
         self.assertEqual(report["checks"]["acoustic_barge_in"]["status"], "blocked")
@@ -76,6 +82,38 @@ class NativeQualificationTests(unittest.TestCase):
                 report = evaluate_native_evidence(ready_evidence(platform_name))
                 self.assertTrue(report["ready"])
                 self.assertEqual(report["code"], "qualification.native_ready")
+
+    def test_legacy_or_wrong_protocol_identity_is_rejected(self) -> None:
+        legacy = ready_evidence("windows")
+        legacy["schema_version"] = 1
+        for field in ("product_version", "protocol_version", "voice_auth_protocol"):
+            legacy.pop(field)
+        with self.assertRaisesRegex(BackendError, "qualification.native_schema_invalid"):
+            validate_native_evidence(legacy)
+
+        for field, value in (
+            ("product_version", "0.7.0"),
+            ("protocol_version", "jarvis.voice/0"),
+            ("voice_auth_protocol", "jarvis.voice-auth/0"),
+        ):
+            evidence = ready_evidence("windows")
+            evidence[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                BackendError, "qualification.native_schema_invalid"
+            ):
+                validate_native_evidence(evidence)
+
+    def test_expected_runtime_profile_must_match(self) -> None:
+        evidence = ready_evidence("windows")
+        report = evaluate_native_evidence(
+            evidence,
+            expected_runtime_profile_sha256="b" * 64,
+        )
+        self.assertFalse(report["ready"])
+        self.assertEqual(
+            report["checks"]["runtime_profile"]["code"],
+            "qualification.native_profile_mismatch",
+        )
 
     def test_duplicate_stuck_and_exact_200ms_each_block(self) -> None:
         for field in ("duplicate_transcripts", "duplicate_tts_playbacks", "stuck_ptt"):

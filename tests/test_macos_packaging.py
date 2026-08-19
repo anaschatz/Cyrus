@@ -24,7 +24,7 @@ class MacPackageProfileTests(unittest.TestCase):
     def _profile(self, helper: bytes) -> dict[str, object]:
         return {
             "schema_version": "jarvis-macos-runtime-profile/1",
-            "product_version": "0.7.0",
+            "product_version": "0.8.0",
             "voice_protocol": 1,
             "minimum_macos": "14.0",
             "architecture": "arm64",

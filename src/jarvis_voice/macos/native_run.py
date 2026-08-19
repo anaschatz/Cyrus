@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from ..backends import SpeechUnit
-from ..config import VoiceConfig
+from ..config import VoiceConfig, configured_voice_auth_key
 from ..errors import BackendError
 from ..native_qualification import evaluate_native_evidence
 from ..ptt import PttEventPublisher, PttTransition
 from ..qualification import write_report
+from ..voice_auth import VoiceAuthKey
 from .doctor import macos_doctor_report
 from .greektts15_runtime import (
     GreekTtsF1Backend,
@@ -470,7 +471,7 @@ def run_macos_native_collection(
     maximum_real_voice_turns: int | None = None,
     threshold_calibrated: bool = False,
     runtime_factory: Callable[..., MacVoiceRuntime] = MacVoiceRuntime,
-    server_factory: Callable[[str], MacSmokeLoopbackServer] = MacSmokeLoopbackServer,
+    server_factory: Callable[[str, VoiceAuthKey], MacSmokeLoopbackServer] = MacSmokeLoopbackServer,
     rss_probe: Callable[[], int] = current_process_rss_bytes,
     clock: Callable[[], float] = time.perf_counter,
     sleeper: Callable[[float], None] = time.sleep,
@@ -505,7 +506,10 @@ def run_macos_native_collection(
         clock=clock,
     )
     runtime = runtime_factory(config, audio_frame_observer=monitor.publish_audio)
-    server = server_factory(config.orchestrator_url)
+    server = server_factory(
+        config.orchestrator_url,
+        configured_voice_auth_key(config),
+    )
     runtime_errors: list[BaseException] = []
 
     def run_runtime() -> None:

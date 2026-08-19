@@ -11,6 +11,7 @@ from jarvis_voice.errors import BackendError
 from jarvis_voice.fakes import FakeOrchestrator
 from jarvis_voice.macos.interactive_smoke import GuidedSmokeController, MacSmokeLoopbackServer
 from jarvis_voice.protocol import EventFactory, new_uuid4
+from jarvis_voice.voice_auth import VoiceAuthKey
 
 
 def event(name: str, timestamp: float, **details: object) -> dict[str, object]:
@@ -119,7 +120,10 @@ class GuidedSmokeControllerTests(unittest.TestCase):
 
     def test_server_rejects_non_loopback_url(self) -> None:
         with self.assertRaisesRegex(BackendError, "smoke.non_loopback_server"):
-            MacSmokeLoopbackServer("ws://192.0.2.1:8765")
+            MacSmokeLoopbackServer(
+                "ws://192.0.2.1:8765",
+                VoiceAuthKey(1, b"k" * 32),
+            )
 
     def test_server_emits_frozen_response_cancelled_payload(self) -> None:
         response_id = new_uuid4()

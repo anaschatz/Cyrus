@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import _bootstrap  # noqa: F401
 from helpers import StoreCase
+
 from jarvis_orchestrator.anamnesis_adapter import (
     SUPPORTED_ANAMNESIS_CONTRACT_SHA256,
     AnamnesisMemoryAdapter,
@@ -24,18 +26,23 @@ from jarvis_orchestrator.domain import (
     TaskState,
 )
 from jarvis_orchestrator.memory import (
-    EXPLICIT_MEMORY_RESPONSE_TOKENS,
     MemoryObservation,
     MemoryRecall,
+    MemoryRecallRequest,
     parse_explicit_memory_command,
 )
+from jarvis_orchestrator.memory_crypto import (
+    InMemoryMemoryEpochKeyProvider,
+    MemoryEnvelopeCipherV1,
+)
+from jarvis_orchestrator.memory_runtime import InjectedMemoryCryptoRuntime
 from jarvis_orchestrator.model import BudgetedModelPort
 from jarvis_orchestrator.service import OrchestratorService
 from jarvis_orchestrator.store import OrchestratorStore
 
 
 def config(path: Path, *, timeout: float = 0.1) -> OrchestratorConfig:
-    return OrchestratorConfig.from_mapping(
+    return OrchestratorConfig.from_test_mapping(
         {
             "database_path": str(path),
             "control_bearer_token": "control-private",
@@ -56,13 +63,6 @@ class CapturingModel:
         yield ModelChunk("Έτοιμο.", ModelUsage(input_tokens=4, output_tokens=2))
 
 
-class FailingModel:
-    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
-        del request
-        raise RuntimeError("synthetic model failure")
-        yield  # pragma: no cover - keeps this an async iterator
-
-
 def admit(store: OrchestratorStore, text: str):
     result = store.admit_transcript(
         event_id=str(uuid.uuid4()),
@@ -71,6 +71,17 @@ def admit(store: OrchestratorStore, text: str):
     )
     assert result.task is not None
     return result.task
+
+
+def prepared_memory_store(case: StoreCase):
+    provider = InMemoryMemoryEpochKeyProvider()
+    runtime = InjectedMemoryCryptoRuntime(
+        provider.install_id,
+        MemoryEnvelopeCipherV1(provider),
+    )
+    store = case.make_store(memory_crypto=runtime)
+    store.prepare_memory_storage()
+    return store, runtime
 
 
 class SlowMemory:
@@ -140,7 +151,7 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
             )
         )
 
-    def test_schema_v1_is_migrated_through_memory_to_current_schema_v7(self) -> None:
+    def test_schema_v1_is_migrated_atomically_to_current_schema_v10(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         path = Path(temporary.name) / "orchestrator.sqlite3"
@@ -151,6 +162,8 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         connection.execute("INSERT INTO schema_meta VALUES('schema_version','1')")
         connection.commit()
         connection.close()
+        if os.name == "posix":
+            path.chmod(0o600)
         store = OrchestratorStore(path)
         self.addCleanup(store.close)
         with store._lock:
@@ -163,12 +176,12 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
             research_table = store._connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='research_runs'"
             ).fetchone()
-        self.assertEqual(version, "7")
+        self.assertEqual(version, "10")
         self.assertIsNotNone(table)
         self.assertIsNotNone(research_table)
 
     def test_adapter_is_pinned_to_real_anamnesis_runtime_contract(self) -> None:
-        store = self.make_store()
+        store, _ = prepared_memory_store(self)
         adapter = AnamnesisMemoryAdapter(store)
         self.assertEqual(
             adapter.qualification["contract_sha256"],
@@ -181,7 +194,7 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         self.assertFalse(adapter.qualification["network"])
 
     def test_completed_explicit_fact_is_recalled_via_memory_local(self) -> None:
-        store = self.make_store()
+        store, _ = prepared_memory_store(self)
         model = CapturingModel()
         adapter = AnamnesisMemoryAdapter(store)
         service = OrchestratorService(
@@ -194,11 +207,14 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         self.assertEqual(
             asyncio.run(service.execute_task(first.task_id)).state, TaskState.COMPLETED
         )
-        self.assertEqual(
-            model.requests[-1].output_allowance,
-            EXPLICIT_MEMORY_RESPONSE_TOKENS,
-        )
+        self.assertEqual(model.requests, [])
         self.assertEqual(store.memory_record_count(first.conversation_id), 1)
+        self.assertEqual(
+            store.canonical_conversation(first.conversation_id)
+            .turns[-1]
+            .assistant_text,
+            "Το αποθήκευσα στην αποθηκευμένη μνήμη.",
+        )
 
         second = admit(store, "Ποιο είναι το αγαπημένο μου χρώμα;")
         self.assertEqual(
@@ -219,8 +235,49 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
             ).fetchone()[0]
         self.assertIn('"route":"memory_local"', route)
 
+    def test_adapter_recall_crosses_conversations_without_scope_metadata_leak(
+        self,
+    ) -> None:
+        store, _ = prepared_memory_store(self)
+        model = CapturingModel()
+        adapter = AnamnesisMemoryAdapter(store)
+        service = OrchestratorService(
+            config(store.path),
+            store,
+            BudgetedModelPort(store, model),
+            active_memory=adapter,
+        )
+        fact = "my bicycle is called Iris"
+        remembered = admit(store, f"Remember that {fact}.")
+        self.assertEqual(
+            asyncio.run(service.execute_task(remembered.task_id)).state,
+            TaskState.COMPLETED,
+        )
+        source_event_id = store.task_input(remembered.task_id)["event_id"]
+        second_conversation = store.create_conversation(remembered.epoch)[
+            "conversation_id"
+        ]
+        query_task = admit(store, "What is my bicycle called?")
+        self.assertEqual(query_task.conversation_id, second_conversation)
+        recall = asyncio.run(
+            adapter.search(
+                MemoryRecallRequest(
+                    task_id=query_task.task_id,
+                    conversation_id=second_conversation,
+                    epoch=query_task.epoch,
+                    query="bicycle Iris",
+                    limit=5,
+                )
+            )
+        )
+        self.assertEqual(recall.provider, adapter.provider)
+        self.assertEqual(tuple(item.text for item in recall.items), (fact,))
+        projection = repr(recall)
+        self.assertNotIn(remembered.conversation_id, projection)
+        self.assertNotIn(source_event_id, projection)
+
     def test_irrelevant_or_empty_recall_falls_back_to_local(self) -> None:
-        store = self.make_store()
+        store, _ = prepared_memory_store(self)
         model = CapturingModel()
         service = OrchestratorService(
             config(store.path),
@@ -240,7 +297,7 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         self.assertEqual(store.memory_record_count(task.conversation_id), 0)
 
     def test_timeout_is_content_free_and_does_not_break_local_response(self) -> None:
-        store = self.make_store()
+        store, _ = prepared_memory_store(self)
         model = CapturingModel()
         service = OrchestratorService(
             config(store.path, timeout=0.001),
@@ -262,7 +319,7 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
     def test_unavailable_provider_falls_back_without_leaking_exception_text(
         self,
     ) -> None:
-        store = self.make_store()
+        store, _ = prepared_memory_store(self)
         model = CapturingModel()
         service = OrchestratorService(
             config(store.path),
@@ -279,7 +336,7 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         self.assertNotIn("private provider diagnostic", str(audit))
 
     def test_cancelled_explicit_fact_is_never_stored(self) -> None:
-        store = self.make_store()
+        store, _ = prepared_memory_store(self)
         task = admit(store, "Να θυμάσαι ότι ο κωδικός είναι 1234.")
         store.cancel_task(task.task_id, task.epoch, ReasonCode.USER_CANCELLED)
         self.assertEqual(store.memory_record_count(task.conversation_id), 0)
@@ -287,7 +344,7 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
     def test_exact_explicit_forget_deletes_and_subsequent_recall_is_empty(
         self,
     ) -> None:
-        store = self.make_store()
+        store, _ = prepared_memory_store(self)
         model = CapturingModel()
         adapter = AnamnesisMemoryAdapter(store)
         service = OrchestratorService(
@@ -302,10 +359,7 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
             asyncio.run(service.execute_task(remembered.task_id)).state,
             TaskState.COMPLETED,
         )
-        self.assertEqual(
-            model.requests[-1].output_allowance,
-            EXPLICIT_MEMORY_RESPONSE_TOKENS,
-        )
+        self.assertEqual(model.requests, [])
         self.assertEqual(store.memory_record_count(remembered.conversation_id), 1)
 
         forgotten = admit(store, f"Forget that {fact}.")
@@ -313,10 +367,7 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
             asyncio.run(service.execute_task(forgotten.task_id)).state,
             TaskState.COMPLETED,
         )
-        self.assertEqual(
-            model.requests[-1].output_allowance,
-            EXPLICIT_MEMORY_RESPONSE_TOKENS,
-        )
+        self.assertEqual(model.requests, [])
         self.assertEqual(store.memory_record_count(forgotten.conversation_id), 0)
         audit = store.memory_delete_audit(forgotten.task_id)
         assert audit is not None
@@ -350,7 +401,7 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         )
 
     def test_exact_forget_replay_returns_the_original_outcome(self) -> None:
-        store = self.make_store()
+        store, _ = prepared_memory_store(self)
         model = CapturingModel()
         adapter = AnamnesisMemoryAdapter(store)
         service = OrchestratorService(
@@ -393,8 +444,8 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(count, 1)
 
-    def test_mismatched_and_ambiguous_forget_never_delete(self) -> None:
-        store = self.make_store()
+    def test_mismatched_forget_and_duplicate_remember_are_fail_closed(self) -> None:
+        store, _ = prepared_memory_store(self)
         model = CapturingModel()
         adapter = AnamnesisMemoryAdapter(store)
         service = OrchestratorService(
@@ -430,23 +481,33 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
             asyncio.run(service.execute_task(duplicate.task_id)).state,
             TaskState.COMPLETED,
         )
-        self.assertEqual(store.memory_record_count(first.conversation_id), 2)
-        ambiguous = admit(store, f"Forget that {fact}.")
+        self.assertEqual(store.memory_record_count(first.conversation_id), 1)
+        duplicate_audit = store.memory_command_audit(duplicate.task_id)
+        assert duplicate_audit is not None
         self.assertEqual(
-            asyncio.run(service.execute_task(ambiguous.task_id)).state,
-            TaskState.COMPLETED,
+            duplicate_audit["event_type"],
+            "memory.command.remember.already_exists",
         )
-        self.assertEqual(store.memory_record_count(first.conversation_id), 2)
-        ambiguous_audit = store.memory_delete_audit(ambiguous.task_id)
-        assert ambiguous_audit is not None
-        self.assertEqual(ambiguous_audit["event_type"], "memory.delete.ambiguous")
-        self.assertEqual(ambiguous_audit["payload"]["matched_count"], 2)
-        self.assertEqual(ambiguous_audit["payload"]["deleted_count"], 0)
-        self.assertFalse(ambiguous_audit["payload"]["authoritative_state_changed"])
-        self.assertNotIn(fact, str(ambiguous_audit))
+        with store._lock:
+            unique_indexes = {
+                tuple(
+                    column[2]
+                    for column in store._connection.execute(
+                        f"PRAGMA index_info({index[1]})"
+                    ).fetchall()
+                )
+                for index in store._connection.execute(
+                    "PRAGMA index_list(memory_records)"
+                ).fetchall()
+                if index[2]
+            }
+        self.assertIn(
+            ("principal_id", "key_version", "normalized_hmac"),
+            unique_indexes,
+        )
 
-    def test_cancelled_and_failed_forget_tasks_never_delete(self) -> None:
-        store = self.make_store()
+    def test_cancelled_forget_never_deletes_but_completed_forget_does(self) -> None:
+        store, _ = prepared_memory_store(self)
         model = CapturingModel()
         adapter = AnamnesisMemoryAdapter(store)
         service = OrchestratorService(
@@ -468,19 +529,12 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         self.assertEqual(store.memory_record_count(remembered.conversation_id), 1)
         self.assertIsNone(store.memory_delete_audit(cancelled.task_id))
 
-        failed = admit(store, f"Forget that {fact}.")
-        failed_service = OrchestratorService(
-            config(store.path),
-            store,
-            BudgetedModelPort(store, FailingModel()),
-            active_memory=adapter,
-        )
+        forgotten = admit(store, f"Forget that {fact}.")
         self.assertEqual(
-            asyncio.run(failed_service.execute_task(failed.task_id)).state,
-            TaskState.FAILED,
+            asyncio.run(service.execute_task(forgotten.task_id)).state,
+            TaskState.COMPLETED,
         )
-        self.assertEqual(store.memory_record_count(remembered.conversation_id), 1)
-        self.assertIsNone(store.memory_delete_audit(failed.task_id))
+        self.assertEqual(store.memory_record_count(remembered.conversation_id), 0)
 
     def test_cancellation_during_recall_fails_epoch_cas_without_model_dispatch(
         self,
@@ -511,7 +565,13 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         path = Path(temporary.name) / "orchestrator.sqlite3"
-        store = OrchestratorStore(path)
+        provider = InMemoryMemoryEpochKeyProvider()
+        runtime = InjectedMemoryCryptoRuntime(
+            provider.install_id,
+            MemoryEnvelopeCipherV1(provider),
+        )
+        store = OrchestratorStore(path, memory_crypto=runtime)
+        store.prepare_memory_storage()
         model = CapturingModel()
         adapter = AnamnesisMemoryAdapter(store)
         service = OrchestratorService(
@@ -533,7 +593,8 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         self.assertEqual(store.memory_record_count(task.conversation_id), 1)
         store.close()
 
-        restarted = OrchestratorStore(path)
+        restarted = OrchestratorStore(path, memory_crypto=runtime)
+        restarted.prepare_memory_storage()
         self.addCleanup(restarted.close)
         restarted_adapter = AnamnesisMemoryAdapter(restarted)
         records = restarted.memory_records_for_scope(

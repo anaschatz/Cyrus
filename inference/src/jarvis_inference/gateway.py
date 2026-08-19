@@ -329,6 +329,26 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     "json_object": caps.json_object, "json_schema": caps.json_schema,
                 }})
                 return
+            if self.path == "/jarvis/v1/identity":
+                self._require_ready()
+                identity = self.production.identity
+                if not isinstance(identity, dict):
+                    raise ApplianceError(
+                        503,
+                        "service_unavailable",
+                        "The inference appliance is not ready.",
+                    )
+                self._json(
+                    200,
+                    {
+                        "manifest_digest": self.production.manifest.digest,
+                        "runtime_identity_sha256": hashlib.sha256(
+                            canonical_bytes(identity)
+                        ).hexdigest(),
+                        "schema_version": "jarvis-inference-live-identity/1",
+                    },
+                )
+                return
             raise ApplianceError(404, "not_found", "The endpoint does not exist.")
         except ApplianceError as exc:
             self._error(exc)

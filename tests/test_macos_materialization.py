@@ -26,6 +26,7 @@ from jarvis_voice.macos.materialization import (
 from jarvis_voice.macos.staging import validate_wheelhouse
 from jarvis_voice.errors import BackendError
 from jarvis_voice.manifest import ManifestValidationResult
+from jarvis_voice.voice_auth import create_voice_auth_key_file
 
 
 def fake_wheel(directory: Path, name: str, version: str) -> Path:
@@ -147,16 +148,27 @@ class PrivateConfigTests(unittest.TestCase):
                 "source": {"package": "silero-vad", "version": "6.2.1", "wheel_sha256": "source"},
             }))
             output = root / "voice.json"
+            auth_key = root / "voice-auth.json"
+            create_voice_auth_key_file(auth_key, key=b"k" * 32)
             with (
                 mock.patch("jarvis_voice.macos.materialization.validate_model_directory", return_value=ManifestValidationResult(True, "model.manifest_valid", "valid", files_checked=4)),
                 mock.patch("jarvis_voice.macos.materialization._default_voice_probe", return_value={"Melina", "Samantha"}),
             ):
-                result = materialize_private_config(str(base), "/private/model", str(manifest), str(output), greek_voice="Melina", english_voice="Samantha")
+                result = materialize_private_config(
+                    str(base),
+                    "/private/model",
+                    str(manifest),
+                    str(output),
+                    greek_voice="Melina",
+                    english_voice="Samantha",
+                    voice_auth_key=str(auth_key),
+                )
             raw = json.loads(output.read_text())
         self.assertTrue(result["ready"])
         self.assertEqual(raw["macos"]["asr_backend"], "faster_whisper_cpu_smoke")
         self.assertEqual(raw["macos"]["system_voices"], {"el-GR": "Melina", "en-US": "Samantha"})
         self.assertEqual(raw["whisper_model_directory"], "/private/model")
+        self.assertEqual(raw["voice_auth_key_file"], str(auth_key))
 
 
 class BackendProbeTests(unittest.TestCase):

@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import uuid
+from pathlib import Path
 
 from jarvis_voice.protocol import Envelope, EventFactory
+from jarvis_voice.voice_auth import load_voice_auth_key
+from jarvis_voice.voice_auth_transport import authenticate_async_client
 
 
 PROBE_TURNS = (
@@ -20,25 +23,30 @@ PROBE_TURNS = (
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="run-live-shadow-probe")
     result.add_argument("--url", default="ws://127.0.0.1:8865")
+    result.add_argument("--voice-auth-key", type=Path, required=True)
     return result
 
 
-async def run(url: str) -> dict[str, object]:
+async def run(url: str, voice_auth_key: Path) -> dict[str, object]:
     from websockets.asyncio.client import connect
 
     factory = EventFactory()
+    auth_key = load_voice_auth_key(voice_auth_key)
     event_counts: dict[str, int] = {}
     completed = 0
     async with connect(
         url,
         origin=None,
+        compression=None,
+        proxy=None,
         max_size=64 * 1024,
         open_timeout=3,
         close_timeout=1,
         ping_interval=10,
         ping_timeout=10,
     ) as websocket:
-        await websocket.send(factory.create("client.hello").to_json())
+        hello = factory.create("client.hello")
+        await authenticate_async_client(websocket, auth_key, hello.to_json())
         ready = Envelope.from_json(await asyncio.wait_for(websocket.recv(), timeout=3))
         if ready.type != "server.ready":
             raise RuntimeError("shadow probe did not receive server.ready")
@@ -95,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     import json
 
     parsed = parser().parse_args(argv)
-    result = asyncio.run(run(parsed.url))
+    result = asyncio.run(run(parsed.url, parsed.voice_auth_key))
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0 if result["turns_completed"] == len(PROBE_TURNS) else 2
 

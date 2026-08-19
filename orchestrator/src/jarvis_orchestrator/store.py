@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sqlite3
 import threading
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from dataclasses import asdict
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager, suppress
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from .cloud_contract import (
+    MONTHLY_HARD_CAP_MICROUSD,
+    CloudApprovalBindingV1,
+    QualifiedEndpointV1,
+    build_dispatch_body,
+)
+from .cloud_routing import RoutePlanV1, RoutingFactsV1, TaskProfileV1
 from .domain import (
     ACTIVE_STATES,
     DEFAULT_ABSOLUTE_LIFETIME,
@@ -41,19 +51,46 @@ from .domain import (
     new_uuid4,
     nfc,
     parse_utc,
+    require_uuid4,
     utc_now,
     utc_text,
 )
-from .reducer import require_transition
-from .cloud_contract import (
-    MONTHLY_HARD_CAP_MICROUSD,
-    CloudApprovalBindingV1,
-    QualifiedEndpointV1,
-    build_dispatch_body,
+from .jcs import domain_sha256, jcs_bytes, jcs_text
+from .memory import (
+    MAX_MEMORY_PRINCIPAL_BYTES,
+    MAX_MEMORY_PRINCIPAL_RECORDS,
+    MAX_MEMORY_QUERY_BYTES,
+    MAX_MEMORY_QUERY_TERMS,
+    MAX_MEMORY_RECORD_BYTES,
+    MAX_MEMORY_RECORD_TERMS,
+    MEMORY_NORMALIZER_VERSION,
+    MEMORY_RECORD_TTL_DAYS,
+    ExplicitMemoryCommandResult,
+    ExplicitMemoryCommandStatus,
+    explicit_memory_response,
+    memory_normalized_sha256,
+    memory_search_terms,
+    normalize_explicit_memory_target,
+    parse_explicit_memory_command,
 )
-from .cloud_routing import RoutePlanV1, RoutingFactsV1, TaskProfileV1
-from .jcs import domain_sha256, jcs_text
+from .memory_crypto import (
+    MEMORY_ENVELOPE_VERSION,
+    MEMORY_RECORD_SCHEMA_VERSION,
+    MemoryCryptoError,
+    MemoryEnvelopeCipherV1,
+    MemoryEnvelopeInvalid,
+    MemoryEnvelopeV1,
+    MemoryEpochSessionV1,
+    MemoryRecordBindingV1,
+)
 from .memory_release import shadow_safety_fields, validate_shadow_audit_payload
+from .memory_runtime import MemoryCryptoRuntime
+from .private_state import (
+    absolute_path_no_resolve,
+    assert_private_database,
+    prepare_private_database,
+)
+from .reducer import require_transition
 from .research import (
     MAX_RUN_DOCUMENT_BYTES,
     EvidenceBundleV1,
@@ -63,16 +100,63 @@ from .research import (
     validate_syntactic_citation_coverage,
 )
 from .scheduler_store import MIGRATION_5_SQL
-from .tool_store import MIGRATION_6_SQL
 from .tool_provenance import (
     ContentProvenanceV1,
     ContentSourceKind,
-    EgressDisposition,
-    PolicyLabel,
     ProvenanceError,
 )
+from .tool_store import MIGRATION_6_SQL
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 10
+MEMORY_SWEEP_LIMIT = 256
+MEMORY_SWEEP_INTERVAL = timedelta(hours=1)
+MEMORY_RECALL_BUSY_TIMEOUT_MS = 100
+MEMORY_RECALL_DEADLINE_SECONDS = 0.150
+MEMORY_PAYLOAD_CONTRACT = "jarvis.memory-payload/1"
+MEMORY_CRYPTO_OPERATION_CONTRACT = "jarvis.memory-crypto-operation/1"
+MEMORY_AUDIT_CONTRACT = "jarvis.memory-record-audit/1"
+MEMORY_PROVIDER_CONFIRMATION_TEXT = "jarvis-memory-key-confirmation-v1"
+SQLITE_MAX_INTEGER = (1 << 63) - 1
+
+
+class MemoryStorageUnavailable(RuntimeError):
+    """Stable fail-closed boundary for an unavailable encrypted authority."""
+
+    def __init__(self, code: str = "memory_storage_unavailable") -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class ControlMutationKind(StrEnum):
+    """Closed same-SQLite mutations accepted by the HTTP control boundary."""
+
+    CREATE_CONVERSATION = "create_conversation"
+    DELETE_CONVERSATION = "delete_conversation"
+    DELETE_MEMORY_RECORD = "delete_memory_record"
+    CANCEL_TASK = "cancel_task"
+    DECIDE_APPROVAL = "decide_approval"
+    METHOD_NOT_ALLOWED = "method_not_allowed"
+    NOT_FOUND = "not_found"
+
+
+@dataclass(frozen=True, slots=True)
+class ControlMutationRequest:
+    kind: ControlMutationKind
+    resource_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, ControlMutationKind):
+            raise TypeError("control mutation kind is invalid")
+        resource_required = self.kind in {
+            ControlMutationKind.DELETE_CONVERSATION,
+            ControlMutationKind.DELETE_MEMORY_RECORD,
+            ControlMutationKind.CANCEL_TASK,
+            ControlMutationKind.DECIDE_APPROVAL,
+        }
+        if resource_required != (self.resource_id is not None):
+            raise ValueError("control mutation resource binding is invalid")
+        if self.resource_id is not None and not isinstance(self.resource_id, str):
+            raise TypeError("control mutation resource is invalid")
 
 
 SCHEMA_SQL = """
@@ -274,7 +358,7 @@ CREATE TABLE IF NOT EXISTS memory_records (
     record_id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),
     task_id TEXT NOT NULL REFERENCES tasks(task_id),
-    source_event_id TEXT NOT NULL,
+    source_event_id TEXT NOT NULL REFERENCES inbox(event_id),
     scoped_user_id TEXT NOT NULL,
     content TEXT NOT NULL,
     content_sha256 TEXT NOT NULL,
@@ -495,6 +579,461 @@ ON scheduler_task_links(task_id,epoch,state);
 """
 
 
+MIGRATION_8_SQL = """
+CREATE TABLE IF NOT EXISTS voice_playback_receipts (
+    event_id TEXT PRIMARY KEY,
+    semantic_sha256 TEXT NOT NULL,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+    epoch INTEGER NOT NULL,
+    response_id TEXT NOT NULL UNIQUE,
+    terminal_type TEXT NOT NULL CHECK(terminal_type IN (
+        'playback.completed','playback.interrupted'
+    )),
+    client_sent_at TEXT NOT NULL,
+    received_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS voice_playback_receipts_by_task
+ON voice_playback_receipts(task_id,received_at);
+"""
+
+
+MIGRATION_9_SQL = f"""
+CREATE TABLE IF NOT EXISTS memory_principals (
+    principal_id TEXT PRIMARY KEY,
+    owner_kind TEXT NOT NULL CHECK(owner_kind='local_owner'),
+    owner_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    UNIQUE(owner_kind)
+);
+CREATE TABLE IF NOT EXISTS conversation_principals (
+    conversation_id TEXT PRIMARY KEY
+        REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+    principal_id TEXT NOT NULL REFERENCES memory_principals(principal_id),
+    bound_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS conversation_principals_by_principal
+ON conversation_principals(principal_id,conversation_id);
+CREATE TABLE IF NOT EXISTS memory_principal_usage (
+    principal_id TEXT PRIMARY KEY REFERENCES memory_principals(principal_id),
+    active_record_count INTEGER NOT NULL DEFAULT 0
+        CHECK(active_record_count BETWEEN 0 AND {MAX_MEMORY_PRINCIPAL_RECORDS}),
+    active_content_bytes INTEGER NOT NULL DEFAULT 0
+        CHECK(active_content_bytes BETWEEN 0 AND {MAX_MEMORY_PRINCIPAL_BYTES}),
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_records_v9 (
+    record_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL REFERENCES memory_principals(principal_id),
+    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),
+    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+    source_event_id TEXT NOT NULL REFERENCES inbox(event_id),
+    content TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL CHECK(length(content_sha256)=64),
+    normalized_sha256 TEXT NOT NULL CHECK(length(normalized_sha256)=64),
+    content_bytes INTEGER NOT NULL
+        CHECK(content_bytes BETWEEN 1 AND {MAX_MEMORY_RECORD_BYTES}
+              AND content_bytes=length(CAST(content AS BLOB))),
+    term_count INTEGER NOT NULL
+        CHECK(term_count BETWEEN 1 AND {MAX_MEMORY_RECORD_TERMS}),
+    expires_at TEXT NOT NULL,
+    normalizer_version TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(conversation_id,source_event_id),
+    UNIQUE(principal_id,normalized_sha256)
+);
+CREATE TABLE IF NOT EXISTS memory_terms (
+    principal_id TEXT NOT NULL REFERENCES memory_principals(principal_id),
+    term_sha256 TEXT NOT NULL CHECK(length(term_sha256)=64),
+    record_id TEXT NOT NULL REFERENCES memory_records_v9(record_id) ON DELETE CASCADE,
+    PRIMARY KEY(principal_id,term_sha256,record_id)
+);
+CREATE INDEX IF NOT EXISTS memory_terms_by_principal_term
+ON memory_terms(principal_id,term_sha256,record_id);
+CREATE TABLE IF NOT EXISTS memory_migration_audits (
+    schema_version INTEGER PRIMARY KEY CHECK(schema_version=9),
+    source_schema_version INTEGER NOT NULL,
+    source_record_count INTEGER NOT NULL CHECK(source_record_count >= 0),
+    migrated_record_count INTEGER NOT NULL CHECK(migrated_record_count >= 0),
+    collapsed_duplicate_count INTEGER NOT NULL
+        CHECK(collapsed_duplicate_count >= 0),
+    expired_record_count INTEGER NOT NULL CHECK(expired_record_count >= 0),
+    conversation_binding_count INTEGER NOT NULL
+        CHECK(conversation_binding_count >= 0),
+    created_at TEXT NOT NULL
+);
+"""
+
+
+MEMORY_V9_FINALIZE_SQL = f"""
+CREATE INDEX memory_records_by_principal_expiry
+ON memory_records(principal_id,expires_at,record_id);
+CREATE INDEX memory_records_by_expiry
+ON memory_records(expires_at,record_id);
+CREATE INDEX memory_records_by_source_task
+ON memory_records(task_id,record_id);
+CREATE TRIGGER memory_records_quota_guard
+BEFORE INSERT ON memory_records
+BEGIN
+    SELECT CASE WHEN NOT EXISTS(
+        SELECT 1 FROM memory_principal_usage WHERE principal_id=NEW.principal_id
+    ) THEN RAISE(ABORT,'memory principal usage missing') END;
+    SELECT CASE WHEN (
+        SELECT active_record_count FROM memory_principal_usage
+        WHERE principal_id=NEW.principal_id
+    ) + 1 > {MAX_MEMORY_PRINCIPAL_RECORDS}
+    OR (
+        SELECT active_content_bytes FROM memory_principal_usage
+        WHERE principal_id=NEW.principal_id
+    ) + NEW.content_bytes > {MAX_MEMORY_PRINCIPAL_BYTES}
+    THEN RAISE(ABORT,'memory principal quota exceeded') END;
+END;
+CREATE TRIGGER memory_records_usage_insert
+AFTER INSERT ON memory_records
+BEGIN
+    UPDATE memory_principal_usage
+    SET active_record_count=active_record_count+1,
+        active_content_bytes=active_content_bytes+NEW.content_bytes,
+        updated_at=NEW.created_at
+    WHERE principal_id=NEW.principal_id;
+END;
+CREATE TRIGGER memory_records_usage_delete
+AFTER DELETE ON memory_records
+BEGIN
+    UPDATE memory_principal_usage
+    SET active_record_count=active_record_count-1,
+        active_content_bytes=active_content_bytes-OLD.content_bytes,
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE principal_id=OLD.principal_id;
+END;
+"""
+
+
+MIGRATION_10_SQL = f"""
+CREATE TABLE memory_key_epochs (
+    epoch_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL REFERENCES memory_principals(principal_id),
+    provider_install_id TEXT NOT NULL
+        CHECK(length(provider_install_id)=64
+              AND provider_install_id=lower(provider_install_id)
+              AND provider_install_id NOT GLOB '*[^0-9a-f]*'),
+    key_version INTEGER NOT NULL CHECK(key_version BETWEEN 1 AND 2147483647),
+    state TEXT NOT NULL CHECK(state IN (
+        'PROVISIONING','WRITE_ACTIVE','READABLE','RETIRED',
+        'DESTROY_PENDING','DESTROYED','DESTROY_UNCERTAIN'
+    )),
+    confirmation_challenge TEXT NOT NULL,
+    confirmation_hmac BLOB NOT NULL
+        CHECK(typeof(confirmation_hmac)='blob' AND length(confirmation_hmac)=32),
+    created_at TEXT NOT NULL,
+    provider_verified_at TEXT NOT NULL,
+    activated_at TEXT,
+    retired_at TEXT,
+    destroy_requested_at TEXT,
+    destroy_verified_at TEXT,
+    UNIQUE(principal_id,key_version),
+    UNIQUE(provider_install_id,key_version),
+    UNIQUE(epoch_id,principal_id,key_version)
+);
+CREATE UNIQUE INDEX memory_key_epochs_one_write_active
+ON memory_key_epochs(principal_id) WHERE state='WRITE_ACTIVE';
+
+CREATE TABLE memory_crypto_state (
+    principal_id TEXT PRIMARY KEY REFERENCES memory_principals(principal_id),
+    storage_state TEXT NOT NULL
+        CHECK(storage_state IN ('LEGACY_PENDING','MIGRATING','ENCRYPTED')),
+    provider_install_id TEXT
+        CHECK(provider_install_id IS NULL OR (
+            length(provider_install_id)=64
+            AND provider_install_id=lower(provider_install_id)
+            AND provider_install_id NOT GLOB '*[^0-9a-f]*'
+        )),
+    write_epoch_id TEXT REFERENCES memory_key_epochs(epoch_id),
+    memory_revision INTEGER NOT NULL DEFAULT 0 CHECK(memory_revision>=0),
+    active_operation_id TEXT,
+    updated_at TEXT NOT NULL,
+    CHECK(
+        (storage_state='LEGACY_PENDING'
+         AND provider_install_id IS NULL AND write_epoch_id IS NULL)
+        OR
+        (storage_state IN ('MIGRATING','ENCRYPTED')
+         AND provider_install_id IS NOT NULL AND write_epoch_id IS NOT NULL)
+    )
+);
+
+CREATE TABLE memory_crypto_operations (
+    operation_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL REFERENCES memory_principals(principal_id),
+    kind TEXT NOT NULL CHECK(kind IN ('MIGRATE_V9','ROTATE','DESTROY_EPOCH')),
+    phase TEXT NOT NULL CHECK(phase IN (
+        'PREPARED','PROVIDER_READY','COPYING','VERIFYING','CUTOVER_READY',
+        'DB_ACTIVE_SWITCHED','REWRAPPING','PROVIDER_DELETE_REQUESTED',
+        'VERIFYING_ABSENCE','COMPLETE','UNCERTAIN'
+    )),
+    source_epoch_id TEXT,
+    target_epoch_id TEXT,
+    expected_provider_version INTEGER,
+    cursor_created_at TEXT,
+    cursor_record_id TEXT,
+    expected_record_count INTEGER NOT NULL DEFAULT 0
+        CHECK(expected_record_count>=0),
+    processed_record_count INTEGER NOT NULL DEFAULT 0
+        CHECK(processed_record_count>=0),
+    request_sha256 TEXT NOT NULL CHECK(
+        length(request_sha256)=64 AND request_sha256=lower(request_sha256)
+        AND request_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    last_error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    CHECK(
+        (kind='MIGRATE_V9' AND phase IN (
+            'PREPARED','PROVIDER_READY','COPYING','VERIFYING',
+            'CUTOVER_READY','COMPLETE','UNCERTAIN'
+        )) OR
+        (kind='ROTATE' AND phase IN (
+            'PREPARED','PROVIDER_READY','DB_ACTIVE_SWITCHED',
+            'REWRAPPING','VERIFYING','COMPLETE','UNCERTAIN'
+        )) OR
+        (kind='DESTROY_EPOCH' AND phase IN (
+            'PREPARED','PROVIDER_DELETE_REQUESTED','VERIFYING_ABSENCE',
+            'COMPLETE','UNCERTAIN'
+        ))
+    )
+);
+CREATE UNIQUE INDEX memory_crypto_one_active_operation
+ON memory_crypto_operations(principal_id)
+WHERE phase!='COMPLETE';
+
+CREATE TABLE memory_records (
+    record_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL REFERENCES memory_principals(principal_id),
+    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),
+    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+    source_event_id TEXT NOT NULL REFERENCES inbox(event_id),
+    key_epoch_id TEXT NOT NULL,
+    key_version INTEGER NOT NULL CHECK(key_version BETWEEN 1 AND 2147483647),
+    record_schema_version INTEGER NOT NULL CHECK(record_schema_version=10),
+    envelope_version INTEGER NOT NULL CHECK(envelope_version=1),
+    payload_version INTEGER NOT NULL CHECK(payload_version=1),
+    payload_nonce BLOB NOT NULL
+        CHECK(typeof(payload_nonce)='blob' AND length(payload_nonce)=12),
+    payload_ciphertext BLOB NOT NULL
+        CHECK(typeof(payload_ciphertext)='blob'
+              AND length(payload_ciphertext) BETWEEN 17 AND 16400),
+    wrap_nonce BLOB NOT NULL
+        CHECK(typeof(wrap_nonce)='blob' AND length(wrap_nonce)=12),
+    wrapped_dek BLOB NOT NULL
+        CHECK(typeof(wrapped_dek)='blob' AND length(wrapped_dek)=48),
+    binding_sha256 TEXT NOT NULL CHECK(
+        length(binding_sha256)=64 AND binding_sha256=lower(binding_sha256)
+        AND binding_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    envelope_sha256 TEXT NOT NULL CHECK(
+        length(envelope_sha256)=64 AND envelope_sha256=lower(envelope_sha256)
+        AND envelope_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    content_hmac BLOB NOT NULL
+        CHECK(typeof(content_hmac)='blob' AND length(content_hmac)=32),
+    normalized_hmac BLOB NOT NULL
+        CHECK(typeof(normalized_hmac)='blob' AND length(normalized_hmac)=32),
+    content_bytes INTEGER NOT NULL
+        CHECK(content_bytes BETWEEN 1 AND {MAX_MEMORY_RECORD_BYTES}),
+    term_count INTEGER NOT NULL
+        CHECK(term_count BETWEEN 1 AND {MAX_MEMORY_RECORD_TERMS}),
+    expires_at TEXT NOT NULL,
+    normalizer_version TEXT NOT NULL
+        CHECK(normalizer_version='{MEMORY_NORMALIZER_VERSION}'),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(key_epoch_id,principal_id,key_version)
+        REFERENCES memory_key_epochs(epoch_id,principal_id,key_version),
+    UNIQUE(conversation_id,source_event_id),
+    UNIQUE(principal_id,key_version,normalized_hmac),
+    UNIQUE(record_id,principal_id,key_epoch_id,key_version)
+);
+CREATE INDEX memory_records_by_principal_expiry
+ON memory_records(principal_id,expires_at,record_id);
+CREATE INDEX memory_records_by_expiry
+ON memory_records(expires_at,record_id);
+CREATE INDEX memory_records_by_source_task
+ON memory_records(task_id,record_id);
+CREATE INDEX memory_records_by_source_conversation
+ON memory_records(conversation_id,record_id);
+CREATE INDEX memory_records_by_epoch
+ON memory_records(key_epoch_id,record_id);
+CREATE INDEX memory_records_by_principal_created
+ON memory_records(principal_id,created_at DESC,record_id);
+
+CREATE TABLE memory_terms (
+    principal_id TEXT NOT NULL,
+    key_epoch_id TEXT NOT NULL,
+    key_version INTEGER NOT NULL,
+    term_hmac BLOB NOT NULL
+        CHECK(typeof(term_hmac)='blob' AND length(term_hmac)=32),
+    record_id TEXT NOT NULL,
+    PRIMARY KEY(principal_id,key_version,term_hmac,record_id),
+    FOREIGN KEY(record_id,principal_id,key_epoch_id,key_version)
+        REFERENCES memory_records(record_id,principal_id,key_epoch_id,key_version)
+        ON DELETE CASCADE
+);
+CREATE INDEX memory_terms_by_principal_term
+ON memory_terms(principal_id,key_version,term_hmac,record_id);
+CREATE INDEX memory_terms_by_record
+ON memory_terms(record_id,term_hmac);
+
+CREATE TABLE memory_record_tombstones (
+    record_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL REFERENCES memory_principals(principal_id),
+    source_binding_sha256 TEXT NOT NULL CHECK(
+        length(source_binding_sha256)=64
+        AND source_binding_sha256=lower(source_binding_sha256)
+        AND source_binding_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    reason TEXT NOT NULL CHECK(reason IN (
+        'explicit_forget','control_delete','source_conversation_delete','ttl_expiry'
+    )),
+    delete_request_id TEXT,
+    memory_revision INTEGER NOT NULL CHECK(memory_revision>=0),
+    deleted_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX memory_tombstones_by_delete_request
+ON memory_record_tombstones(delete_request_id)
+WHERE delete_request_id IS NOT NULL;
+CREATE TABLE memory_record_audits (
+    audit_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL REFERENCES memory_principals(principal_id),
+    record_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN (
+        'MIGRATED','CREATED','EXPLICIT_FORGOT','CONTROL_DELETED',
+        'SOURCE_CONVERSATION_DELETED','TTL_EXPIRED','REWRAPPED'
+    )),
+    actor_kind TEXT NOT NULL CHECK(actor_kind IN (
+        'explicit_command','control','migration','conversation_lifecycle','ttl_sweep'
+    )),
+    actor_id TEXT,
+    source_binding_sha256 TEXT NOT NULL CHECK(
+        length(source_binding_sha256)=64
+        AND source_binding_sha256=lower(source_binding_sha256)
+        AND source_binding_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    operation_id TEXT NOT NULL,
+    old_epoch_id TEXT,
+    new_epoch_id TEXT,
+    outcome_code TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    audit_sha256 TEXT NOT NULL CHECK(
+        length(audit_sha256)=64 AND audit_sha256=lower(audit_sha256)
+        AND audit_sha256 NOT GLOB '*[^0-9a-f]*'
+    ),
+    UNIQUE(record_id,action,operation_id)
+);
+CREATE INDEX memory_record_audits_by_record
+ON memory_record_audits(principal_id,record_id,created_at,audit_id);
+
+CREATE TABLE memory_crypto_migration_audits (
+    operation_id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL REFERENCES memory_principals(principal_id),
+    source_schema INTEGER NOT NULL CHECK(source_schema=9),
+    target_schema INTEGER NOT NULL CHECK(target_schema=10),
+    provider_install_id TEXT NOT NULL CHECK(
+        length(provider_install_id)=64
+        AND provider_install_id=lower(provider_install_id)
+        AND provider_install_id NOT GLOB '*[^0-9a-f]*'
+    ),
+    key_version INTEGER NOT NULL,
+    source_record_count INTEGER NOT NULL CHECK(source_record_count>=0),
+    encrypted_record_count INTEGER NOT NULL CHECK(encrypted_record_count>=0),
+    expired_record_count INTEGER NOT NULL CHECK(expired_record_count>=0),
+    source_content_bytes INTEGER NOT NULL CHECK(source_content_bytes>=0),
+    encrypted_content_bytes INTEGER NOT NULL CHECK(encrypted_content_bytes>=0),
+    started_at TEXT NOT NULL,
+    cutover_at TEXT NOT NULL,
+    contract_sha256 TEXT NOT NULL CHECK(
+        length(contract_sha256)=64 AND contract_sha256=lower(contract_sha256)
+        AND contract_sha256 NOT GLOB '*[^0-9a-f]*'
+    )
+);
+
+CREATE TRIGGER memory_records_quota_guard
+BEFORE INSERT ON memory_records
+WHEN (SELECT storage_state FROM memory_crypto_state
+      WHERE principal_id=NEW.principal_id)='ENCRYPTED'
+BEGIN
+    SELECT CASE WHEN NOT EXISTS(
+        SELECT 1 FROM memory_principal_usage WHERE principal_id=NEW.principal_id
+    ) THEN RAISE(ABORT,'memory principal usage missing') END;
+    SELECT CASE WHEN (
+        SELECT active_record_count FROM memory_principal_usage
+        WHERE principal_id=NEW.principal_id
+    ) + 1 > {MAX_MEMORY_PRINCIPAL_RECORDS}
+    OR (
+        SELECT active_content_bytes FROM memory_principal_usage
+        WHERE principal_id=NEW.principal_id
+    ) + NEW.content_bytes > {MAX_MEMORY_PRINCIPAL_BYTES}
+    THEN RAISE(ABORT,'memory principal quota exceeded') END;
+END;
+CREATE TRIGGER memory_records_usage_insert
+AFTER INSERT ON memory_records
+WHEN (SELECT storage_state FROM memory_crypto_state
+      WHERE principal_id=NEW.principal_id)='ENCRYPTED'
+BEGIN
+    UPDATE memory_principal_usage
+    SET active_record_count=active_record_count+1,
+        active_content_bytes=active_content_bytes+NEW.content_bytes,
+        updated_at=NEW.created_at
+    WHERE principal_id=NEW.principal_id;
+    UPDATE memory_crypto_state SET memory_revision=memory_revision+1,
+        updated_at=NEW.created_at WHERE principal_id=NEW.principal_id;
+END;
+CREATE TRIGGER memory_records_usage_delete
+AFTER DELETE ON memory_records
+WHEN (SELECT storage_state FROM memory_crypto_state
+      WHERE principal_id=OLD.principal_id)='ENCRYPTED'
+BEGIN
+    UPDATE memory_principal_usage
+    SET active_record_count=active_record_count-1,
+        active_content_bytes=active_content_bytes-OLD.content_bytes,
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE principal_id=OLD.principal_id;
+    UPDATE memory_crypto_state SET memory_revision=memory_revision+1,
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE principal_id=OLD.principal_id;
+END;
+CREATE TRIGGER memory_epoch_destroy_guard
+BEFORE UPDATE OF state ON memory_key_epochs
+WHEN NEW.state IN ('DESTROY_PENDING','DESTROYED')
+     AND EXISTS(SELECT 1 FROM memory_records WHERE key_epoch_id=OLD.epoch_id)
+BEGIN
+    SELECT RAISE(ABORT,'memory epoch remains referenced');
+END;
+"""
+
+
+class _MemoryQuotaExceeded(RuntimeError):
+    pass
+
+
+def _execute_script_tx(connection: sqlite3.Connection, script: str) -> None:
+    """Execute a script without sqlite3.executescript's implicit COMMIT."""
+
+    pending = ""
+    for line in script.splitlines(keepends=True):
+        pending += line
+        if not sqlite3.complete_statement(pending):
+            continue
+        statement = pending.strip()
+        pending = ""
+        if statement:
+            connection.execute(statement)
+    if pending.strip():
+        raise RuntimeError("incomplete database migration statement")
+
+
+def _memory_term_sha256(term: str) -> str:
+    return hashlib.sha256(term.encode("utf-8")).hexdigest()
+
+
 class OrchestratorStore:
     def __init__(
         self,
@@ -507,11 +1046,16 @@ class OrchestratorStore:
         disconnect_ttl: timedelta = DEFAULT_DISCONNECT_TTL,
         delivery_ttl: timedelta = DEFAULT_DELIVERY_TTL,
         tool_authority_enabled: bool = False,
+        memory_crypto: MemoryCryptoRuntime | None = None,
+        memory_storage_enabled: bool = True,
     ) -> None:
         if not isinstance(tool_authority_enabled, bool):
             raise TypeError("tool_authority_enabled must be boolean")
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not isinstance(memory_storage_enabled, bool):
+            raise TypeError("memory_storage_enabled must be boolean")
+        selected_path = absolute_path_no_resolve(path)
+        database_preexisting = selected_path.exists()
+        self.path = prepare_private_database(path)
         self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
@@ -522,103 +1066,2677 @@ class OrchestratorStore:
         self.disconnect_ttl = disconnect_ttl
         self.delivery_ttl = delivery_ttl
         self.tool_authority_enabled = tool_authority_enabled
+        self._memory_storage_enabled = memory_storage_enabled
+        self._memory_crypto = self._validated_memory_runtime(memory_crypto)
+        self._memory_epoch_session: MemoryEpochSessionV1 | None = None
         with self._lock:
             self._connection.execute("PRAGMA journal_mode=WAL")
+            assert_private_database(self.path)
             self._connection.execute("PRAGMA foreign_keys=ON")
             self._connection.execute("PRAGMA synchronous=FULL")
             self._connection.execute("PRAGMA busy_timeout=2000")
-            self._connection.execute(
-                "CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL)"
-            )
-            existing_version = self._connection.execute(
-                "SELECT value FROM schema_meta WHERE key='schema_version'"
-            ).fetchone()
-            if existing_version is not None and existing_version["value"] not in {"1", "2", "3", "4", "5", "6", "7"}:
-                raise RuntimeError("unsupported orchestrator database schema version")
-            self._connection.executescript(SCHEMA_SQL)
-            if existing_version is None:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._memory_storage_enabled and database_preexisting:
+                    schema_table = self._connection.execute(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type='table' AND name='schema_meta'"
+                    ).fetchone()
+                    if schema_table is None:
+                        raise MemoryStorageUnavailable(
+                            "memory_disabled_legacy_schema"
+                        )
                 self._connection.execute(
-                    "INSERT INTO schema_meta(key,value) VALUES('schema_version','1')"
+                    "CREATE TABLE IF NOT EXISTS schema_meta "
+                    "(key TEXT PRIMARY KEY,value TEXT NOT NULL)"
                 )
-                current_version = 1
+                existing_version = self._connection.execute(
+                    "SELECT value FROM schema_meta WHERE key='schema_version'"
+                ).fetchone()
+                supported = {str(value) for value in range(1, SCHEMA_VERSION + 1)}
+                if (
+                    existing_version is not None
+                    and existing_version["value"] not in supported
+                ):
+                    raise RuntimeError(
+                        "unsupported orchestrator database schema version"
+                    )
+                source_schema_version = (
+                    1 if existing_version is None else int(existing_version["value"])
+                )
+                if (
+                    not self._memory_storage_enabled
+                    and database_preexisting
+                    and (
+                        existing_version is None
+                        or source_schema_version < SCHEMA_VERSION
+                    )
+                ):
+                    # A memory-disabled runtime may inspect schema_meta, but it
+                    # must never read, rename, migrate, sweep, or delete legacy
+                    # plaintext memory.  An operator must explicitly enable
+                    # and complete the encrypted migration first.
+                    raise MemoryStorageUnavailable(
+                        "memory_disabled_legacy_schema"
+                    )
+                _execute_script_tx(self._connection, SCHEMA_SQL)
+                if existing_version is None:
+                    self._connection.execute(
+                        "INSERT INTO schema_meta(key,value) "
+                        "VALUES('schema_version','1')"
+                    )
+                current_version = source_schema_version
+                if current_version == 1:
+                    _execute_script_tx(self._connection, MIGRATION_2_SQL)
+                    self._set_schema_version_tx(self._connection, 1, 2)
+                    current_version = 2
+                if current_version == 2:
+                    _execute_script_tx(self._connection, MIGRATION_3_SQL)
+                    self._set_schema_version_tx(self._connection, 2, 3)
+                    current_version = 3
+                if current_version == 3:
+                    task_columns = {
+                        row["name"]
+                        for row in self._connection.execute(
+                            "PRAGMA table_info(tasks)"
+                        ).fetchall()
+                    }
+                    if "cloud_dispatch_count" not in task_columns:
+                        self._connection.execute(
+                            "ALTER TABLE tasks ADD COLUMN cloud_dispatch_count "
+                            "INTEGER NOT NULL DEFAULT 0 CHECK("
+                            "cloud_dispatch_count >= 0 AND cloud_dispatch_count <= 1)"
+                        )
+                    _execute_script_tx(self._connection, MIGRATION_4_SQL)
+                    self._set_schema_version_tx(self._connection, 3, 4)
+                    current_version = 4
+                if current_version == 4:
+                    _execute_script_tx(self._connection, MIGRATION_5_SQL)
+                    self._set_schema_version_tx(self._connection, 4, 5)
+                    current_version = 5
+                if current_version == 5:
+                    tool_columns = {
+                        row["name"]
+                        for row in self._connection.execute(
+                            "PRAGMA table_info(tool_executions)"
+                        ).fetchall()
+                    }
+                    migration_6_lines: list[str] = []
+                    for statement_line in MIGRATION_6_SQL.splitlines():
+                        stripped = statement_line.strip()
+                        if stripped.startswith(
+                            "ALTER TABLE tool_executions ADD COLUMN "
+                        ):
+                            column_name = stripped.split()[5]
+                            if column_name in tool_columns:
+                                continue
+                        migration_6_lines.append(statement_line)
+                    _execute_script_tx(
+                        self._connection, "\n".join(migration_6_lines)
+                    )
+                    self._set_schema_version_tx(self._connection, 5, 6)
+                    current_version = 6
+                if current_version == 6:
+                    _execute_script_tx(self._connection, MIGRATION_7_SQL)
+                    self._set_schema_version_tx(self._connection, 6, 7)
+                    current_version = 7
+                if current_version == 7:
+                    _execute_script_tx(self._connection, MIGRATION_8_SQL)
+                    self._set_schema_version_tx(self._connection, 7, 8)
+                    current_version = 8
+                if current_version == 8:
+                    self._migrate_memory_v9_tx(
+                        self._connection,
+                        source_schema_version=source_schema_version,
+                        now=utc_now(),
+                    )
+                    self._set_schema_version_tx(self._connection, 8, 9)
+                    current_version = 9
+                if current_version == 9:
+                    self._migrate_memory_v10_tx(
+                        self._connection,
+                        now=utc_now(),
+                    )
+                    self._set_schema_version_tx(self._connection, 9, 10)
+                    current_version = 10
+                if current_version != SCHEMA_VERSION:
+                    raise RuntimeError("orchestrator database migration incomplete")
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                self._connection.close()
+                raise
             else:
-                current_version = int(existing_version["value"])
-            if current_version == 1:
-                self._connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + MIGRATION_2_SQL
-                    + "\nUPDATE schema_meta SET value='2' WHERE key='schema_version' AND value='1';\n"
-                    + "COMMIT;"
-                )
-                current_version = 2
-            if current_version == 2:
-                self._connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + MIGRATION_3_SQL
-                    + "\nUPDATE schema_meta SET value='3' WHERE key='schema_version' AND value='2';\n"
-                    + "COMMIT;"
-                )
-                current_version = 3
-            if current_version == 3:
-                task_columns = {
-                    row["name"]
-                    for row in self._connection.execute("PRAGMA table_info(tasks)").fetchall()
+                self._connection.execute("COMMIT")
+            assert_private_database(self.path)
+        # Sweeping is deliberately deferred until an enabled runtime has
+        # opened and verified its encrypted epoch session.  In disabled mode
+        # even a schema-v10 LEGACY_PENDING table is completely untouched.
+
+    @staticmethod
+    def _validated_memory_runtime(
+        runtime: MemoryCryptoRuntime | None,
+    ) -> MemoryCryptoRuntime | None:
+        if runtime is None:
+            return None
+        # A fresh platform provider intentionally has no installation id until
+        # ``prepare_memory_storage`` reaches its journaled bootstrap phase.
+        # Validate only the immutable cipher seam here; the exact id is bound
+        # and checked immediately after bootstrap or on encrypted reopen.
+        try:
+            cipher = runtime.cipher
+        except (AttributeError, MemoryCryptoError):
+            raise TypeError("memory crypto runtime is invalid") from None
+        if not isinstance(cipher, MemoryEnvelopeCipherV1):
+            raise TypeError("memory crypto runtime is invalid")
+        return runtime
+
+    @staticmethod
+    def _set_schema_version_tx(
+        connection: sqlite3.Connection, old: int, new: int
+    ) -> None:
+        changed = connection.execute(
+            "UPDATE schema_meta SET value=? "
+            "WHERE key='schema_version' AND value=?",
+            (str(new), str(old)),
+        )
+        if changed.rowcount != 1:
+            raise RuntimeError("orchestrator database schema version changed")
+
+    @staticmethod
+    def _memory_content_fields(content: str) -> dict[str, Any]:
+        if not isinstance(content, str) or not content or nfc(content) != content:
+            raise ValueError("memory content is invalid")
+        content_bytes = len(content.encode("utf-8"))
+        if content_bytes > MAX_MEMORY_RECORD_BYTES:
+            raise ValueError("memory content exceeds the byte limit")
+        normalized = normalize_explicit_memory_target(content)
+        if not normalized:
+            raise ValueError("memory content normalizes to empty")
+        terms = memory_search_terms(content)
+        if not terms:
+            raise ValueError("memory content has no searchable terms")
+        if len(terms) > MAX_MEMORY_RECORD_TERMS:
+            raise ValueError("memory content has too many unique terms")
+        return {
+            "content": content,
+            "content_sha256": canonical_sha256({"content": content}),
+            "normalized_sha256": memory_normalized_sha256(content),
+            "content_bytes": content_bytes,
+            "terms": terms,
+            "term_count": len(terms),
+            "normalizer_version": MEMORY_NORMALIZER_VERSION,
+        }
+
+    def _migrate_memory_v9_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        source_schema_version: int,
+        now: datetime,
+    ) -> None:
+        """Rebuild legacy memory under one stable local-owner principal."""
+
+        required_columns = {
+            "record_id",
+            "conversation_id",
+            "task_id",
+            "source_event_id",
+            "scoped_user_id",
+            "content",
+            "content_sha256",
+            "metadata_json",
+            "created_at",
+        }
+        observed_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(memory_records)"
+            ).fetchall()
+        }
+        if observed_columns != required_columns:
+            raise RuntimeError("legacy memory schema is malformed")
+        forbidden = {
+            "memory_principals",
+            "conversation_principals",
+            "memory_principal_usage",
+            "memory_records_v9",
+            "memory_terms",
+            "memory_migration_audits",
+        }
+        existing_v9 = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            if row["name"] in forbidden
+        }
+        if existing_v9:
+            raise RuntimeError("partial memory v9 schema is present")
+
+        conversations = connection.execute(
+            "SELECT conversation_id,created_at FROM conversations "
+            "ORDER BY conversation_id"
+        ).fetchall()
+        conversation_ids = {row["conversation_id"] for row in conversations}
+        task_bindings = {
+            row["task_id"]: row
+            for row in connection.execute(
+                """SELECT t.task_id,t.conversation_id,t.epoch,t.turn_id,t.state,
+                          ct.user_language,ct.status AS turn_status
+                   FROM tasks t JOIN canonical_turns ct USING(task_id)"""
+            ).fetchall()
+        }
+        event_bindings = {
+            (row["event_id"], row["task_id"], row["turn_id"])
+            for row in connection.execute(
+                "SELECT event_id,task_id,turn_id FROM inbox"
+            ).fetchall()
+        }
+        legacy_rows = connection.execute(
+            "SELECT * FROM memory_records ORDER BY created_at,record_id"
+        ).fetchall()
+        selected_at = parse_utc(utc_text(now))
+        prepared: list[dict[str, Any]] = []
+        expired_count = 0
+        for row in legacy_rows:
+            try:
+                content = row["content"]
+                fields = self._memory_content_fields(content)
+                if row["content_sha256"] != fields["content_sha256"]:
+                    raise ValueError("legacy content digest does not match")
+                metadata = json.loads(row["metadata_json"])
+                if (
+                    not isinstance(metadata, dict)
+                    or canonical_json(metadata) != row["metadata_json"]
+                ):
+                    raise ValueError("legacy metadata is not canonical")
+                created = parse_utc(row["created_at"])
+                if utc_text(created) != row["created_at"]:
+                    raise ValueError("legacy timestamp is not canonical")
+                conversation_id = row["conversation_id"]
+                task_id = row["task_id"]
+                source_event_id = row["source_event_id"]
+                task_binding = task_bindings.get(task_id)
+                expected_scope = f"anamnesis::jarvis::{conversation_id}"
+                expected_metadata_keys = {
+                    "conversation_id",
+                    "task_id",
+                    "task_epoch",
+                    "turn_id",
+                    "source_event_id",
+                    "language",
+                    "_anamnesis_namespace",
+                    "_anamnesis_user_id",
                 }
-                add_dispatch_count = (
-                    "ALTER TABLE tasks ADD COLUMN cloud_dispatch_count INTEGER NOT NULL DEFAULT 0 "
-                    "CHECK(cloud_dispatch_count >= 0 AND cloud_dispatch_count <= 1);\n"
-                    if "cloud_dispatch_count" not in task_columns
-                    else ""
+                if (
+                    conversation_id not in conversation_ids
+                    or task_binding is None
+                    or task_binding["conversation_id"] != conversation_id
+                    or task_binding["state"] != TaskState.COMPLETED.value
+                    or task_binding["turn_status"] != "COMPLETED"
+                    or (
+                        source_event_id,
+                        task_id,
+                        task_binding["turn_id"],
+                    )
+                    not in event_bindings
+                    or row["scoped_user_id"] != expected_scope
+                    or set(metadata) != expected_metadata_keys
+                    or metadata.get("conversation_id") != conversation_id
+                    or metadata.get("task_id") != task_id
+                    or metadata.get("task_epoch") != str(task_binding["epoch"])
+                    or metadata.get("turn_id") != task_binding["turn_id"]
+                    or metadata.get("source_event_id") != source_event_id
+                    or metadata.get("language") != task_binding["user_language"]
+                    or metadata.get("_anamnesis_namespace") != "jarvis"
+                    or metadata.get("_anamnesis_user_id") != conversation_id
+                ):
+                    raise ValueError("legacy source binding is invalid")
+                expires = created + timedelta(days=MEMORY_RECORD_TTL_DAYS)
+                if expires <= selected_at:
+                    expired_count += 1
+                    continue
+                prepared.append(
+                    {
+                        **fields,
+                        "record_id": row["record_id"],
+                        "conversation_id": conversation_id,
+                        "task_id": task_id,
+                        "source_event_id": source_event_id,
+                        "metadata_json": row["metadata_json"],
+                        "created": created,
+                        "created_at": row["created_at"],
+                        "expires_at": utc_text(expires),
+                    }
                 )
-                self._connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + add_dispatch_count
-                    + MIGRATION_4_SQL
-                    + "\nUPDATE schema_meta SET value='4' WHERE key='schema_version' AND value='3';\n"
-                    + "COMMIT;"
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise RuntimeError("legacy memory record is malformed") from exc
+
+        retained: list[dict[str, Any]] = []
+        seen_normalized: set[str] = set()
+        duplicate_count = 0
+        for item in sorted(
+            prepared, key=lambda value: (value["created"], value["record_id"])
+        ):
+            normalized_sha256 = item["normalized_sha256"]
+            if normalized_sha256 in seen_normalized:
+                duplicate_count += 1
+                continue
+            seen_normalized.add(normalized_sha256)
+            retained.append(item)
+        retained_bytes = sum(item["content_bytes"] for item in retained)
+        if (
+            len(retained) > MAX_MEMORY_PRINCIPAL_RECORDS
+            or retained_bytes > MAX_MEMORY_PRINCIPAL_BYTES
+        ):
+            raise RuntimeError("legacy memory exceeds the local-owner quota")
+
+        _execute_script_tx(connection, MIGRATION_9_SQL)
+        principal_id = new_uuid4()
+        stamp = utc_text(selected_at)
+        connection.execute(
+            "INSERT INTO memory_principals("
+            "principal_id,owner_kind,owner_key,created_at) VALUES("
+            "?,'local_owner','local-owner',?)",
+            (principal_id, stamp),
+        )
+        connection.execute(
+            "INSERT INTO memory_principal_usage("
+            "principal_id,active_record_count,active_content_bytes,updated_at) "
+            "VALUES(?,0,0,?)",
+            (principal_id, stamp),
+        )
+        for conversation in conversations:
+            connection.execute(
+                "INSERT INTO conversation_principals("
+                "conversation_id,principal_id,bound_at) VALUES(?,?,?)",
+                (
+                    conversation["conversation_id"],
+                    principal_id,
+                    conversation["created_at"],
+                ),
+            )
+        for item in retained:
+            connection.execute(
+                """INSERT INTO memory_records_v9(
+                   record_id,principal_id,conversation_id,task_id,source_event_id,
+                   content,content_sha256,normalized_sha256,content_bytes,
+                   term_count,expires_at,normalizer_version,metadata_json,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    item["record_id"],
+                    principal_id,
+                    item["conversation_id"],
+                    item["task_id"],
+                    item["source_event_id"],
+                    item["content"],
+                    item["content_sha256"],
+                    item["normalized_sha256"],
+                    item["content_bytes"],
+                    item["term_count"],
+                    item["expires_at"],
+                    item["normalizer_version"],
+                    item["metadata_json"],
+                    item["created_at"],
+                ),
+            )
+            for term in item["terms"]:
+                connection.execute(
+                    "INSERT INTO memory_terms("
+                    "principal_id,term_sha256,record_id) VALUES(?,?,?)",
+                    (principal_id, _memory_term_sha256(term), item["record_id"]),
                 )
-                current_version = 4
-            if current_version == 4:
-                self._connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + MIGRATION_5_SQL
-                    + "\nUPDATE schema_meta SET value='5' WHERE key='schema_version' AND value='4';\n"
-                    + "COMMIT;"
+        connection.execute(
+            "UPDATE memory_principal_usage SET active_record_count=?,"
+            "active_content_bytes=?,updated_at=? WHERE principal_id=?",
+            (len(retained), retained_bytes, stamp, principal_id),
+        )
+        connection.execute("ALTER TABLE memory_records RENAME TO memory_records_v8")
+        connection.execute("ALTER TABLE memory_records_v9 RENAME TO memory_records")
+        connection.execute("DROP TABLE memory_records_v8")
+        _execute_script_tx(connection, MEMORY_V9_FINALIZE_SQL)
+        connection.execute(
+            """INSERT INTO memory_migration_audits(
+               schema_version,source_schema_version,source_record_count,
+               migrated_record_count,collapsed_duplicate_count,
+               expired_record_count,conversation_binding_count,created_at
+               ) VALUES(9,?,?,?,?,?,?,?)""",
+            (
+                source_schema_version,
+                len(legacy_rows),
+                len(retained),
+                duplicate_count,
+                expired_count,
+                len(conversations),
+                stamp,
+            ),
+        )
+
+    @staticmethod
+    def _migrate_memory_v10_tx(
+        connection: sqlite3.Connection,
+        *,
+        now: datetime,
+    ) -> None:
+        """Install encrypted memory shape without touching the key provider.
+
+        The legacy v9 authority is renamed and becomes inaccessible to normal
+        runtime methods.  ``prepare_memory_storage`` performs the separately
+        journaled provider-backed conversion before encrypted memory is usable.
+        """
+
+        expected_v9_columns = {
+            "record_id",
+            "principal_id",
+            "conversation_id",
+            "task_id",
+            "source_event_id",
+            "content",
+            "content_sha256",
+            "normalized_sha256",
+            "content_bytes",
+            "term_count",
+            "expires_at",
+            "normalizer_version",
+            "metadata_json",
+            "created_at",
+        }
+        observed = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(memory_records)"
+            ).fetchall()
+        }
+        if observed != expected_v9_columns:
+            raise RuntimeError("memory v9 schema is malformed")
+        partial_names = {
+            "memory_records_v9_legacy",
+            "memory_terms_v9_legacy",
+            "memory_crypto_state",
+            "memory_key_epochs",
+            "memory_crypto_operations",
+            "memory_record_tombstones",
+            "memory_record_audits",
+            "memory_crypto_migration_audits",
+        }
+        existing = {
+            row["name"]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            if row["name"] in partial_names
+        }
+        if existing:
+            raise RuntimeError("partial memory v10 schema is present")
+        principals = connection.execute(
+            "SELECT principal_id,owner_kind,owner_key FROM memory_principals"
+        ).fetchall()
+        if (
+            len(principals) != 1
+            or principals[0]["owner_kind"] != "local_owner"
+            or principals[0]["owner_key"] != "local-owner"
+        ):
+            raise RuntimeError("memory v10 principal binding is invalid")
+
+        for trigger in (
+            "memory_records_quota_guard",
+            "memory_records_usage_insert",
+            "memory_records_usage_delete",
+        ):
+            connection.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+        for index in (
+            "memory_records_by_principal_expiry",
+            "memory_records_by_expiry",
+            "memory_records_by_source_task",
+            "memory_terms_by_principal_term",
+        ):
+            connection.execute(f"DROP INDEX IF EXISTS {index}")
+        connection.execute(
+            "ALTER TABLE memory_terms RENAME TO memory_terms_v9_legacy"
+        )
+        connection.execute(
+            "ALTER TABLE memory_records RENAME TO memory_records_v9_legacy"
+        )
+        _execute_script_tx(connection, MIGRATION_10_SQL)
+        stamp = utc_text(now)
+        connection.execute(
+            """INSERT INTO memory_crypto_state(
+               principal_id,storage_state,provider_install_id,write_epoch_id,
+               memory_revision,active_operation_id,updated_at
+               ) VALUES(?,'LEGACY_PENDING',NULL,NULL,0,NULL,?)""",
+            (principals[0]["principal_id"], stamp),
+        )
+
+    @staticmethod
+    def _local_owner_principal_tx(connection: sqlite3.Connection) -> str:
+        rows = connection.execute(
+            "SELECT principal_id FROM memory_principals "
+            "WHERE owner_kind='local_owner' AND owner_key='local-owner'"
+        ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeError("local-owner memory principal is unavailable")
+        return str(rows[0]["principal_id"])
+
+    @classmethod
+    def _principal_for_conversation_tx(
+        cls, connection: sqlite3.Connection, conversation_id: str
+    ) -> str:
+        row = connection.execute(
+            "SELECT principal_id FROM conversation_principals "
+            "WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("conversation memory principal is unavailable")
+        principal_id = str(row["principal_id"])
+        if principal_id != cls._local_owner_principal_tx(connection):
+            raise RuntimeError("conversation memory principal is invalid")
+        return principal_id
+
+    @classmethod
+    def _bind_conversation_principal_tx(
+        cls,
+        connection: sqlite3.Connection,
+        conversation_id: str,
+        bound_at: str,
+    ) -> str:
+        principal_id = cls._local_owner_principal_tx(connection)
+        connection.execute(
+            "INSERT INTO conversation_principals("
+            "conversation_id,principal_id,bound_at) VALUES(?,?,?)",
+            (conversation_id, principal_id, bound_at),
+        )
+        return principal_id
+
+    def _memory_runtime_or_unavailable(self) -> MemoryCryptoRuntime:
+        if not self._memory_storage_enabled:
+            raise MemoryStorageUnavailable("memory_disabled")
+        runtime = self._memory_crypto
+        if runtime is None:
+            raise MemoryStorageUnavailable("memory_crypto_unavailable")
+        return runtime
+
+    def _memory_session_or_unavailable(self) -> MemoryEpochSessionV1:
+        session = self._memory_epoch_session
+        if session is None:
+            raise MemoryStorageUnavailable("memory_crypto_session_unavailable")
+        return session
+
+    @staticmethod
+    def _memory_crypto_state_tx(
+        connection: sqlite3.Connection, principal_id: str
+    ) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM memory_crypto_state WHERE principal_id=?",
+            (principal_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("memory crypto state is unavailable")
+        return row
+
+    @classmethod
+    def _require_current_memory_session_tx(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        principal_id: str,
+        session: MemoryEpochSessionV1,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        state = dict(cls._memory_crypto_state_tx(connection, principal_id))
+        if state["storage_state"] != "ENCRYPTED":
+            raise MemoryStorageUnavailable("memory_storage_not_prepared")
+        epoch_row = connection.execute(
+            "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+            (state["write_epoch_id"],),
+        ).fetchone()
+        if epoch_row is None:
+            raise MemoryStorageUnavailable("memory_key_epoch_missing")
+        epoch = dict(epoch_row)
+        cls._require_session_epoch(session, state, epoch)
+        return state, epoch
+
+    def memory_storage_status(self) -> dict[str, Any]:
+        """Return a content-free cached storage status without provider calls."""
+
+        if not self._memory_storage_enabled:
+            return {
+                "storage_state": "DISABLED",
+                "ready": False,
+                "memory_revision": 0,
+                "referenced_epoch_count": 0,
+                "pending_operation_count": 0,
+            }
+
+        with self._lock:
+            principal_id = self._local_owner_principal_tx(self._connection)
+            state = self._memory_crypto_state_tx(self._connection, principal_id)
+            pending = self._connection.execute(
+                "SELECT COUNT(*) FROM memory_crypto_operations "
+                "WHERE principal_id=? AND phase!='COMPLETE'",
+                (principal_id,),
+            ).fetchone()[0]
+            epochs = self._connection.execute(
+                "SELECT COUNT(*) FROM memory_key_epochs "
+                "WHERE principal_id=? AND state!='DESTROYED'",
+                (principal_id,),
+            ).fetchone()[0]
+        ready = (
+            state["storage_state"] == "ENCRYPTED"
+            and self._memory_epoch_session is not None
+        )
+        return {
+            "storage_state": state["storage_state"],
+            "ready": ready,
+            "memory_revision": int(state["memory_revision"]),
+            "referenced_epoch_count": int(epochs),
+            "pending_operation_count": int(pending),
+        }
+
+    def memory_crypto_readiness(self) -> dict[str, Any]:
+        """Live, content-free provider/key/epoch verification for readiness."""
+
+        if not self._memory_storage_enabled:
+            document = {
+                "contract": "jarvis.memory-crypto-readiness/1",
+                "enabled": False,
+                "storage_state": "DISABLED",
+            }
+            return {
+                "ready": False,
+                "code": "memory_disabled",
+                "state_sha256": canonical_sha256(document),
+            }
+        try:
+            runtime = self._memory_runtime_or_unavailable()
+            with self._lock:
+                principal_id = self._local_owner_principal_tx(self._connection)
+                state = dict(
+                    self._memory_crypto_state_tx(self._connection, principal_id)
                 )
-                current_version = 5
-            if current_version == 5:
-                tool_columns = {
-                    row["name"]
-                    for row in self._connection.execute(
-                        "PRAGMA table_info(tool_executions)"
+                if state["storage_state"] != "ENCRYPTED":
+                    raise MemoryStorageUnavailable("memory_storage_not_prepared")
+                epoch_row = self._connection.execute(
+                    "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+                    (state["write_epoch_id"],),
+                ).fetchone()
+                if epoch_row is None:
+                    raise MemoryStorageUnavailable("memory_key_epoch_missing")
+                epoch = dict(epoch_row)
+            session = self._open_qualified_epoch_session(runtime, state, epoch)
+            try:
+                attestation = runtime.cipher.provider.attest()
+            except MemoryCryptoError as exc:
+                raise MemoryStorageUnavailable(exc.code) from exc
+            if (
+                attestation.install_id != session.install_id
+                or attestation.active_version != session.key_version
+                or attestation.high_water < attestation.active_version
+            ):
+                raise MemoryStorageUnavailable("memory_key_epoch_mismatch")
+            with self._lock:
+                current_state = dict(
+                    self._memory_crypto_state_tx(self._connection, principal_id)
+                )
+                current_epoch_row = self._connection.execute(
+                    "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+                    (current_state["write_epoch_id"],),
+                ).fetchone()
+                if current_epoch_row is None:
+                    raise MemoryStorageUnavailable("memory_key_epoch_missing")
+                current_epoch = dict(current_epoch_row)
+                self._require_session_epoch(session, current_state, current_epoch)
+                self._memory_epoch_session = session
+            document = {
+                "confirmation_hmac_sha256": hashlib.sha256(
+                    bytes(current_epoch["confirmation_hmac"])
+                ).hexdigest(),
+                "contract": "jarvis.memory-crypto-readiness/1",
+                "epoch_id": str(current_epoch["epoch_id"]),
+                "key_version": int(current_epoch["key_version"]),
+                "provider_high_water": int(attestation.high_water),
+                "provider_install_id": str(attestation.install_id),
+                "storage_state": str(current_state["storage_state"]),
+            }
+            return {
+                "ready": True,
+                "code": "memory_crypto_ready",
+                "state_sha256": canonical_sha256(document),
+            }
+        except MemoryStorageUnavailable as exc:
+            return {
+                "ready": False,
+                "code": exc.code,
+                "state_sha256": canonical_sha256(
+                    {
+                        "contract": "jarvis.memory-crypto-readiness/1",
+                        "failure_code": exc.code,
+                    }
+                ),
+            }
+
+    @staticmethod
+    def _memory_source_binding_sha256(row: Mapping[str, Any]) -> str:
+        return canonical_sha256(
+            {
+                "content_bytes": int(row["content_bytes"]),
+                "contract": "jarvis.memory-source-binding/1",
+                "conversation_id": str(row["conversation_id"]),
+                "created_at": str(row["created_at"]),
+                "expires_at": str(row["expires_at"]),
+                "normalizer_version": str(row["normalizer_version"]),
+                "principal_id": str(row["principal_id"]),
+                "record_id": str(row["record_id"]),
+                "source_event_id": str(row["source_event_id"]),
+                "task_id": str(row["task_id"]),
+                "term_count": int(row["term_count"]),
+            }
+        )
+
+    @staticmethod
+    def _append_memory_record_audit_tx(
+        connection: sqlite3.Connection,
+        *,
+        row: Mapping[str, Any],
+        action: str,
+        actor_kind: str,
+        actor_id: str | None,
+        outcome_code: str,
+        now: datetime,
+        operation_id: str | None = None,
+        old_epoch_id: str | None = None,
+        new_epoch_id: str | None = None,
+    ) -> None:
+        source_binding = OrchestratorStore._memory_source_binding_sha256(row)
+        selected_operation_id = operation_id or actor_id or str(row["record_id"])
+        require_uuid4(selected_operation_id)
+        audit_id = new_uuid4()
+        created_at = utc_text(now)
+        document = {
+            "action": action,
+            "audit_id": audit_id,
+            "actor_id": actor_id,
+            "actor_kind": actor_kind,
+            "contract": MEMORY_AUDIT_CONTRACT,
+            "new_epoch_id": new_epoch_id,
+            "old_epoch_id": old_epoch_id,
+            "operation_id": selected_operation_id,
+            "outcome_code": outcome_code,
+            "principal_id": str(row["principal_id"]),
+            "record_id": str(row["record_id"]),
+            "source_binding_sha256": source_binding,
+            "created_at": created_at,
+        }
+        connection.execute(
+            """INSERT OR IGNORE INTO memory_record_audits(
+               audit_id,principal_id,record_id,action,actor_kind,actor_id,
+               source_binding_sha256,operation_id,old_epoch_id,new_epoch_id,
+               outcome_code,created_at,audit_sha256
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                audit_id,
+                row["principal_id"],
+                row["record_id"],
+                action,
+                actor_kind,
+                actor_id,
+                source_binding,
+                selected_operation_id,
+                old_epoch_id,
+                new_epoch_id,
+                outcome_code,
+                created_at,
+                canonical_sha256(document),
+            ),
+        )
+
+    @staticmethod
+    def _require_memory_audit_row(row: Mapping[str, Any]) -> None:
+        document = {
+            "action": row["action"],
+            "audit_id": row["audit_id"],
+            "actor_id": row["actor_id"],
+            "actor_kind": row["actor_kind"],
+            "contract": MEMORY_AUDIT_CONTRACT,
+            "new_epoch_id": row["new_epoch_id"],
+            "old_epoch_id": row["old_epoch_id"],
+            "operation_id": row["operation_id"],
+            "outcome_code": row["outcome_code"],
+            "principal_id": row["principal_id"],
+            "record_id": row["record_id"],
+            "source_binding_sha256": row["source_binding_sha256"],
+            "created_at": row["created_at"],
+        }
+        if canonical_sha256(document) != row["audit_sha256"]:
+            raise MemoryStorageUnavailable("memory_audit_binding_invalid")
+
+    @staticmethod
+    def _memory_binding_from_row(row: Mapping[str, Any]) -> MemoryRecordBindingV1:
+        return MemoryRecordBindingV1(
+            principal_id=str(row["principal_id"]),
+            record_id=str(row["record_id"]),
+            conversation_id=str(row["conversation_id"]),
+            task_id=str(row["task_id"]),
+            source_event_id=str(row["source_event_id"]),
+            created_at=str(row["created_at"]),
+            expires_at=str(row["expires_at"]),
+            content_bytes=int(row["content_bytes"]),
+            term_count=int(row["term_count"]),
+            normalizer_version=str(row["normalizer_version"]),
+            record_schema_version=int(row["record_schema_version"]),
+        )
+
+    @staticmethod
+    def _memory_envelope_from_row(row: Mapping[str, Any]) -> MemoryEnvelopeV1:
+        envelope = MemoryEnvelopeV1(
+            key_version=int(row["key_version"]),
+            payload_nonce=bytes(row["payload_nonce"]),
+            payload_ciphertext_and_tag=bytes(row["payload_ciphertext"]),
+            wrap_nonce=bytes(row["wrap_nonce"]),
+            wrapped_dek_and_tag=bytes(row["wrapped_dek"]),
+            binding_sha256=str(row["binding_sha256"]),
+        )
+        if hashlib.sha256(envelope.to_jcs_bytes()).hexdigest() != row[
+            "envelope_sha256"
+        ]:
+            raise MemoryEnvelopeInvalid("memory_envelope_invalid")
+        return envelope
+
+    @classmethod
+    def _decrypt_memory_row(
+        cls,
+        session: MemoryEpochSessionV1,
+        row: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        selected_row = dict(row)
+        if (
+            int(selected_row.get("record_schema_version", -1))
+            != MEMORY_RECORD_SCHEMA_VERSION
+            or int(selected_row.get("envelope_version", -1))
+            != MEMORY_ENVELOPE_VERSION
+            or int(selected_row.get("payload_version", -1)) != 1
+        ):
+            raise MemoryEnvelopeInvalid("memory_envelope_version_invalid")
+        binding = cls._memory_binding_from_row(selected_row)
+        envelope = cls._memory_envelope_from_row(selected_row)
+        if envelope.key_version != int(row["key_version"]):
+            raise MemoryEnvelopeInvalid("memory_envelope_invalid")
+        plaintext = session.decrypt(envelope, binding)
+        try:
+            document = json.loads(plaintext.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise MemoryEnvelopeInvalid("memory_payload_invalid") from exc
+        if (
+            not isinstance(document, dict)
+            or set(document) != {"contract", "content", "metadata"}
+            or document.get("contract") != MEMORY_PAYLOAD_CONTRACT
+            or jcs_bytes(document) != plaintext
+            or not isinstance(document.get("content"), str)
+            or not isinstance(document.get("metadata"), dict)
+        ):
+            raise MemoryEnvelopeInvalid("memory_payload_invalid")
+        content = document["content"]
+        metadata = document["metadata"]
+        fields = cls._memory_content_fields(content)
+        expected_metadata_keys = {
+            "conversation_id",
+            "task_id",
+            "task_epoch",
+            "turn_id",
+            "source_event_id",
+            "language",
+            "_anamnesis_namespace",
+            "_anamnesis_user_id",
+        }
+        if (
+            fields["content_bytes"] != int(row["content_bytes"])
+            or fields["term_count"] != int(row["term_count"])
+            or row["normalizer_version"] != MEMORY_NORMALIZER_VERSION
+            or set(metadata) != expected_metadata_keys
+            or metadata.get("conversation_id") != row["conversation_id"]
+            or metadata.get("task_id") != row["task_id"]
+            or metadata.get("source_event_id") != row["source_event_id"]
+            or metadata.get("_anamnesis_namespace") != "jarvis"
+            or metadata.get("_anamnesis_user_id") != row["conversation_id"]
+        ):
+            raise MemoryEnvelopeInvalid("memory_payload_binding_invalid")
+        required_source_fields = {
+            "source_task_epoch",
+            "source_turn_id",
+            "source_task_state",
+            "source_task_conversation_id",
+            "source_language",
+            "source_turn_status",
+            "source_turn_conversation_id",
+            "source_turn_task_id",
+            "source_canonical_turn_id",
+            "source_inbox_task_id",
+            "source_inbox_turn_id",
+        }
+        if not required_source_fields.issubset(selected_row) or (
+            metadata.get("task_epoch") != str(selected_row["source_task_epoch"])
+            or metadata.get("turn_id") != selected_row["source_turn_id"]
+            or metadata.get("language") != selected_row["source_language"]
+            or selected_row["source_task_state"] != TaskState.COMPLETED.value
+            or selected_row["source_turn_status"] != "COMPLETED"
+            or selected_row["source_task_conversation_id"]
+            != selected_row["conversation_id"]
+            or selected_row["source_turn_conversation_id"]
+            != selected_row["conversation_id"]
+            or selected_row["source_turn_task_id"] != selected_row["task_id"]
+            or selected_row["source_canonical_turn_id"]
+            != selected_row["source_turn_id"]
+            or selected_row["source_inbox_task_id"] != selected_row["task_id"]
+            or selected_row["source_inbox_turn_id"]
+            != selected_row["source_turn_id"]
+        ):
+            raise MemoryEnvelopeInvalid("memory_payload_binding_invalid")
+        tokens = session.blind_tokens(
+            content=content,
+            normalized_content=normalize_explicit_memory_target(content),
+            terms=fields["terms"],
+        )
+        if (
+            tokens.content_hmac != bytes(row["content_hmac"])
+            or tokens.normalized_hmac != bytes(row["normalized_hmac"])
+        ):
+            raise MemoryEnvelopeInvalid("memory_index_binding_invalid")
+        return {
+            "record_id": str(row["record_id"]),
+            "principal_id": str(row["principal_id"]),
+            "conversation_id": str(row["conversation_id"]),
+            "task_id": str(row["task_id"]),
+            "source_event_id": str(row["source_event_id"]),
+            "content": content,
+            "content_bytes": int(row["content_bytes"]),
+            "term_count": int(row["term_count"]),
+            "expires_at": str(row["expires_at"]),
+            "normalizer_version": str(row["normalizer_version"]),
+            "created_at": str(row["created_at"]),
+            "metadata": dict(metadata),
+            "metadata_json": canonical_json(metadata),
+            "terms": fields["terms"],
+            "key_version": int(row["key_version"]),
+            "key_epoch_id": str(row["key_epoch_id"]),
+            "envelope_sha256": str(row["envelope_sha256"]),
+        }
+
+    @classmethod
+    def _project_verified_memory_row_tx(
+        cls,
+        connection: sqlite3.Connection,
+        session: MemoryEpochSessionV1,
+        row: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        projected = cls._decrypt_memory_row(session, row)
+        observed = tuple(
+            bytes(item["term_hmac"])
+            for item in connection.execute(
+                "SELECT term_hmac FROM memory_terms "
+                "INDEXED BY memory_terms_by_record WHERE record_id=? "
+                "ORDER BY term_hmac",
+                (row["record_id"],),
+            ).fetchall()
+        )
+        expected = tuple(
+            sorted(
+                session.blind_tokens(
+                    content=projected["content"],
+                    normalized_content=normalize_explicit_memory_target(
+                        projected["content"]
+                    ),
+                    terms=projected["terms"],
+                ).term_hmacs
+            )
+        )
+        if observed != expected:
+            raise MemoryStorageUnavailable("memory_term_index_binding_invalid")
+        return projected
+
+    @staticmethod
+    def _memory_row_select_sql(*, where: str) -> str:
+        return f"""SELECT r.*,t.epoch AS source_task_epoch,
+                          t.turn_id AS source_turn_id,
+                          t.state AS source_task_state,
+                          t.conversation_id AS source_task_conversation_id,
+                          ct.user_language AS source_language,
+                          ct.status AS source_turn_status,
+                          ct.conversation_id AS source_turn_conversation_id,
+                          ct.task_id AS source_turn_task_id,
+                          ct.turn_id AS source_canonical_turn_id,
+                          i.task_id AS source_inbox_task_id,
+                          i.turn_id AS source_inbox_turn_id
+                   FROM memory_records r
+                   JOIN tasks t ON t.task_id=r.task_id
+                   JOIN canonical_turns ct ON ct.task_id=r.task_id
+                   JOIN inbox i ON i.event_id=r.source_event_id
+                   WHERE {where}"""
+
+    @classmethod
+    def _legacy_memory_rows_for_migration(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        principal_id: str,
+        cutoff: datetime,
+    ) -> tuple[list[dict[str, Any]], int]:
+        rows = connection.execute(
+            """SELECT r.*,t.epoch AS source_task_epoch,
+                      t.turn_id AS source_turn_id,t.state AS source_task_state,
+                      t.conversation_id AS source_task_conversation_id,
+                      ct.user_language AS source_language,
+                      ct.status AS source_turn_status,
+                      ct.conversation_id AS source_turn_conversation_id,
+                      ct.task_id AS source_turn_task_id,
+                      ct.turn_id AS source_canonical_turn_id,
+                      i.task_id AS source_inbox_task_id,
+                      i.turn_id AS source_inbox_turn_id
+               FROM memory_records_v9_legacy r
+               JOIN tasks t ON t.task_id=r.task_id
+               JOIN canonical_turns ct ON ct.task_id=r.task_id
+               JOIN inbox i ON i.event_id=r.source_event_id
+               WHERE r.principal_id=? ORDER BY r.created_at,r.record_id""",
+            (principal_id,),
+        ).fetchall()
+        prepared: list[dict[str, Any]] = []
+        expired = 0
+        for raw in rows:
+            row = dict(raw)
+            try:
+                fields = cls._memory_content_fields(row["content"])
+                metadata = json.loads(row["metadata_json"])
+                created = parse_utc(row["created_at"])
+                expires = parse_utc(row["expires_at"])
+                expected_terms = {
+                    _memory_term_sha256(term) for term in fields["terms"]
+                }
+                observed_terms = {
+                    item["term_sha256"]
+                    for item in connection.execute(
+                        "SELECT term_sha256 FROM memory_terms_v9_legacy "
+                        "WHERE principal_id=? AND record_id=?",
+                        (principal_id, row["record_id"]),
                     ).fetchall()
                 }
-                migration_6_lines: list[str] = []
-                for statement_line in MIGRATION_6_SQL.splitlines():
-                    stripped = statement_line.strip()
-                    if stripped.startswith("ALTER TABLE tool_executions ADD COLUMN "):
-                        column_name = stripped.split()[5]
-                        if column_name in tool_columns:
-                            continue
-                    migration_6_lines.append(statement_line)
-                self._connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + "\n".join(migration_6_lines)
-                    + "\nUPDATE schema_meta SET value='6' WHERE key='schema_version' AND value='5';\n"
-                    + "COMMIT;"
+                if (
+                    row["principal_id"] != principal_id
+                    or row["content_sha256"] != fields["content_sha256"]
+                    or row["normalized_sha256"] != fields["normalized_sha256"]
+                    or int(row["content_bytes"]) != fields["content_bytes"]
+                    or int(row["term_count"]) != fields["term_count"]
+                    or row["normalizer_version"] != MEMORY_NORMALIZER_VERSION
+                    or observed_terms != expected_terms
+                    or utc_text(created) != row["created_at"]
+                    or utc_text(expires) != row["expires_at"]
+                    or expires
+                    != created + timedelta(days=MEMORY_RECORD_TTL_DAYS)
+                    or not isinstance(metadata, dict)
+                    or canonical_json(metadata) != row["metadata_json"]
+                    or set(metadata)
+                    != {
+                        "conversation_id",
+                        "task_id",
+                        "task_epoch",
+                        "turn_id",
+                        "source_event_id",
+                        "language",
+                        "_anamnesis_namespace",
+                        "_anamnesis_user_id",
+                    }
+                    or metadata.get("conversation_id") != row["conversation_id"]
+                    or metadata.get("task_id") != row["task_id"]
+                    or metadata.get("task_epoch")
+                    != str(row["source_task_epoch"])
+                    or metadata.get("turn_id") != row["source_turn_id"]
+                    or metadata.get("source_event_id") != row["source_event_id"]
+                    or metadata.get("language") != row["source_language"]
+                    or metadata.get("_anamnesis_namespace") != "jarvis"
+                    or metadata.get("_anamnesis_user_id")
+                    != row["conversation_id"]
+                    or row["source_task_state"] != TaskState.COMPLETED.value
+                    or row["source_turn_status"] != "COMPLETED"
+                    or row["source_task_conversation_id"]
+                    != row["conversation_id"]
+                    or row["source_turn_conversation_id"]
+                    != row["conversation_id"]
+                    or row["source_turn_task_id"] != row["task_id"]
+                    or row["source_canonical_turn_id"] != row["source_turn_id"]
+                    or row["source_inbox_task_id"] != row["task_id"]
+                    or row["source_inbox_turn_id"] != row["source_turn_id"]
+                ):
+                    raise ValueError("legacy memory binding is invalid")
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise MemoryStorageUnavailable(
+                    "memory_legacy_record_invalid"
+                ) from exc
+            row.update(fields)
+            row["metadata"] = metadata
+            row["term_sha256s"] = tuple(sorted(observed_terms))
+            row["expired_at_cutoff"] = expires <= cutoff
+            expired += int(row["expired_at_cutoff"])
+            prepared.append(row)
+        active = [row for row in prepared if not row["expired_at_cutoff"]]
+        if (
+            len(active) > MAX_MEMORY_PRINCIPAL_RECORDS
+            or sum(int(row["content_bytes"]) for row in active)
+            > MAX_MEMORY_PRINCIPAL_BYTES
+        ):
+            raise MemoryStorageUnavailable("memory_legacy_quota_invalid")
+        return prepared, expired
+
+    @staticmethod
+    def _legacy_memory_source_digest(
+        *,
+        operation_id: str,
+        principal_id: str,
+        cutoff: str,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> str:
+        """Bind one migration operation to the exact validated legacy source."""
+
+        return canonical_sha256(
+            {
+                "contract": MEMORY_CRYPTO_OPERATION_CONTRACT,
+                "cutoff": cutoff,
+                "kind": "MIGRATE_V9",
+                "operation_id": operation_id,
+                "principal_id": principal_id,
+                "records": [
+                    {
+                        key: row[key]
+                        for key in (
+                            "record_id",
+                            "principal_id",
+                            "conversation_id",
+                            "task_id",
+                            "source_event_id",
+                            "content",
+                            "content_sha256",
+                            "normalized_sha256",
+                            "content_bytes",
+                            "term_count",
+                            "expires_at",
+                            "normalizer_version",
+                            "metadata_json",
+                            "created_at",
+                            "source_task_epoch",
+                            "source_turn_id",
+                            "source_task_state",
+                            "source_task_conversation_id",
+                            "source_language",
+                            "source_turn_status",
+                            "source_turn_conversation_id",
+                            "source_turn_task_id",
+                            "source_canonical_turn_id",
+                            "source_inbox_task_id",
+                            "source_inbox_turn_id",
+                            "term_sha256s",
+                            "expired_at_cutoff",
+                        )
+                    }
+                    for row in rows
+                ],
+                "source_schema": 9,
+                "target_schema": 10,
+            }
+        )
+
+    @staticmethod
+    def _require_encrypted_source_equivalence(
+        *,
+        encrypted: Mapping[str, Any],
+        projected: Mapping[str, Any],
+        source: Mapping[str, Any],
+        epoch: Mapping[str, Any],
+    ) -> None:
+        """Fail closed unless one ciphertext is the exact legacy projection."""
+
+        source_fields = OrchestratorStore._memory_content_fields(
+            str(source["content"])
+        )
+        if (
+            projected["record_id"] != source["record_id"]
+            or projected["principal_id"] != source["principal_id"]
+            or projected["conversation_id"] != source["conversation_id"]
+            or projected["task_id"] != source["task_id"]
+            or projected["source_event_id"] != source["source_event_id"]
+            or projected["content"] != source["content"]
+            or projected["metadata"] != source["metadata"]
+            or projected["content_bytes"] != int(source["content_bytes"])
+            or projected["term_count"] != int(source["term_count"])
+            or projected["expires_at"] != source["expires_at"]
+            or projected["normalizer_version"] != source["normalizer_version"]
+            or projected["created_at"] != source["created_at"]
+            or projected["terms"] != source_fields["terms"]
+            or tuple(sorted(source["term_sha256s"]))
+            != tuple(
+                sorted(_memory_term_sha256(term) for term in projected["terms"])
+            )
+            or encrypted["key_epoch_id"] != epoch["epoch_id"]
+            or int(encrypted["key_version"]) != int(epoch["key_version"])
+        ):
+            raise MemoryStorageUnavailable("memory_migration_target_mismatch")
+
+    @classmethod
+    def _encrypted_record_values(
+        cls,
+        session: MemoryEpochSessionV1,
+        *,
+        principal_id: str,
+        epoch_id: str,
+        key_version: int,
+        source: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        binding = MemoryRecordBindingV1(
+            principal_id=principal_id,
+            record_id=str(source["record_id"]),
+            conversation_id=str(source["conversation_id"]),
+            task_id=str(source["task_id"]),
+            source_event_id=str(source["source_event_id"]),
+            created_at=str(source["created_at"]),
+            expires_at=str(source["expires_at"]),
+            content_bytes=int(source["content_bytes"]),
+            term_count=int(source["term_count"]),
+            normalizer_version=MEMORY_NORMALIZER_VERSION,
+            record_schema_version=MEMORY_RECORD_SCHEMA_VERSION,
+        )
+        payload = jcs_bytes(
+            {
+                "contract": MEMORY_PAYLOAD_CONTRACT,
+                "content": source["content"],
+                "metadata": source["metadata"],
+            }
+        )
+        if (
+            session.principal_id != principal_id
+            or session.key_version != key_version
+        ):
+            raise MemoryStorageUnavailable("memory_key_epoch_mismatch")
+        envelope = session.encrypt(payload, binding)
+        tokens = session.blind_tokens(
+            content=str(source["content"]),
+            normalized_content=normalize_explicit_memory_target(
+                str(source["content"])
+            ),
+            terms=tuple(source["terms"]),
+        )
+        return {
+            "record_id": source["record_id"],
+            "principal_id": principal_id,
+            "conversation_id": source["conversation_id"],
+            "task_id": source["task_id"],
+            "source_event_id": source["source_event_id"],
+            "key_epoch_id": epoch_id,
+            "key_version": key_version,
+            "record_schema_version": MEMORY_RECORD_SCHEMA_VERSION,
+            "envelope_version": MEMORY_ENVELOPE_VERSION,
+            "payload_version": 1,
+            "payload_nonce": envelope.payload_nonce,
+            "payload_ciphertext": envelope.payload_ciphertext_and_tag,
+            "wrap_nonce": envelope.wrap_nonce,
+            "wrapped_dek": envelope.wrapped_dek_and_tag,
+            "binding_sha256": envelope.binding_sha256,
+            "envelope_sha256": hashlib.sha256(
+                envelope.to_jcs_bytes()
+            ).hexdigest(),
+            "content_hmac": tokens.content_hmac,
+            "normalized_hmac": tokens.normalized_hmac,
+            "content_bytes": source["content_bytes"],
+            "term_count": source["term_count"],
+            "expires_at": source["expires_at"],
+            "normalizer_version": MEMORY_NORMALIZER_VERSION,
+            "created_at": source["created_at"],
+            "term_hmacs": tokens.term_hmacs,
+        }
+
+    @staticmethod
+    def _insert_encrypted_memory_row_tx(
+        connection: sqlite3.Connection,
+        values: Mapping[str, Any],
+    ) -> None:
+        connection.execute(
+            """INSERT INTO memory_records(
+               record_id,principal_id,conversation_id,task_id,source_event_id,
+               key_epoch_id,key_version,record_schema_version,envelope_version,
+               payload_version,payload_nonce,payload_ciphertext,wrap_nonce,
+               wrapped_dek,binding_sha256,envelope_sha256,content_hmac,
+               normalized_hmac,content_bytes,term_count,expires_at,
+               normalizer_version,created_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            tuple(
+                values[key]
+                for key in (
+                    "record_id",
+                    "principal_id",
+                    "conversation_id",
+                    "task_id",
+                    "source_event_id",
+                    "key_epoch_id",
+                    "key_version",
+                    "record_schema_version",
+                    "envelope_version",
+                    "payload_version",
+                    "payload_nonce",
+                    "payload_ciphertext",
+                    "wrap_nonce",
+                    "wrapped_dek",
+                    "binding_sha256",
+                    "envelope_sha256",
+                    "content_hmac",
+                    "normalized_hmac",
+                    "content_bytes",
+                    "term_count",
+                    "expires_at",
+                    "normalizer_version",
+                    "created_at",
                 )
-                current_version = 6
-            if current_version == 6:
-                self._connection.executescript(
-                    "BEGIN IMMEDIATE;\n"
-                    + MIGRATION_7_SQL
-                    + "\nUPDATE schema_meta SET value='7' WHERE key='schema_version' AND value='6';\n"
-                    + "COMMIT;"
+            ),
+        )
+        for token in values["term_hmacs"]:
+            connection.execute(
+                """INSERT INTO memory_terms(
+                   principal_id,key_epoch_id,key_version,term_hmac,record_id
+                   ) VALUES(?,?,?,?,?)""",
+                (
+                    values["principal_id"],
+                    values["key_epoch_id"],
+                    values["key_version"],
+                    token,
+                    values["record_id"],
+                ),
+            )
+
+    @staticmethod
+    def _require_session_epoch(
+        session: MemoryEpochSessionV1,
+        state: Mapping[str, Any],
+        epoch: Mapping[str, Any],
+        *,
+        allowed_epoch_states: frozenset[str] = frozenset({"WRITE_ACTIVE"}),
+    ) -> None:
+        if (
+            state["provider_install_id"] != session.install_id
+            or epoch["provider_install_id"] != session.install_id
+            or str(epoch["principal_id"]) != session.principal_id
+            or state["write_epoch_id"] != epoch["epoch_id"]
+            or str(epoch["state"]) not in allowed_epoch_states
+            or session.key_version != int(epoch["key_version"])
+        ):
+            raise MemoryStorageUnavailable("memory_key_epoch_mismatch")
+        confirmation = session.blind_token(
+            kind="content",
+            value=str(epoch["confirmation_challenge"]),
+        )
+        if confirmation != bytes(epoch["confirmation_hmac"]):
+            raise MemoryStorageUnavailable("memory_key_confirmation_failed")
+
+    @classmethod
+    def _open_qualified_epoch_session(
+        cls,
+        runtime: MemoryCryptoRuntime,
+        state: Mapping[str, Any],
+        epoch: Mapping[str, Any],
+        *,
+        allowed_epoch_states: frozenset[str] = frozenset({"WRITE_ACTIVE"}),
+    ) -> MemoryEpochSessionV1:
+        """Load/attest a provider key before any store lock or transaction."""
+
+        try:
+            install_id = runtime.install_id
+        except MemoryCryptoError as exc:
+            raise MemoryStorageUnavailable(exc.code) from exc
+        if (
+            not isinstance(install_id, str)
+            or len(install_id) != 64
+            or install_id != install_id.lower()
+            or any(character not in "0123456789abcdef" for character in install_id)
+        ):
+            raise MemoryStorageUnavailable("memory_key_attestation_invalid")
+        if (
+            state["provider_install_id"] != install_id
+            or epoch["provider_install_id"] != install_id
+            or state["write_epoch_id"] != epoch["epoch_id"]
+            or str(epoch["state"]) not in allowed_epoch_states
+        ):
+            raise MemoryStorageUnavailable("memory_key_epoch_mismatch")
+        try:
+            key_version = int(epoch["key_version"])
+            if runtime.cipher.active_version() != key_version:
+                raise MemoryStorageUnavailable("memory_key_epoch_mismatch")
+            session = runtime.cipher.open_epoch_session(
+                principal_id=str(epoch["principal_id"]),
+                key_version=key_version,
+            )
+        except MemoryCryptoError as exc:
+            raise MemoryStorageUnavailable(exc.code) from exc
+        cls._require_session_epoch(
+            session,
+            state,
+            epoch,
+            allowed_epoch_states=allowed_epoch_states,
+        )
+        return session
+
+    def prepare_memory_storage(
+        self,
+        runtime: MemoryCryptoRuntime | None = None,
+        *,
+        now: datetime | None = None,
+        _crash_hook: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Explicitly migrate v9 plaintext into one verified encrypted epoch.
+
+        This is the only method allowed to bootstrap a key.  It is resumable
+        from every committed phase and is intended to run before serving.
+        """
+
+        if not self._memory_storage_enabled:
+            raise MemoryStorageUnavailable("memory_disabled")
+
+        selected_runtime = self._validated_memory_runtime(runtime)
+        if selected_runtime is not None:
+            if (
+                self._memory_crypto is not None
+                and self._memory_crypto is not selected_runtime
+                and self._memory_crypto.install_id != selected_runtime.install_id
+            ):
+                raise MemoryStorageUnavailable("memory_provider_binding_changed")
+            self._memory_crypto = selected_runtime
+        active_runtime = self._memory_runtime_or_unavailable()
+        selected = now or utc_now()
+        hook = _crash_hook or (lambda _phase: None)
+
+        with self._lock:
+            principal_id = self._local_owner_principal_tx(self._connection)
+            state = dict(
+                self._memory_crypto_state_tx(self._connection, principal_id)
+            )
+            if state["storage_state"] == "ENCRYPTED":
+                epoch_row = self._connection.execute(
+                    "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+                    (state["write_epoch_id"],),
+                ).fetchone()
+                if epoch_row is None:
+                    raise MemoryStorageUnavailable("memory_key_epoch_missing")
+                epoch = dict(epoch_row)
+            else:
+                epoch = None
+        if epoch is not None:
+            session = self._open_qualified_epoch_session(
+                active_runtime,
+                state,
+                epoch,
+            )
+            with self._transaction() as connection:
+                current_state = dict(
+                    self._memory_crypto_state_tx(connection, principal_id)
                 )
+                current_epoch_row = connection.execute(
+                    "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+                    (current_state["write_epoch_id"],),
+                ).fetchone()
+                if current_epoch_row is None:
+                    raise MemoryStorageUnavailable("memory_key_epoch_missing")
+                self._require_session_epoch(
+                    session,
+                    current_state,
+                    dict(current_epoch_row),
+                )
+            self._memory_epoch_session = session
+            self.sweep_expired_memory(now=selected, limit=MEMORY_SWEEP_LIMIT)
+            return self.memory_storage_status()
+
+        with self._transaction() as connection:
+            state = self._memory_crypto_state_tx(connection, principal_id)
+            operation = connection.execute(
+                "SELECT * FROM memory_crypto_operations "
+                "WHERE principal_id=? AND kind='MIGRATE_V9' "
+                "ORDER BY created_at DESC LIMIT 1",
+                (principal_id,),
+            ).fetchone()
+            if operation is None:
+                if state["storage_state"] != "LEGACY_PENDING":
+                    raise MemoryStorageUnavailable("memory_migration_state_invalid")
+                operation_id = new_uuid4()
+                stamp = utc_text(selected)
+                legacy_rows, _expired_count = self._legacy_memory_rows_for_migration(
+                    connection,
+                    principal_id=principal_id,
+                    cutoff=parse_utc(stamp),
+                )
+                request_sha256 = self._legacy_memory_source_digest(
+                    operation_id=operation_id,
+                    principal_id=principal_id,
+                    cutoff=stamp,
+                    rows=legacy_rows,
+                )
+                connection.execute(
+                    """INSERT INTO memory_crypto_operations(
+                       operation_id,principal_id,kind,phase,source_epoch_id,
+                       target_epoch_id,expected_provider_version,
+                       cursor_created_at,cursor_record_id,expected_record_count,
+                       processed_record_count,request_sha256,last_error_code,
+                       created_at,updated_at,completed_at
+                       ) VALUES(?,?,'MIGRATE_V9','PREPARED',NULL,NULL,NULL,
+                                NULL,NULL,?,0,?,NULL,?,?,NULL)""",
+                    (
+                        operation_id,
+                        principal_id,
+                        len(legacy_rows),
+                        request_sha256,
+                        stamp,
+                        stamp,
+                    ),
+                )
+                operation = connection.execute(
+                    "SELECT * FROM memory_crypto_operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
+            if operation is None:
+                raise MemoryStorageUnavailable("memory_migration_state_invalid")
+            frozen_cutoff = str(operation["created_at"])
+            try:
+                frozen_cutoff_value = parse_utc(frozen_cutoff)
+            except (TypeError, ValueError) as exc:
+                raise MemoryStorageUnavailable(
+                    "memory_migration_state_invalid"
+                ) from exc
+            legacy_rows, _expired_count = self._legacy_memory_rows_for_migration(
+                connection,
+                principal_id=principal_id,
+                cutoff=frozen_cutoff_value,
+            )
+            observed_request_sha256 = self._legacy_memory_source_digest(
+                operation_id=str(operation["operation_id"]),
+                principal_id=principal_id,
+                cutoff=frozen_cutoff,
+                rows=legacy_rows,
+            )
+            if (
+                int(operation["expected_record_count"]) != len(legacy_rows)
+                or operation["request_sha256"] != observed_request_sha256
+            ):
+                raise MemoryStorageUnavailable("memory_migration_source_changed")
+            if operation["phase"] == "UNCERTAIN":
+                raise MemoryStorageUnavailable("memory_migration_uncertain")
+            operation_id = str(operation["operation_id"])
+        hook("operation_prepared")
+
+        with self._lock:
+            operation = self._connection.execute(
+                "SELECT * FROM memory_crypto_operations WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            assert operation is not None
+            phase = str(operation["phase"])
+        if phase == "PREPARED":
+            try:
+                key_version = active_runtime.cipher.bootstrap_epoch()
+                migration_session = active_runtime.cipher.open_epoch_session(
+                    principal_id=principal_id,
+                    key_version=key_version,
+                )
+                if (
+                    migration_session.install_id != active_runtime.install_id
+                    or migration_session.principal_id != principal_id
+                    or migration_session.key_version != key_version
+                ):
+                    raise MemoryStorageUnavailable("memory_key_epoch_mismatch")
+                confirmation = migration_session.blind_token(
+                    kind="content",
+                    value=MEMORY_PROVIDER_CONFIRMATION_TEXT,
+                )
+            except MemoryCryptoError as exc:
+                raise MemoryStorageUnavailable(exc.code) from exc
+            epoch_id = new_uuid4()
+            with self._transaction() as connection:
+                current = connection.execute(
+                    "SELECT * FROM memory_crypto_operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
+                if current is None or current["phase"] != "PREPARED":
+                    raise MemoryStorageUnavailable("memory_migration_state_changed")
+                stamp = utc_text(selected)
+                connection.execute(
+                    """INSERT INTO memory_key_epochs(
+                       epoch_id,principal_id,provider_install_id,key_version,state,
+                       confirmation_challenge,confirmation_hmac,created_at,
+                       provider_verified_at,activated_at,retired_at,
+                       destroy_requested_at,destroy_verified_at
+                       ) VALUES(?,?,?,?,'PROVISIONING',?,?,?, ?,NULL,NULL,NULL,NULL)""",
+                    (
+                        epoch_id,
+                        principal_id,
+                        active_runtime.install_id,
+                        key_version,
+                        MEMORY_PROVIDER_CONFIRMATION_TEXT,
+                        confirmation,
+                        stamp,
+                        stamp,
+                    ),
+                )
+                connection.execute(
+                    """UPDATE memory_crypto_state
+                       SET storage_state='MIGRATING',provider_install_id=?,
+                           write_epoch_id=?,active_operation_id=?,updated_at=?
+                       WHERE principal_id=? AND storage_state='LEGACY_PENDING'""",
+                    (
+                        active_runtime.install_id,
+                        epoch_id,
+                        operation_id,
+                        stamp,
+                        principal_id,
+                    ),
+                )
+                connection.execute(
+                    """UPDATE memory_crypto_operations
+                       SET phase='PROVIDER_READY',target_epoch_id=?,
+                           expected_provider_version=?,updated_at=?
+                       WHERE operation_id=? AND phase='PREPARED'""",
+                    (epoch_id, key_version, stamp, operation_id),
+                )
+            hook("provider_ready")
+
+        with self._lock:
+            operation_row = self._connection.execute(
+                "SELECT * FROM memory_crypto_operations WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            assert operation_row is not None
+            operation = dict(operation_row)
+            state = dict(
+                self._memory_crypto_state_tx(self._connection, principal_id)
+            )
+            epoch_row = self._connection.execute(
+                "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+                (operation["target_epoch_id"],),
+            ).fetchone()
+            if epoch_row is None:
+                raise MemoryStorageUnavailable("memory_key_epoch_missing")
+            epoch = dict(epoch_row)
+        migration_session = self._open_qualified_epoch_session(
+            active_runtime,
+            state,
+            epoch,
+            allowed_epoch_states=frozenset({"PROVISIONING", "WRITE_ACTIVE"}),
+        )
+
+        if operation["phase"] in {"PROVIDER_READY", "COPYING"}:
+            with self._transaction() as connection:
+                connection.execute(
+                    "UPDATE memory_crypto_operations SET phase='COPYING',updated_at=? "
+                    "WHERE operation_id=? AND phase IN ('PROVIDER_READY','COPYING')",
+                    (utc_text(selected), operation_id),
+                )
+            cursor = (
+                operation["cursor_created_at"],
+                operation["cursor_record_id"],
+            )
+            for source in legacy_rows:
+                identity = (source["created_at"], source["record_id"])
+                if cursor[0] is not None and identity <= cursor:
+                    continue
+                values = None
+                if not source["expired_at_cutoff"]:
+                    try:
+                        values = self._encrypted_record_values(
+                            migration_session,
+                            principal_id=principal_id,
+                            epoch_id=str(epoch["epoch_id"]),
+                            key_version=int(epoch["key_version"]),
+                            source=source,
+                        )
+                    except MemoryCryptoError as exc:
+                        raise MemoryStorageUnavailable(exc.code) from exc
+                with self._transaction() as connection:
+                    current_source = connection.execute(
+                        "SELECT * FROM memory_records_v9_legacy WHERE record_id=?",
+                        (source["record_id"],),
+                    ).fetchone()
+                    if current_source is None or any(
+                        current_source[key] != source[key]
+                        for key in (
+                            "principal_id",
+                            "conversation_id",
+                            "task_id",
+                            "source_event_id",
+                            "content",
+                            "content_sha256",
+                            "normalized_sha256",
+                            "content_bytes",
+                            "term_count",
+                            "expires_at",
+                            "normalizer_version",
+                            "metadata_json",
+                            "created_at",
+                        )
+                    ):
+                        raise MemoryStorageUnavailable(
+                            "memory_migration_source_changed"
+                        )
+                    existing_target = connection.execute(
+                        "SELECT record_id FROM memory_records WHERE record_id=?",
+                        (source["record_id"],),
+                    ).fetchone()
+                    if values is not None and existing_target is None:
+                        self._insert_encrypted_memory_row_tx(connection, values)
+                        self._append_memory_record_audit_tx(
+                            connection,
+                            row=values,
+                            action="MIGRATED",
+                            actor_kind="migration",
+                            actor_id=operation_id,
+                            operation_id=operation_id,
+                            old_epoch_id=None,
+                            new_epoch_id=str(epoch["epoch_id"]),
+                            outcome_code="encrypted",
+                            now=selected,
+                        )
+                    elif values is None:
+                        if existing_target is not None:
+                            raise MemoryStorageUnavailable(
+                                "memory_migration_expired_target_present"
+                            )
+                        self._record_memory_tombstone_tx(
+                            connection,
+                            source,
+                            reason="ttl_expiry",
+                            action="TTL_EXPIRED",
+                            actor_kind="migration",
+                            actor_id=operation_id,
+                            operation_id=operation_id,
+                            now=selected,
+                            revision_increment=0,
+                        )
+                    connection.execute(
+                        """UPDATE memory_crypto_operations
+                           SET cursor_created_at=?,cursor_record_id=?,
+                               processed_record_count=processed_record_count+1,
+                               updated_at=?
+                           WHERE operation_id=? AND phase='COPYING'""",
+                        (
+                            source["created_at"],
+                            source["record_id"],
+                            utc_text(selected),
+                            operation_id,
+                        ),
+                    )
+                hook("record_copied")
+            with self._transaction() as connection:
+                changed = connection.execute(
+                    """UPDATE memory_crypto_operations
+                       SET phase='VERIFYING',updated_at=?
+                       WHERE operation_id=? AND phase='COPYING'
+                         AND processed_record_count=expected_record_count""",
+                    (utc_text(selected), operation_id),
+                )
+                if changed.rowcount != 1:
+                    raise MemoryStorageUnavailable(
+                        "memory_migration_copy_incomplete"
+                    )
+
+        with self._lock:
+            operation = dict(
+                self._connection.execute(
+                    "SELECT * FROM memory_crypto_operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
+            )
+            encrypted_rows = [
+                dict(row)
+                for row in self._connection.execute(
+                    self._memory_row_select_sql(where="r.principal_id=?")
+                    + " ORDER BY r.created_at,r.record_id",
+                    (principal_id,),
+                ).fetchall()
+            ]
+        if operation["phase"] == "VERIFYING":
+            expected_active = [
+                row for row in legacy_rows if not row["expired_at_cutoff"]
+            ]
+            if len(encrypted_rows) != len(expected_active):
+                raise MemoryStorageUnavailable("memory_migration_count_mismatch")
+            expected_ids = {row["record_id"] for row in expected_active}
+            if {row["record_id"] for row in encrypted_rows} != expected_ids:
+                raise MemoryStorageUnavailable("memory_migration_identity_mismatch")
+            expected_by_id = {
+                str(source["record_id"]): source for source in expected_active
+            }
+            for encrypted in encrypted_rows:
+                projected = self._decrypt_memory_row(migration_session, encrypted)
+                self._require_encrypted_source_equivalence(
+                    encrypted=encrypted,
+                    projected=projected,
+                    source=expected_by_id[str(encrypted["record_id"])],
+                    epoch=epoch,
+                )
+                with self._lock:
+                    term_rows = self._connection.execute(
+                        "SELECT term_hmac FROM memory_terms WHERE record_id=? "
+                        "ORDER BY term_hmac",
+                        (encrypted["record_id"],),
+                    ).fetchall()
+                expected_tokens = migration_session.blind_tokens(
+                    content=projected["content"],
+                    normalized_content=normalize_explicit_memory_target(
+                        projected["content"]
+                    ),
+                    terms=projected["terms"],
+                ).term_hmacs
+                if [bytes(item["term_hmac"]) for item in term_rows] != sorted(
+                    expected_tokens
+                ):
+                    raise MemoryStorageUnavailable(
+                        "memory_migration_term_index_mismatch"
+                    )
+            with self._transaction() as connection:
+                connection.execute(
+                    "UPDATE memory_crypto_operations SET phase='CUTOVER_READY',"
+                    "updated_at=? WHERE operation_id=? AND phase='VERIFYING'",
+                    (utc_text(selected), operation_id),
+                )
+            hook("cutover_ready")
+
+        with self._transaction() as connection:
+            operation = connection.execute(
+                "SELECT * FROM memory_crypto_operations WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            if operation is None:
+                raise MemoryStorageUnavailable("memory_migration_state_invalid")
+            if operation["phase"] == "CUTOVER_READY":
+                final_cutoff = str(operation["created_at"])
+                try:
+                    final_cutoff_value = parse_utc(final_cutoff)
+                except (TypeError, ValueError) as exc:
+                    raise MemoryStorageUnavailable(
+                        "memory_migration_state_invalid"
+                    ) from exc
+                final_legacy_rows, final_expired_count = (
+                    self._legacy_memory_rows_for_migration(
+                        connection,
+                        principal_id=principal_id,
+                        cutoff=final_cutoff_value,
+                    )
+                )
+                if (
+                    len(final_legacy_rows)
+                    != int(operation["expected_record_count"])
+                    or self._legacy_memory_source_digest(
+                        operation_id=operation_id,
+                        principal_id=principal_id,
+                        cutoff=final_cutoff,
+                        rows=final_legacy_rows,
+                    )
+                    != operation["request_sha256"]
+                ):
+                    raise MemoryStorageUnavailable(
+                        "memory_migration_source_changed"
+                    )
+                final_active_rows = {
+                    str(item["record_id"]): item
+                    for item in final_legacy_rows
+                    if not item["expired_at_cutoff"]
+                }
+                final_encrypted_rows = [
+                    dict(item)
+                    for item in connection.execute(
+                        self._memory_row_select_sql(where="r.principal_id=?")
+                        + " ORDER BY r.created_at,r.record_id",
+                        (principal_id,),
+                    ).fetchall()
+                ]
+                if {
+                    str(item["record_id"]) for item in final_encrypted_rows
+                } != set(final_active_rows):
+                    raise MemoryStorageUnavailable(
+                        "memory_migration_identity_mismatch"
+                    )
+                for encrypted_row in final_encrypted_rows:
+                    projected = self._project_verified_memory_row_tx(
+                        connection,
+                        migration_session,
+                        encrypted_row,
+                    )
+                    source = final_active_rows[str(encrypted_row["record_id"])]
+                    self._require_encrypted_source_equivalence(
+                        encrypted=encrypted_row,
+                        projected=projected,
+                        source=source,
+                        epoch=epoch,
+                    )
+                    audits = connection.execute(
+                        "SELECT * FROM memory_record_audits "
+                        "WHERE record_id=? AND action='MIGRATED' "
+                        "AND operation_id=?",
+                        (encrypted_row["record_id"], operation_id),
+                    ).fetchall()
+                    if (
+                        len(audits) != 1
+                        or audits[0]["source_binding_sha256"]
+                        != self._memory_source_binding_sha256(source)
+                        or audits[0]["actor_kind"] != "migration"
+                        or audits[0]["actor_id"] != operation_id
+                        or audits[0]["new_epoch_id"] != epoch["epoch_id"]
+                    ):
+                        raise MemoryStorageUnavailable(
+                            "memory_migration_audit_invalid"
+                        )
+                    self._require_memory_audit_row(dict(audits[0]))
+                for legacy_row in final_legacy_rows:
+                    if not legacy_row["expired_at_cutoff"]:
+                        continue
+                    source_binding = self._memory_source_binding_sha256(
+                        legacy_row
+                    )
+                    tombstone = connection.execute(
+                        "SELECT * FROM memory_record_tombstones WHERE record_id=?",
+                        (legacy_row["record_id"],),
+                    ).fetchone()
+                    audits = connection.execute(
+                        "SELECT * FROM memory_record_audits "
+                        "WHERE record_id=? AND action='TTL_EXPIRED' "
+                        "AND operation_id=?",
+                        (legacy_row["record_id"], operation_id),
+                    ).fetchall()
+                    if (
+                        tombstone is None
+                        or tombstone["principal_id"] != principal_id
+                        or tombstone["source_binding_sha256"] != source_binding
+                        or tombstone["reason"] != "ttl_expiry"
+                        or tombstone["delete_request_id"] is not None
+                        or len(audits) != 1
+                        or audits[0]["source_binding_sha256"] != source_binding
+                        or audits[0]["actor_kind"] != "migration"
+                        or audits[0]["actor_id"] != operation_id
+                    ):
+                        raise MemoryStorageUnavailable(
+                            "memory_migration_expiry_audit_invalid"
+                        )
+                    self._require_memory_audit_row(dict(audits[0]))
+                count_row = connection.execute(
+                    "SELECT COUNT(*) AS count,COALESCE(SUM(content_bytes),0) AS bytes "
+                    "FROM memory_records WHERE principal_id=?",
+                    (principal_id,),
+                ).fetchone()
+                active_count = int(count_row["count"])
+                active_bytes = int(count_row["bytes"])
+                connection.execute("DROP TABLE memory_terms_v9_legacy")
+                connection.execute("DROP TABLE memory_records_v9_legacy")
+                stamp = utc_text(selected)
+                connection.execute(
+                    """UPDATE memory_principal_usage
+                       SET active_record_count=?,active_content_bytes=?,updated_at=?
+                       WHERE principal_id=?""",
+                    (active_count, active_bytes, stamp, principal_id),
+                )
+                connection.execute(
+                    """UPDATE memory_key_epochs
+                       SET state='WRITE_ACTIVE',activated_at=?
+                       WHERE epoch_id=? AND state='PROVISIONING'""",
+                    (stamp, epoch["epoch_id"]),
+                )
+                connection.execute(
+                    """UPDATE memory_crypto_state
+                       SET storage_state='ENCRYPTED',active_operation_id=NULL,
+                           memory_revision=0,updated_at=?
+                       WHERE principal_id=? AND storage_state='MIGRATING'
+                         AND write_epoch_id=?""",
+                    (stamp, principal_id, epoch["epoch_id"]),
+                )
+                connection.execute(
+                    """UPDATE memory_crypto_operations
+                       SET phase='COMPLETE',request_sha256=?,updated_at=?,completed_at=?
+                       WHERE operation_id=? AND phase='CUTOVER_READY'""",
+                    (
+                        canonical_sha256(
+                            {
+                                "contract": MEMORY_CRYPTO_OPERATION_CONTRACT,
+                                "encrypted_content_bytes": active_bytes,
+                                "encrypted_record_count": active_count,
+                                "expired_record_count": final_expired_count,
+                                "final_state": "COMPLETE",
+                                "key_version": int(epoch["key_version"]),
+                                "kind": "MIGRATE_V9",
+                                "operation_id": operation_id,
+                                "principal_id": principal_id,
+                                "source_record_count": len(final_legacy_rows),
+                                "source_schema": 9,
+                                "target_epoch_id": str(epoch["epoch_id"]),
+                                "target_schema": 10,
+                            }
+                        ),
+                        stamp,
+                        stamp,
+                        operation_id,
+                    ),
+                )
+                connection.execute(
+                    """INSERT INTO memory_crypto_migration_audits(
+                       operation_id,principal_id,source_schema,target_schema,
+                       provider_install_id,key_version,source_record_count,
+                       encrypted_record_count,expired_record_count,
+                       source_content_bytes,encrypted_content_bytes,started_at,
+                       cutover_at,contract_sha256
+                       ) VALUES(?,?,9,10,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        operation_id,
+                        principal_id,
+                        active_runtime.install_id,
+                        epoch["key_version"],
+                        len(final_legacy_rows),
+                        active_count,
+                        final_expired_count,
+                        sum(
+                            int(row["content_bytes"])
+                            for row in final_legacy_rows
+                        ),
+                        active_bytes,
+                        operation["created_at"],
+                        stamp,
+                        canonical_sha256(
+                            {
+                                "contract": MEMORY_PAYLOAD_CONTRACT,
+                                "envelope_version": MEMORY_ENVELOPE_VERSION,
+                                "normalizer_version": MEMORY_NORMALIZER_VERSION,
+                                "record_schema_version": MEMORY_RECORD_SCHEMA_VERSION,
+                            }
+                        ),
+                    ),
+                )
+        hook("cutover_committed")
+        with self._lock:
+            final_state = dict(
+                self._memory_crypto_state_tx(self._connection, principal_id)
+            )
+            final_epoch_row = self._connection.execute(
+                "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+                (final_state["write_epoch_id"],),
+            ).fetchone()
+            if final_epoch_row is None:
+                raise MemoryStorageUnavailable("memory_key_epoch_missing")
+            self._require_session_epoch(
+                migration_session,
+                final_state,
+                dict(final_epoch_row),
+            )
+            self._memory_epoch_session = migration_session
+        self.sweep_expired_memory(now=selected, limit=MEMORY_SWEEP_LIMIT)
+        return self.memory_storage_status()
+
+    @staticmethod
+    def rotate_memory_storage_key() -> None:
+        raise OrchestratorError("memory_rotation_not_supported", status=409)
+
+    @staticmethod
+    def destroy_memory_storage_key() -> None:
+        raise OrchestratorError("memory_key_destruction_not_supported", status=409)
+
+    @classmethod
+    def _delete_saved_memory_row_tx(
+        cls,
+        connection: sqlite3.Connection,
+        row: Mapping[str, Any],
+        *,
+        reason: str,
+        action: str,
+        actor_kind: str,
+        actor_id: str | None,
+        now: datetime,
+        encrypted: bool,
+        delete_request_id: str | None = None,
+        operation_id: str | None = None,
+    ) -> bool:
+        cls._record_memory_tombstone_tx(
+            connection,
+            row,
+            reason=reason,
+            action=action,
+            actor_kind=actor_kind,
+            actor_id=actor_id,
+            now=now,
+            revision_increment=int(encrypted),
+            delete_request_id=delete_request_id,
+            operation_id=operation_id,
+        )
+        table = "memory_records" if encrypted else "memory_records_v9_legacy"
+        deleted = connection.execute(
+            f"DELETE FROM {table} WHERE record_id=?",
+            (row["record_id"],),
+        )
+        return deleted.rowcount == 1
+
+    @classmethod
+    def _record_memory_tombstone_tx(
+        cls,
+        connection: sqlite3.Connection,
+        row: Mapping[str, Any],
+        *,
+        reason: str,
+        action: str,
+        actor_kind: str,
+        actor_id: str | None,
+        now: datetime,
+        revision_increment: int,
+        delete_request_id: str | None = None,
+        operation_id: str | None = None,
+    ) -> None:
+        """Write one replay-safe logical deletion marker without deleting a row."""
+
+        if revision_increment not in {0, 1}:
+            raise ValueError("memory revision increment is invalid")
+        source_binding = cls._memory_source_binding_sha256(row)
+        existing_tombstone = connection.execute(
+            "SELECT * FROM memory_record_tombstones WHERE record_id=?",
+            (row["record_id"],),
+        ).fetchone()
+        if existing_tombstone is not None:
+            if (
+                existing_tombstone["principal_id"] != row["principal_id"]
+                or existing_tombstone["source_binding_sha256"] != source_binding
+                or existing_tombstone["reason"] != reason
+                or existing_tombstone["delete_request_id"] != delete_request_id
+            ):
+                raise OrchestratorError("memory_delete_conflict", status=409)
+        else:
+            connection.execute(
+                """INSERT INTO memory_record_tombstones(
+                   record_id,principal_id,source_binding_sha256,reason,
+                   delete_request_id,memory_revision,deleted_at
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (
+                    row["record_id"],
+                    row["principal_id"],
+                    source_binding,
+                    reason,
+                    delete_request_id,
+                    int(
+                        connection.execute(
+                            "SELECT memory_revision FROM memory_crypto_state "
+                            "WHERE principal_id=?",
+                            (row["principal_id"],),
+                        ).fetchone()[0]
+                    )
+                    + revision_increment,
+                    utc_text(now),
+                ),
+            )
+            cls._append_memory_record_audit_tx(
+                connection,
+                row=row,
+                action=action,
+                actor_kind=actor_kind,
+                actor_id=actor_id,
+                outcome_code="removed_from_saved_memory",
+                now=now,
+                operation_id=operation_id,
+            )
+
+    def _sweep_expired_memory_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        now: datetime,
+        limit: int,
+    ) -> int:
+        if not self._memory_storage_enabled:
+            return 0
+        stamp = utc_text(now)
+        principal_id = self._local_owner_principal_tx(connection)
+        state = self._memory_crypto_state_tx(connection, principal_id)
+        if state["storage_state"] == "MIGRATING":
+            return 0
+        encrypted = state["storage_state"] == "ENCRYPTED"
+        table = "memory_records" if encrypted else "memory_records_v9_legacy"
+        rows = connection.execute(
+            f"SELECT * FROM {table} WHERE expires_at<=? "
+            "ORDER BY expires_at,record_id LIMIT ?",
+            (stamp, limit),
+        ).fetchall()
+        for row in rows:
+            if not self._delete_saved_memory_row_tx(
+                connection,
+                row,
+                reason="ttl_expiry",
+                action="TTL_EXPIRED",
+                actor_kind="ttl_sweep",
+                actor_id=None,
+                now=now,
+                encrypted=encrypted,
+            ):
+                raise RuntimeError("expired memory changed during sweep")
+        if not encrypted:
+            usage = connection.execute(
+                """SELECT COUNT(*) AS count,COALESCE(SUM(content_bytes),0) AS bytes
+                   FROM memory_records_v9_legacy
+                   WHERE principal_id=? AND expires_at>?""",
+                (principal_id, stamp),
+            ).fetchone()
+            connection.execute(
+                """UPDATE memory_principal_usage
+                   SET active_record_count=?,active_content_bytes=?,updated_at=?
+                   WHERE principal_id=?""",
+                (int(usage["count"]), int(usage["bytes"]), stamp, principal_id),
+            )
+        connection.execute(
+            "INSERT INTO schema_meta(key,value) VALUES('memory_last_sweep_at',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (stamp,),
+        )
+        return len(rows)
+
+    def _maybe_sweep_expired_memory_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        now: datetime,
+    ) -> int:
+        if not self._memory_storage_enabled:
+            return 0
+        row = connection.execute(
+            "SELECT value FROM schema_meta WHERE key='memory_last_sweep_at'"
+        ).fetchone()
+        if row is not None:
+            try:
+                last_sweep = parse_utc(row["value"])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("memory sweep timestamp is malformed") from exc
+            if now < last_sweep + MEMORY_SWEEP_INTERVAL:
+                return 0
+        return self._sweep_expired_memory_tx(
+            connection, now=now, limit=MEMORY_SWEEP_LIMIT
+        )
+
+    def sweep_expired_memory(
+        self,
+        *,
+        now: datetime | None = None,
+        limit: int = MEMORY_SWEEP_LIMIT,
+    ) -> int:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= MEMORY_SWEEP_LIMIT
+        ):
+            raise ValueError("memory sweep limit is invalid")
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            return self._sweep_expired_memory_tx(
+                connection, now=selected, limit=limit
+            )
+
+    def sweep_expired_memory_if_due(
+        self, *, now: datetime | None = None
+    ) -> int:
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            return self._maybe_sweep_expired_memory_tx(connection, now=selected)
+
+    def _insert_memory_record_tx(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session: MemoryEpochSessionV1,
+        principal_id: str,
+        conversation_id: str,
+        task_id: str,
+        source_event_id: str,
+        content: str,
+        metadata_json: str,
+        now: datetime,
+    ) -> tuple[dict[str, Any], bool]:
+        fields = self._memory_content_fields(content)
+        stamp = utc_text(now)
+        state = dict(self._memory_crypto_state_tx(connection, principal_id))
+        if state["storage_state"] != "ENCRYPTED":
+            raise MemoryStorageUnavailable("memory_storage_not_prepared")
+        epoch_row = connection.execute(
+            "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+            (state["write_epoch_id"],),
+        ).fetchone()
+        if epoch_row is None:
+            raise MemoryStorageUnavailable("memory_key_epoch_missing")
+        epoch = dict(epoch_row)
+        self._require_session_epoch(session, state, epoch)
+        try:
+            metadata = json.loads(metadata_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("memory metadata is invalid") from exc
+        if not isinstance(metadata, dict) or canonical_json(metadata) != metadata_json:
+            raise ValueError("memory metadata is invalid")
+
+        expired_source_rows = connection.execute(
+            "SELECT * FROM memory_records WHERE conversation_id=? "
+            "AND source_event_id=? AND expires_at<=?",
+            (conversation_id, source_event_id, stamp),
+        ).fetchall()
+        for expired in expired_source_rows:
+            self._delete_saved_memory_row_tx(
+                connection,
+                expired,
+                reason="ttl_expiry",
+                action="TTL_EXPIRED",
+                actor_kind="ttl_sweep",
+                actor_id=None,
+                now=now,
+                encrypted=True,
+            )
+        same_source = connection.execute(
+            self._memory_row_select_sql(
+                where="r.conversation_id=? AND r.source_event_id=? AND r.expires_at>?"
+            ),
+            (conversation_id, source_event_id, stamp),
+        ).fetchone()
+        if same_source is not None:
+            projected = self._project_verified_memory_row_tx(
+                connection, session, dict(same_source)
+            )
+            if projected["content"] != content or projected["metadata"] != metadata:
+                raise OrchestratorError("idempotency_conflict", status=409)
+            return projected, False
+        blind = session.blind_tokens(
+            content=content,
+            normalized_content=normalize_explicit_memory_target(content),
+            terms=fields["terms"],
+        )
+        expired_duplicates = connection.execute(
+            """SELECT * FROM memory_records
+               WHERE principal_id=? AND key_version=? AND normalized_hmac=?
+                 AND expires_at<=?""",
+            (principal_id, epoch["key_version"], blind.normalized_hmac, stamp),
+        ).fetchall()
+        for expired in expired_duplicates:
+            self._delete_saved_memory_row_tx(
+                connection,
+                expired,
+                reason="ttl_expiry",
+                action="TTL_EXPIRED",
+                actor_kind="ttl_sweep",
+                actor_id=None,
+                now=now,
+                encrypted=True,
+            )
+        duplicate = connection.execute(
+            self._memory_row_select_sql(
+                where=(
+                    "r.principal_id=? AND r.key_version=? "
+                    "AND r.normalized_hmac=? AND r.expires_at>?"
+                )
+            ),
+            (principal_id, epoch["key_version"], blind.normalized_hmac, stamp),
+        ).fetchone()
+        if duplicate is not None:
+            return (
+                self._project_verified_memory_row_tx(
+                    connection, session, dict(duplicate)
+                ),
+                False,
+            )
+        usage = connection.execute(
+            "SELECT active_record_count,active_content_bytes "
+            "FROM memory_principal_usage WHERE principal_id=?",
+            (principal_id,),
+        ).fetchone()
+        if usage is None:
+            raise RuntimeError("memory principal usage is unavailable")
+        if (
+            int(usage["active_record_count"]) + 1
+            > MAX_MEMORY_PRINCIPAL_RECORDS
+            or int(usage["active_content_bytes"]) + fields["content_bytes"]
+            > MAX_MEMORY_PRINCIPAL_BYTES
+        ):
+            raise _MemoryQuotaExceeded
+        record_id = new_uuid4()
+        source = {
+            "record_id": record_id,
+            "principal_id": principal_id,
+            "conversation_id": conversation_id,
+            "task_id": task_id,
+            "source_event_id": source_event_id,
+            "content": content,
+            "metadata": metadata,
+            "content_bytes": fields["content_bytes"],
+            "term_count": fields["term_count"],
+            "terms": fields["terms"],
+            "expires_at": utc_text(
+                now + timedelta(days=MEMORY_RECORD_TTL_DAYS)
+            ),
+            "created_at": stamp,
+        }
+        values = self._encrypted_record_values(
+            session,
+            principal_id=principal_id,
+            epoch_id=str(epoch["epoch_id"]),
+            key_version=int(epoch["key_version"]),
+            source=source,
+        )
+        if values["normalized_hmac"] != blind.normalized_hmac:
+            raise RuntimeError("memory blind index derivation is inconsistent")
+        self._insert_encrypted_memory_row_tx(connection, values)
+        self._append_memory_record_audit_tx(
+            connection,
+            row=values,
+            action="CREATED",
+            actor_kind="explicit_command",
+            actor_id=task_id,
+            outcome_code="stored",
+            now=now,
+            new_epoch_id=str(epoch["epoch_id"]),
+        )
+        return {
+            **{key: value for key, value in values.items() if key != "term_hmacs"},
+            "content": content,
+            "metadata": metadata,
+            "metadata_json": metadata_json,
+            "terms": fields["terms"],
+        }, True
+
+    async def search_memory_records(
+        self,
+        *,
+        conversation_id: str,
+        query: str,
+        limit: int,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Run encrypted indexed recall on a cancellable read-only connection."""
+
+        query_bytes = len(query.encode("utf-8"))
+        terms = memory_search_terms(query)
+        if not query or query_bytes > MAX_MEMORY_QUERY_BYTES:
+            raise ValueError("memory recall query is empty or too large")
+        if len(terms) > MAX_MEMORY_QUERY_TERMS:
+            raise ValueError("memory recall query has too many unique terms")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
+            raise ValueError("memory recall limit is invalid")
+        if not terms:
+            return []
+        session = self._memory_session_or_unavailable()
+        with self._lock:
+            principal_id = self._principal_for_conversation_tx(
+                self._connection, conversation_id
+            )
+            state = dict(self._memory_crypto_state_tx(self._connection, principal_id))
+            if state["storage_state"] != "ENCRYPTED":
+                raise MemoryStorageUnavailable("memory_storage_not_prepared")
+            epoch_row = self._connection.execute(
+                "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+                (state["write_epoch_id"],),
+            ).fetchone()
+            if epoch_row is None:
+                raise MemoryStorageUnavailable("memory_key_epoch_missing")
+            epoch = dict(epoch_row)
+        selected = now or utc_now()
+        expires_after = utc_text(selected)
+        cancelled = threading.Event()
+        deadline = time.monotonic() + MEMORY_RECALL_DEADLINE_SECONDS
+        database_uri = self.path.resolve().as_uri() + "?mode=ro"
+
+        def query_read_only() -> list[dict[str, Any]]:
+            if cancelled.is_set() or time.monotonic() >= deadline:
+                raise TimeoutError("memory recall deadline exceeded")
+            try:
+                self._require_session_epoch(session, state, epoch)
+                term_tokens = session.blind_term_tokens(terms=terms)
+            except MemoryCryptoError as exc:
+                raise MemoryStorageUnavailable(exc.code) from exc
+            if cancelled.is_set() or time.monotonic() >= deadline:
+                raise TimeoutError("memory recall deadline exceeded")
+            connection = sqlite3.connect(
+                database_uri,
+                uri=True,
+                isolation_level=None,
+                timeout=MEMORY_RECALL_BUSY_TIMEOUT_MS / 1000,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only=ON")
+            connection.execute(
+                f"PRAGMA busy_timeout={MEMORY_RECALL_BUSY_TIMEOUT_MS}"
+            )
+            connection.set_progress_handler(
+                lambda: int(
+                    cancelled.is_set() or time.monotonic() >= deadline
+                ),
+                100,
+            )
+            try:
+                current_state_row = connection.execute(
+                    "SELECT * FROM memory_crypto_state WHERE principal_id=?",
+                    (principal_id,),
+                ).fetchone()
+                current_epoch_row = connection.execute(
+                    "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+                    (state["write_epoch_id"],),
+                ).fetchone()
+                if current_state_row is None or current_epoch_row is None:
+                    raise MemoryStorageUnavailable(
+                        "memory_key_epoch_missing"
+                    )
+                self._require_session_epoch(
+                    session,
+                    dict(current_state_row),
+                    dict(current_epoch_row),
+                )
+                placeholders = ",".join("?" for _ in term_tokens)
+                rows = connection.execute(
+                    f"""SELECT r.*,COUNT(*) AS match_count,
+                               st.epoch AS source_task_epoch,
+                               st.turn_id AS source_turn_id,
+                               st.state AS source_task_state,
+                               st.conversation_id AS source_task_conversation_id,
+                               ct.user_language AS source_language,
+                               ct.status AS source_turn_status,
+                               ct.conversation_id AS source_turn_conversation_id,
+                               ct.task_id AS source_turn_task_id,
+                               ct.turn_id AS source_canonical_turn_id,
+                               i.task_id AS source_inbox_task_id,
+                               i.turn_id AS source_inbox_turn_id
+                       FROM memory_terms AS t
+                       INDEXED BY memory_terms_by_principal_term
+                       JOIN memory_records AS r
+                         ON r.record_id=t.record_id
+                        AND r.principal_id=t.principal_id
+                        AND r.key_epoch_id=t.key_epoch_id
+                        AND r.key_version=t.key_version
+                       JOIN tasks st ON st.task_id=r.task_id
+                       JOIN canonical_turns ct ON ct.task_id=r.task_id
+                       JOIN inbox i ON i.event_id=r.source_event_id
+                       WHERE t.principal_id=?
+                         AND t.key_version=?
+                         AND t.term_hmac IN ({placeholders})
+                         AND r.expires_at>?
+                       GROUP BY r.record_id
+                       ORDER BY match_count DESC,r.created_at DESC,r.record_id
+                       LIMIT ?""",
+                    (
+                        principal_id,
+                        epoch["key_version"],
+                        *term_tokens,
+                        expires_after,
+                        limit,
+                    ),
+                ).fetchall()
+                selected_rows: list[dict[str, Any]] = []
+                for row in rows:
+                    item = dict(row)
+                    item["stored_term_hmacs"] = tuple(
+                        bytes(token["term_hmac"])
+                        for token in connection.execute(
+                            """SELECT term_hmac FROM memory_terms
+                               INDEXED BY memory_terms_by_record
+                               WHERE record_id=? ORDER BY term_hmac""",
+                            (row["record_id"],),
+                        ).fetchall()
+                    )
+                    selected_rows.append(item)
+            except sqlite3.OperationalError:
+                if cancelled.is_set() or time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "memory recall deadline exceeded"
+                    ) from None
+                raise
+            finally:
+                connection.set_progress_handler(None, 0)
+                connection.close()
+            projected_rows: list[dict[str, Any]] = []
+            for row in selected_rows:
+                if cancelled.is_set() or time.monotonic() >= deadline:
+                    raise TimeoutError("memory recall deadline exceeded")
+                try:
+                    projected = self._decrypt_memory_row(session, row)
+                    expected_term_tokens = session.blind_term_tokens(
+                        terms=projected["terms"]
+                    )
+                except MemoryCryptoError as exc:
+                    raise MemoryStorageUnavailable(exc.code) from exc
+                if tuple(sorted(expected_term_tokens)) != row[
+                    "stored_term_hmacs"
+                ]:
+                    raise MemoryStorageUnavailable(
+                        "memory_term_index_binding_invalid"
+                    )
+                actual_matches = len(set(terms).intersection(projected["terms"]))
+                if actual_matches != int(row["match_count"]):
+                    raise MemoryStorageUnavailable(
+                        "memory_recall_match_binding_invalid"
+                    )
+                projected["match_count"] = actual_matches
+                projected_rows.append(projected)
+            return projected_rows
+
+        worker = asyncio.create_task(asyncio.to_thread(query_read_only))
+
+        def consume_worker_result(done: asyncio.Task[list[dict[str, Any]]]) -> None:
+            if not done.cancelled():
+                with suppress(BaseException):
+                    done.exception()
+
+        worker.add_done_callback(consume_worker_result)
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(worker),
+                timeout=max(0.001, deadline - time.monotonic()),
+            )
+        except (asyncio.CancelledError, TimeoutError):
+            cancelled.set()
+            raise
 
     def close(self) -> None:
         with self._lock:
             self._connection.close()
+
+    @contextmanager
+    def _read_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Hold one SQLite snapshot across a bounded multi-query read."""
+
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                yield self._connection
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -896,8 +4014,10 @@ class OrchestratorStore:
                 "memory_records": [
                     dict(row)
                     for row in self._connection.execute(
-                        """SELECT record_id,task_id,source_event_id,scoped_user_id,
-                                  content_sha256,metadata_json,created_at
+                        """SELECT record_id,principal_id,task_id,source_event_id,
+                                  key_epoch_id,key_version,binding_sha256,
+                                  envelope_sha256,content_bytes,term_count,
+                                  expires_at,normalizer_version,created_at
                            FROM memory_records WHERE task_id=?
                            ORDER BY record_id""",
                         (task_id,),
@@ -1052,14 +4172,23 @@ class OrchestratorStore:
         """Persist one completed-turn memory with task/epoch CAS and stable identity."""
 
         selected = now or utc_now()
-        content_hash = canonical_sha256({"content": content})
+        session = self._memory_session_or_unavailable()
+        self._memory_content_fields(content)
         metadata_json = canonical_json(metadata)
+        expected_scope = f"anamnesis::jarvis::{conversation_id}"
+        if scoped_user_id != expected_scope:
+            raise ValueError("memory scope does not match conversation")
         with self._transaction() as connection:
+            self._sweep_expired_memory_tx(
+                connection, now=selected, limit=MEMORY_SWEEP_LIMIT
+            )
             task = connection.execute(
                 """SELECT t.*,c.current_epoch,c.state AS conversation_state,
-                          ct.status AS turn_status
+                          ct.status AS turn_status,ct.user_language,
+                          i.event_id AS bound_event_id
                    FROM tasks t JOIN conversations c USING(conversation_id)
                    JOIN canonical_turns ct USING(task_id)
+                   JOIN inbox i USING(task_id)
                    WHERE t.task_id=? AND t.conversation_id=?""",
                 (task_id, conversation_id),
             ).fetchone()
@@ -1071,74 +4200,1061 @@ class OrchestratorStore:
                 or bool(task["tombstoned"])
                 or task["conversation_state"] != "ACTIVE"
                 or task["turn_status"] != "COMPLETED"
+                or task["bound_event_id"] != source_event_id
             ):
                 raise StaleEpochError()
-            existing = connection.execute(
-                """SELECT * FROM memory_records
-                   WHERE conversation_id=? AND source_event_id=?""",
-                (conversation_id, source_event_id),
+            expected_metadata = {
+                "conversation_id": conversation_id,
+                "task_id": task_id,
+                "task_epoch": str(epoch),
+                "turn_id": task["turn_id"],
+                "source_event_id": source_event_id,
+                "language": task["user_language"],
+                "_anamnesis_namespace": "jarvis",
+                "_anamnesis_user_id": conversation_id,
+            }
+            if dict(metadata) != expected_metadata:
+                raise ValueError("memory metadata binding is invalid")
+            principal_id = self._principal_for_conversation_tx(
+                connection, conversation_id
+            )
+            try:
+                row, _ = self._insert_memory_record_tx(
+                    connection,
+                    session=session,
+                    principal_id=principal_id,
+                    conversation_id=conversation_id,
+                    task_id=task_id,
+                    source_event_id=source_event_id,
+                    content=content,
+                    metadata_json=metadata_json,
+                    now=selected,
+                )
+            except _MemoryQuotaExceeded as exc:
+                raise OrchestratorError(
+                    "memory_quota_exceeded", status=409
+                ) from exc
+            result = dict(row)
+            result["scoped_user_id"] = expected_scope
+            return result
+
+    def complete_explicit_memory_command(
+        self,
+        task_id: str,
+        epoch: int,
+        *,
+        enabled: bool,
+        locale: str,
+        now: datetime | None = None,
+        delivery_ttl: timedelta | None = None,
+    ) -> tuple[TaskSnapshot, ExplicitMemoryCommandResult]:
+        """Atomically mutate explicit memory and commit its deterministic reply.
+
+        ``task_events`` is the durable command journal and the normal response
+        outbox is the delivery journal.  A process failure before SQLite commit
+        leaves both absent; a failure afterwards can only replay the persisted
+        outcome and response events.
+        """
+
+        if not isinstance(enabled, bool):
+            raise TypeError("explicit memory enabled flag must be boolean")
+        if not locale or nfc(locale) != locale:
+            raise ValueError("explicit memory response locale is invalid")
+        selected = now or utc_now()
+        prepared_session = self._memory_epoch_session
+        stamp = utc_text(selected)
+        delivery = utc_text(selected + (delivery_ttl or self.delivery_ttl))
+        with self._transaction() as connection:
+            row = connection.execute(
+                """SELECT t.*,c.current_epoch,c.state AS conversation_state,
+                          ct.user_text,ct.user_language,ct.status AS turn_status,
+                          ct.assistant_text,ct.effects_json,i.event_id AS source_event_id
+                   FROM tasks t JOIN conversations c USING(conversation_id)
+                   JOIN canonical_turns ct USING(task_id)
+                   JOIN inbox i USING(task_id)
+                   WHERE t.task_id=? AND t.epoch=? AND t.tombstoned=0""",
+                (task_id, epoch),
             ).fetchone()
+            if (
+                row is None
+                or int(row["current_epoch"]) != epoch
+                or row["conversation_state"] != "ACTIVE"
+            ):
+                raise StaleEpochError()
+            parsed = parse_explicit_memory_command(str(row["user_text"]))
+            if parsed is None:
+                raise InvalidStateError()
+            operation, target = parsed
+            target_sha256 = hashlib.sha256(target.encode("utf-8")).hexdigest()
+            existing_rows = connection.execute(
+                """SELECT event_type,payload_json FROM task_events
+                   WHERE task_id=? AND event_type LIKE 'memory.command.%'""",
+                (task_id,),
+            ).fetchall()
+            if len(existing_rows) > 1:
+                raise OrchestratorError("memory_command_audit_invalid", status=409)
+            existing = existing_rows[0] if existing_rows else None
             if existing is not None:
+                try:
+                    payload = json.loads(existing["payload_json"])
+                except json.JSONDecodeError as exc:
+                    raise OrchestratorError(
+                        "memory_command_audit_invalid", status=409
+                    ) from exc
+                expected_keys = {
+                    "operation",
+                    "status",
+                    "target_sha256",
+                    "matched_count",
+                    "changed",
+                    "outcome_sha256",
+                    "response_sha256",
+                }
+                if not isinstance(payload, dict) or set(payload) != expected_keys:
+                    raise OrchestratorError("memory_command_audit_invalid", status=409)
+                try:
+                    status = ExplicitMemoryCommandStatus(payload["status"])
+                    result = ExplicitMemoryCommandResult(
+                        operation=payload["operation"],
+                        status=status,
+                        matched_count=payload["matched_count"],
+                        changed=payload["changed"],
+                        target_sha256=payload["target_sha256"],
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise OrchestratorError(
+                        "memory_command_audit_invalid", status=409
+                    ) from exc
+                response_text = explicit_memory_response(
+                    result.operation, result.status, str(row["user_language"])
+                )
+                expected_outcome_sha256 = canonical_sha256(
+                    {
+                        "operation": result.operation,
+                        "status": result.status.value,
+                        "target_sha256": result.target_sha256,
+                        "matched_count": result.matched_count,
+                        "changed": result.changed,
+                    }
+                )
+                expected_event_type = (
+                    f"memory.command.{operation}.{result.status.value}"
+                )
                 if (
-                    existing["content_sha256"] != content_hash
-                    or existing["scoped_user_id"] != scoped_user_id
-                    or existing["metadata_json"] != metadata_json
+                    existing["event_type"] != expected_event_type
+                    or result.operation != operation
+                    or result.target_sha256 != target_sha256
+                    or row["state"] != TaskState.COMPLETED.value
+                    or row["turn_status"] != "COMPLETED"
+                    or row["assistant_text"] != response_text
+                    or payload["outcome_sha256"] != expected_outcome_sha256
+                    or payload["response_sha256"]
+                    != hashlib.sha256(response_text.encode("utf-8")).hexdigest()
                 ):
-                    raise OrchestratorError("idempotency_conflict", status=409)
-                return dict(existing)
-            record_id = new_uuid4()
-            connection.execute(
-                """INSERT INTO memory_records(
-                   record_id,conversation_id,task_id,source_event_id,scoped_user_id,
-                   content,content_sha256,metadata_json,created_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
-                (
-                    record_id,
-                    conversation_id,
+                    raise OrchestratorError("memory_command_replay_invalid", status=409)
+                journal = connection.execute(
+                    """SELECT event_type,payload_json,task_id,task_epoch,
+                              guard_epoch,turn_id,response_id
+                       FROM outbox
+                       WHERE response_id=? AND event_type LIKE 'response.%'
+                       ORDER BY ordinal""",
+                    (row["response_id"],),
+                ).fetchall()
+                expected_types = [
+                    "response.started",
+                    "response.text.delta",
+                    "response.text.done",
+                    "response.speech.commit",
+                    "response.speech.done",
+                ]
+                if (
+                    [item["event_type"] for item in journal] != expected_types
+                    or any(
+                        item["task_id"] != task_id
+                        or item["task_epoch"] != epoch
+                        or item["guard_epoch"] != epoch
+                        or item["turn_id"] != row["turn_id"]
+                        or item["response_id"] != row["response_id"]
+                        for item in journal
+                    )
+                ):
+                    raise OrchestratorError(
+                        "memory_command_response_journal_invalid", status=409
+                    )
+                try:
+                    journal_payloads = [
+                        json.loads(item["payload_json"]) for item in journal
+                    ]
+                except json.JSONDecodeError as exc:
+                    raise OrchestratorError(
+                        "memory_command_response_journal_invalid", status=409
+                    ) from exc
+                if any(not isinstance(item, dict) for item in journal_payloads):
+                    raise OrchestratorError(
+                        "memory_command_response_journal_invalid", status=409
+                    )
+                committed_locale = journal_payloads[0].get("locale")
+                if (
+                    set(journal_payloads[0]) != {"locale"}
+                    or not isinstance(committed_locale, str)
+                    or not committed_locale
+                    or nfc(committed_locale) != committed_locale
+                    or journal_payloads[1]
+                    != {"chunk_index": 0, "text": response_text}
+                    or journal_payloads[2] != {"chunk_count": 1}
+                    or journal_payloads[3]
+                    != {
+                        "unit_index": 1,
+                        "locale": committed_locale,
+                        "text": response_text,
+                    }
+                    or journal_payloads[4] != {"last_unit_index": 1}
+                ):
+                    raise OrchestratorError(
+                        "memory_command_response_journal_invalid", status=409
+                    )
+                expected_effect = asdict(
+                    CanonicalEffectV1(
+                        kind="memory",
+                        name=operation,
+                        status=result.status.value,
+                        arguments_sha256=target_sha256,
+                        result_sha256=expected_outcome_sha256,
+                    )
+                )
+                try:
+                    effects = json.loads(row["effects_json"])
+                except json.JSONDecodeError as exc:
+                    raise OrchestratorError(
+                        "memory_command_replay_invalid", status=409
+                    ) from exc
+                provenance_row = connection.execute(
+                    """SELECT provenance_json,provenance_sha256,
+                              policy_label,egress_disposition
+                       FROM content_provenance
+                       WHERE entity_kind='canonical_turn' AND entity_id=?""",
+                    (row["turn_id"],),
+                ).fetchone()
+                expected_provenance = self._explicit_memory_command_provenance(
+                    task_id=task_id,
+                    turn_id=row["turn_id"],
+                    user_text=row["user_text"],
+                    response_text=response_text,
+                )
+                try:
+                    provenance = (
+                        None
+                        if provenance_row is None
+                        else ContentProvenanceV1.from_dict(
+                            json.loads(provenance_row["provenance_json"])
+                        )
+                    )
+                except (json.JSONDecodeError, ProvenanceError) as exc:
+                    raise OrchestratorError(
+                        "memory_command_replay_invalid", status=409
+                    ) from exc
+                if (
+                    effects != [expected_effect]
+                    or provenance is None
+                    or provenance != expected_provenance
+                    or provenance.sha256 != provenance_row["provenance_sha256"]
+                    or provenance_row["policy_label"]
+                    != expected_provenance.policy_label.value
+                    or provenance_row["egress_disposition"]
+                    != expected_provenance.egress.value
+                ):
+                    raise OrchestratorError("memory_command_replay_invalid", status=409)
+                return self._task_from_row(row), result
+
+            if (
+                row["state"] != TaskState.EXECUTING.value
+                or row["turn_status"] != "PENDING"
+            ):
+                raise StaleEpochError()
+
+            self._sweep_expired_memory_tx(
+                connection, now=selected, limit=MEMORY_SWEEP_LIMIT
+            )
+            matches: list[dict[str, Any]] = []
+            principal_id: str | None = None
+            session: MemoryEpochSessionV1 | None = None
+            crypto_available = False
+            over_limit = (
+                enabled and len(target.encode("utf-8")) > MAX_MEMORY_RECORD_BYTES
+            )
+            target_terms = () if not enabled or over_limit else memory_search_terms(
+                target
+            )
+            invalid_content = enabled and not over_limit and (
+                not target_terms or len(target_terms) > MAX_MEMORY_RECORD_TERMS
+            )
+            if not enabled:
+                matched_count = 0
+                status = ExplicitMemoryCommandStatus.NOT_ENABLED
+                changed = False
+            elif over_limit:
+                matched_count = 0
+                status = ExplicitMemoryCommandStatus.LIMIT_EXCEEDED
+                changed = False
+            elif invalid_content:
+                matched_count = 0
+                status = ExplicitMemoryCommandStatus.INVALID_CONTENT
+                changed = False
+            else:
+                principal_id = self._principal_for_conversation_tx(
+                    connection, row["conversation_id"]
+                )
+                state = dict(self._memory_crypto_state_tx(connection, principal_id))
+                session = prepared_session
+                if state["storage_state"] == "ENCRYPTED" and session is not None:
+                    epoch_row = connection.execute(
+                        "SELECT * FROM memory_key_epochs WHERE epoch_id=?",
+                        (state["write_epoch_id"],),
+                    ).fetchone()
+                    try:
+                        if epoch_row is None:
+                            raise MemoryStorageUnavailable(
+                                "memory_key_epoch_missing"
+                            )
+                        epoch_row = dict(epoch_row)
+                        self._require_session_epoch(session, state, epoch_row)
+                        normalized_hmac = session.blind_token(
+                            kind="normalized",
+                            value=normalize_explicit_memory_target(target),
+                        )
+                        selected_matches = connection.execute(
+                            self._memory_row_select_sql(
+                                where=(
+                                    "r.principal_id=? AND r.key_version=? "
+                                    "AND r.normalized_hmac=? AND r.expires_at>?"
+                                )
+                            )
+                            + " ORDER BY r.record_id",
+                            (
+                                principal_id,
+                                epoch_row["key_version"],
+                                normalized_hmac,
+                                stamp,
+                            ),
+                        ).fetchall()
+                        for selected_match in selected_matches:
+                            projected = self._project_verified_memory_row_tx(
+                                connection, session, dict(selected_match)
+                            )
+                            if normalize_explicit_memory_target(
+                                projected["content"]
+                            ) != normalize_explicit_memory_target(target):
+                                raise MemoryStorageUnavailable(
+                                    "memory_index_binding_invalid"
+                                )
+                            matches.append(dict(selected_match))
+                        matched_count = len(matches)
+                        crypto_available = True
+                    except (MemoryCryptoError, MemoryStorageUnavailable):
+                        matched_count = 0
+                        status = ExplicitMemoryCommandStatus.UNAVAILABLE
+                        changed = False
+                else:
+                    matched_count = 0
+                    status = ExplicitMemoryCommandStatus.UNAVAILABLE
+                    changed = False
+            if not enabled or over_limit or invalid_content or not crypto_available:
+                pass
+            elif operation == "remember":
+                if matches:
+                    status = ExplicitMemoryCommandStatus.ALREADY_EXISTS
+                    changed = False
+                else:
+                    status = ExplicitMemoryCommandStatus.STORED
+                    changed = True
+                    metadata = {
+                        "conversation_id": row["conversation_id"],
+                        "task_id": task_id,
+                        "task_epoch": str(epoch),
+                        "turn_id": row["turn_id"],
+                        "source_event_id": row["source_event_id"],
+                        "language": row["user_language"],
+                        "_anamnesis_namespace": "jarvis",
+                        "_anamnesis_user_id": row["conversation_id"],
+                    }
+                    try:
+                        self._insert_memory_record_tx(
+                            connection,
+                            session=session,
+                            principal_id=principal_id,
+                            conversation_id=row["conversation_id"],
+                            task_id=task_id,
+                            source_event_id=row["source_event_id"],
+                            content=target,
+                            metadata_json=canonical_json(metadata),
+                            now=selected,
+                        )
+                    except _MemoryQuotaExceeded:
+                        status = ExplicitMemoryCommandStatus.QUOTA_EXCEEDED
+                        changed = False
+                    except (MemoryCryptoError, MemoryStorageUnavailable):
+                        status = ExplicitMemoryCommandStatus.UNAVAILABLE
+                        changed = False
+                        matched_count = 0
+            elif matched_count == 0:
+                status = ExplicitMemoryCommandStatus.NOT_FOUND
+                changed = False
+            elif matched_count > 1:
+                status = ExplicitMemoryCommandStatus.AMBIGUOUS
+                changed = False
+            else:
+                status = ExplicitMemoryCommandStatus.DELETED
+                changed = True
+                assert principal_id is not None
+                if not self._delete_saved_memory_row_tx(
+                    connection,
+                    matches[0],
+                    reason="explicit_forget",
+                    action="EXPLICIT_FORGOT",
+                    actor_kind="explicit_command",
+                    actor_id=task_id,
+                    now=selected,
+                    encrypted=True,
+                ):
+                    raise OrchestratorError(
+                        "memory_delete_target_changed", status=409
+                    )
+
+            result = ExplicitMemoryCommandResult(
+                operation=operation,
+                status=status,
+                matched_count=matched_count,
+                changed=changed,
+                target_sha256=target_sha256,
+            )
+            outcome_document = {
+                "operation": result.operation,
+                "status": result.status.value,
+                "target_sha256": result.target_sha256,
+                "matched_count": result.matched_count,
+                "changed": result.changed,
+            }
+            outcome_sha256 = canonical_sha256(outcome_document)
+            response_text = explicit_memory_response(
+                operation, status, str(row["user_language"])
+            )
+            command_payload = {
+                **outcome_document,
+                "outcome_sha256": outcome_sha256,
+                "response_sha256": hashlib.sha256(
+                    response_text.encode("utf-8")
+                ).hexdigest(),
+            }
+            self._append_task_event_tx(
+                connection,
+                task_id,
+                epoch,
+                f"memory.command.{operation}.{status.value}",
+                command_payload,
+                selected,
+            )
+            if operation == "forget" and status in {
+                ExplicitMemoryCommandStatus.DELETED,
+                ExplicitMemoryCommandStatus.NOT_FOUND,
+                ExplicitMemoryCommandStatus.AMBIGUOUS,
+            }:
+                legacy_status = {
+                    ExplicitMemoryCommandStatus.DELETED: "completed",
+                    ExplicitMemoryCommandStatus.NOT_FOUND: "empty",
+                    ExplicitMemoryCommandStatus.AMBIGUOUS: "ambiguous",
+                }[status]
+                self._append_task_event_tx(
+                    connection,
                     task_id,
-                    source_event_id,
-                    scoped_user_id,
-                    content,
-                    content_hash,
-                    metadata_json,
-                    utc_text(selected),
+                    epoch,
+                    f"memory.delete.{legacy_status}",
+                    {
+                        "status": legacy_status,
+                        "target_sha256": target_sha256,
+                        "matched_count": matched_count,
+                        "deleted_count": 1 if changed else 0,
+                        "authoritative_state_changed": changed,
+                        "selection": "exact_normalized_content",
+                    },
+                    selected,
+                )
+
+            effects = json.loads(row["effects_json"])
+            effects.append(
+                asdict(
+                    CanonicalEffectV1(
+                        kind="memory",
+                        name=operation,
+                        status=status.value,
+                        arguments_sha256=target_sha256,
+                        result_sha256=outcome_sha256,
+                    )
+                )
+            )
+            provenance = self._explicit_memory_command_provenance(
+                task_id=task_id,
+                turn_id=row["turn_id"],
+                user_text=row["user_text"],
+                response_text=response_text,
+            )
+            self._append_task_event_tx(
+                connection, task_id, epoch, "RESPONDING", {}, selected
+            )
+            self._append_outbox_tx(
+                connection,
+                conversation_id=row["conversation_id"],
+                task_id=task_id,
+                task_epoch=epoch,
+                guard_epoch=epoch,
+                turn_id=row["turn_id"],
+                response_id=row["response_id"],
+                event_type="response.started",
+                payload={"locale": locale},
+                now=selected,
+            )
+            self._append_outbox_tx(
+                connection,
+                conversation_id=row["conversation_id"],
+                task_id=task_id,
+                task_epoch=epoch,
+                guard_epoch=epoch,
+                turn_id=row["turn_id"],
+                response_id=row["response_id"],
+                event_type="response.text.delta",
+                payload={"chunk_index": 0, "text": response_text},
+                now=selected,
+            )
+            self._append_task_event_tx(
+                connection, task_id, epoch, "COMMITTING", {}, selected
+            )
+            self._append_outbox_tx(
+                connection,
+                conversation_id=row["conversation_id"],
+                task_id=task_id,
+                task_epoch=epoch,
+                guard_epoch=epoch,
+                turn_id=row["turn_id"],
+                response_id=row["response_id"],
+                event_type="response.text.done",
+                payload={"chunk_count": 1},
+                delivery_expires_at=delivery,
+                now=selected,
+            )
+            self._append_outbox_tx(
+                connection,
+                conversation_id=row["conversation_id"],
+                task_id=task_id,
+                task_epoch=epoch,
+                guard_epoch=epoch,
+                turn_id=row["turn_id"],
+                response_id=row["response_id"],
+                event_type="response.speech.commit",
+                payload={"unit_index": 1, "locale": locale, "text": response_text},
+                delivery_expires_at=delivery,
+                now=selected,
+            )
+            self._append_outbox_tx(
+                connection,
+                conversation_id=row["conversation_id"],
+                task_id=task_id,
+                task_epoch=epoch,
+                guard_epoch=epoch,
+                turn_id=row["turn_id"],
+                response_id=row["response_id"],
+                event_type="response.speech.done",
+                payload={"last_unit_index": 1},
+                delivery_expires_at=delivery,
+                now=selected,
+            )
+            elapsed = float(row["active_elapsed_seconds"])
+            if row["active_started_at"] is not None:
+                elapsed += max(
+                    0.0,
+                    (selected - parse_utc(row["active_started_at"])).total_seconds(),
+                )
+            updated = connection.execute(
+                """UPDATE tasks SET state='COMPLETED',partial_output=1,
+                          active_elapsed_seconds=?,active_started_at=NULL,
+                          delivery_expires_at=?,disconnect_expires_at=NULL,updated_at=?
+                   WHERE task_id=? AND epoch=? AND state='EXECUTING' AND tombstoned=0""",
+                (elapsed, delivery, stamp, task_id, epoch),
+            )
+            if updated.rowcount != 1:
+                raise StaleEpochError()
+            connection.execute(
+                """UPDATE outbox SET delivery_expires_at=?
+                   WHERE task_id=? AND state='REPLAYABLE'""",
+                (delivery, task_id),
+            )
+            connection.execute(
+                """UPDATE canonical_turns
+                   SET assistant_text=?,effects_json=?,status='COMPLETED',completed_at=?
+                   WHERE task_id=? AND status='PENDING'""",
+                (response_text, canonical_json(effects), stamp, task_id),
+            )
+            connection.execute(
+                """INSERT INTO content_provenance(
+                   entity_kind,entity_id,provenance_json,provenance_sha256,
+                   policy_label,egress_disposition,created_at
+                   ) VALUES('canonical_turn',?,?,?,?,?,?)""",
+                (
+                    row["turn_id"],
+                    jcs_text(provenance.to_dict()),
+                    provenance.sha256,
+                    provenance.policy_label.value,
+                    provenance.egress.value,
+                    stamp,
                 ),
             )
-            row = connection.execute(
-                "SELECT * FROM memory_records WHERE record_id=?", (record_id,)
+            connection.execute(
+                """UPDATE conversations SET revision=revision+1,updated_at=?
+                   WHERE conversation_id=? AND current_epoch=?""",
+                (stamp, row["conversation_id"], epoch),
+            )
+            self._append_task_event_tx(
+                connection, task_id, epoch, "COMPLETED", {}, selected
+            )
+            completed = connection.execute(
+                "SELECT * FROM tasks WHERE task_id=?", (task_id,)
             ).fetchone()
-            return dict(row)
+            return self._task_from_row(completed), result
 
-    def memory_record(self, record_id: str) -> dict[str, Any] | None:
+    def memory_command_audit(self, task_id: str) -> dict[str, Any] | None:
+        """Return the content-free committed explicit command result."""
+
         with self._lock:
             row = self._connection.execute(
-                "SELECT * FROM memory_records WHERE record_id=?", (record_id,)
+                """SELECT epoch,event_type,payload_json,created_at
+                   FROM task_events
+                   WHERE task_id=? AND event_type LIKE 'memory.command.%'""",
+                (task_id,),
             ).fetchone()
         if row is None:
             return None
-        result = dict(row)
-        result["metadata"] = json.loads(result.pop("metadata_json"))
+        return {
+            "epoch": row["epoch"],
+            "event_type": row["event_type"],
+            "payload": json.loads(row["payload_json"]),
+            "created_at": row["created_at"],
+        }
+
+    def control_memory_record_snapshot(
+        self,
+        record_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Read one unexpired local-owner record and its revision atomically."""
+
+        require_uuid4(record_id)
+        session = self._memory_session_or_unavailable()
+        selected = utc_text(now or utc_now())
+        with self._read_transaction() as connection:
+            principal_id = self._local_owner_principal_tx(connection)
+            state, _ = self._require_current_memory_session_tx(
+                connection,
+                principal_id=principal_id,
+                session=session,
+            )
+            row = connection.execute(
+                self._memory_row_select_sql(
+                    where=(
+                        "r.record_id=? AND r.principal_id=? "
+                        "AND r.expires_at>?"
+                    )
+                ),
+                (record_id, principal_id, selected),
+            ).fetchone()
+            record = (
+                None
+                if row is None
+                else self._project_verified_memory_row_tx(
+                    connection,
+                    session,
+                    dict(row),
+                )
+            )
+            revision = int(state["memory_revision"])
+        return {"record": record, "memory_revision": revision}
+
+    def control_memory_record_page(
+        self,
+        *,
+        limit: int = 50,
+        after: tuple[str, str] | None = None,
+        expected_revision: int | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Read one revision-bound, principal-wide local-owner page."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+            raise ValueError("memory page limit is invalid")
+        if after is not None and (
+            not isinstance(after, tuple)
+            or len(after) != 2
+            or not all(isinstance(item, str) and item for item in after)
+        ):
+            raise ValueError("memory page cursor is invalid")
+        if expected_revision is not None and (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 0
+        ):
+            raise ValueError("memory revision is invalid")
+        session = self._memory_session_or_unavailable()
+        selected = utc_text(now or utc_now())
+        with self._read_transaction() as connection:
+            principal_id = self._local_owner_principal_tx(connection)
+            state, _ = self._require_current_memory_session_tx(
+                connection,
+                principal_id=principal_id,
+                session=session,
+            )
+            revision = int(state["memory_revision"])
+            if expected_revision is not None and revision != expected_revision:
+                raise OrchestratorError("memory_revision_conflict", status=409)
+            parameters: list[Any] = [principal_id, selected]
+            where = "r.principal_id=? AND r.expires_at>?"
+            if after is not None:
+                parse_utc(after[0])
+                require_uuid4(after[1])
+                where += (
+                    " AND (r.created_at<? OR "
+                    "(r.created_at=? AND r.record_id>?))"
+                )
+                parameters.extend((after[0], after[0], after[1]))
+            parameters.append(limit + 1)
+            rows = connection.execute(
+                self._memory_row_select_sql(where=where)
+                + " ORDER BY r.created_at DESC,r.record_id LIMIT ?",
+                tuple(parameters),
+            ).fetchall()
+            has_more = len(rows) > limit
+            page_rows = rows[:limit]
+            items = [
+                self._project_verified_memory_row_tx(
+                    connection,
+                    session,
+                    dict(row),
+                )
+                for row in page_rows
+            ]
+        cursor = None
+        if has_more and items:
+            cursor = (items[-1]["created_at"], items[-1]["record_id"])
+        return {
+            "items": items,
+            "memory_revision": revision,
+            "next_cursor": cursor,
+        }
+
+    def memory_record(self, record_id: str) -> dict[str, Any] | None:
+        session = self._memory_session_or_unavailable()
+        with self._lock:
+            principal_id = self._local_owner_principal_tx(self._connection)
+            self._require_current_memory_session_tx(
+                self._connection,
+                principal_id=principal_id,
+                session=session,
+            )
+            row = self._connection.execute(
+                self._memory_row_select_sql(
+                    where="r.record_id=? AND r.principal_id=?"
+                ),
+                (record_id, principal_id),
+            ).fetchone()
+            if row is None:
+                return None
+            result = self._project_verified_memory_row_tx(
+                self._connection, session, dict(row)
+            )
+        result["scoped_user_id"] = (
+            f"anamnesis::jarvis::{result['conversation_id']}"
+        )
         return result
 
     def memory_records_for_scope(self, scoped_user_id: str) -> list[dict[str, Any]]:
+        prefix = "anamnesis::jarvis::"
+        if not scoped_user_id.startswith(prefix) or len(scoped_user_id) == len(prefix):
+            raise ValueError("memory scope is invalid")
+        conversation_id = scoped_user_id[len(prefix) :]
+        session = self._memory_session_or_unavailable()
         with self._lock:
+            principal_id = self._principal_for_conversation_tx(
+                self._connection, conversation_id
+            )
+            self._require_current_memory_session_tx(
+                self._connection,
+                principal_id=principal_id,
+                session=session,
+            )
             rows = self._connection.execute(
-                """SELECT * FROM memory_records WHERE scoped_user_id=?
-                   ORDER BY created_at DESC,record_id""",
-                (scoped_user_id,),
+                self._memory_row_select_sql(
+                    where="r.principal_id=? AND r.expires_at>?"
+                )
+                + " ORDER BY r.created_at DESC,r.record_id",
+                (principal_id, utc_text(utc_now())),
             ).fetchall()
-        result: list[dict[str, Any]] = []
-        for row in rows:
-            item = dict(row)
-            item["metadata"] = json.loads(item.pop("metadata_json"))
-            result.append(item)
+            result = [
+                self._project_verified_memory_row_tx(
+                    self._connection, session, dict(row)
+                )
+                for row in rows
+            ]
+        for item in result:
+            item["scoped_user_id"] = scoped_user_id
         return result
 
+    def memory_records_matching(
+        self,
+        *,
+        conversation_id: str,
+        target: str,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        session = self._memory_session_or_unavailable()
+        with self._lock:
+            principal_id = self._principal_for_conversation_tx(
+                self._connection, conversation_id
+            )
+            _, epoch = self._require_current_memory_session_tx(
+                self._connection,
+                principal_id=principal_id,
+                session=session,
+            )
+            normalized_hmac = session.blind_token(
+                kind="normalized",
+                value=normalize_explicit_memory_target(target),
+            )
+            rows = self._connection.execute(
+                self._memory_row_select_sql(
+                    where=(
+                        "r.principal_id=? AND r.key_version=? "
+                        "AND r.normalized_hmac=? AND r.expires_at>?"
+                    )
+                )
+                + " ORDER BY r.record_id",
+                (
+                    principal_id,
+                    epoch["key_version"],
+                    normalized_hmac,
+                    utc_text(now or utc_now()),
+                ),
+            ).fetchall()
+            return [
+                self._project_verified_memory_row_tx(
+                    self._connection, session, dict(row)
+                )
+                for row in rows
+            ]
+
     def delete_memory_record(self, record_id: str) -> bool:
+        session = self._memory_session_or_unavailable()
+        selected = utc_now()
         with self._transaction() as connection:
-            return connection.execute(
-                "DELETE FROM memory_records WHERE record_id=?", (record_id,)
-            ).rowcount == 1
+            principal_id = self._local_owner_principal_tx(connection)
+            self._require_current_memory_session_tx(
+                connection,
+                principal_id=principal_id,
+                session=session,
+            )
+            row = connection.execute(
+                self._memory_row_select_sql(
+                    where="r.record_id=? AND r.principal_id=?"
+                ),
+                (record_id, principal_id),
+            ).fetchone()
+            if row is None:
+                return False
+            self._project_verified_memory_row_tx(connection, session, dict(row))
+            return self._delete_saved_memory_row_tx(
+                connection,
+                dict(row),
+                reason="control_delete",
+                action="CONTROL_DELETED",
+                actor_kind="control",
+                actor_id=None,
+                now=selected,
+                encrypted=True,
+            )
+
+    def memory_record_page(
+        self,
+        *,
+        conversation_id: str,
+        limit: int = 50,
+        after: tuple[str, str] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """List a bounded principal-wide page using a stable keyset cursor."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 50:
+            raise ValueError("memory page limit is invalid")
+        if after is not None and (
+            not isinstance(after, tuple)
+            or len(after) != 2
+            or not all(isinstance(item, str) and item for item in after)
+        ):
+            raise ValueError("memory page cursor is invalid")
+        session = self._memory_session_or_unavailable()
+        selected = utc_text(now or utc_now())
+        with self._lock:
+            principal_id = self._principal_for_conversation_tx(
+                self._connection, conversation_id
+            )
+            state, _ = self._require_current_memory_session_tx(
+                self._connection,
+                principal_id=principal_id,
+                session=session,
+            )
+            parameters: list[Any] = [principal_id, selected]
+            where = "r.principal_id=? AND r.expires_at>?"
+            if after is not None:
+                parse_utc(after[0])
+                where += (
+                    " AND (r.created_at<? OR "
+                    "(r.created_at=? AND r.record_id>?))"
+                )
+                parameters.extend((after[0], after[0], after[1]))
+            parameters.append(limit + 1)
+            rows = self._connection.execute(
+                self._memory_row_select_sql(where=where)
+                + " ORDER BY r.created_at DESC,r.record_id LIMIT ?",
+                tuple(parameters),
+            ).fetchall()
+            has_more = len(rows) > limit
+            page_rows = rows[:limit]
+            items = [
+                self._project_verified_memory_row_tx(
+                    self._connection, session, dict(row)
+                )
+                for row in page_rows
+            ]
+            revision = int(state["memory_revision"])
+        cursor = None
+        if has_more and items:
+            cursor = (items[-1]["created_at"], items[-1]["record_id"])
+        return {
+            "items": items,
+            "memory_revision": revision,
+            "next_cursor": cursor,
+        }
+
+    @classmethod
+    def _delete_memory_record_by_id_tx(
+        cls,
+        connection: sqlite3.Connection,
+        record_id: str,
+        *,
+        expected_revision: int,
+        request_id: str,
+        session: MemoryEpochSessionV1 | None,
+        now: datetime,
+    ) -> dict[str, Any]:
+        """Apply a replay-safe saved-memory deletion inside the caller's tx."""
+
+        principal_id = cls._local_owner_principal_tx(connection)
+        tombstone = connection.execute(
+            "SELECT * FROM memory_record_tombstones WHERE record_id=?",
+            (record_id,),
+        ).fetchone()
+        if tombstone is not None:
+            if tombstone["reason"] != "control_delete":
+                raise OrchestratorError("not_found", status=404)
+            if (
+                tombstone["principal_id"] != principal_id
+                or tombstone["delete_request_id"] != request_id
+                or int(tombstone["memory_revision"]) != expected_revision + 1
+            ):
+                raise OrchestratorError("idempotency_conflict", status=409)
+            return {
+                "record_id": record_id,
+                "status": "removed_from_saved_memory",
+                "chat_history_changed": False,
+                "physical_erasure_claimed": False,
+                "memory_revision": int(tombstone["memory_revision"]),
+            }
+        reused_request = connection.execute(
+            "SELECT record_id FROM memory_record_tombstones "
+            "WHERE delete_request_id=?",
+            (request_id,),
+        ).fetchone()
+        if reused_request is not None:
+            raise OrchestratorError("idempotency_conflict", status=409)
+        if session is None:
+            raise MemoryStorageUnavailable("memory_crypto_session_unavailable")
+        state, _ = cls._require_current_memory_session_tx(
+            connection,
+            principal_id=principal_id,
+            session=session,
+        )
+        if int(state["memory_revision"]) != expected_revision:
+            raise OrchestratorError("memory_revision_conflict", status=409)
+        row = connection.execute(
+            cls._memory_row_select_sql(
+                where=(
+                    "r.record_id=? AND r.principal_id=? AND r.expires_at>?"
+                )
+            ),
+            (record_id, principal_id, utc_text(now)),
+        ).fetchone()
+        if row is None:
+            raise OrchestratorError("not_found", status=404)
+        cls._project_verified_memory_row_tx(connection, session, dict(row))
+        if not cls._delete_saved_memory_row_tx(
+            connection,
+            dict(row),
+            reason="control_delete",
+            action="CONTROL_DELETED",
+            actor_kind="control",
+            actor_id=request_id,
+            delete_request_id=request_id,
+            now=now,
+            encrypted=True,
+        ):
+            raise OrchestratorError("memory_delete_target_changed", status=409)
+        current = connection.execute(
+            "SELECT memory_revision FROM memory_crypto_state WHERE principal_id=?",
+            (principal_id,),
+        ).fetchone()
+        revision = int(current["memory_revision"])
+        return {
+            "record_id": record_id,
+            "status": "removed_from_saved_memory",
+            "chat_history_changed": False,
+            "physical_erasure_claimed": False,
+            "memory_revision": revision,
+        }
+
+    def delete_memory_record_by_id(
+        self,
+        record_id: str,
+        *,
+        expected_revision: int,
+        request_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Commit logical removal, audit and revision CAS in one transaction."""
+
+        require_uuid4(record_id)
+        require_uuid4(request_id)
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 0
+        ):
+            raise ValueError("memory revision is invalid")
+        prepared_session = self._memory_epoch_session
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            return self._delete_memory_record_by_id_tx(
+                connection,
+                record_id,
+                expected_revision=expected_revision,
+                request_id=request_id,
+                session=prepared_session,
+                now=selected,
+            )
 
     def record_explicit_memory_delete(
         self,
@@ -1148,7 +5264,7 @@ class OrchestratorStore:
         epoch: int,
         target_sha256: str,
         record_id: str | None,
-        expected_content_sha256: str | None,
+        expected_envelope_sha256: str | None,
         matched_count: int,
         now: datetime | None = None,
     ) -> dict[str, Any]:
@@ -1156,17 +5272,21 @@ class OrchestratorStore:
 
         if matched_count < 0 or isinstance(matched_count, bool):
             raise ValueError("memory delete match count is invalid")
-        if (record_id is None) != (expected_content_sha256 is None):
+        if (record_id is None) != (expected_envelope_sha256 is None):
             raise ValueError("memory delete record binding is incomplete")
         if (matched_count == 1) != (record_id is not None):
             raise ValueError("memory delete record binding is inconsistent")
         selected = now or utc_now()
+        prepared_session = self._memory_epoch_session
         with self._transaction() as connection:
             task = self._guarded_task_tx(
                 connection, task_id, epoch, (TaskState.COMPLETED,)
             )
             if task["conversation_id"] != conversation_id:
                 raise StaleEpochError()
+            principal_id = self._principal_for_conversation_tx(
+                connection, conversation_id
+            )
             existing = connection.execute(
                 """SELECT payload_json FROM task_events
                    WHERE task_id=? AND event_type LIKE 'memory.delete.%'""",
@@ -1180,12 +5300,39 @@ class OrchestratorStore:
             deleted_count = 0
             status = "empty" if matched_count == 0 else "ambiguous"
             if record_id is not None:
-                changed = connection.execute(
-                    """DELETE FROM memory_records
-                       WHERE record_id=? AND conversation_id=? AND content_sha256=?""",
-                    (record_id, conversation_id, expected_content_sha256),
+                if prepared_session is None:
+                    raise MemoryStorageUnavailable(
+                        "memory_crypto_session_unavailable"
+                    )
+                self._require_current_memory_session_tx(
+                    connection,
+                    principal_id=principal_id,
+                    session=prepared_session,
                 )
-                if changed.rowcount != 1:
+                row = connection.execute(
+                    self._memory_row_select_sql(
+                        where=(
+                            "r.record_id=? AND r.principal_id=? "
+                            "AND r.envelope_sha256=?"
+                        )
+                    ),
+                    (record_id, principal_id, expected_envelope_sha256),
+                ).fetchone()
+                if row is None:
+                    raise OrchestratorError("memory_delete_target_changed", status=409)
+                self._project_verified_memory_row_tx(
+                    connection, prepared_session, dict(row)
+                )
+                if not self._delete_saved_memory_row_tx(
+                    connection,
+                    dict(row),
+                    reason="explicit_forget",
+                    action="EXPLICIT_FORGOT",
+                    actor_kind="explicit_command",
+                    actor_id=task_id,
+                    now=selected,
+                    encrypted=True,
+                ):
                     raise OrchestratorError("memory_delete_target_changed", status=409)
                 deleted_count = 1
                 status = "completed"
@@ -1228,10 +5375,28 @@ class OrchestratorStore:
         with self._lock:
             return int(
                 self._connection.execute(
-                    "SELECT COUNT(*) FROM memory_records WHERE conversation_id=?",
-                    (conversation_id,),
+                    """SELECT COUNT(*) FROM conversation_principals cp
+                       JOIN memory_records r USING(principal_id)
+                       WHERE cp.conversation_id=? AND r.expires_at>?""",
+                    (conversation_id, utc_text(utc_now())),
                 ).fetchone()[0]
             )
+
+    def memory_principal_usage(self, conversation_id: str) -> dict[str, int]:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT u.active_record_count,u.active_content_bytes
+                   FROM conversation_principals cp
+                   JOIN memory_principal_usage u USING(principal_id)
+                   WHERE cp.conversation_id=?""",
+                (conversation_id,),
+            ).fetchone()
+        if row is None:
+            raise OrchestratorError("not_found", status=404)
+        return {
+            "active_record_count": int(row["active_record_count"]),
+            "active_content_bytes": int(row["active_content_bytes"]),
+        }
 
     def active_conversation(self) -> dict[str, Any] | None:
         with self._lock:
@@ -1249,34 +5414,58 @@ class OrchestratorStore:
             "updated_at": conversation["updated_at"],
         }
 
-    def create_conversation(self, expected_epoch: int, *, now: datetime | None = None) -> dict[str, Any]:
-        selected = now or utc_now()
-        stamp = utc_text(selected)
+    def _create_conversation_tx(
+        self,
+        connection: sqlite3.Connection,
+        expected_epoch: int,
+        *,
+        now: datetime,
+    ) -> dict[str, Any]:
+        stamp = utc_text(now)
         conversation_id = new_uuid4()
-        with self._transaction() as connection:
-            current = connection.execute("SELECT * FROM conversations WHERE state='ACTIVE'").fetchone()
-            if current is None:
-                if expected_epoch != 0:
-                    raise StaleEpochError()
-            else:
-                if current["current_epoch"] != expected_epoch:
-                    raise StaleEpochError()
-                if self._active_task_tx(connection, current["conversation_id"]) is not None:
-                    raise OrchestratorError("conversation_busy", status=409, retryable=True)
-                connection.execute(
-                    "UPDATE conversations SET state='CLOSED',updated_at=? WHERE conversation_id=? AND current_epoch=?",
-                    (stamp, current["conversation_id"], expected_epoch),
-                )
-                connection.execute(
-                    """UPDATE outbox SET state='NON_REPLAYABLE',claimed_by=NULL,claim_expires_at=NULL
-                       WHERE conversation_id=? AND state IN ('REPLAYABLE','CLAIMED')""",
-                    (current["conversation_id"],),
+        self._maybe_sweep_expired_memory_tx(connection, now=now)
+        current = connection.execute(
+            "SELECT * FROM conversations WHERE state='ACTIVE'"
+        ).fetchone()
+        if current is None:
+            if expected_epoch != 0:
+                raise StaleEpochError()
+        else:
+            if current["current_epoch"] != expected_epoch:
+                raise StaleEpochError()
+            if self._active_task_tx(connection, current["conversation_id"]) is not None:
+                raise OrchestratorError(
+                    "conversation_busy", status=409, retryable=True
                 )
             connection.execute(
-                "INSERT INTO conversations(conversation_id,state,current_epoch,revision,created_at,updated_at) VALUES(?, 'ACTIVE', 0, 0, ?, ?)",
-                (conversation_id, stamp, stamp),
+                "UPDATE conversations SET state='CLOSED',updated_at=? "
+                "WHERE conversation_id=? AND current_epoch=?",
+                (stamp, current["conversation_id"], expected_epoch),
             )
+            connection.execute(
+                """UPDATE outbox SET state='NON_REPLAYABLE',claimed_by=NULL,
+                          claim_expires_at=NULL
+                   WHERE conversation_id=?
+                     AND state IN ('REPLAYABLE','CLAIMED')""",
+                (current["conversation_id"],),
+            )
+        connection.execute(
+            """INSERT INTO conversations(
+                   conversation_id,state,current_epoch,revision,created_at,updated_at
+               ) VALUES(?,'ACTIVE',0,0,?,?)""",
+            (conversation_id, stamp, stamp),
+        )
+        self._bind_conversation_principal_tx(connection, conversation_id, stamp)
         return {"conversation_id": conversation_id, "epoch": 0, "state": "ACTIVE"}
+
+    def create_conversation(
+        self, expected_epoch: int, *, now: datetime | None = None
+    ) -> dict[str, Any]:
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            return self._create_conversation_tx(
+                connection, expected_epoch, now=selected
+            )
 
     @staticmethod
     def _active_task_tx(connection: sqlite3.Connection, conversation_id: str) -> sqlite3.Row | None:
@@ -1606,6 +5795,7 @@ class OrchestratorStore:
         selected = now or utc_now()
         digest = self.transcript_digest(event_type="input.transcript.final", turn_id=turn_id, response_id=None, payload=payload)
         with self._transaction() as connection:
+            self._maybe_sweep_expired_memory_tx(connection, now=selected)
             existing = connection.execute("SELECT * FROM inbox WHERE event_id=?", (event_id,)).fetchone()
             conversation = connection.execute("SELECT * FROM conversations WHERE state='ACTIVE'").fetchone()
             if conversation is None:
@@ -1614,6 +5804,9 @@ class OrchestratorStore:
                 connection.execute(
                     "INSERT INTO conversations(conversation_id,state,current_epoch,revision,created_at,updated_at) VALUES(?,'ACTIVE',0,0,?,?)",
                     (conversation_id, stamp, stamp),
+                )
+                self._bind_conversation_principal_tx(
+                    connection, conversation_id, stamp
                 )
                 conversation = connection.execute("SELECT * FROM conversations WHERE conversation_id=?", (conversation_id,)).fetchone()
             if existing is not None:
@@ -1958,6 +6151,31 @@ class OrchestratorStore:
             self._append_task_event_tx(connection, task_id, epoch, "COMPLETED", {}, selected)
             return self._task_from_row(connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
 
+    @staticmethod
+    def _explicit_memory_command_provenance(
+        *,
+        task_id: str,
+        turn_id: str,
+        user_text: str,
+        response_text: str,
+    ) -> ContentProvenanceV1:
+        """Bind a code-owned memory reply only to its current input and template."""
+
+        return ContentProvenanceV1.derive(
+            (
+                ContentProvenanceV1.source(
+                    ContentSourceKind.USER_INPUT,
+                    turn_id,
+                    user_text,
+                ),
+                ContentProvenanceV1.source(
+                    ContentSourceKind.CODE_TEMPLATE,
+                    task_id,
+                    response_text,
+                ),
+            )
+        )
+
     def _derive_response_provenance_tx(
         self,
         connection: sqlite3.Connection,
@@ -2011,6 +6229,13 @@ class OrchestratorStore:
                 inputs=inputs,
                 deterministic=True,
             )
+        if any(value.startswith("memory.command.") for value in event_types):
+            inputs.append(
+                ContentProvenanceV1.source(
+                    ContentSourceKind.CODE_TEMPLATE, task_id, assistant_text
+                )
+            )
+            return ContentProvenanceV1.derive(inputs)
         if any(value.startswith("memory.recall.") for value in event_types):
             inputs.append(
                 ContentProvenanceV1.source(
@@ -2030,6 +6255,50 @@ class OrchestratorStore:
         )
         return ContentProvenanceV1.derive(inputs)
 
+    def _cancel_task_request_tx(
+        self,
+        connection: sqlite3.Connection,
+        task_id: str,
+        expected_epoch: int,
+        reason: ReasonCode,
+        *,
+        terminal_state: TaskState = TaskState.CANCELLED,
+        now: datetime,
+    ) -> dict[str, Any]:
+        row = connection.execute(
+            """SELECT t.*,c.current_epoch
+               FROM tasks t JOIN conversations c USING(conversation_id)
+               WHERE task_id=? AND t.epoch=? AND c.current_epoch=?
+                 AND c.state='ACTIVE'""",
+            (task_id, expected_epoch, expected_epoch),
+        ).fetchone()
+        if row is None:
+            raise StaleEpochError()
+        if TaskState(row["state"]) in TERMINAL_STATES:
+            raise InvalidStateError()
+        new_epoch = expected_epoch + 1
+        changed = connection.execute(
+            "UPDATE conversations SET current_epoch=?,updated_at=? "
+            "WHERE conversation_id=? AND current_epoch=?",
+            (new_epoch, utc_text(now), row["conversation_id"], expected_epoch),
+        )
+        if changed.rowcount != 1:
+            raise StaleEpochError()
+        self._cancel_task_tx(
+            connection,
+            row,
+            guard_epoch=new_epoch,
+            state=terminal_state,
+            reason=reason,
+            now=now,
+        )
+        return {
+            "task_id": task_id,
+            "previous_epoch": expected_epoch,
+            "epoch": new_epoch,
+            "state": terminal_state.value,
+        }
+
     def cancel_task(
         self,
         task_id: str,
@@ -2041,24 +6310,14 @@ class OrchestratorStore:
     ) -> dict[str, Any]:
         selected = now or utc_now()
         with self._transaction() as connection:
-            row = connection.execute(
-                """SELECT t.*,c.current_epoch FROM tasks t JOIN conversations c USING(conversation_id)
-                   WHERE task_id=? AND t.epoch=? AND c.current_epoch=? AND c.state='ACTIVE'""",
-                (task_id, expected_epoch, expected_epoch),
-            ).fetchone()
-            if row is None:
-                raise StaleEpochError()
-            if TaskState(row["state"]) in TERMINAL_STATES:
-                raise InvalidStateError()
-            new_epoch = expected_epoch + 1
-            changed = connection.execute(
-                "UPDATE conversations SET current_epoch=?,updated_at=? WHERE conversation_id=? AND current_epoch=?",
-                (new_epoch, utc_text(selected), row["conversation_id"], expected_epoch),
+            return self._cancel_task_request_tx(
+                connection,
+                task_id,
+                expected_epoch,
+                reason,
+                terminal_state=terminal_state,
+                now=selected,
             )
-            if changed.rowcount != 1:
-                raise StaleEpochError()
-            self._cancel_task_tx(connection, row, guard_epoch=new_epoch, state=terminal_state, reason=reason, now=selected)
-            return {"task_id": task_id, "previous_epoch": expected_epoch, "epoch": new_epoch, "state": terminal_state.value}
 
     def terminate_failure(
         self,
@@ -2330,6 +6589,114 @@ class OrchestratorStore:
             for row in rows
         ]
 
+    def _decide_approval_tx(
+        self,
+        connection: sqlite3.Connection,
+        approval_id: str,
+        expected_epoch: int,
+        decision: str,
+        *,
+        client_connected: bool,
+        now: datetime,
+    ) -> dict[str, Any]:
+        if decision not in {"approve", "deny"}:
+            raise OrchestratorError("invalid_request", status=400)
+        approval = connection.execute(
+            "SELECT * FROM approvals WHERE approval_id=?", (approval_id,)
+        ).fetchone()
+        if approval is None:
+            raise OrchestratorError("not_found", status=404)
+        if approval["epoch"] != expected_epoch:
+            raise StaleEpochError()
+        if approval["status"] != "PENDING":
+            raise InvalidStateError()
+        task = self._guarded_task_tx(
+            connection,
+            approval["task_id"],
+            expected_epoch,
+            (TaskState.AWAITING_APPROVAL,),
+        )
+        approval_status = (
+            ApprovalStatus.APPROVED
+            if decision == "approve"
+            else ApprovalStatus.DENIED
+        )
+        target = (
+            TaskState.EXECUTING
+            if client_connected
+            else TaskState.DECISION_WAITING_RECONNECT
+        )
+        reconnect_deadline = (
+            None if client_connected else utc_text(now + self.disconnect_ttl)
+        )
+        connection.execute(
+            "UPDATE approvals SET status=?,decided_at=? "
+            "WHERE approval_id=? AND status='PENDING'",
+            (approval_status.value, utc_text(now), approval_id),
+        )
+        if approval["kind"] == "research":
+            connection.execute(
+                """UPDATE research_runs SET stage=?,updated_at=?
+                   WHERE approval_id=? AND stage='AWAITING_APPROVAL'""",
+                (
+                    "APPROVED"
+                    if approval_status == ApprovalStatus.APPROVED
+                    else "DENIED",
+                    utc_text(now),
+                    approval_id,
+                ),
+            )
+        connection.execute(
+            """UPDATE tasks SET state=?,active_started_at=?,
+                      disconnect_expires_at=?,updated_at=?
+               WHERE task_id=? AND epoch=? AND state='AWAITING_APPROVAL'""",
+            (
+                target.value,
+                utc_text(now) if client_connected else None,
+                reconnect_deadline,
+                utc_text(now),
+                task["task_id"],
+                expected_epoch,
+            ),
+        )
+        turn = connection.execute(
+            "SELECT effects_json FROM canonical_turns WHERE task_id=?",
+            (task["task_id"],),
+        ).fetchone()
+        effects = json.loads(turn["effects_json"])
+        effects.append(
+            {
+                "kind": (
+                    "ToolDenied"
+                    if approval_status == ApprovalStatus.DENIED
+                    else approval["kind"]
+                ),
+                "name": approval["name"],
+                "status": approval_status.value,
+                "arguments_sha256": approval["arguments_sha256"],
+                "result_sha256": "",
+            }
+        )
+        connection.execute(
+            "UPDATE canonical_turns SET effects_json=? WHERE task_id=?",
+            (canonical_json(effects), task["task_id"]),
+        )
+        self._append_task_event_tx(
+            connection,
+            task["task_id"],
+            expected_epoch,
+            target.value,
+            {"approval_id": approval_id, "decision": decision},
+            now,
+        )
+        return {
+            "approval_id": approval_id,
+            "task_id": task["task_id"],
+            "epoch": expected_epoch,
+            "approval_status": approval_status.value,
+            "task_state": target.value,
+        }
+
     def decide_approval(
         self,
         approval_id: str,
@@ -2342,98 +6709,93 @@ class OrchestratorStore:
         if decision not in {"approve", "deny"}:
             raise OrchestratorError("invalid_request", status=400)
         selected = now or utc_now()
-        with self._lock:
-            before = self._connection.execute(
-                "SELECT epoch,expires_at,status FROM approvals WHERE approval_id=?",
+        expired = False
+        result: dict[str, Any] | None = None
+        with self._transaction() as connection:
+            before = connection.execute(
+                "SELECT expires_at,status FROM approvals WHERE approval_id=?",
                 (approval_id,),
             ).fetchone()
-        if before is not None and before["status"] == "PENDING" and parse_utc(before["expires_at"]) <= selected:
-            self.expire_approval(approval_id, now=selected)
+            if (
+                before is not None
+                and before["status"] == "PENDING"
+                and parse_utc(before["expires_at"]) <= selected
+            ):
+                self._expire_approval_tx(connection, approval_id, now=selected)
+                expired = True
+            else:
+                result = self._decide_approval_tx(
+                    connection,
+                    approval_id,
+                    expected_epoch,
+                    decision,
+                    client_connected=client_connected,
+                    now=selected,
+                )
+        if expired:
             raise OrchestratorError("approval_expired", status=410)
-        with self._transaction() as connection:
-            approval = connection.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
-            if approval is None:
-                raise OrchestratorError("not_found", status=404)
-            if approval["epoch"] != expected_epoch:
-                raise StaleEpochError()
-            if approval["status"] != "PENDING":
-                raise InvalidStateError()
-            task = self._guarded_task_tx(connection, approval["task_id"], expected_epoch, (TaskState.AWAITING_APPROVAL,))
-            approval_status = ApprovalStatus.APPROVED if decision == "approve" else ApprovalStatus.DENIED
-            target = TaskState.EXECUTING if client_connected else TaskState.DECISION_WAITING_RECONNECT
-            reconnect_deadline = None if client_connected else utc_text(selected + self.disconnect_ttl)
-            connection.execute(
-                "UPDATE approvals SET status=?,decided_at=? WHERE approval_id=? AND status='PENDING'",
-                (approval_status.value, utc_text(selected), approval_id),
-            )
-            if approval["kind"] == "research":
-                connection.execute(
-                    """UPDATE research_runs SET stage=?,updated_at=?
-                       WHERE approval_id=? AND stage='AWAITING_APPROVAL'""",
-                    (
-                        "APPROVED" if approval_status == ApprovalStatus.APPROVED else "DENIED",
-                        utc_text(selected),
-                        approval_id,
-                    ),
-                )
-            connection.execute(
-                "UPDATE tasks SET state=?,active_started_at=?,disconnect_expires_at=?,updated_at=? WHERE task_id=? AND epoch=? AND state='AWAITING_APPROVAL'",
-                (target.value, utc_text(selected) if client_connected else None, reconnect_deadline, utc_text(selected), task["task_id"], expected_epoch),
-            )
-            turn = connection.execute("SELECT effects_json FROM canonical_turns WHERE task_id=?", (task["task_id"],)).fetchone()
-            effects = json.loads(turn["effects_json"])
-            effects.append({
-                "kind": "ToolDenied" if approval_status == ApprovalStatus.DENIED else approval["kind"],
-                "name": approval["name"],
-                "status": approval_status.value,
-                "arguments_sha256": approval["arguments_sha256"],
-                "result_sha256": "",
-            })
-            connection.execute("UPDATE canonical_turns SET effects_json=? WHERE task_id=?", (canonical_json(effects), task["task_id"]))
-            self._append_task_event_tx(connection, task["task_id"], expected_epoch, target.value, {"approval_id": approval_id, "decision": decision}, selected)
-            return {"approval_id": approval_id, "task_id": task["task_id"], "epoch": expected_epoch, "approval_status": approval_status.value, "task_state": target.value}
+        assert result is not None
+        return result
 
-    def expire_approval(self, approval_id: str, *, now: datetime | None = None) -> bool:
-        selected = now or utc_now()
-        with self._transaction() as connection:
-            approval = connection.execute(
-                "SELECT * FROM approvals WHERE approval_id=? AND status='PENDING' AND expires_at<=?",
-                (approval_id, utc_text(selected)),
-            ).fetchone()
-            if approval is None:
-                return False
-            task = connection.execute(
-                """SELECT t.*,c.current_epoch FROM tasks t JOIN conversations c USING(conversation_id)
-                   WHERE t.task_id=? AND t.epoch=? AND t.tombstoned=0
-                   AND c.current_epoch=? AND c.state='ACTIVE'""",
-                (approval["task_id"], approval["epoch"], approval["epoch"]),
-            ).fetchone()
-            if task is None:
-                connection.execute(
-                    "UPDATE approvals SET status='EXPIRED',decided_at=? WHERE approval_id=?",
-                    (utc_text(selected), approval_id),
-                )
-                return True
-            new_epoch = int(approval["epoch"]) + 1
-            changed = connection.execute(
-                "UPDATE conversations SET current_epoch=?,updated_at=? WHERE conversation_id=? AND current_epoch=?",
-                (new_epoch, utc_text(selected), task["conversation_id"], approval["epoch"]),
-            )
-            if changed.rowcount != 1:
-                raise StaleEpochError()
+    def _expire_approval_tx(
+        self,
+        connection: sqlite3.Connection,
+        approval_id: str,
+        *,
+        now: datetime,
+    ) -> bool:
+        approval = connection.execute(
+            "SELECT * FROM approvals WHERE approval_id=? "
+            "AND status='PENDING' AND expires_at<=?",
+            (approval_id, utc_text(now)),
+        ).fetchone()
+        if approval is None:
+            return False
+        task = connection.execute(
+            """SELECT t.*,c.current_epoch
+               FROM tasks t JOIN conversations c USING(conversation_id)
+               WHERE t.task_id=? AND t.epoch=? AND t.tombstoned=0
+                 AND c.current_epoch=? AND c.state='ACTIVE'""",
+            (approval["task_id"], approval["epoch"], approval["epoch"]),
+        ).fetchone()
+        if task is None:
             connection.execute(
-                "UPDATE approvals SET status='EXPIRED',decided_at=? WHERE approval_id=?",
-                (utc_text(selected), approval_id),
-            )
-            self._cancel_task_tx(
-                connection,
-                task,
-                guard_epoch=new_epoch,
-                state=TaskState.CANCELLED,
-                reason=ReasonCode.APPROVAL_EXPIRED,
-                now=selected,
+                "UPDATE approvals SET status='EXPIRED',decided_at=? "
+                "WHERE approval_id=?",
+                (utc_text(now), approval_id),
             )
             return True
+        new_epoch = int(approval["epoch"]) + 1
+        changed = connection.execute(
+            "UPDATE conversations SET current_epoch=?,updated_at=? "
+            "WHERE conversation_id=? AND current_epoch=?",
+            (new_epoch, utc_text(now), task["conversation_id"], approval["epoch"]),
+        )
+        if changed.rowcount != 1:
+            raise StaleEpochError()
+        connection.execute(
+            "UPDATE approvals SET status='EXPIRED',decided_at=? "
+            "WHERE approval_id=?",
+            (utc_text(now), approval_id),
+        )
+        self._cancel_task_tx(
+            connection,
+            task,
+            guard_epoch=new_epoch,
+            state=TaskState.CANCELLED,
+            reason=ReasonCode.APPROVAL_EXPIRED,
+            now=now,
+        )
+        return True
+
+    def expire_approval(
+        self, approval_id: str, *, now: datetime | None = None
+    ) -> bool:
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            return self._expire_approval_tx(
+                connection, approval_id, now=selected
+            )
 
     def expire_approvals(self, *, now: datetime | None = None) -> int:
         selected = now or utc_now()
@@ -2603,6 +6965,119 @@ class OrchestratorStore:
         with self._transaction() as connection:
             connection.execute("UPDATE outbox SET state='NON_REPLAYABLE',claimed_by=NULL,claim_expires_at=NULL WHERE response_id=? AND state IN ('REPLAYABLE','CLAIMED')", (response_id,))
 
+    def record_voice_playback_terminal(
+        self,
+        *,
+        event_id: str,
+        semantic_sha256: str,
+        response_id: str,
+        terminal_type: str,
+        client_sent_at: str,
+        now: datetime | None = None,
+    ) -> str:
+        """Persist content-free playback evidence before retiring delivery.
+
+        The receipt deliberately stores no payload, transcript, response text,
+        locale, unit index, session identifier, or connection identifier.  An
+        exact replay is idempotent; a changed event identity or a second
+        terminal for the same response fails closed.
+        """
+
+        if terminal_type not in {"playback.completed", "playback.interrupted"}:
+            raise ValueError("playback terminal type is invalid")
+        if (
+            not isinstance(semantic_sha256, str)
+            or len(semantic_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in semantic_sha256)
+        ):
+            raise ValueError("playback semantic digest is invalid")
+        try:
+            parse_utc(client_sent_at)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("playback client timestamp is invalid") from exc
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            task = connection.execute(
+                "SELECT task_id,epoch,state FROM tasks WHERE response_id=?",
+                (response_id,),
+            ).fetchone()
+            if task is None:
+                return "stale"
+            existing_event = connection.execute(
+                """SELECT semantic_sha256,task_id,epoch,response_id,terminal_type,
+                          client_sent_at
+                   FROM voice_playback_receipts WHERE event_id=?""",
+                (event_id,),
+            ).fetchone()
+            expected = (
+                semantic_sha256,
+                task["task_id"],
+                int(task["epoch"]),
+                response_id,
+                terminal_type,
+            )
+            if existing_event is not None:
+                observed = (
+                    existing_event["semantic_sha256"],
+                    existing_event["task_id"],
+                    int(existing_event["epoch"]),
+                    existing_event["response_id"],
+                    existing_event["terminal_type"],
+                )
+                if observed != expected:
+                    raise OrchestratorError(
+                        "protocol.conflicting_duplicate", status=409
+                    )
+                return "duplicate"
+            if connection.execute(
+                "SELECT 1 FROM voice_playback_receipts WHERE response_id=?",
+                (response_id,),
+            ).fetchone() is not None:
+                raise OrchestratorError(
+                    "protocol.conflicting_duplicate", status=409
+                )
+            if terminal_type == "playback.completed":
+                speech_done = connection.execute(
+                    """SELECT 1 FROM outbox
+                       WHERE response_id=? AND event_type='response.speech.done'""",
+                    (response_id,),
+                ).fetchone()
+                if task["state"] != TaskState.COMPLETED.value or speech_done is None:
+                    raise InvalidStateError()
+            connection.execute(
+                """INSERT INTO voice_playback_receipts(
+                   event_id,semantic_sha256,task_id,epoch,response_id,
+                   terminal_type,client_sent_at,received_at
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    event_id,
+                    semantic_sha256,
+                    task["task_id"],
+                    int(task["epoch"]),
+                    response_id,
+                    terminal_type,
+                    client_sent_at,
+                    utc_text(selected),
+                ),
+            )
+            self._append_task_event_tx(
+                connection,
+                task["task_id"],
+                int(task["epoch"]),
+                "voice.playback.completed"
+                if terminal_type == "playback.completed"
+                else "voice.playback.interrupted",
+                {},
+                selected,
+            )
+            connection.execute(
+                """UPDATE outbox SET state='NON_REPLAYABLE',claimed_by=NULL,
+                          claim_expires_at=NULL
+                   WHERE response_id=? AND state IN ('REPLAYABLE','CLAIMED')""",
+                (response_id,),
+            )
+            return "accepted"
+
     def expire_delivery(self, *, now: datetime | None = None) -> int:
         selected = now or utc_now()
         with self._transaction() as connection:
@@ -2623,6 +7098,39 @@ class OrchestratorStore:
             effects = tuple(CanonicalEffectV1(**item) for item in json.loads(row["effects_json"]))
             turns.append(CanonicalTurnV1(row["turn_id"], row["user_text"], row["user_language"], row["assistant_text"], effects))
         return CanonicalConversationV1(conversation_id, conversation["revision"], tuple(turns))
+
+    def recent_canonical_turns(
+        self, conversation_id: str, *, limit_pairs: int = 8
+    ) -> tuple[CanonicalTurnV1, ...]:
+        """Return a bounded chronological window of completed canonical pairs."""
+
+        if (
+            isinstance(limit_pairs, bool)
+            or not isinstance(limit_pairs, int)
+            or not 1 <= limit_pairs <= 8
+        ):
+            raise ValueError("canonical history limit must be between 1 and 8")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT turn_id,user_text,user_language,assistant_text,effects_json
+                   FROM canonical_turns
+                   WHERE conversation_id=? AND status='COMPLETED'
+                   ORDER BY created_at DESC,turn_id DESC LIMIT ?""",
+                (conversation_id, limit_pairs),
+            ).fetchall()
+        return tuple(
+            CanonicalTurnV1(
+                row["turn_id"],
+                row["user_text"],
+                row["user_language"],
+                row["assistant_text"],
+                tuple(
+                    CanonicalEffectV1(**item)
+                    for item in json.loads(row["effects_json"])
+                ),
+            )
+            for row in reversed(rows)
+        )
 
     def cloud_safe_history(self, conversation_id: str, *, limit_pairs: int = 4) -> tuple[CanonicalTurnV1, ...]:
         """Completed pairs with no memory, research or tool-derived content."""
@@ -3209,23 +7717,418 @@ class OrchestratorStore:
                 continue
         return count
 
-    def lookup_command(self, key: str, method: str, path: str, body: Any, expected_epoch: int, *, now: datetime | None = None) -> tuple[int, str | None] | None:
-        selected = now or utc_now()
-        digest = canonical_sha256(body)
-        with self._lock:
-            row = self._connection.execute("SELECT * FROM idempotency_commands WHERE idempotency_key=? AND expires_at>?", (key, utc_text(selected))).fetchone()
+    @staticmethod
+    def _lookup_command_tx(
+        connection: sqlite3.Connection,
+        key: str,
+        method: str,
+        path: str,
+        request_sha256: str,
+        expected_epoch: int,
+        *,
+        now: datetime,
+    ) -> tuple[int, str | None] | None:
+        stamp = utc_text(now)
+        row = connection.execute(
+            "SELECT * FROM idempotency_commands WHERE idempotency_key=?",
+            (key,),
+        ).fetchone()
         if row is None:
             return None
-        if row["method"] != method or row["canonical_path"] != path or row["request_sha256"] != digest or row["expected_epoch"] != expected_epoch:
+        if row["expires_at"] <= stamp:
+            connection.execute(
+                "DELETE FROM idempotency_commands "
+                "WHERE idempotency_key=? AND expires_at<=?",
+                (key, stamp),
+            )
+            return None
+        if (
+            row["method"] != method
+            or row["canonical_path"] != path
+            or row["request_sha256"] != request_sha256
+            or row["expected_epoch"] != expected_epoch
+        ):
             raise OrchestratorError("idempotency_conflict", status=409)
         return row["response_status"], row["response_json"]
 
-    def store_command(self, key: str, method: str, path: str, body: Any, expected_epoch: int, status: int, response_json: str | None, *, now: datetime | None = None) -> None:
+    @staticmethod
+    def _store_command_tx(
+        connection: sqlite3.Connection,
+        key: str,
+        method: str,
+        path: str,
+        request_sha256: str,
+        expected_epoch: int,
+        status: int,
+        response_json: str | None,
+        *,
+        now: datetime,
+    ) -> None:
+        connection.execute(
+            """INSERT INTO idempotency_commands(
+                   idempotency_key,method,canonical_path,request_sha256,
+                   expected_epoch,response_status,response_json,created_at,
+                   expires_at
+               ) VALUES(?,?,?,?,?,?,?,?,?)""",
+            (
+                key,
+                method,
+                path,
+                request_sha256,
+                expected_epoch,
+                status,
+                response_json,
+                utc_text(now),
+                utc_text(now + timedelta(hours=24)),
+            ),
+        )
+
+    @staticmethod
+    def _control_object(body: Any, fields: set[str]) -> dict[str, Any]:
+        if not isinstance(body, dict) or set(body) != fields:
+            raise OrchestratorError("invalid_request", status=400)
+        return body
+
+    @staticmethod
+    def _control_error(error: OrchestratorError) -> dict[str, Any]:
+        return {
+            "error": {
+                "code": error.code,
+                "retryable": error.retryable,
+            }
+        }
+
+    @classmethod
+    def _require_durable_memory_delete_binding_tx(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        idempotency_key: str,
+        request: ControlMutationRequest,
+        body: Any,
+        expected_epoch: int,
+    ) -> None:
+        """Keep a durable memory-delete key bound after its receipt expires."""
+
+        tombstone = connection.execute(
+            "SELECT * FROM memory_record_tombstones "
+            "WHERE delete_request_id=?",
+            (idempotency_key,),
+        ).fetchone()
+        if tombstone is None:
+            return
+        exact_memory_delete = (
+            request.kind is ControlMutationKind.DELETE_MEMORY_RECORD
+            and request.resource_id == tombstone["record_id"]
+            and body is None
+            and not isinstance(expected_epoch, bool)
+            and isinstance(expected_epoch, int)
+            and 0 <= expected_epoch <= SQLITE_MAX_INTEGER
+            and int(tombstone["memory_revision"]) == expected_epoch + 1
+            and tombstone["reason"] == "control_delete"
+            and tombstone["principal_id"]
+            == cls._local_owner_principal_tx(connection)
+        )
+        if not exact_memory_delete:
+            raise OrchestratorError("idempotency_conflict", status=409)
+
+    def _apply_control_mutation_tx(
+        self,
+        connection: sqlite3.Connection,
+        request: ControlMutationRequest,
+        body: Any,
+        expected_epoch: int,
+        *,
+        idempotency_key: str,
+        client_connected: bool,
+        now: datetime,
+    ) -> tuple[int, Any | None]:
+        if request.kind is ControlMutationKind.CREATE_CONVERSATION:
+            self._control_object(body, set())
+            return 201, self._create_conversation_tx(
+                connection, expected_epoch, now=now
+            )
+        if request.kind is ControlMutationKind.DELETE_CONVERSATION:
+            if body is not None:
+                raise OrchestratorError("invalid_request", status=400)
+            assert request.resource_id is not None
+            self._delete_conversation_tx(
+                connection,
+                require_uuid4(request.resource_id),
+                expected_epoch,
+                now=now,
+            )
+            return 204, None
+        if request.kind is ControlMutationKind.DELETE_MEMORY_RECORD:
+            if body is not None:
+                prior_delete = connection.execute(
+                    "SELECT record_id FROM memory_record_tombstones "
+                    "WHERE delete_request_id=?",
+                    (idempotency_key,),
+                ).fetchone()
+                if prior_delete is not None:
+                    raise OrchestratorError("idempotency_conflict", status=409)
+                raise OrchestratorError("invalid_request", status=400)
+            if (
+                isinstance(expected_epoch, bool)
+                or not isinstance(expected_epoch, int)
+                or expected_epoch < 0
+                or expected_epoch > SQLITE_MAX_INTEGER
+            ):
+                raise OrchestratorError("invalid_request", status=400)
+            assert request.resource_id is not None
+            try:
+                return 200, self._delete_memory_record_by_id_tx(
+                    connection,
+                    require_uuid4(request.resource_id),
+                    expected_revision=expected_epoch,
+                    request_id=idempotency_key,
+                    session=self._memory_epoch_session,
+                    now=now,
+                )
+            except OrchestratorError:
+                raise
+            except (
+                MemoryCryptoError,
+                MemoryStorageUnavailable,
+                RuntimeError,
+            ) as error:
+                raise OrchestratorError(
+                    "memory_storage_unavailable",
+                    status=503,
+                    retryable=True,
+                ) from error
+        if request.kind is ControlMutationKind.CANCEL_TASK:
+            payload = self._control_object(body, {"reason_code"})
+            if payload["reason_code"] != ReasonCode.USER_CANCELLED.value:
+                raise OrchestratorError("invalid_request", status=400)
+            assert request.resource_id is not None
+            return 200, self._cancel_task_request_tx(
+                connection,
+                require_uuid4(request.resource_id),
+                expected_epoch,
+                ReasonCode.USER_CANCELLED,
+                now=now,
+            )
+        if request.kind is ControlMutationKind.DECIDE_APPROVAL:
+            payload = self._control_object(body, {"decision"})
+            decision = payload["decision"]
+            if decision not in {"approve", "deny"}:
+                raise OrchestratorError("invalid_request", status=400)
+            assert request.resource_id is not None
+            approval_id = require_uuid4(request.resource_id)
+            approval = connection.execute(
+                "SELECT kind,status,expires_at FROM approvals "
+                "WHERE approval_id=?",
+                (approval_id,),
+            ).fetchone()
+            if approval is not None and approval["kind"] == "cloud_model":
+                raise OrchestratorError("forbidden", status=403)
+            if approval is not None and approval["kind"] == "tool":
+                raise OrchestratorError(
+                    "tool.approval_route_required", status=409
+                )
+            if (
+                approval is not None
+                and approval["status"] == "PENDING"
+                and parse_utc(approval["expires_at"]) <= now
+            ):
+                self._expire_approval_tx(connection, approval_id, now=now)
+                error = OrchestratorError("approval_expired", status=410)
+                return error.status, self._control_error(error)
+            return 200, self._decide_approval_tx(
+                connection,
+                approval_id,
+                expected_epoch,
+                decision,
+                client_connected=client_connected,
+                now=now,
+            )
+        if request.kind is ControlMutationKind.METHOD_NOT_ALLOWED:
+            raise OrchestratorError("method_not_allowed", status=405)
+        if request.kind is ControlMutationKind.NOT_FOUND:
+            raise OrchestratorError("not_found", status=404)
+        raise RuntimeError("unreachable control mutation")
+
+    @staticmethod
+    def _validate_control_mutation_binding(
+        method: str,
+        path: str,
+        request: ControlMutationRequest,
+    ) -> None:
+        if request.kind is ControlMutationKind.CREATE_CONVERSATION:
+            expected = ("POST", "/v1/conversations")
+        elif request.kind in {
+            ControlMutationKind.DELETE_CONVERSATION,
+            ControlMutationKind.DELETE_MEMORY_RECORD,
+            ControlMutationKind.CANCEL_TASK,
+            ControlMutationKind.DECIDE_APPROVAL,
+        }:
+            assert request.resource_id is not None
+            try:
+                canonical_id = require_uuid4(request.resource_id)
+            except OrchestratorError as error:
+                raise ValueError("control mutation HTTP binding is invalid") from error
+            if canonical_id != request.resource_id:
+                raise ValueError("control mutation HTTP binding is invalid")
+            if request.kind is ControlMutationKind.DELETE_CONVERSATION:
+                expected = (
+                    "DELETE",
+                    f"/v1/conversations/{canonical_id}",
+                )
+            elif request.kind is ControlMutationKind.DELETE_MEMORY_RECORD:
+                expected = ("DELETE", f"/v1/memory/records/{canonical_id}")
+            elif request.kind is ControlMutationKind.CANCEL_TASK:
+                expected = ("POST", f"/v1/tasks/{canonical_id}/cancel")
+            else:
+                expected = (
+                    "POST",
+                    f"/v1/approvals/{canonical_id}/decision",
+                )
+        else:
+            return
+        if (method, path) != expected:
+            raise ValueError("control mutation HTTP binding is invalid")
+
+    def execute_control_mutation(
+        self,
+        key: str,
+        method: str,
+        path: str,
+        body: Any,
+        expected_epoch: int,
+        request: ControlMutationRequest,
+        *,
+        client_connected: bool,
+        now: datetime | None = None,
+    ) -> tuple[int, str | None]:
+        """Commit one same-SQLite mutation and its exact receipt atomically."""
+
+        if not isinstance(request, ControlMutationRequest):
+            raise TypeError("control mutation request is invalid")
+        if not isinstance(client_connected, bool):
+            raise TypeError("control client state is invalid")
+        if request.kind is ControlMutationKind.DELETE_MEMORY_RECORD:
+            require_uuid4(key)
+            if (
+                isinstance(expected_epoch, bool)
+                or not isinstance(expected_epoch, int)
+                or expected_epoch < 0
+                or expected_epoch > SQLITE_MAX_INTEGER
+            ):
+                raise OrchestratorError("invalid_request", status=400)
+        self._validate_control_mutation_binding(method, path, request)
+        selected = now or utc_now()
+        request_sha256 = canonical_sha256(body)
+        should_checkpoint = False
+        with self._transaction() as connection:
+            replay = self._lookup_command_tx(
+                connection,
+                key,
+                method,
+                path,
+                request_sha256,
+                expected_epoch,
+                now=selected,
+            )
+            if replay is not None:
+                return replay
+            self._require_durable_memory_delete_binding_tx(
+                connection,
+                idempotency_key=key,
+                request=request,
+                body=body,
+                expected_epoch=expected_epoch,
+            )
+            connection.execute("SAVEPOINT control_mutation")
+            try:
+                status, result = self._apply_control_mutation_tx(
+                    connection,
+                    request,
+                    body,
+                    expected_epoch,
+                    idempotency_key=key,
+                    client_connected=client_connected,
+                    now=selected,
+                )
+            except OrchestratorError as error:
+                connection.execute("ROLLBACK TO control_mutation")
+                connection.execute("RELEASE control_mutation")
+                status = error.status
+                result = self._control_error(error)
+            else:
+                connection.execute("RELEASE control_mutation")
+            response_json = (
+                None if result is None else canonical_json(result)
+            )
+            self._store_command_tx(
+                connection,
+                key,
+                method,
+                path,
+                request_sha256,
+                expected_epoch,
+                status,
+                response_json,
+                now=selected,
+            )
+            should_checkpoint = (
+                request.kind is ControlMutationKind.DELETE_CONVERSATION
+                and status == 204
+            )
+        if should_checkpoint:
+            # Logical deletion and its receipt are already durable. WAL
+            # compaction is deliberately outside that transaction.
+            with suppress(sqlite3.Error):
+                self.checkpoint()
+        return status, response_json
+
+    def lookup_command(
+        self,
+        key: str,
+        method: str,
+        path: str,
+        body: Any,
+        expected_epoch: int,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[int, str | None] | None:
         selected = now or utc_now()
         with self._transaction() as connection:
-            connection.execute(
-                "INSERT INTO idempotency_commands(idempotency_key,method,canonical_path,request_sha256,expected_epoch,response_status,response_json,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                (key, method, path, canonical_sha256(body), expected_epoch, status, response_json, utc_text(selected), utc_text(selected + timedelta(hours=24))),
+            return self._lookup_command_tx(
+                connection,
+                key,
+                method,
+                path,
+                canonical_sha256(body),
+                expected_epoch,
+                now=selected,
+            )
+
+    def store_command(
+        self,
+        key: str,
+        method: str,
+        path: str,
+        body: Any,
+        expected_epoch: int,
+        status: int,
+        response_json: str | None,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            self._store_command_tx(
+                connection,
+                key,
+                method,
+                path,
+                canonical_sha256(body),
+                expected_epoch,
+                status,
+                response_json,
+                now=selected,
             )
 
     def expire_commands(self, *, now: datetime | None = None) -> int:
@@ -4315,89 +9218,174 @@ class OrchestratorStore:
             ).fetchone()[0]
         return max(0, MONTHLY_HARD_CAP_MICROUSD - int(used))
 
-    def delete_conversation(self, conversation_id: str, expected_epoch: int, *, now: datetime | None = None) -> None:
-        del now
-        with self._transaction() as connection:
-            row = connection.execute("SELECT * FROM conversations WHERE conversation_id=? AND state!='DELETED'", (conversation_id,)).fetchone()
-            if row is None:
-                raise OrchestratorError("not_found", status=404)
-            if row["current_epoch"] != expected_epoch:
-                raise StaleEpochError()
-            if self._active_task_tx(connection, conversation_id) is not None:
-                raise OrchestratorError("conversation_busy", status=409, retryable=True)
-            task_rows = connection.execute(
-                "SELECT task_id FROM tasks WHERE conversation_id=?", (conversation_id,)
-            ).fetchall()
-            task_ids = [item["task_id"] for item in task_rows]
-            if task_ids:
-                placeholders = ",".join("?" for _ in task_ids)
-                connection.execute(
-                    f"""DELETE FROM model_request_provenance
-                        WHERE reservation_id IN (
-                            SELECT reservation_id FROM reservations
-                            WHERE task_id IN ({placeholders})
-                        )""",
-                    tuple(task_ids),
+    def _delete_conversation_tx(
+        self,
+        connection: sqlite3.Connection,
+        conversation_id: str,
+        expected_epoch: int,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        row = connection.execute(
+            "SELECT * FROM conversations "
+            "WHERE conversation_id=? AND state!='DELETED'",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            raise OrchestratorError("not_found", status=404)
+        if row["current_epoch"] != expected_epoch:
+            raise StaleEpochError()
+        if self._active_task_tx(connection, conversation_id) is not None:
+            raise OrchestratorError(
+                "conversation_busy", status=409, retryable=True
+            )
+        task_rows = connection.execute(
+            "SELECT task_id FROM tasks WHERE conversation_id=?", (conversation_id,)
+        ).fetchall()
+        task_ids = [item["task_id"] for item in task_rows]
+        principal_id = self._principal_for_conversation_tx(
+            connection, conversation_id
+        )
+        memory_state = self._memory_crypto_state_tx(connection, principal_id)
+        if memory_state["storage_state"] == "MIGRATING":
+            raise OrchestratorError(
+                "memory_migration_in_progress", status=409, retryable=True
+            )
+        encrypted_memory = memory_state["storage_state"] == "ENCRYPTED"
+        memory_table = (
+            "memory_records"
+            if encrypted_memory
+            else "memory_records_v9_legacy"
+        )
+        memory_rows = connection.execute(
+            f"SELECT * FROM {memory_table} WHERE conversation_id=? "
+            "ORDER BY record_id",
+            (conversation_id,),
+        ).fetchall()
+        selected = now or utc_now()
+        for memory_row in memory_rows:
+            if not self._delete_saved_memory_row_tx(
+                connection,
+                memory_row,
+                reason="source_conversation_delete",
+                action="SOURCE_CONVERSATION_DELETED",
+                actor_kind="conversation_lifecycle",
+                actor_id=conversation_id,
+                now=selected,
+                encrypted=encrypted_memory,
+            ):
+                raise OrchestratorError(
+                    "memory_delete_target_changed", status=409
                 )
-                connection.execute(
-                    f"""DELETE FROM cloud_extension_inbox WHERE approval_id IN (
-                       SELECT approval_id FROM approvals WHERE task_id IN ({placeholders})
-                       )""",
-                    tuple(task_ids),
-                )
-                connection.execute(
-                    f"DELETE FROM research_documents WHERE task_id IN ({placeholders})",
-                    tuple(task_ids),
-                )
-                connection.execute(
-                    f"DELETE FROM research_runs WHERE task_id IN ({placeholders})",
-                    tuple(task_ids),
-                )
-                for table in (
-                    "cloud_provider_receipts",
-                    "cloud_dispatch_permits",
-                    "cloud_cost_reservations",
-                    "cloud_presentations",
-                    "cloud_approval_bindings",
-                    "route_plans",
-                    "routing_facts",
-                    "task_profiles",
-                    "continuation_artifacts",
-                    "tool_executions",
-                    "capability_reservations",
-                    "approvals",
-                    "reservations",
-                    "task_events",
-                    "inbox",
-                ):
-                    connection.execute(
-                        f"DELETE FROM {table} WHERE task_id IN ({placeholders})",
-                        tuple(task_ids),
-                    )
+        if not encrypted_memory and memory_rows:
+            usage = connection.execute(
+                """SELECT COUNT(*) AS count,COALESCE(SUM(content_bytes),0) AS bytes
+                   FROM memory_records_v9_legacy WHERE principal_id=?""",
+                (principal_id,),
+            ).fetchone()
             connection.execute(
-                "DELETE FROM cloud_extension_outbox WHERE conversation_id=?",
-                (conversation_id,),
+                """UPDATE memory_principal_usage
+                   SET active_record_count=?,active_content_bytes=?,updated_at=?
+                   WHERE principal_id=?""",
+                (
+                    int(usage["count"]),
+                    int(usage["bytes"]),
+                    utc_text(selected),
+                    principal_id,
+                ),
+            )
+        if task_ids:
+            placeholders = ",".join("?" for _ in task_ids)
+            connection.execute(
+                f"""DELETE FROM model_request_provenance
+                    WHERE reservation_id IN (
+                        SELECT reservation_id FROM reservations
+                        WHERE task_id IN ({placeholders})
+                    )""",
+                tuple(task_ids),
             )
             connection.execute(
-                "DELETE FROM outbox_attempts WHERE event_id IN (SELECT event_id FROM outbox WHERE conversation_id=?)",
-                (conversation_id,),
-            )
-            connection.execute(
-                "DELETE FROM memory_records WHERE conversation_id=?", (conversation_id,)
-            )
-            connection.execute("DELETE FROM outbox WHERE conversation_id=?", (conversation_id,))
-            connection.execute(
-                """DELETE FROM content_provenance
-                   WHERE entity_kind='canonical_turn' AND entity_id IN (
-                       SELECT turn_id FROM canonical_turns WHERE conversation_id=?
+                f"""DELETE FROM cloud_extension_inbox WHERE approval_id IN (
+                   SELECT approval_id FROM approvals
+                   WHERE task_id IN ({placeholders})
                    )""",
-                (conversation_id,),
+                tuple(task_ids),
             )
-            connection.execute("DELETE FROM canonical_turns WHERE conversation_id=?", (conversation_id,))
-            connection.execute("DELETE FROM tasks WHERE conversation_id=?", (conversation_id,))
             connection.execute(
-                "DELETE FROM conversations WHERE conversation_id=? AND current_epoch=?",
-                (conversation_id, expected_epoch),
+                f"DELETE FROM research_documents "
+                f"WHERE task_id IN ({placeholders})",
+                tuple(task_ids),
+            )
+            connection.execute(
+                f"DELETE FROM research_runs WHERE task_id IN ({placeholders})",
+                tuple(task_ids),
+            )
+            for table in (
+                "voice_playback_receipts",
+                "cloud_provider_receipts",
+                "cloud_dispatch_permits",
+                "cloud_cost_reservations",
+                "cloud_presentations",
+                "cloud_approval_bindings",
+                "route_plans",
+                "routing_facts",
+                "task_profiles",
+                "continuation_artifacts",
+                "tool_executions",
+                "capability_reservations",
+                "approvals",
+                "reservations",
+                "task_events",
+                "inbox",
+            ):
+                connection.execute(
+                    f"DELETE FROM {table} WHERE task_id IN ({placeholders})",
+                    tuple(task_ids),
+                )
+        connection.execute(
+            "DELETE FROM cloud_extension_outbox WHERE conversation_id=?",
+            (conversation_id,),
+        )
+        connection.execute(
+            """DELETE FROM outbox_attempts WHERE event_id IN (
+                   SELECT event_id FROM outbox WHERE conversation_id=?
+               )""",
+            (conversation_id,),
+        )
+        connection.execute(
+            "DELETE FROM outbox WHERE conversation_id=?", (conversation_id,)
+        )
+        connection.execute(
+            """DELETE FROM content_provenance
+               WHERE entity_kind='canonical_turn' AND entity_id IN (
+                   SELECT turn_id FROM canonical_turns WHERE conversation_id=?
+               )""",
+            (conversation_id,),
+        )
+        connection.execute(
+            "DELETE FROM canonical_turns WHERE conversation_id=?",
+            (conversation_id,),
+        )
+        connection.execute(
+            "DELETE FROM tasks WHERE conversation_id=?", (conversation_id,)
+        )
+        connection.execute(
+            "DELETE FROM conversations "
+            "WHERE conversation_id=? AND current_epoch=?",
+            (conversation_id, expected_epoch),
+        )
+
+    def delete_conversation(
+        self,
+        conversation_id: str,
+        expected_epoch: int,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        selected = now or utc_now()
+        with self._transaction() as connection:
+            self._delete_conversation_tx(
+                connection, conversation_id, expected_epoch, now=selected
             )
         self.checkpoint()
 

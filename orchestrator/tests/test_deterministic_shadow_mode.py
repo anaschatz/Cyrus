@@ -67,10 +67,10 @@ class DeterministicShadowModeTests(unittest.TestCase):
                 "inference_bearer_token": "inference-private",
                 "memory_shadow_enabled": True,
             }
-            deterministic = OrchestratorConfig.from_mapping(
+            deterministic = OrchestratorConfig.from_test_mapping(
                 {**base, "memory_shadow_mode": "deterministic_only"}
             )
-            structured = OrchestratorConfig.from_mapping(
+            structured = OrchestratorConfig.from_test_mapping(
                 {**base, "memory_shadow_mode": "structured_fallback"}
             )
             self.assertEqual(
@@ -82,7 +82,7 @@ class DeterministicShadowModeTests(unittest.TestCase):
                 "structured_fallback",
             )
             with self.assertRaisesRegex(ValueError, "memory_shadow_mode"):
-                OrchestratorConfig.from_mapping(
+                OrchestratorConfig.from_test_mapping(
                     {**base, "memory_shadow_mode": "model_auto"}
                 )
             self.assertEqual(deterministic.final_response_output_tokens, 256)
@@ -91,7 +91,7 @@ class DeterministicShadowModeTests(unittest.TestCase):
                 MEMORY_RELEASE_POLICY_VERSION,
             )
             with self.assertRaisesRegex(ValueError, "memory_release_policy"):
-                OrchestratorConfig.from_mapping(
+                OrchestratorConfig.from_test_mapping(
                     {**base, "memory_release_policy": "generative-production"}
                 )
             for invalid in (31, 1025, True):
@@ -100,7 +100,7 @@ class DeterministicShadowModeTests(unittest.TestCase):
                         ValueError,
                         "final_response_output_tokens",
                     ):
-                        OrchestratorConfig.from_mapping(
+                        OrchestratorConfig.from_test_mapping(
                             {
                                 **base,
                                 "final_response_output_tokens": invalid,

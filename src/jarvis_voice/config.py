@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import re
 from dataclasses import dataclass, field
@@ -11,6 +10,7 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 
 from .errors import BackendError
+from .voice_auth import VoiceAuthError, VoiceAuthKey, load_voice_auth_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +118,7 @@ class VoiceConfig:
     scheduler: SchedulerClientConfig = field(default_factory=SchedulerClientConfig)
     vad: VadConfig = field(default_factory=VadConfig)
     orchestrator_url: str = "ws://127.0.0.1:8765"
+    voice_auth_key_file: str | None = None
     sapi_voices: Mapping[str, str] = field(default_factory=dict)
     macos: MacosConfig = field(default_factory=MacosConfig)
     logging_level: str = "INFO"
@@ -126,13 +127,39 @@ class VoiceConfig:
 def is_loopback_websocket_url(value: str) -> bool:
     try:
         parsed = urlparse(value)
-        if parsed.scheme not in {"ws", "wss"} or parsed.hostname is None:
-            return False
-        if parsed.hostname.lower() == "localhost":
-            return True
-        return ipaddress.ip_address(parsed.hostname).is_loopback
+        return (
+            parsed.scheme == "ws"
+            and parsed.hostname == "127.0.0.1"
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.path in {"", "/"}
+            and not parsed.params
+            and not parsed.query
+            and not parsed.fragment
+            and parsed.port is not None
+            and 1 <= parsed.port <= 65_535
+        )
     except (TypeError, ValueError):
         return False
+
+
+def configured_voice_auth_key(config: VoiceConfig) -> VoiceAuthKey:
+    """Load the external per-install key or fail without disclosing its path."""
+
+    if config.voice_auth_key_file is None:
+        raise BackendError(
+            "config.voice_auth_key_required",
+            "A per-install Voice authentication key is required",
+            subsystem="config",
+        )
+    try:
+        return load_voice_auth_key(config.voice_auth_key_file)
+    except VoiceAuthError as exc:
+        raise BackendError(
+            "config.voice_auth_key_invalid",
+            "The Voice authentication key is unavailable or invalid",
+            subsystem="config",
+        ) from exc
 
 
 def _positive_int(value: Any, field_name: str) -> int:
@@ -203,6 +230,24 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     url = str(data.get("orchestrator_url", "ws://127.0.0.1:8765"))
     if not is_loopback_websocket_url(url):
         raise BackendError("config.non_loopback_orchestrator", "Only loopback WebSocket URLs are permitted", subsystem="config", safe_context={"field": "orchestrator_url"})
+    voice_auth_key_file = data.get("voice_auth_key_file")
+    if voice_auth_key_file is not None:
+        if not isinstance(voice_auth_key_file, str) or not voice_auth_key_file:
+            raise BackendError(
+                "config.voice_auth_key_path_invalid",
+                "Voice authentication key path must be absolute",
+                subsystem="config",
+                safe_context={"field": "voice_auth_key_file"},
+            )
+        selected_auth_key = Path(voice_auth_key_file).expanduser()
+        if not selected_auth_key.is_absolute():
+            raise BackendError(
+                "config.voice_auth_key_path_invalid",
+                "Voice authentication key path must be absolute",
+                subsystem="config",
+                safe_context={"field": "voice_auth_key_file"},
+            )
+        voice_auth_key_file = str(selected_auth_key)
     voices = data.get("sapi_voices", {})
     if not isinstance(voices, Mapping) or not all(isinstance(k, str) and isinstance(v, str) for k, v in voices.items()):
         raise BackendError("config.invalid_field", "SAPI voice mappings must be strings", subsystem="config", safe_context={"field": "sapi_voices"})
@@ -265,6 +310,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
             padding_ms=int(vad_data.get("padding_ms", 80)),
         ),
         orchestrator_url=url,
+        voice_auth_key_file=voice_auth_key_file,
         sapi_voices=dict(voices),
         macos=MacosConfig(
             asr_backend=str(macos_data.get("asr_backend", "whisper_cpp")).lower(),

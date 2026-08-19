@@ -32,6 +32,7 @@ from jarvis_voice.macos.native_run import (
 )
 from jarvis_voice.native_qualification import evaluate_native_evidence
 from jarvis_voice.ptt import PttEvent, PttTransition
+from jarvis_voice.voice_auth import create_voice_auth_key_file
 
 
 class _FakeAcousticMonitor:
@@ -50,6 +51,12 @@ class _FakeAcousticMonitor:
 
 def _event(name: str, timestamp: float, **details: object) -> dict[str, object]:
     return {"event": name, "timestamp": timestamp, **details}
+
+
+def _authenticated_config(root: Path):
+    key_path = root / "voice-auth.json"
+    create_voice_auth_key_file(key_path, key=b"k" * 32)
+    return voice_config_from_mapping({"voice_auth_key_file": str(key_path)})
 
 
 class AcousticSilenceMonitorTests(unittest.TestCase):
@@ -569,18 +576,19 @@ class MacNativeRunTests(unittest.TestCase):
                 return self.timings
 
         class Server:
-            def __init__(self, _url): pass
+            def __init__(self, _url, _auth_key): pass
             def start(self): pass
             def stop(self): pass
 
-        config = voice_config_from_mapping({})
         with tempfile.TemporaryDirectory() as directory, mock.patch(
             "jarvis_voice.macos.native_run.sys.platform",
             "darwin",
         ):
+            root = Path(directory)
+            config = _authenticated_config(root)
             report = run_macos_native_collection(
                 config,
-                output=Path(directory) / "evidence.json",
+                output=root / "evidence.json",
                 silence_threshold_dbfs=-40.0,
                 audio_path="built_in",
                 duration_seconds=2.0,
@@ -621,7 +629,7 @@ class MacNativeRunTests(unittest.TestCase):
             def timing_snapshot(self): return ()
 
         class Server:
-            def __init__(self, _url): pass
+            def __init__(self, _url, _auth_key): pass
             def start(self): pass
             def stop(self): pass
 
@@ -629,9 +637,10 @@ class MacNativeRunTests(unittest.TestCase):
             "jarvis_voice.macos.native_run.sys.platform",
             "darwin",
         ):
+            root = Path(directory)
             report = run_macos_native_collection(
-                voice_config_from_mapping({}),
-                output=Path(directory) / "evidence.json",
+                _authenticated_config(root),
+                output=root / "evidence.json",
                 silence_threshold_dbfs=-40.0,
                 audio_path="built_in",
                 duration_seconds=1.0,

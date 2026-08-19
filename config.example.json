@@ -49,6 +49,7 @@
     "padding_ms": 80
   },
   "orchestrator_url": "ws://127.0.0.1:8765",
+  "voice_auth_key_file": null,
   "sapi_voices": {"el-GR": "", "en-US": ""},
   "macos": {
     "asr_backend": "whisper_cpp",

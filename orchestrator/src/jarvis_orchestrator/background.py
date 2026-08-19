@@ -11,10 +11,18 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from .operations import OperationalError, ProcessLock, operational_paths
-
+from .private_state import (
+    PrivateStateError,
+    assert_private_regular_file,
+    create_or_replace_private_file,
+    ensure_private_directory,
+    unlink_private_file,
+)
 
 MACOS_LABEL = "com.jarvis.orchestrator"
 WINDOWS_TASK_NAME = "JARVIS-Orchestrator"
+BACKGROUND_SHUTDOWN_TIMEOUT_SECONDS = 5
+BACKGROUND_MANAGER_STOP_TIMEOUT_SECONDS = 7.0
 
 
 def _repository_root() -> Path:
@@ -56,10 +64,14 @@ class BackgroundServiceManager:
         return Path.home() / "Library" / "LaunchAgents" / f"{MACOS_LABEL}.plist"
 
     def _write_runner(self) -> None:
-        self.paths["state"].mkdir(parents=True, exist_ok=True)
-        self.runner.write_text(_runner_source(self.config_path), encoding="utf-8")
-        if os.name != "nt":
-            self.runner.chmod(0o600)
+        try:
+            ensure_private_directory(self.paths["state"], create=True)
+            create_or_replace_private_file(
+                self.runner,
+                _runner_source(self.config_path).encode("utf-8"),
+            )
+        except PrivateStateError as exc:
+            raise OperationalError(exc.code) from exc
 
     @staticmethod
     def _run(command: list[str], *, allowed_fail: bool = False) -> bool:
@@ -82,6 +94,7 @@ class BackgroundServiceManager:
             "ProgramArguments": [sys.executable, str(self.runner)],
             "RunAtLoad": True,
             "KeepAlive": {"SuccessfulExit": False},
+            "ExitTimeOut": BACKGROUND_SHUTDOWN_TIMEOUT_SECONDS,
             "ProcessType": "Background",
             "ThrottleInterval": 5,
             "WorkingDirectory": str(_repository_root()),
@@ -104,27 +117,42 @@ class BackgroundServiceManager:
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <StartWhenAvailable>true</StartWhenAvailable>
+    <AllowHardTerminate>true</AllowHardTerminate>
     <RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <Enabled>true</Enabled>
   </Settings>
   <Actions Context="Author"><Exec><Command>{command}</Command><Arguments>{arguments}</Arguments><WorkingDirectory>{escape(str(_repository_root()))}</WorkingDirectory></Exec></Actions>
 </Task>'''
-        self.windows_xml.write_text(document, encoding="utf-16")
+        try:
+            create_or_replace_private_file(
+                self.windows_xml,
+                document.encode("utf-16"),
+            )
+        except PrivateStateError as exc:
+            raise OperationalError(exc.code) from exc
 
     def _is_running(self) -> bool:
         probe = ProcessLock(self.paths["lock"])
         try:
             probe.acquire()
-        except OperationalError:
-            return True
+        except OperationalError as exc:
+            if exc.code == "service_already_running":
+                return True
+            raise
         else:
             probe.release()
             return False
 
     def install(self) -> dict[str, object]:
+        try:
+            ensure_private_directory(self.paths["state"], create=True)
+            unlink_private_file(self.paths["stop"], missing_ok=True)
+        except PrivateStateError as exc:
+            raise OperationalError(exc.code) from exc
+        # Clear only a stale request before install work begins.  Any stop
+        # arriving after this point must survive until the service consumes it.
         self._write_runner()
-        self.paths["stop"].unlink(missing_ok=True)
         if sys.platform == "darwin":
             self._write_macos_plist()
             domain = f"gui/{os.getuid()}"
@@ -141,7 +169,11 @@ class BackgroundServiceManager:
         return self.status()
 
     def start(self) -> dict[str, object]:
-        self.paths["stop"].unlink(missing_ok=True)
+        try:
+            ensure_private_directory(self.paths["state"], create=True)
+            unlink_private_file(self.paths["stop"], missing_ok=True)
+        except PrivateStateError as exc:
+            raise OperationalError(exc.code) from exc
         if sys.platform == "darwin":
             if not self.macos_plist.is_file():
                 raise OperationalError("background_not_installed")
@@ -154,18 +186,44 @@ class BackgroundServiceManager:
             raise OperationalError("background_platform_unsupported")
         return self._wait_for_state(running=True)
 
-    def stop(self, *, timeout_seconds: float = 10.0) -> dict[str, object]:
-        self.paths["state"].mkdir(parents=True, exist_ok=True)
-        self.paths["stop"].write_bytes(b"stop\n")
-        return self._wait_for_state(running=False, timeout_seconds=timeout_seconds)
+    def stop(
+        self,
+        *,
+        timeout_seconds: float = BACKGROUND_MANAGER_STOP_TIMEOUT_SECONDS,
+    ) -> dict[str, object]:
+        try:
+            ensure_private_directory(self.paths["state"], create=True)
+            create_or_replace_private_file(self.paths["stop"], b"stop\n")
+        except PrivateStateError as exc:
+            raise OperationalError(exc.code) from exc
+        return self._wait_for_state(
+            running=False,
+            timeout_seconds=timeout_seconds,
+            require_stop_consumed=True,
+        )
 
     def _wait_for_state(
-        self, *, running: bool, timeout_seconds: float = 10.0
+        self,
+        *,
+        running: bool,
+        timeout_seconds: float = 10.0,
+        require_stop_consumed: bool = False,
     ) -> dict[str, object]:
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if self._is_running() is running:
-                return self.status()
+                try:
+                    stop_pending = assert_private_regular_file(
+                        self.paths["stop"], required=False
+                    )
+                except PrivateStateError as exc:
+                    raise OperationalError(exc.code) from exc
+                # A non-zero hard exit can produce a brief unlocked interval
+                # before the OS manager restarts the service.  The service
+                # clears this marker only after full successful cleanup, so a
+                # stop command never reports that transient gap as success.
+                if not require_stop_consumed or not stop_pending:
+                    return self.status()
             time.sleep(0.1)
         raise OperationalError("background_state_timeout")
 
@@ -181,8 +239,11 @@ class BackgroundServiceManager:
             self.windows_xml.unlink(missing_ok=True)
         else:
             raise OperationalError("background_platform_unsupported")
-        self.runner.unlink(missing_ok=True)
-        self.paths["stop"].unlink(missing_ok=True)
+        try:
+            unlink_private_file(self.runner, missing_ok=True)
+            unlink_private_file(self.paths["stop"], missing_ok=True)
+        except PrivateStateError as exc:
+            raise OperationalError(exc.code) from exc
         return self.status()
 
     def status(self) -> dict[str, object]:

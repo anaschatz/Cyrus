@@ -13,7 +13,11 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from .runtime_supervisor import RuntimeSupervisor
 from .scheduler_store import SchedulerStore
+
+SCHEDULER_RUNTIME_COMPONENT = "scheduler_worker"
+SCHEDULER_RUNTIME_FAILURE = "runtime_scheduler_failed"
 
 
 class SchedulerWorker:
@@ -37,9 +41,24 @@ class SchedulerWorker:
         self._last_monotonic_ns: int | None = None
         self.worker_boot_id = str(uuid.uuid4())
 
-    def start(self) -> None:
+    def start(self, *, supervisor: RuntimeSupervisor | None = None) -> None:
         if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self.run(), name="jarvis-deterministic-scheduler")
+            if supervisor is None:
+                # Kept for standalone deterministic scheduler tests.  The
+                # production CLI always supplies the process supervisor.
+                self._task = asyncio.create_task(
+                    self.run(), name="jarvis-deterministic-scheduler"
+                )
+            else:
+                self._task = supervisor.start_task(
+                    SCHEDULER_RUNTIME_COMPONENT,
+                    lambda: self.run(
+                        ready=lambda: supervisor.acknowledge_ready(
+                            SCHEDULER_RUNTIME_COMPONENT
+                        )
+                    ),
+                    failure_code=SCHEDULER_RUNTIME_FAILURE,
+                )
 
     async def stop(self) -> None:
         if self._task is None:
@@ -85,9 +104,13 @@ class SchedulerWorker:
             "purged_content_count": purged,
         }
 
-    async def run(self) -> None:
+    async def run(self, *, ready: Callable[[], None] | None = None) -> None:
+        acknowledged = False
         while True:
             self.tick()
+            if not acknowledged and ready is not None:
+                ready()
+                acknowledged = True
             self._wake.clear()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=self.maximum_wait_seconds)

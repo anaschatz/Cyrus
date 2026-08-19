@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.asr_selection import create_macos_asr_backend, with_faster_whisper_cpu_smoke
 from jarvis_voice.macos.doctor import macos_doctor_report
 from jarvis_voice.manifest import ManifestValidationResult
+from jarvis_voice.voice_auth import create_voice_auth_key_file
 
 
 class MacCpuSmokeSelectionTests(unittest.TestCase):
@@ -53,12 +55,13 @@ class MacCpuSmokeSelectionTests(unittest.TestCase):
 
 
 class MacCpuSmokeDoctorTests(unittest.TestCase):
-    def _config(self, vad_path: Path):
+    def _config(self, vad_path: Path, auth_key_path: Path):
         raw = vad_path.read_bytes()
         import hashlib
 
         base = voice_config_from_mapping({
             "orchestrator_url": "ws://127.0.0.1:8765",
+            "voice_auth_key_file": str(auth_key_path),
             "vad": {"artifact": {"path": str(vad_path), "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}},
             "macos": {"system_voices": {"el-GR": "GreekVoice", "en-US": "EnglishVoice"}},
         })
@@ -72,7 +75,9 @@ class MacCpuSmokeDoctorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             vad = Path(temp) / "silero.onnx"
             vad.write_bytes(b"vad")
-            config = self._config(vad)
+            auth_key = Path(temp) / "voice-auth.json"
+            create_voice_auth_key_file(auth_key, key=b"k" * 32)
+            config = self._config(vad, auth_key)
             with mock.patch("jarvis_voice.macos.doctor._validate_artifact", side_effect=AssertionError("unused backend inspected")):
                 report = macos_doctor_report(
                     config,
@@ -104,7 +109,9 @@ class MacCpuSmokeDoctorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             vad = Path(temp) / "silero.onnx"
             vad.write_bytes(b"vad")
-            config = self._config(vad)
+            auth_key = Path(temp) / "voice-auth.json"
+            create_voice_auth_key_file(auth_key, key=b"k" * 32)
+            config = self._config(vad, auth_key)
             report = macos_doctor_report(
                 config,
                 platform_name="darwin",
@@ -121,6 +128,130 @@ class MacCpuSmokeDoctorTests(unittest.TestCase):
         self.assertFalse(report["ready"])
         self.assertEqual(report["checks"]["asr"]["code"], "model.hash_mismatch")
         self.assertEqual(report["checks"]["audio"]["code"], "audio.sounddevice_missing")
+
+    def test_restricted_codex_native_probes_are_inconclusive_and_fail_closed(self) -> None:
+        dependencies = {
+            name: {"status": "ready", "code": "dependency.available"}
+            for name in (
+                "sounddevice",
+                "soxr",
+                "onnxruntime",
+                "websockets",
+                "faster-whisper",
+                "ctranslate2",
+                "numpy",
+            )
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            vad = Path(temp) / "silero.onnx"
+            vad.write_bytes(b"vad")
+            auth_key = Path(temp) / "voice-auth.json"
+            create_voice_auth_key_file(auth_key, key=b"k" * 32)
+            config = self._config(vad, auth_key)
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"CODEX_SANDBOX": "seatbelt"},
+                    clear=False,
+                ),
+                mock.patch(
+                    "jarvis_voice.macos.doctor.CoreGraphicsEventTapAdapter.preflight",
+                    side_effect=AssertionError("restricted probe must not run"),
+                ),
+                mock.patch(
+                    "jarvis_voice.macos.doctor._default_audio_probe",
+                    side_effect=AssertionError("restricted probe must not run"),
+                ),
+            ):
+                report = macos_doctor_report(
+                    config,
+                    platform_name="darwin",
+                    machine="arm64",
+                    macos_version="14.6",
+                    python_version=(3, 11),
+                    pointer_bits=64,
+                    voice_probe=lambda: {"GreekVoice", "EnglishVoice"},
+                    dependencies=dependencies,
+                    model_validator=lambda path: ManifestValidationResult(
+                        True,
+                        "model.manifest_valid",
+                        "valid",
+                        files_checked=4,
+                    ),
+                )
+
+        self.assertFalse(report["ready"])
+        for name in ("ptt", "audio"):
+            self.assertEqual(report["checks"][name]["status"], "inconclusive")
+            self.assertEqual(
+                report["checks"][name]["code"],
+                "environment.restricted_native_io_probe",
+            )
+            self.assertEqual(
+                report["checks"][name]["probe_scope"],
+                "current_process_identity",
+            )
+
+    def test_audio_probe_distinguishes_no_device_from_query_failure(self) -> None:
+        dependencies = {
+            name: {"status": "ready", "code": "dependency.available"}
+            for name in (
+                "sounddevice",
+                "soxr",
+                "onnxruntime",
+                "websockets",
+                "faster-whisper",
+                "ctranslate2",
+                "numpy",
+            )
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            vad = Path(temp) / "silero.onnx"
+            vad.write_bytes(b"vad")
+            auth_key = Path(temp) / "voice-auth.json"
+            create_voice_auth_key_file(auth_key, key=b"k" * 32)
+            config = self._config(vad, auth_key)
+            common = {
+                "platform_name": "darwin",
+                "machine": "arm64",
+                "macos_version": "14.6",
+                "python_version": (3, 11),
+                "pointer_bits": 64,
+                "permission_probe": lambda: True,
+                "restricted_native_probe": False,
+                "voice_probe": lambda: {"GreekVoice", "EnglishVoice"},
+                "dependencies": dependencies,
+                "model_validator": lambda path: ManifestValidationResult(
+                    True,
+                    "model.manifest_valid",
+                    "valid",
+                    files_checked=4,
+                ),
+            }
+            no_device = macos_doctor_report(
+                config,
+                audio_probe=lambda _device: False,
+                **common,
+            )
+
+            def query_failed(_device: object) -> bool:
+                raise RuntimeError("private device detail")
+
+            query_error = macos_doctor_report(
+                config,
+                audio_probe=query_failed,
+                **common,
+            )
+
+        self.assertEqual(
+            no_device["checks"]["audio"]["code"],
+            "audio.coreaudio_no_input_device",
+        )
+        self.assertEqual(
+            query_error["checks"]["audio"]["code"],
+            "audio.coreaudio_query_failed",
+        )
+        self.assertNotIn("private device detail", json.dumps(query_error))
 
     def test_cli_exposes_explicit_cpu_commands(self) -> None:
         from jarvis_voice.cli import build_parser

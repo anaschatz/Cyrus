@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
-import unicodedata
 from collections.abc import Mapping
 from typing import Any, ClassVar
 
@@ -23,6 +21,7 @@ from .memory import (
     MemoryRecall,
     MemoryRecallRequest,
     MemoryWriteResult,
+    memory_search_terms,
     parse_explicit_memory_command,
 )
 from .store import OrchestratorStore
@@ -31,50 +30,9 @@ SUPPORTED_ANAMNESIS_CONTRACT_SHA256 = (
     "832de106ffcfa543d8544bb7b29084a141666d6a3f6e2d40e90ff03ade2b1352"
 )
 
-_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
-_STOPWORDS = frozenset(
-    {
-        "το",
-        "η",
-        "ο",
-        "τα",
-        "οι",
-        "μου",
-        "σου",
-        "ειναι",
-        "ποιο",
-        "ποια",
-        "τι",
-        "για",
-        "the",
-        "a",
-        "an",
-        "is",
-        "are",
-        "my",
-        "what",
-        "about",
-    }
-)
-
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _normalized(value: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", value.casefold())
-    return "".join(
-        character for character in decomposed if not unicodedata.combining(character)
-    )
-
-
-def _tokens(value: str) -> frozenset[str]:
-    return frozenset(
-        token
-        for token in _TOKEN.findall(_normalized(value))
-        if len(token) > 1 and token not in _STOPWORDS
-    )
 
 
 def _explicit_fact(value: str) -> str | None:
@@ -96,6 +54,7 @@ class _SQLiteRecallClient:
 
     def __init__(self, store: OrchestratorStore) -> None:
         self._store = store
+        self._verification_scopes: dict[str, str] = {}
 
     def add(
         self,
@@ -132,51 +91,60 @@ class _SQLiteRecallClient:
             content=content,
             metadata=metadata,
         )
-        return self._provider_row(row)
+        record_id = str(row["record_id"])
+        self._verification_scopes[record_id] = user_id
+        return self._provider_row(row, user_id=user_id)
 
-    def search(
+    async def search(
         self, query: str, *, user_id: str, limit: int
     ) -> list[dict[str, object]]:
-        query_tokens = _tokens(query)
-        recall_all = any(
-            marker in _normalized(query)
-            for marker in ("θυμα", "μνημη", "remember", "recall", "memory")
+        prefix = "anamnesis::jarvis::"
+        if not user_id.startswith(prefix) or len(user_id) == len(prefix):
+            raise ValueError("memory scope is invalid")
+        conversation_id = user_id[len(prefix) :]
+        query_terms = memory_search_terms(query)
+        if not query_terms:
+            return []
+        rows = await self._store.search_memory_records(
+            conversation_id=conversation_id,
+            query=query,
+            limit=limit,
         )
-        matches: list[tuple[float, dict[str, Any]]] = []
-        for row in self._store.memory_records_for_scope(user_id):
-            content_tokens = _tokens(row["content"])
-            overlap = len(query_tokens & content_tokens)
-            if overlap == 0 and not recall_all:
-                continue
-            denominator = max(1, min(len(query_tokens), len(content_tokens)))
-            score = min(1.0, overlap / denominator)
-            if overlap == 0:
-                score = 0.25
-            if score < 0.2:
-                continue
-            item = self._provider_row(row)
-            item["score"] = score
-            matches.append((score, item))
-        matches.sort(key=lambda item: (-item[0], str(item[1]["id"])))
-        return [item for _, item in matches[:limit]]
+        results: list[dict[str, object]] = []
+        for row in rows:
+            item = self._provider_row(row, user_id=user_id)
+            item["score"] = min(1.0, int(row["match_count"]) / len(query_terms))
+            results.append(item)
+        return results
 
     def get(self, memory_id: str) -> dict[str, object] | None:
         row = self._store.memory_record(memory_id)
-        return None if row is None else self._provider_row(row)
+        if row is None:
+            return None
+        user_id = self._verification_scopes.pop(memory_id, None)
+        return self._provider_row(row, user_id=user_id)
 
     def delete(self, memory_id: str) -> dict[str, bool]:
         return {"deleted": self._store.delete_memory_record(memory_id)}
 
     @staticmethod
-    def _provider_row(row: Mapping[str, Any]) -> dict[str, object]:
+    def _provider_row(
+        row: Mapping[str, Any], *, user_id: str | None = None
+    ) -> dict[str, object]:
         metadata = row.get("metadata")
         if metadata is None and "metadata_json" in row:
             metadata = json.loads(str(row["metadata_json"]))
+        projected_metadata = dict(metadata or {})
+        if user_id is None:
+            user_id = f"anamnesis::jarvis::{row['conversation_id']}"
+        prefix = "anamnesis::jarvis::"
+        projected_metadata["_anamnesis_namespace"] = "jarvis"
+        projected_metadata["_anamnesis_user_id"] = user_id[len(prefix) :]
         return {
             "id": str(row["record_id"]),
             "content": str(row["content"]),
-            "user_id": str(row["scoped_user_id"]),
-            "metadata": dict(metadata or {}),
+            "user_id": user_id,
+            "metadata": projected_metadata,
         }
 
 
@@ -191,7 +159,7 @@ class AnamnesisMemoryAdapter:
             from anamnesis.runtime_contract import anamnesis_runtime_contract
         except ImportError as exc:
             raise RuntimeError(
-                "Anamnesis source package is unavailable; add anamnesis/src to PYTHONPATH"
+                "The qualified Anamnesis runtime package is unavailable"
             ) from exc
         contract = anamnesis_runtime_contract()
         digest = _sha256_text(canonical_json(contract))
@@ -254,12 +222,10 @@ class AnamnesisMemoryAdapter:
         target = _explicit_forget_target(observation.text)
         if target is None:
             return MemoryDeleteResult(False, False, 0, self.provider, _sha256_text(""))
-        scoped_user_id = f"anamnesis::jarvis::{observation.conversation_id}"
-        matches = [
-            row
-            for row in self._store.memory_records_for_scope(scoped_user_id)
-            if _normalized(str(row["content"])) == _normalized(target)
-        ]
+        matches = self._store.memory_records_matching(
+            conversation_id=observation.conversation_id,
+            target=target,
+        )
         selected = matches[0] if len(matches) == 1 else None
         outcome = self._store.record_explicit_memory_delete(
             task_id=observation.task_id,
@@ -267,8 +233,8 @@ class AnamnesisMemoryAdapter:
             epoch=observation.epoch,
             target_sha256=_sha256_text(target),
             record_id=None if selected is None else str(selected["record_id"]),
-            expected_content_sha256=(
-                None if selected is None else str(selected["content_sha256"])
+            expected_envelope_sha256=(
+                None if selected is None else str(selected["envelope_sha256"])
             ),
             matched_count=len(matches),
         )

@@ -5,6 +5,7 @@ import io
 import json
 import os
 import queue
+import subprocess
 import sys
 import tempfile
 import threading
@@ -22,6 +23,7 @@ from jarvis_voice.config import ArtifactConfig, WhisperCppConfig, voice_config_f
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.audio_capture import CoreAudioCapture
 from jarvis_voice.macos.doctor import macos_doctor_report
+from jarvis_voice.voice_auth import create_voice_auth_key_file
 from jarvis_voice.macos.ptt import (
     CG_EVENT_KEY_DOWN,
     CG_EVENT_KEY_UP,
@@ -34,7 +36,7 @@ from jarvis_voice.macos.ptt import (
     mac_ptt_vkey,
 )
 from jarvis_voice.macos.recovery import MacRecoverySupervisor
-from jarvis_voice.macos.system_tts import MacSystemTtsBackend
+from jarvis_voice.macos.system_tts import MacSystemTtsBackend, _start_say
 from jarvis_voice.macos.whisper_cpp import WhisperCppSidecarBackend, parse_whisper_response
 from jarvis_voice.ptt import PttEventPublisher, PttTransition, function_key_vkey
 
@@ -404,7 +406,30 @@ class FakeSayProcess:
         return self.returncode or 0
 
 
+class StubbornSayProcess(FakeSayProcess):
+    def __init__(self) -> None:
+        super().__init__(False)
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired("say", timeout)
+        return self.returncode
+
+
 class MacTtsTests(unittest.TestCase):
+    def test_say_inherits_voice_group_for_supervisor_crash_containment(self) -> None:
+        with mock.patch(
+            "jarvis_voice.macos.system_tts.subprocess.Popen"
+        ) as popen:
+            _start_say(["/usr/bin/say", "-f", "-"])
+
+        kwargs = popen.call_args.kwargs
+        self.assertNotIn("start_new_session", kwargs)
+        self.assertFalse(kwargs["shell"])
+
     def test_text_is_stdin_only_and_units_remain_ordered(self) -> None:
         processes: list[FakeSayProcess] = []
         argv: list[list[str]] = []
@@ -426,6 +451,36 @@ class MacTtsTests(unittest.TestCase):
         self.assertEqual([item.input_bytes.decode() for item in processes], ["Πρώτη πρόταση.", "Δεύτερη πρόταση."])
         self.assertNotIn("Πρώτη πρόταση.", " ".join(argv[0]))
 
+    def test_completion_callback_observes_queued_then_idle_state(self) -> None:
+        release_worker = threading.Event()
+        completed = threading.Event()
+        observed: list[tuple[int, bool]] = []
+        backend_ref: dict[str, MacSystemTtsBackend] = {}
+
+        def on_completed(unit: SpeechUnit) -> None:
+            observed.append((unit.unit_index, backend_ref["backend"].is_idle))
+            if unit.unit_index == 2:
+                completed.set()
+
+        def factory(_argv: list[str]) -> FakeSayProcess:
+            self.assertTrue(release_worker.wait(1.0))
+            return FakeSayProcess(True)
+
+        backend = MacSystemTtsBackend(
+            voice_mapping={},
+            process_factory=factory,
+            on_completed=on_completed,
+        )
+        backend_ref["backend"] = backend
+        self.addCleanup(backend.close)
+
+        backend.enqueue(SpeechUnit("r", 1, 1, "en-US", "final"))
+        backend.enqueue(SpeechUnit("r", 1, 2, "en-US", "really final"))
+        release_worker.set()
+
+        self.assertTrue(completed.wait(1.0))
+        self.assertEqual(observed, [(1, False), (2, True)])
+
     def test_cancel_terminates_active_and_rejects_late_completion(self) -> None:
         process = FakeSayProcess(False)
         started = threading.Event()
@@ -444,6 +499,26 @@ class MacTtsTests(unittest.TestCase):
         backend.close()
         self.assertTrue(process.terminated)
         self.assertEqual(completed, [])
+
+    def test_close_escalates_exact_stubborn_say_process_and_reaps(self) -> None:
+        process = StubbornSayProcess()
+        started = threading.Event()
+        completed: list[int] = []
+        backend = MacSystemTtsBackend(
+            voice_mapping={},
+            process_factory=lambda _argv: process,
+            on_started=lambda _unit: started.set(),
+            on_completed=lambda unit: completed.append(unit.unit_index),
+        )
+        backend.enqueue(SpeechUnit("r", 1, 1, "en-US", "active"))
+        self.assertTrue(started.wait(1.0))
+
+        backend.close()
+
+        self.assertTrue(process.terminated)
+        self.assertTrue(process.killed)
+        self.assertEqual(completed, [])
+        self.assertTrue(backend.is_idle)
 
 
 class MacDoctorConfigTests(unittest.TestCase):
@@ -482,13 +557,16 @@ class MacDoctorConfigTests(unittest.TestCase):
             executable = root / "whisper-server"
             model = root / "model.bin"
             vad = root / "silero.onnx"
+            auth_key = root / "voice-auth.json"
             executable.write_bytes(b"exe")
             executable.chmod(0o700)
             model.write_bytes(b"model")
             vad.write_bytes(b"vad")
+            create_voice_auth_key_file(auth_key, key=b"k" * 32)
             config = voice_config_from_mapping({
                 "ptt_key": "F9",
                 "orchestrator_url": "ws://127.0.0.1:8765",
+                "voice_auth_key_file": str(auth_key),
                 "vad": {"artifact": artifact(vad)},
                 "macos": {
                     "whisper_cpp": {

@@ -9,6 +9,13 @@ dist/
 voice.local.json
 orchestrator.local.json
 jarvis.private.json
+voice-auth.json
+voice.json
+orchestrator.json
+beta-preflight*.json
+physical-turn*.json
+jarvis-stack-status*.json
+.jarvis-macos-beta-*/
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm

@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from jarvis_voice.protocol import Envelope, EventFactory
+from jarvis_voice.voice_auth import load_voice_auth_key
+from jarvis_voice.voice_auth_transport import authenticate_async_client
 
 _CLOSED_FAILURE_CODES = frozenset(
     {
@@ -96,6 +98,7 @@ def _task_evidence(database: Path, turn_id: str) -> dict[str, Any]:
            WHERE task_id=? AND (
              event_type LIKE 'memory.recall.%'
              OR event_type LIKE 'memory.delete.%'
+             OR event_type LIKE 'memory.command.%'
            ) ORDER BY event_sequence""",
         (selected["task_id"],),
     )
@@ -107,8 +110,13 @@ def _task_evidence(database: Path, turn_id: str) -> dict[str, Any]:
         (row for row in events if str(row["event_type"]).startswith("memory.delete.")),
         None,
     )
+    command = next(
+        (row for row in events if str(row["event_type"]).startswith("memory.command.")),
+        None,
+    )
     recall_payload = {} if recall is None else json.loads(recall["payload_json"])
     delete_payload = {} if deletion is None else json.loads(deletion["payload_json"])
+    command_payload = {} if command is None else json.loads(command["payload_json"])
     memory_count = _read_only(
         database,
         "SELECT COUNT(*) AS n FROM memory_records WHERE conversation_id=?",
@@ -122,6 +130,10 @@ def _task_evidence(database: Path, turn_id: str) -> dict[str, Any]:
         "memory_count": int(memory_count),
         "recall_event": None if recall is None else recall["event_type"],
         "recall_count": int(recall_payload.get("result_count", 0)),
+        "command_event": None if command is None else command["event_type"],
+        "command_status": command_payload.get("status"),
+        "command_changed": command_payload.get("changed"),
+        "command_matched": int(command_payload.get("matched_count", 0)),
         "delete_event": None if deletion is None else deletion["event_type"],
         "delete_matched": int(delete_payload.get("matched_count", 0)),
         "delete_count": int(delete_payload.get("deleted_count", 0)),
@@ -136,20 +148,26 @@ def _wait_evidence(
     turn_id: str,
     phase: int,
     timeout: float,
-    expected: tuple[str, int, str | None, int, int],
+    expected: tuple[str | None, int, str | None, str | None, int, int],
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last: Exception | None = None
     while time.monotonic() < deadline:
         try:
             evidence = _task_evidence(database, turn_id)
-            recall_event, recall_count, delete_event, delete_count, memory_count = (
-                expected
-            )
+            (
+                recall_event,
+                recall_count,
+                command_event,
+                delete_event,
+                delete_count,
+                memory_count,
+            ) = expected
             if (
                 evidence["state"] == "COMPLETED"
                 and evidence["recall_event"] == recall_event
                 and evidence["recall_count"] == recall_count
+                and evidence["command_event"] == command_event
                 and evidence["delete_event"] == delete_event
                 and evidence["delete_count"] == delete_count
                 and evidence["memory_count"] == memory_count
@@ -357,6 +375,27 @@ def _authority_counts(database: Path) -> dict[str, int]:
     return counts
 
 
+def _canonical_effect_summary(
+    database: Path, conversation_id: str
+) -> list[tuple[str, str]]:
+    rows = _read_only(
+        database,
+        """SELECT effects_json FROM canonical_turns
+           WHERE conversation_id=? ORDER BY created_at,turn_id""",
+        (conversation_id,),
+    )
+    result: list[tuple[str, str]] = []
+    for row in rows:
+        effects = json.loads(row["effects_json"])
+        if not isinstance(effects, list):
+            raise RuntimeError("memory CRUD canonical effects were invalid")
+        for effect in effects:
+            if not isinstance(effect, dict):
+                raise RuntimeError("memory CRUD canonical effects were invalid")
+            result.append((str(effect.get("kind")), str(effect.get("status"))))
+    return result
+
+
 def _validate_disposable_target(args: argparse.Namespace) -> None:
     database = args.database.resolve(strict=True)
     config = args.config.resolve(strict=True)
@@ -429,32 +468,35 @@ async def run(
         "Is there a stored synthetic verification nonce? Reply only yes or no.",
     )
     expected = (
-        ("memory.recall.empty", 0, None, 0, 1),
-        ("memory.recall.completed", 1, None, 0, 1),
-        ("memory.recall.completed", 1, "memory.delete.completed", 1, 0),
-        ("memory.recall.empty", 0, None, 0, 0),
+        (None, 0, "memory.command.remember.stored", None, 0, 1),
+        ("memory.recall.completed", 1, None, None, 0, 1),
+        (None, 0, "memory.command.forget.deleted", "memory.delete.completed", 1, 0),
+        ("memory.recall.empty", 0, None, None, 0, 0),
     )
     factory = EventFactory()
     turns: list[dict[str, Any]] = []
     before = _authority_counts(args.database)
+    config_document = json.loads(args.config.read_text(encoding="utf-8"))
+    auth_key = load_voice_auth_key(config_document["voice_auth_key_file"])
     async with connect(
         args.url,
         origin=None,
+        compression=None,
+        proxy=None,
         open_timeout=3,
         close_timeout=1,
         ping_interval=10,
         ping_timeout=10,
         max_size=64 * 1024,
     ) as websocket:
-        await websocket.send(
-            factory.create(
-                "client.hello",
-                {
-                    "protocol": "jarvis.voice/1",
-                    "capabilities": ["speech_commits", "speech_done", "output_epochs"],
-                },
-            ).to_json()
+        hello = factory.create(
+            "client.hello",
+            {
+                "protocol": "jarvis.voice/1",
+                "capabilities": ["speech_commits", "speech_done", "output_epochs"],
+            },
         )
+        await authenticate_async_client(websocket, auth_key, hello.to_json())
         ready = Envelope.from_json(await websocket.recv())
         if ready.type != "server.ready":
             raise RuntimeError("memory CRUD probe did not receive server.ready")
@@ -481,20 +523,37 @@ async def run(
         await websocket.send(factory.create("client.goodbye").to_json())
 
     for index, (turn, contract) in enumerate(zip(turns, expected, strict=True)):
-        recall_event, recall_count, delete_event, delete_count, memory_count = contract
+        (
+            recall_event,
+            recall_count,
+            command_event,
+            delete_event,
+            delete_count,
+            memory_count,
+        ) = contract
         if (
             turn["state"] != "COMPLETED"
             or turn["recall_event"] != recall_event
             or turn["recall_count"] != recall_count
+            or turn["command_event"] != command_event
             or turn["delete_event"] != delete_event
             or turn["delete_count"] != delete_count
             or turn["memory_count"] != memory_count
         ):
             raise RuntimeError(f"memory CRUD contract failed at phase {index + 1}")
+    if (
+        turns[0]["command_status"] != "stored"
+        or turns[0]["command_changed"] is not True
+        or turns[0]["command_matched"] != 0
+    ):
+        raise RuntimeError("memory CRUD remember command evidence was invalid")
     if turns[2]["delete_selection"] != "exact_normalized_content":
         raise RuntimeError("memory CRUD deletion selection was not deterministic")
     if (
-        turns[2]["delete_matched"] != 1
+        turns[2]["command_status"] != "deleted"
+        or turns[2]["command_changed"] is not True
+        or turns[2]["command_matched"] != 1
+        or turns[2]["delete_matched"] != 1
         or turns[2]["delete_authoritative"] is not True
         or turns[2]["delete_target_sha256"] != _sha256(fact)
     ):
@@ -509,7 +568,6 @@ async def run(
         after[name] != 0
         for name in (
             "approvals",
-            "canonical_effects",
             "capability_reservations",
             "cloud_dispatch_permits",
             "cloud_provider_receipts",
@@ -521,6 +579,12 @@ async def run(
         )
     ):
         raise RuntimeError("memory CRUD probe created an unrelated side effect")
+    canonical_effects = _canonical_effect_summary(args.database, conversation_id)
+    if after["canonical_effects"] != 2 or canonical_effects != [
+        ("memory", "stored"),
+        ("memory", "deleted"),
+    ]:
+        raise RuntimeError("memory CRUD canonical effects were invalid")
     status = await asyncio.to_thread(
         _delete_conversation, args.control_url, args.config, conversation_id, epoch
     )
@@ -568,6 +632,7 @@ async def run(
         "recall_completed": turns[1]["recall_event"] == "memory.recall.completed",
         "recall_response_contains_marker": turns[1]["response_contains_marker"],
         "delete_completed": turns[2]["delete_event"] == "memory.delete.completed",
+        "canonical_memory_effects_verified": True,
         "post_delete_recall_empty": turns[3]["recall_event"] == "memory.recall.empty",
         "post_delete_response_contains_marker": turns[3]["response_contains_marker"],
         "response_marker_checks_isolating": False,

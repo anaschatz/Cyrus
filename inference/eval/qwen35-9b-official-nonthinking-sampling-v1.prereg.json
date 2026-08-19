@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "experiment_id": "qwen35-9b-official-nonthinking-sampling-v1",
+  "status": "preregistered_unrun",
+  "candidate_only": true,
+  "authoritative_qualification": false,
+  "public_model_alias": "jarvis-local",
+  "suite_version": "jarvis-local-fallback-quality-v1",
+  "corpus_sha256": "cc3814b05807908f1235db815f078f5ac2a4034ad3844e9dcc03a85c5d1fdd71",
+  "system_prompt_sha256": "05dbfe802df53da6c8660425016b9ea20fef0c745111c38701845d5c422cf4f2",
+  "scorer_code_bundle": {
+    "aggregate_sha256": "ed1682eed182da50cf819bf1bc923a4fc1f728e252009ffb0736c27318f6286c",
+    "files": [
+      {
+        "name": "limits.py",
+        "sha256": "327f592cf7fa1f4368bb1a0e57062cc3d321353eb9d74bf7b6f5af689810ee7e",
+        "size_bytes": 822
+      },
+      {
+        "name": "profile_preflight.py",
+        "sha256": "b22a9659cf4e7c8f8a9629333b5e12545f91daa42402f4b0c21ccb17fc4f16e1",
+        "size_bytes": 15197
+      },
+      {
+        "name": "profile_quality.py",
+        "sha256": "a7c5cf30101102117ca2d4486f63f65d3c66e7913f08db385c5a303f1abe0a8f",
+        "size_bytes": 11748
+      },
+      {
+        "name": "strict_json.py",
+        "sha256": "a9875b61825fbd6032eceb4d93ea59109aacd595c91a0f022e4f48fcc2c879f1",
+        "size_bytes": 5778
+      }
+    ]
+  },
+  "model": {
+    "description": "Qwen3.5 9B Ollama-format GGUF Q4_K_M",
+    "sha256": "dec52a44569a2a25341c4e4d3fee25846eed4f6f0b936278e3a3c900bb99d37c",
+    "size_bytes": 6594462816
+  },
+  "runner": {
+    "description": "llama-server build 9840",
+    "sha256": "b9bdd68928c150482049100d20bd446ccee5569ff3db386135855e0cb8fea66a",
+    "size_bytes": 11496832
+  },
+  "fixed_runtime": {
+    "context_tokens": 8192,
+    "slots": 1,
+    "reasoning": "off",
+    "native_chat_template": true,
+    "offline": true,
+    "authenticated_ipv4_loopback": true
+  },
+  "baseline_sampling": {
+    "temperature": 0,
+    "top_p": 1
+  },
+  "treatment_sampling": {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 20,
+    "presence_penalty": 1.5,
+    "seed": 101
+  },
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "execution": {
+    "warmups": 2,
+    "generation_dispatches": 82,
+    "retries": 0,
+    "repairs": 0,
+    "max_runs": 1,
+    "rerun_after_first_generation_dispatch": false,
+    "tuning_after_result": false,
+    "raw_prompt_persistence": false,
+    "raw_completion_persistence": false
+  },
+  "acceptance": {
+    "greek_passes_at_least": 34,
+    "english_passes_at_least": 34,
+    "language_gap_at_most": 0.1,
+    "protocol_completions": 80,
+    "critical_failures": 0
+  },
+  "decision_rule": "Pass only if every original frozen threshold passes; otherwise reject this exact sampling profile without rerun or tuning on this corpus."
+}

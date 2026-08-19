@@ -14,6 +14,7 @@ from jarvis_inference.engine import GenerationEvent, PreparedPrompt
 from jarvis_inference.gateway import GatewayServer, Production, effective_configuration, package_digest
 from jarvis_inference.manifest import load_manifest, runtime_identity
 from jarvis_inference.rendering import render_prompt
+from jarvis_inference.strict_json import canonical_bytes
 
 
 def artifact(path: Path, root: Path) -> dict:
@@ -114,6 +115,25 @@ class GatewayIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(raw), {"ready": True})
         self.assertEqual(response.getheader("Cache-Control"), "no-store")
+
+    def test_authenticated_live_identity_is_bound_to_loaded_runtime(self) -> None:
+        response, raw = self.request(
+            "GET",
+            "/jarvis/v1/identity",
+            headers={"Authorization": "Bearer " + "s" * 40},
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(
+            json.loads(raw),
+            {
+                "manifest_digest": self.manifest.digest,
+                "runtime_identity_sha256": hashlib.sha256(
+                    canonical_bytes(self.production.identity)
+                ).hexdigest(),
+                "schema_version": "jarvis-inference-live-identity/1",
+            },
+        )
 
     def test_canonical_nonstream_response(self) -> None:
         body = json.dumps({"model": "jarvis-local", "messages": [{"role": "user", "content": "hello"}], "max_completion_tokens": 8}).encode()

@@ -2,31 +2,46 @@
 
 from __future__ import annotations
 
-import hmac
 import base64
 import hashlib
+import hmac
 import json
 import re
 import threading
 import uuid
-from http import HTTPStatus
+from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from .config import OrchestratorConfig
-from .domain import OrchestratorError, require_uuid4, utc_text
-from .scheduler_contract import (MINIMUM_INTERVAL_MS, MINIMUM_LEAD_MS, MAXIMUM_SNOOZE_GENERATIONS,
-                                 MANUAL_CANONICAL_API_SHA256)
+from .domain import OrchestratorError, parse_utc, require_uuid4, utc_text
 from .jcs import domain_sha256, jcs_bytes
-from .service import OrchestratorService
-from .scheduler_contract import ScheduleContractError, compile_proposal
-
+from .memory_crypto import MemoryCryptoError
+from .scheduler_contract import (
+    MANUAL_CANONICAL_API_SHA256,
+    MAXIMUM_SNOOZE_GENERATIONS,
+    MINIMUM_INTERVAL_MS,
+    MINIMUM_LEAD_MS,
+    ScheduleContractError,
+    compile_proposal,
+)
+from .service import (
+    BETA_SESSION_SCHEMA_VERSION,
+    OrchestratorService,
+)
+from .store import (
+    SQLITE_MAX_INTEGER,
+    ControlMutationKind,
+    ControlMutationRequest,
+    MemoryStorageUnavailable,
+)
 
 APPROVAL_DECISION = re.compile(r"^/v1/approvals/([0-9a-f-]{36})/decision$")
 SCHEDULER_APPROVAL_DECISION = re.compile(r"^/v1/scheduler/approvals/([0-9a-f-]{36})/decision$")
 TASK_CANCEL = re.compile(r"^/v1/tasks/([0-9a-f-]{36})/cancel$")
 CONVERSATION_DELETE = re.compile(r"^/v1/conversations/([0-9a-f-]{36})$")
+MEMORY_RECORD = re.compile(r"^/v1/memory/records/([0-9a-f-]{36})$")
 ACTION_APPROVAL_PRESENTATION = re.compile(
     r"^/v1/action-approvals/([0-9a-f-]{36})/presentation$"
 )
@@ -60,11 +75,148 @@ def _cursor_decode(token: str, *, kind: str, binding: dict[str, Any]) -> list[An
     return value["key"]
 
 
+def _memory_cursor_encode(
+    secret: str,
+    *,
+    revision: int,
+    after: tuple[str, str],
+) -> str:
+    core = {
+        "after": list(after),
+        "memory_revision": revision,
+        "scope": "local_owner",
+        "version": "memory-records-cursor/1",
+    }
+    value = {
+        **core,
+        "hmac_sha256": hmac.new(
+            secret.encode("utf-8"),
+            jcs_bytes(core),
+            hashlib.sha256,
+        ).hexdigest(),
+    }
+    return base64.urlsafe_b64encode(jcs_bytes(value)).rstrip(b"=").decode("ascii")
+
+
+def _memory_cursor_decode(
+    secret: str,
+    token: str,
+) -> tuple[int, tuple[str, str]]:
+    if (
+        not isinstance(token, str)
+        or len(token) > 2048
+        or re.fullmatch(r"[A-Za-z0-9_-]+", token) is None
+    ):
+        raise OrchestratorError("invalid_cursor", status=400)
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        value = json.loads(raw)
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise OrchestratorError("invalid_cursor", status=400) from exc
+    expected_fields = {
+        "after",
+        "hmac_sha256",
+        "memory_revision",
+        "scope",
+        "version",
+    }
+    if not isinstance(value, dict) or set(value) != expected_fields:
+        raise OrchestratorError("invalid_cursor", status=400)
+    digest = value["hmac_sha256"]
+    revision = value["memory_revision"]
+    after = value["after"]
+    if (
+        not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or value["scope"] != "local_owner"
+        or value["version"] != "memory-records-cursor/1"
+        or isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or revision < 0
+        or not isinstance(after, list)
+        or len(after) != 2
+        or not all(isinstance(item, str) and item for item in after)
+    ):
+        raise OrchestratorError("invalid_cursor", status=400)
+    core = {
+        name: value[name]
+        for name in ("after", "memory_revision", "scope", "version")
+    }
+    try:
+        canonical_value = jcs_bytes(value)
+        expected_hmac = hmac.new(
+            secret.encode("utf-8"),
+            jcs_bytes(core),
+            hashlib.sha256,
+        ).hexdigest()
+    except (TypeError, ValueError) as exc:
+        raise OrchestratorError("invalid_cursor", status=400) from exc
+    if canonical_value != raw or not hmac.compare_digest(digest, expected_hmac):
+        raise OrchestratorError("invalid_cursor", status=400)
+    try:
+        if utc_text(parse_utc(after[0])) != after[0]:
+            raise ValueError
+        record_id = require_uuid4(after[1])
+    except (OrchestratorError, ValueError) as exc:
+        raise OrchestratorError("invalid_cursor", status=400) from exc
+    return revision, (after[0], record_id)
+
+
 class ControlApplication:
-    def __init__(self, config: OrchestratorConfig, service: OrchestratorService) -> None:
+    def __init__(
+        self,
+        config: OrchestratorConfig,
+        service: OrchestratorService,
+        *,
+        runtime_health: Callable[[], Mapping[str, Any]] | None = None,
+        business_admission: Callable[[], bool] | None = None,
+    ) -> None:
         self.config = config
         self.service = service
+        self._runtime_health_provider = runtime_health
+        # Transport admission is fail-closed unless a lifecycle owner
+        # explicitly injects the shared readiness predicate.
+        self._business_admission_provider = business_admission or (lambda: False)
         self._mutation_lock = threading.RLock()
+
+    def require_business_admission(self, path: str) -> None:
+        route = urlsplit(path).path
+        if route in {"/readyz", "/v1/readiness"}:
+            return
+        try:
+            admitted = self._business_admission_provider() is True
+        except Exception:  # noqa: BLE001 - admission must fail closed
+            admitted = False
+        if not admitted:
+            raise OrchestratorError(
+                "runtime_not_ready",
+                status=503,
+                retryable=True,
+            )
+
+    def _runtime_health(self) -> tuple[bool, str, str | None]:
+        if self._runtime_health_provider is None:
+            return False, "UNSUPERVISED", "runtime_health_unavailable"
+        try:
+            health = self._runtime_health_provider()
+            state = health.get("state")
+            failure_code = health.get("failure_code")
+            ready = health.get("ready") is True and state == "RUNNING"
+        except Exception:  # noqa: BLE001 - runtime health must fail closed
+            return False, "FAILED", "runtime_health_unavailable"
+        if not isinstance(state, str) or state not in (
+            "FAILED",
+            "RUNNING",
+            "STOPPED",
+            "STOPPING",
+        ):
+            return False, "FAILED", "runtime_health_invalid"
+        if failure_code is not None and (
+            not isinstance(failure_code, str)
+            or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", failure_code) is None
+        ):
+            return False, "FAILED", "runtime_health_invalid"
+        return ready, state, failure_code
 
     @staticmethod
     def _exact_object(value: Any, fields: set[str]) -> dict[str, Any]:
@@ -73,12 +225,33 @@ class ControlApplication:
         return value
 
     @staticmethod
+    def _public_memory_record(record: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the closed management projection, excluding crypto internals."""
+
+        return {
+            "record_id": record["record_id"],
+            "content": record["content"],
+            "created_at": record["created_at"],
+            "expires_at": record["expires_at"],
+        }
+
+    @staticmethod
+    def _memory_unavailable() -> OrchestratorError:
+        return OrchestratorError(
+            "memory_storage_unavailable",
+            status=503,
+            retryable=True,
+        )
+
+    @staticmethod
     def known_path(path: str) -> bool:
         path = urlsplit(path).path
         return bool(
             path in {
                 "/readyz", "/v1/approvals", "/v1/conversations/active", "/v1/conversations",
-                "/v1/readiness", "/v1/capabilities", "/v1/scheduler/proposals",
+                "/v1/readiness", "/v1/beta-session", "/v1/capabilities",
+                "/v1/memory/records",
+                "/v1/scheduler/proposals",
                 "/v1/scheduler/compile",
                 "/v1/scheduler/jobs", "/v1/scheduler/occurrences", "/v1/scheduler/ledger",
             }
@@ -86,6 +259,7 @@ class ControlApplication:
             or SCHEDULER_APPROVAL_DECISION.fullmatch(path)
             or TASK_CANCEL.fullmatch(path)
             or CONVERSATION_DELETE.fullmatch(path)
+            or MEMORY_RECORD.fullmatch(path)
             or ACTION_APPROVAL_PRESENTATION.fullmatch(path)
         )
 
@@ -110,20 +284,61 @@ class ControlApplication:
     def get(self, path: str) -> tuple[int, Any]:
         split = urlsplit(path)
         route = split.path
-        query = parse_qs(split.query, strict_parsing=True, keep_blank_values=False)
+        try:
+            query = parse_qs(
+                split.query,
+                strict_parsing=True,
+                keep_blank_values=True,
+                max_num_fields=16,
+            )
+        except ValueError as exc:
+            raise OrchestratorError("invalid_request", status=400) from exc
         if route == "/readyz":
-            ready = self.service.ready()
+            runtime_ready, _, _ = self._runtime_health()
+            readiness = self.service.readiness_snapshot()
+            ready = readiness["core_ready"] and runtime_ready
             return (200 if ready else 503), {"ready": ready}
         if route == "/v1/readiness":
-            inference_ready = self.service.ready()
+            readiness = self.service.readiness_snapshot()
+            runtime_ready, runtime_state, runtime_failure_code = self._runtime_health()
+            core_ready = readiness["core_ready"] and runtime_ready
             scheduler_ready = self.service.scheduler is not None and self.service.scheduler.readiness()["state"] == "READY"
             capabilities = ["control"] + (["scheduler"] if scheduler_ready else [])
             return 200, {
-                "core_ready": True,
+                "core_ready": core_ready,
                 "scheduler_ready": scheduler_ready,
-                "inference_ready": inference_ready,
-                "mode": "ready" if inference_ready else "degraded",
+                "inference_ready": readiness["inference_ready"],
+                "memory_ready": readiness["memory_ready"],
+                "memory_state": readiness["memory_state"],
+                "storage_ready": readiness["storage_ready"],
+                "runtime_ready": runtime_ready,
+                "runtime_state": runtime_state,
+                "runtime_failure_code": runtime_failure_code,
+                "mode": "ready" if core_ready else "degraded",
                 "capabilities": capabilities,
+            }
+        if route == "/v1/beta-session":
+            readiness = self.service.readiness_snapshot()
+            runtime_ready, _, _ = self._runtime_health()
+            core_ready = readiness["core_ready"] and runtime_ready
+            connected, tracker_id, generation = (
+                self.service.voice_connection_state()
+            )
+            return 200, {
+                "core_ready": core_ready,
+                "effective_capabilities": {
+                    "cloud": self.service.cloud_approval_available(),
+                    "memory_retrospective": readiness[
+                        "memory_retrospective_ready"
+                    ],
+                    "memory_shadow": self.service.config.memory_shadow_enabled,
+                    "research": self.service.config.research_enabled,
+                    "tools": self.service.config.tools_enabled,
+                },
+                "schema_version": BETA_SESSION_SCHEMA_VERSION,
+                "voice_client_connected": connected,
+                "voice_connection_generation": generation,
+                "voice_connection_tracker_id": tracker_id,
             }
         if route == "/v1/capabilities":
             scheduler = self.service.scheduler
@@ -191,6 +406,80 @@ class ControlApplication:
             return 200, {"approvals": self.service.store.list_pending_approvals()}
         if route == "/v1/conversations/active":
             return 200, {"conversation": self.service.store.active_conversation()}
+        if route == "/v1/memory/records":
+            if (
+                split.fragment
+                or any(len(values) != 1 for values in query.values())
+                or set(query) - {"limit", "after"}
+            ):
+                raise OrchestratorError("invalid_request", status=400)
+            try:
+                limit = int(query.get("limit", ["50"])[0])
+            except ValueError as exc:
+                raise OrchestratorError("invalid_request", status=400) from exc
+            if not 1 <= limit <= 50:
+                raise OrchestratorError("invalid_request", status=400)
+            expected_revision = None
+            after = None
+            if "after" in query:
+                expected_revision, after = _memory_cursor_decode(
+                    self.config.control_bearer_token,
+                    query["after"][0],
+                )
+            try:
+                page = self.service.store.control_memory_record_page(
+                    limit=limit,
+                    after=after,
+                    expected_revision=expected_revision,
+                )
+            except OrchestratorError:
+                raise
+            except (
+                MemoryCryptoError,
+                MemoryStorageUnavailable,
+                RuntimeError,
+            ) as exc:
+                raise self._memory_unavailable() from exc
+            next_cursor = (
+                None
+                if page["next_cursor"] is None
+                else _memory_cursor_encode(
+                    self.config.control_bearer_token,
+                    revision=page["memory_revision"],
+                    after=page["next_cursor"],
+                )
+            )
+            return 200, {
+                "records": [
+                    self._public_memory_record(record)
+                    for record in page["items"]
+                ],
+                "memory_revision": page["memory_revision"],
+                "next_cursor": next_cursor,
+            }
+        memory_record = MEMORY_RECORD.fullmatch(route)
+        if memory_record is not None:
+            if query or split.fragment:
+                raise OrchestratorError("invalid_request", status=400)
+            record_id = require_uuid4(memory_record.group(1))
+            try:
+                snapshot = self.service.store.control_memory_record_snapshot(
+                    record_id
+                )
+            except OrchestratorError:
+                raise
+            except (
+                MemoryCryptoError,
+                MemoryStorageUnavailable,
+                RuntimeError,
+            ) as exc:
+                raise self._memory_unavailable() from exc
+            if snapshot["record"] is None:
+                raise OrchestratorError("not_found", status=404)
+            return 200, {
+                "record": self._public_memory_record(snapshot["record"]),
+                "memory_revision": snapshot["memory_revision"],
+            }
         if route.startswith("/v1/scheduler/"):
             scheduler = self.service.scheduler
             if scheduler is None:
@@ -248,46 +537,94 @@ class ControlApplication:
 
     def mutate(self, method: str, path: str, body: Any, key: str, epoch: int) -> tuple[int, Any | None]:
         with self._mutation_lock:
-            replay = self.service.store.lookup_command(key, method, path, body, epoch)
-            if replay is not None:
-                status, response_json = replay
-                return status, json.loads(response_json) if response_json is not None else None
             approval = APPROVAL_DECISION.fullmatch(path)
             cancel = TASK_CANCEL.fullmatch(path)
             deletion = CONVERSATION_DELETE.fullmatch(path)
-            try:
-                if method == "POST" and approval:
-                    payload = self._exact_object(body, {"decision"})
-                    result = self.service.decide_approval(require_uuid4(approval.group(1)), epoch, payload["decision"])
-                    status = 200
-                elif method == "POST" and cancel:
-                    payload = self._exact_object(body, {"reason_code"})
-                    if payload["reason_code"] != "user_cancelled":
-                        raise OrchestratorError("invalid_request", status=400)
-                    result = self.service.cancel_task(require_uuid4(cancel.group(1)), epoch)
-                    status = 200
-                elif method == "POST" and path == "/v1/conversations":
-                    self._exact_object(body, set())
-                    result = self.service.store.create_conversation(epoch)
-                    status = 201
-                elif method == "DELETE" and deletion:
-                    if body is not None:
-                        raise OrchestratorError("invalid_request", status=400)
-                    self.service.store.delete_conversation(require_uuid4(deletion.group(1)), epoch)
-                    result = None
-                    status = 204
-                else:
-                    known = self.known_path(path)
-                    raise OrchestratorError(
-                        "method_not_allowed" if known else "not_found",
-                        status=405 if known else 404,
-                    )
-            except OrchestratorError as exc:
-                status = exc.status
-                result = {"error": {"code": exc.code, "retryable": exc.retryable}}
-            response_json = None if result is None else json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            self.service.store.store_command(key, method, path, body, epoch, status, response_json)
+            if method == "POST" and approval:
+                request = ControlMutationRequest(
+                    ControlMutationKind.DECIDE_APPROVAL,
+                    approval.group(1),
+                )
+            elif method == "POST" and cancel:
+                request = ControlMutationRequest(
+                    ControlMutationKind.CANCEL_TASK,
+                    cancel.group(1),
+                )
+            elif method == "POST" and path == "/v1/conversations":
+                request = ControlMutationRequest(
+                    ControlMutationKind.CREATE_CONVERSATION
+                )
+            elif method == "DELETE" and deletion:
+                request = ControlMutationRequest(
+                    ControlMutationKind.DELETE_CONVERSATION,
+                    deletion.group(1),
+                )
+            elif self.known_path(path):
+                request = ControlMutationRequest(
+                    ControlMutationKind.METHOD_NOT_ALLOWED
+                )
+            else:
+                request = ControlMutationRequest(ControlMutationKind.NOT_FOUND)
+            status, response_json = self.service.store.execute_control_mutation(
+                key,
+                method,
+                path,
+                body,
+                epoch,
+                request,
+                client_connected=self.service.has_client(),
+            )
+            result = (
+                None if response_json is None else json.loads(response_json)
+            )
+            if (
+                request.kind is ControlMutationKind.DECIDE_APPROVAL
+                and status == 200
+                and isinstance(result, dict)
+                and result.get("task_state") == "EXECUTING"
+                and isinstance(result.get("task_id"), str)
+            ):
+                # Scheduling is intentionally outside the SQLite transaction;
+                # task execution is guarded by its durable state/epoch CAS.
+                self.service._schedule(result["task_id"])
             return status, result
+
+    def memory_mutate(
+        self,
+        method: str,
+        path: str,
+        body: Any,
+        key: str,
+        memory_revision: int,
+    ) -> tuple[int, Any | None]:
+        """Apply one revision-bound saved-memory mutation."""
+
+        with self._mutation_lock:
+            match = MEMORY_RECORD.fullmatch(path)
+            if method == "DELETE" and match is not None:
+                request = ControlMutationRequest(
+                    ControlMutationKind.DELETE_MEMORY_RECORD,
+                    require_uuid4(match.group(1)),
+                )
+            elif self.known_path(path):
+                request = ControlMutationRequest(
+                    ControlMutationKind.METHOD_NOT_ALLOWED
+                )
+            else:
+                request = ControlMutationRequest(ControlMutationKind.NOT_FOUND)
+            status, response_json = self.service.store.execute_control_mutation(
+                key,
+                method,
+                path,
+                body,
+                memory_revision,
+                request,
+                client_connected=self.service.has_client(),
+            )
+            return (
+                status,
+                None if response_json is None else json.loads(response_json),
+            )
 
     def scheduler_mutate(self, method: str, path: str, body: Any, key: str) -> tuple[int, Any | None]:
         scheduler = self.service.scheduler
@@ -441,6 +778,55 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
                 raise OrchestratorError("invalid_request", status=400)
             return key.lower(), epoch
 
+        def _memory_mutation_headers(self) -> tuple[str, int]:
+            keys = self.headers.get_all("Idempotency-Key", failobj=[])
+            revisions = self.headers.get_all(
+                "If-Match-Memory-Revision",
+                failobj=[],
+            )
+            epochs = self.headers.get_all("If-Match-Epoch", failobj=[])
+            if epochs:
+                raise OrchestratorError("invalid_request", status=400)
+            if not keys or not revisions:
+                raise OrchestratorError("precondition_required", status=428)
+            if len(keys) != 1 or len(revisions) != 1:
+                raise OrchestratorError("invalid_request", status=400)
+            key, revision_raw = keys[0], revisions[0]
+            try:
+                parsed = uuid.UUID(key)
+                if parsed.version != 4 or str(parsed) != key.lower():
+                    raise ValueError
+                revision = int(revision_raw)
+            except (ValueError, TypeError) as exc:
+                raise OrchestratorError("invalid_request", status=400) from exc
+            if revision < 0 or revision > SQLITE_MAX_INTEGER:
+                raise OrchestratorError("invalid_request", status=400)
+            return key.lower(), revision
+
+        def _memory_delete_body(self) -> Any | None:
+            if self.headers.get_all("Transfer-Encoding", failobj=[]):
+                raise OrchestratorError("invalid_request", status=400)
+            lengths = self.headers.get_all("Content-Length", failobj=[])
+            if len(lengths) > 1:
+                raise OrchestratorError("invalid_request", status=400)
+            if not lengths:
+                return None
+            try:
+                length = int(lengths[0])
+            except ValueError as exc:
+                raise OrchestratorError("invalid_request", status=400) from exc
+            if length < 0 or length > MAX_BODY:
+                raise OrchestratorError("request_too_large", status=413)
+            if length == 0:
+                return None
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise OrchestratorError("invalid_request", status=400)
+            return {
+                "unexpected_body_bytes": length,
+                "unexpected_body_sha256": hashlib.sha256(raw).hexdigest(),
+            }
+
         def _idempotency_header(self) -> str:
             keys = self.headers.get_all("Idempotency-Key", failobj=[])
             if len(keys) != 1:
@@ -477,6 +863,7 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
         def do_GET(self) -> None:
             try:
                 self._admit(authenticate=self.path != "/readyz")
+                application.require_business_admission(self.path)
                 if ACTION_APPROVAL_PRESENTATION.fullmatch(urlsplit(self.path).path):
                     presentation = self.headers.get_all("X-Presentation-Id", failobj=[])
                     nonce = self.headers.get_all("X-Preview-Nonce", failobj=[])
@@ -504,6 +891,7 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
         def do_POST(self) -> None:
             try:
                 self._admit(authenticate=True)
+                application.require_business_admission(self.path)
                 body = self._post_body()
                 route = urlsplit(self.path).path
                 if route.startswith("/v1/scheduler/"):
@@ -521,11 +909,35 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
         def do_DELETE(self) -> None:
             try:
                 self._admit(authenticate=True)
-                key, epoch = self._mutation_headers()
-                lengths = self.headers.get_all("Content-Length", failobj=[])
-                if len(lengths) > 1 or (lengths and lengths[0] != "0"):
-                    raise OrchestratorError("invalid_request", status=400)
-                status, result = application.mutate("DELETE", self.path, None, key, epoch)
+                application.require_business_admission(self.path)
+                route = urlsplit(self.path).path
+                if MEMORY_RECORD.fullmatch(route):
+                    if self.path != route:
+                        raise OrchestratorError("invalid_request", status=400)
+                    key, revision = self._memory_mutation_headers()
+                    body = self._memory_delete_body()
+                    status, result = application.memory_mutate(
+                        "DELETE",
+                        route,
+                        body,
+                        key,
+                        revision,
+                    )
+                else:
+                    key, epoch = self._mutation_headers()
+                    lengths = self.headers.get_all(
+                        "Content-Length",
+                        failobj=[],
+                    )
+                    if len(lengths) > 1 or (lengths and lengths[0] != "0"):
+                        raise OrchestratorError("invalid_request", status=400)
+                    status, result = application.mutate(
+                        "DELETE",
+                        self.path,
+                        None,
+                        key,
+                        epoch,
+                    )
                 self._json(status, result)
             except OrchestratorError as exc:
                 self._error(exc)
@@ -535,6 +947,7 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
         def do_PUT(self) -> None:
             try:
                 self._admit(authenticate=True)
+                application.require_business_admission(self.path)
                 if application.known_path(self.path):
                     self._error(OrchestratorError("method_not_allowed", status=405))
                 else:

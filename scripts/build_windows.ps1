@@ -18,9 +18,17 @@ if ($PyInstallerVersion -ne "6.21.0") {
     throw "Expected the pre-approved PyInstaller 6.21.0 environment. Nothing was installed."
 }
 
-$env:PYTHONPATH = (Resolve-Path ".\src").Path
+$SourceRoots = @(
+    (Resolve-Path ".\src").Path
+    (Resolve-Path ".\orchestrator\src").Path
+    (Resolve-Path ".\inference\src").Path
+    (Resolve-Path ".\anamnesis\src").Path
+    (Resolve-Path ".\research\src").Path
+)
+$env:PYTHONPATH = $SourceRoots -join [IO.Path]::PathSeparator
 py -3.11 -m unittest discover -s tests -v
-py -3.11 -m compileall -q src tests packaging
+py -3.11 -m unittest discover -s orchestrator/tests -v
+py -3.11 -m compileall -q src tests packaging orchestrator/src orchestrator/tests
 py -3.11 -m PyInstaller --clean --noconfirm .\packaging\jarvis_voice.spec
 
 $Distribution = Join-Path $Repository "dist\JARVIS Voice"

@@ -20,11 +20,16 @@ from jarvis_orchestrator.anamnesis_shadow import (
 )
 from jarvis_orchestrator.config import OrchestratorConfig
 from jarvis_orchestrator.domain import ModelChunk, ModelUsage, canonical_sha256
-from jarvis_orchestrator.model import BudgetedModelPort
+from jarvis_orchestrator.memory_crypto import (
+    InMemoryMemoryEpochKeyProvider,
+    MemoryEnvelopeCipherV1,
+)
 from jarvis_orchestrator.memory_release import (
     MEMORY_RELEASE_POLICY_SHA256,
     ShadowHistoryReaderFacade,
 )
+from jarvis_orchestrator.memory_runtime import InjectedMemoryCryptoRuntime
+from jarvis_orchestrator.model import BudgetedModelPort
 from jarvis_orchestrator.service import OrchestratorService
 from jarvis_orchestrator.shadow_audit import build_shadow_trial_report
 from jarvis_orchestrator.store import OrchestratorStore
@@ -48,7 +53,7 @@ class ShadowAuditReportTests(unittest.TestCase):
     def _database(self, directory: str) -> Path:
         path = Path(directory) / "orchestrator.sqlite3"
         store = OrchestratorStore(path)
-        config = OrchestratorConfig.from_mapping(
+        config = OrchestratorConfig.from_test_mapping(
             {
                 "database_path": str(path),
                 "control_bearer_token": "control-private",
@@ -196,12 +201,22 @@ class ShadowAuditReportTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = self._database(directory)
-            store = OrchestratorStore(path)
+            provider = InMemoryMemoryEpochKeyProvider()
+            store = OrchestratorStore(
+                path,
+                memory_crypto=InjectedMemoryCryptoRuntime(
+                    provider.install_id,
+                    MemoryEnvelopeCipherV1(provider),
+                ),
+            )
             try:
+                store.prepare_memory_storage()
                 with store._lock:
                     row = store._connection.execute(
-                        """SELECT t.task_id,t.conversation_id,t.epoch,i.event_id
+                        """SELECT t.task_id,t.conversation_id,t.epoch,t.turn_id,
+                                  i.event_id,ct.user_language
                            FROM tasks t JOIN inbox i USING(task_id)
+                           JOIN canonical_turns ct USING(task_id)
                            WHERE t.state='COMPLETED'
                            ORDER BY t.epoch DESC LIMIT 1"""
                     ).fetchone()
@@ -210,10 +225,21 @@ class ShadowAuditReportTests(unittest.TestCase):
                     conversation_id=row["conversation_id"],
                     task_id=row["task_id"],
                     epoch=row["epoch"],
-                    source_event_id="explicit-memory-source",
-                    scoped_user_id="local-user",
+                    source_event_id=row["event_id"],
+                    scoped_user_id=(
+                        f"anamnesis::jarvis::{row['conversation_id']}"
+                    ),
                     content="explicit remembered fact",
-                    metadata={"origin": "explicit_command"},
+                    metadata={
+                        "conversation_id": row["conversation_id"],
+                        "task_id": row["task_id"],
+                        "task_epoch": str(row["epoch"]),
+                        "turn_id": row["turn_id"],
+                        "source_event_id": row["event_id"],
+                        "language": row["user_language"],
+                        "_anamnesis_namespace": "jarvis",
+                        "_anamnesis_user_id": row["conversation_id"],
+                    },
                 )
             finally:
                 store.close()
@@ -227,6 +253,22 @@ class ShadowAuditReportTests(unittest.TestCase):
             missing = Path(directory) / "missing.sqlite3"
             with self.assertRaises(FileNotFoundError):
                 build_shadow_trial_report(missing)
+
+    def test_unknown_future_schema_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._database(directory)
+            connection = __import__("sqlite3").connect(path)
+            connection.execute(
+                "UPDATE schema_meta SET value='11' WHERE key='schema_version'"
+            )
+            connection.commit()
+            connection.close()
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "unsupported shadow audit database schema",
+            ):
+                build_shadow_trial_report(path)
 
 
 if __name__ == "__main__":

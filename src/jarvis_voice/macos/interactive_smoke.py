@@ -10,11 +10,13 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-from ..config import VoiceConfig
+from ..config import VoiceConfig, configured_voice_auth_key
 from ..errors import BackendError
 from ..fakes import FakeOrchestrator
 from ..protocol import Envelope
 from ..qualification import write_report
+from ..voice_auth import VoiceAuthError, VoiceAuthKey
+from ..voice_auth_transport import authenticate_async_server
 from .runtime import MacVoiceRuntime
 
 
@@ -257,12 +259,13 @@ class GuidedSmokeController:
 class MacSmokeLoopbackServer:
     """Temporary loopback server with a deliberately long barge-in response."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, auth_key: VoiceAuthKey) -> None:
         parsed = urlparse(url)
         if parsed.scheme != "ws" or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
             raise BackendError("smoke.non_loopback_server", "Smoke server must use loopback WebSocket", subsystem="smoke")
         self.host = "127.0.0.1" if parsed.hostname == "localhost" else str(parsed.hostname)
         self.port = parsed.port or 8765
+        self.auth_key = auth_key
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
@@ -280,12 +283,22 @@ class MacSmokeLoopbackServer:
         )
 
     async def _handle(self, websocket: Any) -> None:
-        orchestrator: FakeOrchestrator | None = None
+        from ..protocol import new_uuid4
+
+        hello_raw = await authenticate_async_server(
+            websocket,
+            self.auth_key,
+            connection_id=new_uuid4(),
+        )
+        hello = Envelope.from_json(hello_raw)
+        if hello.type != "client.hello" or hello.seq != 1:
+            raise VoiceAuthError("voice_auth.hello_invalid")
+        orchestrator = FakeOrchestrator(session_id=hello.session_id)
+        orchestrator.acknowledged_event_ids = self._acknowledged
+        for reply in orchestrator.accept(hello):
+            await websocket.send(reply.to_json())
         async for raw in websocket:
             event = Envelope.from_json(raw)
-            if orchestrator is None:
-                orchestrator = FakeOrchestrator(session_id=event.session_id)
-                orchestrator.acknowledged_event_ids = self._acknowledged
             duplicate = event.event_id in self._acknowledged
             for reply in orchestrator.accept(event):
                 await websocket.send(reply.to_json())
@@ -367,7 +380,7 @@ def run_interactive_macos_smoke(
     output: str,
     timeout_seconds: float = 300.0,
     runtime_factory: Callable[[VoiceConfig], MacVoiceRuntime] = MacVoiceRuntime,
-    server_factory: Callable[[str], MacSmokeLoopbackServer] = MacSmokeLoopbackServer,
+    server_factory: Callable[[str, VoiceAuthKey], MacSmokeLoopbackServer] = MacSmokeLoopbackServer,
     prompt_sink: Callable[[SmokePrompt], None] | None = None,
     stage_sink: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
@@ -375,7 +388,10 @@ def run_interactive_macos_smoke(
         raise BackendError("smoke.timeout_invalid", "Smoke timeout is invalid", subsystem="smoke")
     sink = prompt_sink or (lambda prompt: print(f"[{prompt.code}] {prompt.message}", flush=True))
     controller = GuidedSmokeController(ptt_key=config.ptt_key)
-    server = server_factory(config.orchestrator_url)
+    server = server_factory(
+        config.orchestrator_url,
+        configured_voice_auth_key(config),
+    )
     runtime = runtime_factory(config)
     runtime_error: list[str] = []
 

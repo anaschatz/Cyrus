@@ -61,7 +61,7 @@ class SchedulerAdmissionTests(unittest.TestCase):
         )
         self.model = CountingModel()
         self.compiler = Compiler(self.scheduler)
-        self.config = OrchestratorConfig.from_mapping({
+        self.config = OrchestratorConfig.from_test_mapping({
             "database_path": str(path),
             "control_bearer_token": "control-private",
             "inference_bearer_token": "inference-private",
@@ -154,7 +154,7 @@ class SchedulerAdmissionTests(unittest.TestCase):
         self.assertIn("currently unavailable", history.turns[0].assistant_text)
 
     def test_capability_reports_native_delivery_only_for_qualified_connection(self) -> None:
-        configured = OrchestratorConfig.from_mapping({
+        configured = OrchestratorConfig.from_test_mapping({
             "database_path": str(self.store.path),
             "control_bearer_token": "control-private",
             "inference_bearer_token": "inference-private",
@@ -177,7 +177,7 @@ class SchedulerAdmissionTests(unittest.TestCase):
         self.assertEqual(after["reminders_overall"]["state"], "BLOCKED")
 
     def test_notification_actions_require_the_separately_qualified_connection(self) -> None:
-        configured = OrchestratorConfig.from_mapping({
+        configured = OrchestratorConfig.from_test_mapping({
             "database_path": str(self.store.path),
             "control_bearer_token": "control-private",
             "inference_bearer_token": "inference-private",

@@ -9,16 +9,22 @@ description = "A reproducible evaluation harness for temporal and prospective ag
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "fastembed>=0.7,<0.8",
-  "inspect-ai>=0.3.150,<0.4",
-  "numpy>=2.0,<3",
-  "openai>=2.45,<3",
   "pydantic>=2.10,<3",
 ]
 
 [project.optional-dependencies]
+eval = [
+  "fastembed>=0.7,<0.8",
+  "inspect-ai>=0.3.150,<0.4",
+  "numpy>=2.0,<3",
+  "openai>=2.45,<3",
+]
 dev = [
+  "fastembed>=0.7,<0.8",
   "hatchling==1.27.0",
+  "inspect-ai>=0.3.150,<0.4",
+  "numpy>=2.0,<3",
+  "openai>=2.45,<3",
   "pytest>=8.3,<9",
   "ruff>=0.12,<1",
 ]
@@ -33,6 +39,15 @@ anamnesis-manifest = "anamnesis.manifest_cli:manifest_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/anamnesis"]
+include = ["src/anamnesis/**/*.py"]
+exclude = [
+  "src/anamnesis/* *.py",
+  "src/anamnesis/**/* *.py",
+]
+only-packages = true
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
 
 [tool.pytest.ini_options]
 addopts = "-q"

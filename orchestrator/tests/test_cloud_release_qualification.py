@@ -201,8 +201,8 @@ class CloudReleaseQualificationTests(unittest.TestCase):
                 "cloud_qualification_file": str(root / "registry.json"),
             }
             with self.assertRaisesRegex(ValueError, "cloud_release_qualification_file"):
-                OrchestratorConfig.from_mapping(base)
-            valid = OrchestratorConfig.from_mapping(
+                OrchestratorConfig.from_test_mapping(base)
+            valid = OrchestratorConfig.from_test_mapping(
                 {
                     **base,
                     "cloud_release_qualification_file": str(root / "release.json"),

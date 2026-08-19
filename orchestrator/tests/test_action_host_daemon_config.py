@@ -83,7 +83,7 @@ class ActionHostDaemonConfigTests(unittest.TestCase):
                 "control_bearer_token": "control-private",
                 "inference_bearer_token": "inference-private",
             }
-            self.assertFalse(OrchestratorConfig.from_mapping(base).tools_enabled)
+            self.assertFalse(OrchestratorConfig.from_test_mapping(base).tools_enabled)
             base.update(
                 {
                     "tools_enabled": True,
@@ -97,15 +97,15 @@ class ActionHostDaemonConfigTests(unittest.TestCase):
                 }
             )
             with self.assertRaisesRegex(ValueError, "qualification"):
-                OrchestratorConfig.from_mapping(base)
+                OrchestratorConfig.from_test_mapping(base)
             base["action_host_qualification_file"] = str(root / "qualification.json")
             base["action_host_qualification_sha256"] = "c" * 64
-            self.assertTrue(OrchestratorConfig.from_mapping(base).tools_enabled)
+            self.assertTrue(OrchestratorConfig.from_test_mapping(base).tools_enabled)
 
     def test_bad_native_qualification_disables_actions_not_assistant(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            config = OrchestratorConfig.from_mapping(
+            config = OrchestratorConfig.from_test_mapping(
                 {
                     "database_path": str(root / "orchestrator.sqlite3"),
                     "control_bearer_token": "control-private",

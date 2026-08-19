@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any, Protocol
 
 from .config import is_loopback_websocket_url
@@ -14,6 +15,8 @@ from .protocol import Envelope
 from .cloud_approval import CloudApprovalEnvelope
 from .action_approval import ACTION_APPROVAL_PROTOCOL, ActionApprovalEnvelope
 from .scheduler_protocol import SCHEDULER_PROTOCOL, SchedulerEnvelope
+from .voice_auth import VoiceAuthError, VoiceAuthKey
+from .voice_auth_transport import authenticate_async_server, authenticate_sync_client
 
 
 class SyncConnection(Protocol):
@@ -23,12 +26,26 @@ class SyncConnection(Protocol):
 
 
 class LoopbackWebSocketTransport:
-    def __init__(self, url: str, *, connection_factory: Callable[[str], SyncConnection] | None = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        auth_key: VoiceAuthKey,
+        connection_factory: Callable[[str], SyncConnection] | None = None,
+    ) -> None:
         if not is_loopback_websocket_url(url):
             raise BackendError("transport.non_loopback_url", "Only loopback WebSockets are permitted", subsystem="transport")
+        if not isinstance(auth_key, VoiceAuthKey):
+            raise BackendError(
+                "transport.authentication_required",
+                "Voice authentication key is required",
+                subsystem="transport",
+            )
         self.url = url
+        self._auth_key = auth_key
         self._factory = connection_factory
         self._connection: SyncConnection | None = None
+        self._authenticated = False
 
     def connect(self) -> None:
         if self._connection is not None:
@@ -39,23 +56,63 @@ class LoopbackWebSocketTransport:
                 from websockets.sync.client import connect  # type: ignore[import-not-found]
             except ImportError as exc:
                 raise BackendError("transport.runtime_missing", "websockets is not installed", subsystem="transport") from exc
-            factory = connect
+            factory = lambda selected_url: connect(
+                selected_url,
+                origin=None,
+                compression=None,
+                proxy=None,
+                open_timeout=2,
+                close_timeout=1,
+                ping_interval=10,
+                ping_timeout=10,
+                max_size=64 * 1024,
+                max_queue=32,
+            )
         self._connection = factory(self.url)
 
     def send(self, event: Envelope | CloudApprovalEnvelope | ActionApprovalEnvelope | SchedulerEnvelope) -> None:
         try:
             self.connect()
             assert self._connection is not None
+            if not self._authenticated:
+                if not isinstance(event, Envelope) or event.type != "client.hello" or event.seq != 1:
+                    with suppress(Exception):
+                        self.close()
+                    raise BackendError(
+                        "transport.authentication_required",
+                        "The first frame must be the authenticated Voice hello",
+                        subsystem="transport",
+                    )
+                authenticate_sync_client(
+                    self._connection,
+                    self._auth_key,
+                    event.to_json(),
+                )
+                self._authenticated = True
+                return
             self._connection.send(event.to_json())
         except BackendError:
             raise
+        except VoiceAuthError as exc:
+            with suppress(Exception):
+                self.close()
+            raise BackendError(
+                "transport.authentication_failed",
+                "Voice WebSocket authentication failed",
+                subsystem="transport",
+                retryable=True,
+            ) from exc
         except Exception as exc:
             raise BackendError("transport.send_failed", "WebSocket send failed", subsystem="transport", retryable=True) from exc
 
     def receive(self) -> Envelope | CloudApprovalEnvelope | ActionApprovalEnvelope | SchedulerEnvelope | None:
         try:
-            self.connect()
-            assert self._connection is not None
+            if self._connection is None or not self._authenticated:
+                raise BackendError(
+                    "transport.authentication_required",
+                    "Voice WebSocket is not authenticated",
+                    subsystem="transport",
+                )
             raw = self._connection.recv(timeout=0)
         except TimeoutError:
             return None
@@ -76,23 +133,43 @@ class LoopbackWebSocketTransport:
         return Envelope.from_json(raw)
 
     def close(self) -> None:
-        if self._connection is not None:
-            self._connection.close(); self._connection = None
+        connection = self._connection
+        self._connection = None
+        self._authenticated = False
+        if connection is not None:
+            connection.close()
 
 
 class LoopbackFakeServer:
     """A local test server; acknowledged event IDs persist across reconnects."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, auth_key: VoiceAuthKey) -> None:
+        if not isinstance(auth_key, VoiceAuthKey):
+            raise BackendError(
+                "transport.authentication_required",
+                "Voice authentication key is required",
+                subsystem="transport",
+            )
+        self.auth_key = auth_key
         self.acknowledged_event_ids: set[str] = set()
 
     async def handle(self, websocket: Any) -> None:
-        orchestrator: FakeOrchestrator | None = None
+        from .protocol import new_uuid4
+
+        hello_raw = await authenticate_async_server(
+            websocket,
+            self.auth_key,
+            connection_id=new_uuid4(),
+        )
+        hello = Envelope.from_json(hello_raw)
+        if hello.type != "client.hello" or hello.seq != 1:
+            raise VoiceAuthError("voice_auth.hello_invalid")
+        orchestrator = FakeOrchestrator(session_id=hello.session_id)
+        orchestrator.acknowledged_event_ids = self.acknowledged_event_ids
+        for reply in orchestrator.accept(hello):
+            await websocket.send(reply.to_json())
         async for raw in websocket:
             event = Envelope.from_json(raw)
-            if orchestrator is None:
-                orchestrator = FakeOrchestrator(session_id=event.session_id)
-                orchestrator.acknowledged_event_ids = self.acknowledged_event_ids
             was_acknowledged = event.event_id in self.acknowledged_event_ids
             for reply in orchestrator.accept(event):
                 await websocket.send(reply.to_json())

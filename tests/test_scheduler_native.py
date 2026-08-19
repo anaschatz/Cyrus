@@ -36,6 +36,8 @@ from jarvis_voice.scheduler_native_qualification import load_native_scheduler_qu
 from jarvis_voice.scheduler_protocol import SchedulerEventFactory
 from jarvis_voice.scheduler_runtime import SchedulerNativeRuntime
 from jarvis_voice.transport import LoopbackWebSocketTransport
+from jarvis_voice.protocol import EventFactory
+from jarvis_voice.voice_auth import VoiceAuthKey, create_server_challenge, create_server_ready
 
 
 class CapturingRunner:
@@ -173,17 +175,42 @@ class SchedulerNativeTests(unittest.TestCase):
         })
 
         class Connection:
+            def __init__(self):
+                self.key = VoiceAuthKey(1, bytes(range(32)))
+                self.challenge = create_server_challenge(self.key).to_json()
+                self.incoming = [self.challenge]
+                self.sent = []
+
             def recv(self, timeout=0):
-                return event.to_json()
+                del timeout
+                return self.incoming.pop(0)
 
             def send(self, data):
-                return None
+                self.sent.append(data)
+                if len(self.sent) == 2:
+                    self.incoming.extend(
+                        [
+                            create_server_ready(
+                                self.key,
+                                self.challenge,
+                                self.sent[0],
+                                self.sent[1],
+                            ).to_json(),
+                            event.to_json(),
+                        ]
+                    )
 
             def close(self):
                 return None
 
+        connection = Connection()
         transport = LoopbackWebSocketTransport(
-            "ws://127.0.0.1:8765", connection_factory=lambda _url: Connection()
+            "ws://127.0.0.1:8765",
+            auth_key=connection.key,
+            connection_factory=lambda _url: connection,
+        )
+        transport.send(
+            EventFactory(session_id=session_id).create("client.hello", {})
         )
         decoded = transport.receive()
         self.assertEqual(decoded, event)

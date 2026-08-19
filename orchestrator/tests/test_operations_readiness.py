@@ -6,12 +6,11 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from unittest.mock import patch
 
 from _bootstrap import ROOT  # noqa: F401
 
-from jarvis_orchestrator.domain import TaskState
 from jarvis_orchestrator.background import BackgroundServiceManager
+from jarvis_orchestrator.domain import TaskState
 from jarvis_orchestrator.operations import (
     ContentFreeOperationalLog,
     OperationalError,
@@ -21,13 +20,12 @@ from jarvis_orchestrator.operations import (
     restore_database,
 )
 from jarvis_orchestrator.readiness import (
-    evaluate_operational_ready_gate,
     run_live_sequential_gate,
     run_sqlite_recovery_gate,
     run_synthetic_lifecycle_gate,
-    write_readiness_report,
 )
 from jarvis_orchestrator.store import OrchestratorStore
+from jarvis_voice.voice_auth import VoiceAuthKey
 
 
 def _completed_store(path: Path) -> OrchestratorStore:
@@ -84,6 +82,24 @@ class OperationalPersistenceTests(unittest.TestCase):
             self.assertNotIn("operational test", encoded)
             self.assertNotIn("Ready.", encoded)
             self.assertEqual(report.invariant_violation_count, 0)
+
+    def test_diagnostics_fail_closed_on_memory_crypto_state_corruption(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite3"
+            store = _completed_store(path)
+            with store._transaction() as connection:
+                connection.execute("DELETE FROM memory_crypto_state")
+            store.checkpoint()
+
+            report = database_diagnostics(path)
+            store.close()
+
+            self.assertFalse(report.ready)
+            self.assertEqual(
+                report.invariant_counts["memory_crypto_state_cardinality"],
+                1,
+            )
+            self.assertGreater(report.invariant_violation_count, 0)
 
     def test_online_backup_and_offline_restore_are_verified(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -191,97 +207,13 @@ class SyntheticReadinessTests(unittest.TestCase):
         self.assertEqual(report["invariant_violation_count"], 0)
         self.assertTrue(all(count > 0 for count in report["cancellation_stage_counts"].values()))
 
-    def test_overall_gate_requires_every_independent_evidence_file(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            reports = {
-                "synthetic": {
-                    "version": "synthetic-lifecycle-ready-gate/1",
-                    "ready": True,
-                    "turn_count": 1000,
-                    "invariant_violation_count": 0,
-                },
-                "live": {
-                    "version": "live-sequential-ready-gate/1",
-                    "ready": True,
-                    "turn_count": 100,
-                    "duplicate_publication_count": 0,
-                },
-                "restart": {
-                    "version": "live-restart-ready-gate/1",
-                    "ready": True,
-                    "generation_interrupted": True,
-                    "playback_replay_exact": True,
-                    "duplicate_publication_count": 0,
-                },
-                "recovery": {
-                    "version": "sqlite-recovery-ready-gate/1",
-                    "ready": True,
-                    "corruption_detected": True,
-                    "production_database_mutated": False,
-                },
-                "soak": {
-                    "version": "live-soak-ready-gate/1",
-                    "ready": True,
-                    "duration_seconds": 86_400,
-                    "database_bounded": True,
-                    "operational_log_bounded": True,
-                    "invariant_violation_count": 0,
-                },
-            }
-            paths: dict[str, Path] = {}
-            for name, report in reports.items():
-                paths[name] = write_readiness_report(root / f"{name}.json", report)
-            native = root / "native.json"
-            native.write_text("{}", encoding="utf-8")
-            with (
-                patch(
-                    "jarvis_voice.native_qualification.load_native_evidence",
-                    return_value={},
-                ),
-                patch(
-                    "jarvis_voice.native_qualification.evaluate_native_evidence",
-                    return_value={"ready": True},
-                ),
-            ):
-                result = evaluate_operational_ready_gate(
-                    synthetic_evidence=paths["synthetic"],
-                    live_evidence=paths["live"],
-                    restart_evidence=paths["restart"],
-                    recovery_evidence=paths["recovery"],
-                    soak_evidence=paths["soak"],
-                    native_voice_evidence=native,
-                )
-            self.assertTrue(result["ready"])
-            reports["soak"]["duration_seconds"] = 86_399
-            write_readiness_report(paths["soak"], reports["soak"])
-            with (
-                patch(
-                    "jarvis_voice.native_qualification.load_native_evidence",
-                    return_value={},
-                ),
-                patch(
-                    "jarvis_voice.native_qualification.evaluate_native_evidence",
-                    return_value={"ready": True},
-                ),
-            ):
-                result = evaluate_operational_ready_gate(
-                    synthetic_evidence=paths["synthetic"],
-                    live_evidence=paths["live"],
-                    restart_evidence=paths["restart"],
-                    recovery_evidence=paths["recovery"],
-                    soak_evidence=paths["soak"],
-                    native_voice_evidence=native,
-                )
-            self.assertFalse(result["ready"])
-
-
 class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_harness_rejects_unbounded_explicit_request_text(self) -> None:
         with self.assertRaisesRegex(ValueError, "request text"):
             await run_live_sequential_gate(
                 host="127.0.0.1",
                 port=8765,
+                auth_key=VoiceAuthKey(1, b"k" * 32),
                 turns=1,
                 request_text="x" * 257,
             )
@@ -290,10 +222,26 @@ class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
         from websockets.asyncio.server import serve
         from jarvis_voice.fakes import FakeOrchestrator
         from jarvis_voice.protocol import Envelope, new_uuid4
+        from jarvis_voice.voice_auth_transport import authenticate_async_server
+
+        auth_key = VoiceAuthKey(1, b"k" * 32)
 
         async def handle(websocket: object) -> None:
             fake: FakeOrchestrator | None = None
-            async for raw in websocket:  # type: ignore[attr-defined]
+            hello_raw = await authenticate_async_server(
+                websocket,
+                auth_key,
+                connection_id=new_uuid4(),
+            )
+            pending = [hello_raw]
+            while True:
+                if pending:
+                    raw = pending.pop()
+                else:
+                    try:
+                        raw = await websocket.recv()  # type: ignore[attr-defined]
+                    except Exception:
+                        return
                 event = Envelope.from_json(raw)
                 if fake is None:
                     fake = FakeOrchestrator(session_id=event.session_id)
@@ -328,6 +276,7 @@ class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
             report = await run_live_sequential_gate(
                 host="127.0.0.1",
                 port=port,
+                auth_key=auth_key,
                 turns=3,
                 timeout_seconds=2,
             )

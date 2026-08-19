@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import ProtocolError
+from .private_state import prepare_voice_journal_path
 from .approval_arbiter import GlobalApprovalController
 
 
@@ -275,15 +276,23 @@ class ActionApprovalEventFactory:
 class ActionApprovalJournal:
     """Content-free persist-before-send journal for action decisions."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(
+        self,
+        path: Path,
+        *,
+        trusted_boundary: str | Path | None = None,
+    ) -> None:
+        self.path = prepare_voice_journal_path(
+            path,
+            trusted_boundary=trusted_boundary,
+        )
         self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._closed = False
-        self._connection.executescript(
-            """
+        try:
+            self._connection.executescript(
+                """
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS action_events(
@@ -302,7 +311,14 @@ class ActionApprovalJournal:
             CREATE UNIQUE INDEX IF NOT EXISTS one_action_decision
             ON action_decisions(approval_id,presentation_id);
             """
-        )
+            )
+            prepare_voice_journal_path(
+                self.path,
+                trusted_boundary=trusted_boundary,
+            )
+        except BaseException:
+            self._connection.close()
+            raise
 
     def close(self) -> None:
         with self._lock:

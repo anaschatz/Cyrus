@@ -12,7 +12,8 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from .. import PROTOCOL_VERSION, __version__
-from ..config import VoiceConfig, is_loopback_websocket_url
+from ..config import VoiceConfig, configured_voice_auth_key, is_loopback_websocket_url
+from ..errors import BackendError
 from ..manifest import ManifestValidationResult, validate_model_directory
 from ..vad import validate_artifact
 from .ptt import CoreGraphicsEventTapAdapter, mac_ptt_keycode
@@ -20,6 +21,11 @@ from .whisper_cpp import _validate_artifact
 from .greektts15_pilot import validate_greektts_model_root
 from .greektts15_runtime import load_digest_bound_greektts_candidate
 from .greektts15_sidecar import validate_worker_python
+from ..voice_auth import AUTH_PROTOCOL
+
+
+NATIVE_PROBE_SCOPE = "current_process_identity"
+RESTRICTED_NATIVE_PROBE_CODE = "environment.restricted_native_io_probe"
 
 
 def _status(status: str, code: str, **details: object) -> dict[str, object]:
@@ -39,6 +45,17 @@ def _default_audio_probe(device: int | str | None) -> bool:
 
     info = sd.query_devices(device, "input")
     return int(info.get("max_input_channels", 0)) >= 1 and float(info.get("default_samplerate", 0)) > 0
+
+
+def _restricted_native_probe_environment() -> bool:
+    """Return whether the current process is known to have restricted native I/O.
+
+    The marker is advisory only: a restricted result always remains fail-closed
+    and can never make the doctor ready.  It prevents a Codex Seatbelt child
+    from being misreported as a real TCC denial or a missing CoreAudio device.
+    """
+
+    return os.environ.get("CODEX_SANDBOX") == "seatbelt"
 
 
 def _default_voice_probe() -> set[str]:
@@ -79,6 +96,7 @@ def macos_doctor_report(
     voice_probe: Callable[[], set[str]] | None = None,
     dependencies: Mapping[str, Mapping[str, object]] | None = None,
     model_validator: Callable[[str | None], ManifestValidationResult] | None = None,
+    restricted_native_probe: bool | None = None,
 ) -> dict[str, object]:
     selected_platform = sys.platform if platform_name is None else platform_name
     selected_machine = platform.machine() if machine is None else machine
@@ -163,26 +181,66 @@ def macos_doctor_report(
             "temporary_smoke_profile": False,
         }
 
+    native_probe_restricted = (
+        _restricted_native_probe_environment()
+        if restricted_native_probe is None
+        else restricted_native_probe
+    )
     try:
         mac_ptt_keycode(config.ptt_key)
-        permitted = bool((permission_probe or CoreGraphicsEventTapAdapter().preflight)())
+        if native_probe_restricted and permission_probe is None:
+            ptt = _status(
+                "inconclusive",
+                RESTRICTED_NATIVE_PROBE_CODE,
+                passive=True,
+                probe_scope=NATIVE_PROBE_SCOPE,
+                suppression=False,
+            )
+        else:
+            permitted = bool((permission_probe or CoreGraphicsEventTapAdapter().preflight)())
+            ptt = _status(
+                "ready" if permitted else "blocked",
+                "input.macos_listen_permission_ready" if permitted else "input.macos_listen_permission_required",
+                passive=True,
+                probe_scope=NATIVE_PROBE_SCOPE,
+                suppression=False,
+            )
+    except Exception as exc:
         ptt = _status(
-            "ready" if permitted else "blocked",
-            "input.macos_listen_permission_ready" if permitted else "input.macos_listen_permission_required",
+            "blocked",
+            str(getattr(exc, "code", "input.macos_event_tap_probe_failed")),
             passive=True,
+            probe_scope=NATIVE_PROBE_SCOPE,
             suppression=False,
         )
-    except Exception as exc:
-        ptt = _status("blocked", str(getattr(exc, "code", "input.macos_event_tap_probe_failed")), passive=True, suppression=False)
 
     if selected_dependencies.get("sounddevice", {}).get("status") != "ready":
-        audio = _status("blocked", "audio.sounddevice_missing")
+        audio = _status(
+            "blocked",
+            "audio.sounddevice_missing",
+            probe_scope=NATIVE_PROBE_SCOPE,
+        )
+    elif native_probe_restricted and audio_probe is None:
+        audio = _status(
+            "inconclusive",
+            RESTRICTED_NATIVE_PROBE_CODE,
+            probe_scope=NATIVE_PROBE_SCOPE,
+        )
     else:
         try:
             available = bool((audio_probe or _default_audio_probe)(config.audio_input_device))
         except Exception:
-            available = False
-        audio = _status("ready" if available else "blocked", "audio.coreaudio_input_available" if available else "audio.coreaudio_probe_failed")
+            audio = _status(
+                "blocked",
+                "audio.coreaudio_query_failed",
+                probe_scope=NATIVE_PROBE_SCOPE,
+            )
+        else:
+            audio = _status(
+                "ready" if available else "blocked",
+                "audio.coreaudio_input_available" if available else "audio.coreaudio_no_input_device",
+                probe_scope=NATIVE_PROBE_SCOPE,
+            )
 
     if config.macos.tts_backend == "greektts15_f1":
         greek = config.macos.greektts15
@@ -224,8 +282,28 @@ def macos_doctor_report(
     vad_artifact = config.vad.artifact
     vad_ok, vad_code = validate_artifact(vad_artifact.path, vad_artifact.size, vad_artifact.sha256)
     vad = _status("ready" if vad_ok else "blocked", vad_code)
-    transport_ok = is_loopback_websocket_url(config.orchestrator_url)
-    transport = _status("ready" if transport_ok else "blocked", "transport.loopback_only" if transport_ok else "transport.non_loopback_url")
+    transport_loopback = is_loopback_websocket_url(config.orchestrator_url)
+    transport_auth_code = "transport.authentication_key_required"
+    try:
+        configured_voice_auth_key(config)
+        transport_authenticated = True
+    except BackendError as exc:
+        transport_authenticated = False
+        if exc.code != "config.voice_auth_key_required":
+            transport_auth_code = "transport.authentication_key_invalid"
+    transport_ok = transport_loopback and transport_authenticated
+    transport = _status(
+        "ready" if transport_ok else "blocked",
+        (
+            "transport.loopback_authenticated"
+            if transport_ok
+            else (
+                transport_auth_code
+                if transport_loopback
+                else "transport.non_loopback_url"
+            )
+        ),
+    )
     checks: dict[str, Any] = {
         "host": host,
         "dependencies": selected_dependencies,
@@ -249,6 +327,7 @@ def macos_doctor_report(
         "milestone": "macos-cpu-smoke" if config.macos.asr_backend == "faster_whisper_cpu_smoke" else "macos-apple-silicon-parity",
         "product_version": __version__,
         "protocol_version": PROTOCOL_VERSION,
+        "voice_auth_protocol": AUTH_PROTOCOL,
         "checks": checks,
         "network_used": False,
         "content_captured": False,

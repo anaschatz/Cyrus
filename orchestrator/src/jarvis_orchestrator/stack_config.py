@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +16,7 @@ from urllib.parse import urlparse
 from .config import OrchestratorConfig
 
 
-STACK_SCHEMA_VERSION = "jarvis-private-stack/1"
+STACK_SCHEMA_VERSION = "jarvis-private-stack/2"
 
 
 class StackConfigError(ValueError):
@@ -35,14 +37,44 @@ def _absolute_file(value: Any, code: str) -> Path:
     if not isinstance(value, str) or not value:
         raise StackConfigError(code)
     path = Path(value).expanduser()
-    if not path.is_absolute() or not path.is_file():
+    if not path.is_absolute():
         raise StackConfigError(code)
-    return path.resolve()
+    # Do not use resolve()/is_file() here: both follow a configured symlink and
+    # would hide the fact that the operator selected a mutable indirection.
+    path = Path(os.path.abspath(path))
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise StackConfigError(code) from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise StackConfigError(code)
+    try:
+        return path.resolve(strict=True)
+    except OSError as exc:
+        raise StackConfigError(code) from exc
 
 
 def _private_mode(path: Path) -> None:
-    if os.name != "nt" and path.stat().st_mode & 0o077:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise StackConfigError("private_file_permissions") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         raise StackConfigError("private_file_permissions")
+    if os.name != "nt":
+        if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+            raise StackConfigError("private_file_permissions")
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+    except OSError as exc:
+        raise StackConfigError("component_identity_unavailable") from exc
+    return digest.hexdigest()
 
 
 def _canonical_document(value: Mapping[str, Any]) -> bytes:
@@ -88,11 +120,9 @@ class PrivateStackConfig:
             "qualification_report_path",
         }:
             raise StackConfigError("inference_config_invalid")
-        source = Path(source_path).expanduser()
-        if not source.is_absolute() or not source.is_file():
-            raise StackConfigError("stack_config_unavailable")
+        source = _absolute_file(str(Path(source_path).expanduser()), "stack_config_unavailable")
         result = cls(
-            source_path=source.resolve(),
+            source_path=source,
             voice_config_path=_absolute_file(
                 value["voice_config_path"], "voice_config_unavailable"
             ),
@@ -170,6 +200,25 @@ class PrivateStackConfig:
         expected_ws = f"ws://{orchestrator.voice_host}:{orchestrator.voice_port}"
         if voice.orchestrator_url != expected_ws:
             raise StackConfigError("voice_orchestrator_mismatch")
+        if voice.voice_auth_key_file is None or orchestrator.voice_auth_key_file is None:
+            raise StackConfigError("voice_auth_key_required")
+        try:
+            from jarvis_voice.voice_auth import load_voice_auth_key
+
+            voice_key_path = Path(voice.voice_auth_key_file).absolute()
+            orchestrator_key_path = orchestrator.voice_auth_key_file.absolute()
+            voice_key = load_voice_auth_key(voice_key_path)
+            orchestrator_key = load_voice_auth_key(orchestrator_key_path)
+        except StackConfigError:
+            raise
+        except Exception as exc:
+            raise StackConfigError("voice_auth_key_invalid") from exc
+        if (
+            voice_key_path != orchestrator_key_path
+            or voice_key.key_version != orchestrator_key.key_version
+            or not hmac.compare_digest(voice_key.key, orchestrator_key.key)
+        ):
+            raise StackConfigError("voice_auth_key_mismatch")
         inference_url = urlparse(orchestrator.inference_base_url)
         if (
             inference_url.scheme != "http"
@@ -205,7 +254,92 @@ class PrivateStackConfig:
 
     @property
     def sha256(self) -> str:
-        return hashlib.sha256(_canonical_document(self.canonical())).hexdigest()
+        """Return the deployment identity, not merely a hash of path strings."""
+
+        return self.deployment_identity()["deployment_sha256"]
+
+    def deployment_identity(self) -> dict[str, Any]:
+        """Build a content-bound, secret-free identity for this composition.
+
+        The authentication-key commitment is an HMAC over public component
+        digests. It changes after key rotation without publishing a reusable
+        hash of the key itself.
+        """
+
+        try:
+            from jarvis_voice.voice_auth import load_voice_auth_key
+
+            orchestrator = OrchestratorConfig.load(self.orchestrator_config_path)
+            if orchestrator.voice_auth_key_file is None:
+                raise StackConfigError("voice_auth_key_required")
+            auth_key = load_voice_auth_key(orchestrator.voice_auth_key_file)
+        except StackConfigError:
+            raise
+        except Exception as exc:
+            raise StackConfigError("component_identity_unavailable") from exc
+        components = {
+            "stack_manifest_sha256": _sha256_file(self.source_path),
+            "voice_config_sha256": _sha256_file(self.voice_config_path),
+            "orchestrator_config_sha256": _sha256_file(
+                self.orchestrator_config_path
+            ),
+            "inference_runner_sha256": _sha256_file(self.inference.runner_path),
+            "inference_manifest_sha256": _sha256_file(
+                self.inference.manifest_path
+            ),
+            "inference_qualification_sha256": _sha256_file(
+                self.inference.qualification_report_path
+            ),
+        }
+        commitment_payload = _canonical_document(
+            {
+                "components": components,
+                "domain": "jarvis-private-stack-auth-binding/1",
+                "key_version": auth_key.key_version,
+            }
+        )
+        auth_binding = hmac.new(
+            auth_key.key,
+            commitment_payload,
+            hashlib.sha256,
+        ).hexdigest()
+        core = {
+            "auth_binding": auth_binding,
+            "auth_key_version": auth_key.key_version,
+            "components": components,
+            "schema_version": "jarvis-private-stack-deployment/1",
+        }
+        return {
+            **core,
+            "deployment_sha256": hashlib.sha256(
+                _canonical_document(core)
+            ).hexdigest(),
+        }
+
+    def expected_inference_runtime_identity(self) -> tuple[str, str]:
+        """Return the manifest and qualified runtime-identity digests."""
+
+        try:
+            report = json.loads(
+                self.inference.qualification_report_path.read_text(
+                    encoding="utf-8"
+                )
+            )
+            identity = report.get("identity")
+            if not isinstance(identity, Mapping):
+                raise ValueError
+            manifest_digest = identity.get("manifest_digest")
+            if (
+                not isinstance(manifest_digest, str)
+                or len(manifest_digest) != 64
+            ):
+                raise ValueError
+            runtime_digest = hashlib.sha256(
+                _canonical_document(identity)
+            ).hexdigest()
+            return manifest_digest, runtime_digest
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            raise StackConfigError("component_identity_unavailable") from exc
 
 
 def write_private_stack_config(path: str | Path, value: Mapping[str, Any]) -> None:

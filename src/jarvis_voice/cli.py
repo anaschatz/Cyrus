@@ -7,7 +7,7 @@ import json
 from collections.abc import Sequence
 from urllib.parse import urlparse
 
-from .config import load_voice_config
+from .config import configured_voice_auth_key, load_voice_config
 from .doctor import doctor_report, doctor_report_config
 from .errors import BackendError
 
@@ -30,6 +30,16 @@ def build_parser() -> argparse.ArgumentParser:
     macos_cpu_doctor.add_argument("--output", help="Write redacted doctor JSON atomically instead of stdout")
     fake = commands.add_parser("fake-server", help="Run the loopback fake orchestrator")
     fake.add_argument("--config", required=True)
+    auth_key = commands.add_parser(
+        "create-auth-key",
+        help="Create one external per-install Voice authentication key",
+    )
+    auth_key.add_argument("--output", dest="key_output", required=True)
+    auth_key.add_argument("--key-version", type=int, default=1)
+    commands.add_parser(
+        "harden-private-state",
+        help="Safely migrate Voice SQLite journals to the owner-only boundary",
+    )
     run = commands.add_parser("run", help="Run the native Windows voice loop")
     run.add_argument("--config", required=True)
     run_macos = commands.add_parser("run-macos", help="Run the native macOS voice loop")
@@ -45,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--directory", required=True)
     template = commands.add_parser("qualification-template", help="Write an empty strict native-smoke sample file")
     template.add_argument("--output", required=True)
+    template.add_argument("--distribution", required=True)
     record = commands.add_parser("qualification-record", help="Append one content-free native-smoke sample")
     record.add_argument("--samples", required=True)
     record.add_argument("--case", required=True)
@@ -102,8 +113,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             _emit(report, args.output)
             return 0 if report["ready"] else 2
         if args.command == "qualification-template":
-            from .qualification import write_sample_template
-            write_sample_template(args.output)
+            from .qualification import verified_distribution_manifest_sha256, write_sample_template
+            write_sample_template(
+                args.output,
+                verified_distribution_manifest_sha256(args.distribution),
+            )
             return 0
         if args.command == "qualification-record":
             from .qualification import parse_metrics, record_sample
@@ -143,6 +157,41 @@ def main(argv: Sequence[str] | None = None) -> int:
                 hash_candidates=args.hash_candidates,
             )
             return 0 if report["completed"] else 2
+        if args.command == "create-auth-key":
+            from .voice_auth import VoiceAuthError, create_voice_auth_key_file
+
+            try:
+                created = create_voice_auth_key_file(
+                    args.key_output,
+                    key_version=args.key_version,
+                )
+            except VoiceAuthError as exc:
+                raise BackendError(
+                    exc.code,
+                    "Voice authentication key creation failed",
+                    subsystem="voice_auth",
+                ) from exc
+            _print(
+                {
+                    "code": "voice_auth.key_created",
+                    "key_version": created.key_version,
+                    "ready": True,
+                    "secret_disclosed": False,
+                }
+            )
+            return 0
+        if args.command == "harden-private-state":
+            from .private_state import harden_voice_journal_state
+
+            report = harden_voice_journal_state()
+            _print(
+                {
+                    **report.to_dict(),
+                    "content_captured": False,
+                    "network_used": False,
+                }
+            )
+            return 0 if report.ready else 2
         if args.command == "tray":
             from .tray_app import VoiceTrayApplication
             VoiceTrayApplication(args.config).run()
@@ -151,7 +200,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "fake-server":
             from .transport import LoopbackFakeServer
             parsed = urlparse(config.orchestrator_url)
-            LoopbackFakeServer().run(parsed.hostname or "127.0.0.1", parsed.port or 8765)
+            LoopbackFakeServer(
+                auth_key=configured_voice_auth_key(config)
+            ).run(parsed.hostname or "127.0.0.1", parsed.port or 8765)
             return 0
         if args.command == "run":
             from .runtime import WindowsVoiceRuntime

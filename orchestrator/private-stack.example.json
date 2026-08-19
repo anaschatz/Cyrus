@@ -1,5 +1,5 @@
 {
-  "schema_version": "jarvis-private-stack/1",
+  "schema_version": "jarvis-private-stack/2",
   "voice_config_path": "/absolute/private/path/voice.local.json",
   "orchestrator_config_path": "/absolute/private/path/orchestrator.local.json",
   "inference": {

@@ -59,7 +59,7 @@ class BlockingAdapter:
 
 
 def research_config(path: Path) -> OrchestratorConfig:
-    return OrchestratorConfig.from_mapping(
+    return OrchestratorConfig.from_test_mapping(
         {
             "database_path": str(path),
             "control_bearer_token": "control-private",

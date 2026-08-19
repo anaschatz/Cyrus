@@ -22,6 +22,7 @@ from ..native_qualification import (
     MINIMUM_ACOUSTIC_SAMPLES,
     native_evidence_template,
 )
+from ..voice_auth import AUTH_PROTOCOL
 
 
 ACOUSTIC_AUDIBLE_MARGIN_DB = 3.0
@@ -34,6 +35,7 @@ def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
     profile = {
         "product_version": __version__,
         "protocol_version": PROTOCOL_VERSION,
+        "voice_auth_protocol": AUTH_PROTOCOL,
         "ptt_key": config.ptt_key,
         "asr_backend": config.macos.asr_backend,
         "asr_model_sha256": config.macos.whisper_cpp.model.sha256,

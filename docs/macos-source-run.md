@@ -9,8 +9,31 @@ M5 adds source-run parity only. It does not install dependencies, build `whisper
 - An explicit local GGML/GGUF-compatible Whisper model. `ggml-large-v3-turbo-q5_0.bin` is the target profile, but M5 does not fetch it and does not replace an existing model.
 - The existing Silero ONNX artifact, `sounddevice`/CoreAudio, SoXR and loopback WebSocket transport.
 - `/usr/bin/say` with explicit installed Greek and English voice names.
+- One external `jarvis.voice-auth-key/1` file shared by the Voice and
+  Orchestrator configs on this Mac.
 
 The existing Windows `faster-whisper` model directory is a different runtime format. Pointing the macOS sidecar at that directory is rejected; M5 never attempts implicit conversion or a tokenizer/model fallback.
+
+## Provision the authenticated local boundary
+
+Create one per-install key outside the repository. Its private parent directory
+must already exist and the output path must not exist:
+
+```zsh
+PYTHONPATH=src python3.11 -m jarvis_voice create-auth-key \
+  --output /absolute/private/path/voice-auth.json
+```
+
+The command creates the file exclusively with mode `0600` and does not print
+the secret. Set this exact path in both private configs:
+
+```json
+"voice_auth_key_file": "/absolute/private/path/voice-auth.json"
+```
+
+Keep the Voice URL, Orchestrator Voice listener and inference appliance on
+loopback on this Mac. A macOS Voice client with a Windows/PC Orchestrator is not
+a supported split; do not copy the key to another host.
 
 ## Prepare explicit manifests
 
@@ -37,11 +60,17 @@ PYTHONPATH=src python3.11 -m jarvis_voice doctor-macos \
 
 The parent output directory must already exist. The report contains no configured paths, hashes, transcript, audio, prompts, usernames, device identifiers or subprocess output. A missing permission, dependency or artifact produces exit code `2` and `ready: false`.
 
+The ready report must also identify `jarvis.voice-auth/1` and include the
+`transport.loopback_authenticated` check. A checked-in config with
+`voice_auth_key_file: null`, an unreadable key or a non-private key is expected
+to remain blocked.
+
 Input Monitoring and microphone access must be granted manually to the exact source interpreter during development. The doctor only calls the non-prompting CoreGraphics preflight API. A future signed `.app` will have a different TCC identity and must be qualified again.
 
 ## Source runtime
 
-Start the existing loopback orchestrator separately, then run:
+Start the existing loopback Orchestrator with its matching key separately,
+then run:
 
 ```zsh
 PYTHONPATH=src python3.11 -m jarvis_voice run-macos --config /explicit/path/to/voice.json
@@ -84,3 +113,22 @@ the override applies only to that qualification process.
 
 Packaging, Developer ID signing, notarization, hardened runtime entitlements
 and packaged-app TCC testing remain a separate qualification profile.
+
+The authentication boundary changes the native runtime profile fingerprint.
+Pre-auth native evidence cannot qualify Voice 0.8.0 or a current scheduler-TTS
+promotion; recollect it with the authenticated runtime. Packaged 0.7 artifacts
+must likewise be rebuilt, re-signed and re-notarized before qualification. A
+key-only rotation with unchanged code/profile still requires a fresh
+authenticated connection smoke, but does not by itself replace the full
+acoustic evidence set.
+
+Rotation has no dual-key window: stop Voice and Orchestrator, create a new key
+at a new absolute path, update both configs, restart Orchestrator followed by
+Voice, and rerun the private-stack `status` and `e2e` gates before retiring the
+old key. Because those gates use their own protocol client, also complete one
+native Voice PTT turn to prove the live microphone-to-speaker path.
+
+The shared-key HMAC handshake authenticates the two local peers and binds the
+exact hello frame. It is not TLS or payload encryption, does not grant remote
+transport, does not authorize application actions and does not defend against
+malware already running as the same macOS user.

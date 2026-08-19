@@ -17,6 +17,8 @@ import uuid
 from pathlib import Path
 
 from jarvis_voice.protocol import Envelope, EventFactory
+from jarvis_voice.voice_auth import load_voice_auth_key
+from jarvis_voice.voice_auth_transport import authenticate_async_client
 
 
 FIXED_TRANSCRIPT = "Απάντησε μόνο με τη λέξη έτοιμο."
@@ -26,6 +28,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="smoke-orchestrator-text")
     parser.add_argument("--url", default="ws://127.0.0.1:8765")
     parser.add_argument("--database", type=Path, required=True)
+    parser.add_argument("--voice-auth-key", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=120.0)
     return parser
 
@@ -74,26 +77,28 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
     terminal: str | None = None
     response_id: str | None = None
     received_events = 0
+    auth_key = load_voice_auth_key(args.voice_auth_key)
 
     async with asyncio.timeout(args.timeout):
         async with connect(
             args.url,
             origin=None,
+            compression=None,
+            proxy=None,
             open_timeout=2,
             close_timeout=1,
             ping_interval=10,
             ping_timeout=10,
             max_size=64 * 1024,
         ) as websocket:
-            await websocket.send(
-                factory.create(
-                    "client.hello",
-                    {
-                        "protocol": "jarvis.voice/1",
-                        "capabilities": ["speech_commits", "speech_done", "output_epochs"],
-                    },
-                ).to_json()
+            hello = factory.create(
+                "client.hello",
+                {
+                    "protocol": "jarvis.voice/1",
+                    "capabilities": ["speech_commits", "speech_done", "output_epochs"],
+                },
             )
+            await authenticate_async_client(websocket, auth_key, hello.to_json())
             ready = Envelope.from_json(await websocket.recv())
             if ready.type != "server.ready" or ready.payload != {"protocol": "jarvis.voice/1"}:
                 raise RuntimeError("server.ready was invalid")

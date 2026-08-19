@@ -22,13 +22,15 @@ class SayProcess(Protocol):
 
 
 def _start_say(argv: list[str]) -> SayProcess:
+    # Deliberately inherit the Voice component's process group. The macOS
+    # foreground supervisor can then stop an in-flight ``say`` if Voice itself
+    # crashes. Normal cancellation still signals only this exact child PID.
     return subprocess.Popen(  # type: ignore[return-value]
         argv,
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         shell=False,
-        start_new_session=True,
     )
 
 
@@ -112,11 +114,9 @@ class MacSystemTtsBackend:
         self._thread.join(timeout=2.0)
         with self._lock:
             process = self._process
-        if process is not None and process.poll() is None:
-            try:
-                process.kill()
-            except OSError:
-                pass
+        if process is not None:
+            self._stop_process(process)
+            self._thread.join(timeout=0.5)
 
     @staticmethod
     def _stop_process(process: SayProcess) -> None:
@@ -124,12 +124,22 @@ class MacSystemTtsBackend:
             return
         try:
             process.terminate()
+        except OSError:
+            pass
+        try:
             process.wait(timeout=0.2)
+            return
         except (OSError, subprocess.TimeoutExpired):
+            pass
+        if process.poll() is None:
             try:
                 process.kill()
             except OSError:
-                pass
+                return
+        try:
+            process.wait(timeout=0.2)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     def _worker(self) -> None:
         while not self._stop_event.is_set():
@@ -160,20 +170,38 @@ class MacSystemTtsBackend:
                 process.stdin.write(unit.text.encode("utf-8"))
                 process.stdin.close()
                 self.on_started(unit)
+                interrupted = False
                 while process.poll() is None and not self._stop_event.wait(0.005):
                     with self._lock:
                         stale = unit.epoch <= self._cancelled_through_epoch
                     if stale:
-                        self._stop_process(process)
+                        interrupted = True
                         break
+                if self._stop_event.is_set():
+                    interrupted = True
+                if interrupted:
+                    self._stop_process(process)
                 exit_code = process.poll()
+                publish_completion = False
                 with self._lock:
                     stale = unit.epoch <= self._cancelled_through_epoch
-                if not stale and not self._stop_event.is_set():
-                    if exit_code == 0:
-                        self.on_completed(unit)
-                    else:
-                        self._error = BackendError("tts.say_failed", "macOS system TTS failed", subsystem="tts")
+                    if (
+                        not stale
+                        and not self._stop_event.is_set()
+                        and exit_code == 0
+                        and self._process is process
+                        and self._active is unit
+                    ):
+                        # Publish completion only after this exact unit has
+                        # retired. A queued successor still keeps is_idle
+                        # false, preserving playback ordering.
+                        self._process = None
+                        self._active = None
+                        publish_completion = True
+                if publish_completion:
+                    self.on_completed(unit)
+                elif not stale and not self._stop_event.is_set() and exit_code != 0:
+                    self._error = BackendError("tts.say_failed", "macOS system TTS failed", subsystem="tts")
             except Exception as exc:
                 self._error = BackendError("tts.say_failed", "macOS system TTS failed", subsystem="tts")
                 self._error.__cause__ = exc
@@ -181,5 +209,7 @@ class MacSystemTtsBackend:
                     self._stop_process(process)
             finally:
                 with self._lock:
-                    self._process = None
-                    self._active = None
+                    if self._process is process:
+                        self._process = None
+                    if self._active is unit:
+                        self._active = None

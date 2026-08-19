@@ -6,6 +6,7 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+import re
 from urllib.parse import urlsplit, urlunsplit
 
 from .domain import OrchestratorError
@@ -18,6 +19,16 @@ class InferenceCapabilities:
     tools: bool
     json_object: bool
     json_schema: bool
+
+
+@dataclass(frozen=True, slots=True)
+class InferenceRuntimeIdentity:
+    manifest_digest: str
+    runtime_identity_sha256: str
+
+
+class InferenceIdentityEndpointUnavailable(RuntimeError):
+    """The authenticated legacy appliance explicitly has no identity route."""
 
 
 class InferenceControlClient:
@@ -69,3 +80,37 @@ class InferenceControlClient:
         if not result.text or not result.stream:
             raise OrchestratorError("service_unavailable", status=503, retryable=True)
         return result
+
+    def runtime_identity(self) -> InferenceRuntimeIdentity:
+        try:
+            value = self._get("/jarvis/v1/identity", authenticated=True)
+        except OrchestratorError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, urllib.error.HTTPError) and cause.code in {404, 405}:
+                raise InferenceIdentityEndpointUnavailable from None
+            raise
+        expected = {
+            "manifest_digest",
+            "runtime_identity_sha256",
+            "schema_version",
+        }
+        if (
+            set(value) != expected
+            or value.get("schema_version")
+            != "jarvis-inference-live-identity/1"
+        ):
+            raise OrchestratorError(
+                "service_unavailable", status=503, retryable=True
+            )
+        manifest_digest = value.get("manifest_digest")
+        runtime_digest = value.get("runtime_identity_sha256")
+        if (
+            not isinstance(manifest_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", manifest_digest)
+            or not isinstance(runtime_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", runtime_digest)
+        ):
+            raise OrchestratorError(
+                "service_unavailable", status=503, retryable=True
+            )
+        return InferenceRuntimeIdentity(manifest_digest, runtime_digest)

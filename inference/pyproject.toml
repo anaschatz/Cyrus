@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=84,<85"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,7 @@ version = "1.0.0"
 description = "Stateless, fail-closed local inference appliance for JARVIS"
 requires-python = ">=3.11"
 dependencies = []
+license-files = []
 
 [project.optional-dependencies]
 qualification = ["openai==2.46.0"]
@@ -16,6 +17,13 @@ test = []
 
 [project.scripts]
 jarvis-inference = "jarvis_inference.cli:main"
+jarvis-qwen35-sampling-candidate = "jarvis_inference.qwen35_sampling_candidate:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["jarvis_inference"]
+namespaces = false

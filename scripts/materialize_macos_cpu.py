@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     config.add_argument("--vad-manifest", required=True)
     config.add_argument("--greek-voice", required=True)
     config.add_argument("--english-voice", required=True)
+    config.add_argument("--voice-auth-key", required=True)
     config.add_argument("--output", required=True)
     probe = commands.add_parser("probe-backends")
     probe.add_argument("--config", required=True)
@@ -74,6 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.output,
                 greek_voice=args.greek_voice,
                 english_voice=args.english_voice,
+                voice_auth_key=args.voice_auth_key,
             )
         elif args.command == "probe-backends":
             report_output = args.output

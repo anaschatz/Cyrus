@@ -23,9 +23,11 @@ from .config import VoiceConfig
 from .distribution import MANIFEST_NAME, verify_distribution
 from .doctor import doctor_report_config
 from .errors import BackendError
+from .voice_auth import AUTH_PROTOCOL
 
-SAMPLE_SCHEMA_VERSION = 1
-QUALIFICATION_SCHEMA_VERSION = 1
+SAMPLE_SCHEMA_VERSION = 2
+QUALIFICATION_SCHEMA_VERSION = 2
+_SHA256_LENGTH = 64
 
 CASE_REQUIREMENTS: Mapping[str, int] = {
     "greek_turn": 10,
@@ -89,12 +91,34 @@ def write_report(path: str | Path, value: object) -> Path:
     return _atomic_json(path, value)
 
 
-def sample_template() -> dict[str, object]:
-    return {"schema_version": SAMPLE_SCHEMA_VERSION, "samples": []}
+def _is_sha256(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != _SHA256_LENGTH:
+        return False
+    try:
+        return len(bytes.fromhex(value)) == 32 and value == value.lower()
+    except ValueError:
+        return False
 
 
-def write_sample_template(path: str | Path) -> Path:
-    return _atomic_json(path, sample_template())
+def sample_template(runtime_profile_sha256: str) -> dict[str, object]:
+    if not _is_sha256(runtime_profile_sha256):
+        raise BackendError(
+            "qualification.samples_runtime_profile_invalid",
+            "Qualification sample runtime profile is invalid",
+            subsystem="qualification",
+        )
+    return {
+        "schema_version": SAMPLE_SCHEMA_VERSION,
+        "product_version": __version__,
+        "protocol_version": PROTOCOL_VERSION,
+        "voice_auth_protocol": AUTH_PROTOCOL,
+        "runtime_profile_sha256": runtime_profile_sha256,
+        "samples": [],
+    }
+
+
+def write_sample_template(path: str | Path, runtime_profile_sha256: str) -> Path:
+    return _atomic_json(path, sample_template(runtime_profile_sha256))
 
 
 def _load_json(path: str | Path, code: str) -> Any:
@@ -130,9 +154,39 @@ def _validate_metrics(raw: Any, *, required: frozenset[str]) -> dict[str, float]
     return metrics
 
 
-def validate_samples(raw: Any) -> list[dict[str, object]]:
-    if not isinstance(raw, Mapping) or set(raw) != {"schema_version", "samples"} or raw.get("schema_version") != SAMPLE_SCHEMA_VERSION or not isinstance(raw.get("samples"), list):
+def validate_samples(
+    raw: Any,
+    *,
+    expected_runtime_profile_sha256: str | None = None,
+) -> list[dict[str, object]]:
+    expected_fields = {
+        "schema_version",
+        "product_version",
+        "protocol_version",
+        "voice_auth_protocol",
+        "runtime_profile_sha256",
+        "samples",
+    }
+    if (
+        not isinstance(raw, Mapping)
+        or set(raw) != expected_fields
+        or raw.get("schema_version") != SAMPLE_SCHEMA_VERSION
+        or raw.get("product_version") != __version__
+        or raw.get("protocol_version") != PROTOCOL_VERSION
+        or raw.get("voice_auth_protocol") != AUTH_PROTOCOL
+        or not _is_sha256(raw.get("runtime_profile_sha256"))
+        or not isinstance(raw.get("samples"), list)
+    ):
         raise BackendError("qualification.samples_schema_invalid", "Qualification samples have an invalid schema", subsystem="qualification")
+    if (
+        expected_runtime_profile_sha256 is not None
+        and raw.get("runtime_profile_sha256") != expected_runtime_profile_sha256
+    ):
+        raise BackendError(
+            "qualification.samples_runtime_profile_mismatch",
+            "Qualification samples do not match the current runtime profile",
+            subsystem="qualification",
+        )
     validated: list[dict[str, object]] = []
     identifiers: set[str] = set()
     for item in raw["samples"]:
@@ -151,8 +205,15 @@ def validate_samples(raw: Any) -> list[dict[str, object]]:
     return validated
 
 
-def load_samples(path: str | Path) -> list[dict[str, object]]:
-    return validate_samples(_load_json(path, "qualification.samples_unreadable"))
+def load_samples(
+    path: str | Path,
+    *,
+    expected_runtime_profile_sha256: str | None = None,
+) -> list[dict[str, object]]:
+    return validate_samples(
+        _load_json(path, "qualification.samples_unreadable"),
+        expected_runtime_profile_sha256=expected_runtime_profile_sha256,
+    )
 
 
 def parse_metrics(values: Sequence[str]) -> dict[str, float]:
@@ -174,8 +235,10 @@ def record_sample(path: str | Path, *, case: str, outcome: str, metrics: Mapping
     samples = validate_samples(raw)
     sample_id = str(id_factory())
     candidate = {"sample_id": sample_id, "case": case, "outcome": outcome, "metrics": dict(metrics)}
-    validate_samples({"schema_version": SAMPLE_SCHEMA_VERSION, "samples": [*samples, candidate]})
-    _atomic_json(path, {"schema_version": SAMPLE_SCHEMA_VERSION, "samples": [*samples, candidate]})
+    updated = sample_template(str(raw["runtime_profile_sha256"]))
+    updated["samples"] = [*samples, candidate]
+    validate_samples(updated)
+    _atomic_json(path, updated)
     return sample_id
 
 
@@ -273,12 +336,13 @@ def evaluate_frozen_doctor(raw: Any) -> dict[str, object]:
     checks = raw.get("checks")
     if not isinstance(checks, Mapping):
         return _blocked("qualification.frozen_doctor_invalid")
-    packaging = checks.get("packaging"); tray = checks.get("tray"); host = checks.get("host")
+    packaging = checks.get("packaging"); tray = checks.get("tray"); host = checks.get("host"); transport = checks.get("transport")
     valid = (
         raw.get("ready") is True
         and raw.get("network_used") is False
         and raw.get("product_version") == __version__
         and raw.get("protocol_version") == PROTOCOL_VERSION
+        and raw.get("voice_auth_protocol") == AUTH_PROTOCOL
         and isinstance(packaging, Mapping)
         and packaging.get("status") == "ready"
         and packaging.get("frozen") is True
@@ -289,6 +353,9 @@ def evaluate_frozen_doctor(raw: Any) -> dict[str, object]:
         and packaging["mutable_data"].get("status") == "ready"
         and isinstance(tray, Mapping) and tray.get("status") == "ready"
         and isinstance(host, Mapping) and host.get("status") == "ready"
+        and isinstance(transport, Mapping)
+        and transport.get("status") == "ready"
+        and transport.get("code") == "transport.loopback_authenticated"
     )
     return _ready("qualification.frozen_doctor_ready", product_version=__version__, protocol_version=PROTOCOL_VERSION) if valid else _blocked("qualification.frozen_doctor_not_ready")
 
@@ -303,6 +370,20 @@ def _manifest_gate(directory: str | Path) -> dict[str, object]:
     except (BackendError, OSError) as exc:
         code = exc.code if isinstance(exc, BackendError) else "qualification.distribution_unreadable"
         return _blocked(code, files_checked=0)
+
+
+def verified_distribution_manifest_sha256(directory: str | Path) -> str:
+    """Return the exact verified distribution identity used by qualification."""
+
+    gate = _manifest_gate(directory)
+    digest = gate.get("manifest_sha256")
+    if gate.get("status") != "ready" or not _is_sha256(digest):
+        raise BackendError(
+            str(gate.get("code", "qualification.distribution_unreadable")),
+            "The distribution cannot provide a qualification identity",
+            subsystem="qualification",
+        )
+    return str(digest)
 
 
 def build_release_report(
@@ -320,7 +401,14 @@ def build_release_report(
     host = host_probe()
     try:
         source_doctor_raw = doctor_runner(config)
-        source_doctor = _ready("qualification.source_doctor_ready") if source_doctor_raw.get("ready") is True and source_doctor_raw.get("network_used") is False else _blocked("qualification.source_doctor_not_ready")
+        source_transport = source_doctor_raw.get("checks", {}).get("transport", {})
+        source_doctor = _ready("qualification.source_doctor_ready") if (
+            source_doctor_raw.get("ready") is True
+            and source_doctor_raw.get("network_used") is False
+            and source_doctor_raw.get("voice_auth_protocol") == AUTH_PROTOCOL
+            and source_transport.get("status") == "ready"
+            and source_transport.get("code") == "transport.loopback_authenticated"
+        ) else _blocked("qualification.source_doctor_not_ready")
     except Exception:
         source_doctor = _blocked("qualification.source_doctor_failed")
     distribution_gate = _manifest_gate(distribution)
@@ -329,21 +417,35 @@ def build_release_report(
         frozen = evaluate_frozen_doctor(_load_json(frozen_doctor_path, "qualification.frozen_doctor_unreadable"))
     except BackendError as exc:
         frozen = _blocked(exc.code)
-    try:
-        samples = evaluate_samples(load_samples(samples_path))
-    except BackendError as exc:
-        samples = _blocked(exc.code, samples_total=0, failed_total=0, cases={}, metrics={}, content_captured=False)
+    runtime_profile_sha256 = distribution_gate.get("manifest_sha256")
+    if distribution_gate.get("status") != "ready" or not _is_sha256(runtime_profile_sha256):
+        samples = _blocked("qualification.distribution_prerequisite_failed", samples_total=0, failed_total=0, cases={}, metrics={}, content_captured=False)
+    else:
+        try:
+            samples = evaluate_samples(load_samples(
+                samples_path,
+                expected_runtime_profile_sha256=str(runtime_profile_sha256),
+            ))
+        except BackendError as exc:
+            samples = _blocked(exc.code, samples_total=0, failed_total=0, cases={}, metrics={}, content_captured=False)
     if native_evidence_path is None:
         native_acceptance = _blocked("qualification.native_evidence_required")
+    elif distribution_gate.get("status") != "ready" or not _is_sha256(runtime_profile_sha256):
+        native_acceptance = _blocked("qualification.distribution_prerequisite_failed")
     else:
         try:
             from .native_qualification import evaluate_native_evidence, load_native_evidence
 
-            native_report = evaluate_native_evidence(load_native_evidence(native_evidence_path))
+            native_report = evaluate_native_evidence(
+                load_native_evidence(native_evidence_path),
+                expected_runtime_profile_sha256=str(runtime_profile_sha256),
+            )
             if native_report.get("platform") != "windows":
                 native_acceptance = _blocked("qualification.native_windows_evidence_required")
             elif native_report.get("ready") is True:
                 native_acceptance = _ready("qualification.native_acceptance_ready")
+            elif native_report.get("checks", {}).get("runtime_profile", {}).get("code") == "qualification.native_profile_mismatch":
+                native_acceptance = _blocked("qualification.native_profile_mismatch")
             else:
                 native_acceptance = _blocked("qualification.native_acceptance_blocked")
         except BackendError as exc:
@@ -363,6 +465,7 @@ def build_release_report(
         "product": "jarvis-voice",
         "product_version": __version__,
         "protocol_version": PROTOCOL_VERSION,
+        "voice_auth_protocol": AUTH_PROTOCOL,
         "generated_at": now().astimezone(UTC).isoformat(timespec="seconds"),
         "ready": ready,
         "code": "qualification.release_ready" if ready else "qualification.release_blocked",

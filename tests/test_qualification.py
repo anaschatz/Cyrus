@@ -17,6 +17,7 @@ from jarvis_voice.config import voice_config_from_mapping
 from jarvis_voice.distribution import write_distribution_manifest
 from jarvis_voice.errors import BackendError
 from jarvis_voice.native_qualification import native_evidence_template
+from jarvis_voice.voice_auth import AUTH_PROTOCOL
 from jarvis_voice.qualification import (
     CASE_REQUIREMENTS,
     DISPATCH_LATENCY,
@@ -31,6 +32,7 @@ from jarvis_voice.qualification import (
     record_sample,
     sample_template,
     validate_samples,
+    verified_distribution_manifest_sha256,
     verify_authenticode,
     write_sample_template,
 )
@@ -55,6 +57,16 @@ def enough_samples() -> list[dict[str, object]]:
     return samples
 
 
+def sample_evidence(
+    samples: list[dict[str, object]] | None = None,
+    *,
+    runtime_profile_sha256: str = "a" * 64,
+) -> dict[str, object]:
+    evidence = sample_template(runtime_profile_sha256)
+    evidence["samples"] = [] if samples is None else samples
+    return evidence
+
+
 def frozen_doctor(*, ready: bool = True) -> dict[str, object]:
     status = "ready" if ready else "blocked"
     return {
@@ -62,15 +74,24 @@ def frozen_doctor(*, ready: bool = True) -> dict[str, object]:
         "network_used": False,
         "product_version": __version__,
         "protocol_version": PROTOCOL_VERSION,
+        "voice_auth_protocol": AUTH_PROTOCOL,
         "checks": {
             "host": {"status": status},
             "tray": {"status": status},
+            "transport": {
+                "status": status,
+                "code": (
+                    "transport.loopback_authenticated"
+                    if ready
+                    else "transport.authentication_key_required"
+                ),
+            },
             "packaging": {"status": status, "frozen": True, "bundle_mode": "onedir", "dll_search": {"status": status}, "mutable_data": {"status": status}},
         },
     }
 
 
-def ready_native_windows() -> dict[str, object]:
+def ready_native_windows(*, runtime_profile_sha256: str = "b" * 64) -> dict[str, object]:
     evidence = native_evidence_template("windows")
     evidence["provenance"] = {
         "native_machine": True,
@@ -106,7 +127,7 @@ def ready_native_windows() -> dict[str, object]:
     }
     evidence["runtime_profile"] = {
         "mode": "signed_package",
-        "fingerprint_sha256": "b" * 64,
+        "fingerprint_sha256": runtime_profile_sha256,
         "stable": True,
         "signed": True,
     }
@@ -115,12 +136,48 @@ def ready_native_windows() -> dict[str, object]:
 
 class QualificationSampleTests(unittest.TestCase):
     def test_template_is_empty_and_strict(self) -> None:
-        self.assertEqual(sample_template(), {"schema_version": 1, "samples": []})
+        expected = {
+            "schema_version": 2,
+            "product_version": __version__,
+            "protocol_version": PROTOCOL_VERSION,
+            "voice_auth_protocol": AUTH_PROTOCOL,
+            "runtime_profile_sha256": "a" * 64,
+            "samples": [],
+        }
+        self.assertEqual(sample_template("a" * 64), expected)
         with self.assertRaisesRegex(BackendError, "qualification.samples_schema_invalid"):
-            validate_samples({"schema_version": 1, "samples": [], "notes": "secret transcript"})
+            validate_samples({**expected, "notes": "secret transcript"})
+
+    def test_legacy_and_wrong_identity_samples_are_rejected(self) -> None:
+        with self.assertRaisesRegex(BackendError, "qualification.samples_schema_invalid"):
+            validate_samples({"schema_version": 1, "samples": []})
+        for field, value in (
+            ("product_version", "0.7.0"),
+            ("protocol_version", "jarvis.voice/0"),
+            ("voice_auth_protocol", "jarvis.voice-auth/0"),
+        ):
+            evidence = sample_evidence()
+            evidence[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                BackendError, "qualification.samples_schema_invalid"
+            ):
+                validate_samples(evidence)
+
+    def test_sample_runtime_profile_binding_is_exact(self) -> None:
+        validate_samples(
+            sample_evidence(),
+            expected_runtime_profile_sha256="a" * 64,
+        )
+        with self.assertRaisesRegex(
+            BackendError, "qualification.samples_runtime_profile_mismatch"
+        ):
+            validate_samples(
+                sample_evidence(),
+                expected_runtime_profile_sha256="b" * 64,
+            )
 
     def test_sufficient_samples_produce_only_counts_and_percentiles(self) -> None:
-        samples = validate_samples({"schema_version": 1, "samples": enough_samples()})
+        samples = validate_samples(sample_evidence(enough_samples()))
         report = evaluate_samples(samples)
         self.assertEqual(report["status"], "ready")
         self.assertEqual(report["samples_total"], sum(CASE_REQUIREMENTS.values()))
@@ -130,31 +187,31 @@ class QualificationSampleTests(unittest.TestCase):
 
     def test_failure_and_insufficient_counts_block_release(self) -> None:
         samples = enough_samples(); samples[0]["outcome"] = "fail"; samples[0]["metrics"] = {}
-        self.assertEqual(evaluate_samples(validate_samples({"schema_version": 1, "samples": samples}))["code"], "qualification.failed_sample_present")
+        self.assertEqual(evaluate_samples(validate_samples(sample_evidence(samples)))["code"], "qualification.failed_sample_present")
         self.assertEqual(evaluate_samples([])["code"], "qualification.samples_insufficient")
 
     def test_replay_unknown_metric_and_missing_required_metric_are_rejected(self) -> None:
         samples = enough_samples(); samples[1]["sample_id"] = samples[0]["sample_id"]
         with self.assertRaisesRegex(BackendError, "qualification.sample_id_invalid"):
-            validate_samples({"schema_version": 1, "samples": samples})
+            validate_samples(sample_evidence(samples))
         broken = enough_samples(); broken[0]["metrics"] = {"transcript": 1}
         with self.assertRaisesRegex(BackendError, "qualification.samples_schema_invalid"):
-            validate_samples({"schema_version": 1, "samples": broken})
+            validate_samples(sample_evidence(broken))
         broken = enough_samples(); broken[0]["metrics"] = {TRANSCRIPT_LATENCY: 1, DISPATCH_LATENCY: 1}
         with self.assertRaisesRegex(BackendError, "qualification.required_metric_missing"):
-            validate_samples({"schema_version": 1, "samples": broken})
+            validate_samples(sample_evidence(broken))
 
     def test_non_finite_negative_and_duplicate_cli_metrics_are_rejected(self) -> None:
         for raw in ({TRANSCRIPT_LATENCY: float("nan")}, {TRANSCRIPT_LATENCY: -1}):
             sample = {"sample_id": sample_id(0), "case": "no_speech", "outcome": "pass", "metrics": raw}
             with self.assertRaisesRegex(BackendError, "qualification.samples_schema_invalid"):
-                validate_samples({"schema_version": 1, "samples": [sample]})
+                validate_samples(sample_evidence([sample]))
         with self.assertRaisesRegex(BackendError, "qualification.metric_argument_invalid"):
             parse_metrics([f"{TRANSCRIPT_LATENCY}=1", f"{TRANSCRIPT_LATENCY}=2"])
 
     def test_atomic_record_contains_no_free_form_field(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "samples.json"; write_sample_template(path)
+            path = Path(temporary) / "samples.json"; write_sample_template(path, "a" * 64)
             fixed = uuid.UUID(int=99, version=4)
             self.assertEqual(record_sample(path, case="no_speech", outcome="pass", metrics={}, id_factory=lambda: fixed), str(fixed))
             self.assertEqual(set(json.loads(path.read_text())["samples"][0]), {"sample_id", "case", "outcome", "metrics"})
@@ -207,30 +264,128 @@ class ReleaseReportTests(unittest.TestCase):
         wrong = frozen_doctor(); wrong["checks"]["packaging"]["dll_search"]["status"] = "blocked"
         self.assertEqual(evaluate_frozen_doctor(wrong)["status"], "blocked")
 
+    def test_legacy_unauthenticated_frozen_doctor_cannot_qualify(self) -> None:
+        legacy = frozen_doctor()
+        legacy.pop("voice_auth_protocol")
+        legacy["checks"].pop("transport")
+        self.assertEqual(evaluate_frozen_doctor(legacy)["status"], "blocked")
+
+        wrong_protocol = frozen_doctor()
+        wrong_protocol["voice_auth_protocol"] = "jarvis.voice-auth/0"
+        self.assertEqual(evaluate_frozen_doctor(wrong_protocol)["status"], "blocked")
+
     def test_all_gates_create_ready_report_without_paths_or_content(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); distribution = root / "dist"; distribution.mkdir()
             (distribution / "JARVIS Voice.exe").write_bytes(b"exe"); write_distribution_manifest(distribution)
-            samples = root / "samples.json"; samples.write_text(json.dumps({"schema_version": 1, "samples": enough_samples()}))
+            runtime_profile = verified_distribution_manifest_sha256(distribution)
+            samples = root / "samples.json"; samples.write_text(json.dumps(sample_evidence(enough_samples(), runtime_profile_sha256=runtime_profile)))
             frozen = root / "frozen.json"; frozen.write_text(json.dumps(frozen_doctor()))
-            native = root / "native.json"; native.write_text(json.dumps(ready_native_windows()))
+            native = root / "native.json"; native.write_text(json.dumps(ready_native_windows(runtime_profile_sha256=runtime_profile)))
             report = build_release_report(
                 voice_config_from_mapping({}), distribution=distribution, samples_path=samples, frozen_doctor_path=frozen, native_evidence_path=native,
                 now=lambda: datetime(2026, 8, 10, tzinfo=UTC), host_probe=lambda: {"status": "ready", "code": "host.ready"},
-                doctor_runner=lambda _: {"ready": True, "network_used": False},
+                doctor_runner=lambda _: {
+                    "ready": True,
+                    "network_used": False,
+                    "voice_auth_protocol": AUTH_PROTOCOL,
+                    "checks": {
+                        "transport": {
+                            "status": "ready",
+                            "code": "transport.loopback_authenticated",
+                        }
+                    },
+                },
                 signature_verifier=lambda _: {"status": "ready", "code": "signature.ready", "files_checked": 1},
             )
             self.assertTrue(report["ready"])
+            self.assertEqual(report["schema_version"], 2)
+            self.assertEqual(report["voice_auth_protocol"], AUTH_PROTOCOL)
             encoded = json.dumps(report)
             self.assertNotIn(str(root), encoded); self.assertNotIn("μυστικό περιεχόμενο", encoded)
             self.assertFalse(report["network_used"]); self.assertFalse(report["content_captured"])
 
+    def test_release_rejects_samples_and_native_evidence_from_other_distribution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); distribution = root / "dist"; distribution.mkdir()
+            (distribution / "JARVIS Voice.exe").write_bytes(b"exe"); write_distribution_manifest(distribution)
+            runtime_profile = verified_distribution_manifest_sha256(distribution)
+            frozen = root / "frozen.json"; frozen.write_text(json.dumps(frozen_doctor()))
+            samples = root / "samples.json"
+            native = root / "native.json"
+
+            def report() -> dict[str, object]:
+                return build_release_report(
+                    voice_config_from_mapping({}),
+                    distribution=distribution,
+                    samples_path=samples,
+                    frozen_doctor_path=frozen,
+                    native_evidence_path=native,
+                    host_probe=lambda: {"status": "ready", "code": "host.ready"},
+                    doctor_runner=lambda _: {
+                        "ready": True,
+                        "network_used": False,
+                        "voice_auth_protocol": AUTH_PROTOCOL,
+                        "checks": {
+                            "transport": {
+                                "status": "ready",
+                                "code": "transport.loopback_authenticated",
+                            }
+                        },
+                    },
+                    signature_verifier=lambda _: {
+                        "status": "ready",
+                        "code": "signature.ready",
+                        "files_checked": 1,
+                    },
+                )
+
+            samples.write_text(json.dumps(sample_evidence(enough_samples(), runtime_profile_sha256="f" * 64)))
+            native.write_text(json.dumps(ready_native_windows(runtime_profile_sha256=runtime_profile)))
+            samples_mismatch = report()
+            self.assertFalse(samples_mismatch["ready"])
+            self.assertEqual(
+                samples_mismatch["checks"]["samples"]["code"],
+                "qualification.samples_runtime_profile_mismatch",
+            )
+
+            samples.write_text(json.dumps(sample_evidence(enough_samples(), runtime_profile_sha256=runtime_profile)))
+            native.write_text(json.dumps(ready_native_windows(runtime_profile_sha256="f" * 64)))
+            native_mismatch = report()
+            self.assertFalse(native_mismatch["ready"])
+            self.assertEqual(
+                native_mismatch["checks"]["native_acceptance"]["code"],
+                "qualification.native_profile_mismatch",
+            )
+
+    def test_legacy_unauthenticated_source_doctor_blocks_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); distribution = root / "dist"; distribution.mkdir()
+            (distribution / "JARVIS Voice.exe").write_bytes(b"exe"); write_distribution_manifest(distribution)
+            runtime_profile = verified_distribution_manifest_sha256(distribution)
+            samples = root / "samples.json"; samples.write_text(json.dumps(sample_evidence(enough_samples(), runtime_profile_sha256=runtime_profile)))
+            frozen = root / "frozen.json"; frozen.write_text(json.dumps(frozen_doctor()))
+            native = root / "native.json"; native.write_text(json.dumps(ready_native_windows(runtime_profile_sha256=runtime_profile)))
+            report = build_release_report(
+                voice_config_from_mapping({}), distribution=distribution, samples_path=samples, frozen_doctor_path=frozen, native_evidence_path=native,
+                host_probe=lambda: {"status": "ready", "code": "host.ready"},
+                doctor_runner=lambda _: {"ready": True, "network_used": False},
+                signature_verifier=lambda _: {"status": "ready", "code": "signature.ready", "files_checked": 1},
+            )
+            self.assertFalse(report["ready"])
+            self.assertEqual(report["checks"]["source_doctor"]["status"], "blocked")
+            self.assertEqual(
+                report["checks"]["source_doctor"]["code"],
+                "qualification.source_doctor_not_ready",
+            )
+
     def test_cli_template_record_and_development_host_blocked_report(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); samples = root / "samples.json"
-            self.assertEqual(main(["qualification-template", "--output", str(samples)]), 0)
-            self.assertEqual(main(["qualification-record", "--samples", str(samples), "--case", "no_speech", "--outcome", "pass"]), 0)
+            root = Path(temporary)
             distribution = root / "dist"; distribution.mkdir(); (distribution / "JARVIS Voice.exe").write_bytes(b"unsigned"); write_distribution_manifest(distribution)
+            samples = root / "samples.json"
+            self.assertEqual(main(["qualification-template", "--distribution", str(distribution), "--output", str(samples)]), 0)
+            self.assertEqual(main(["qualification-record", "--samples", str(samples), "--case", "no_speech", "--outcome", "pass"]), 0)
             frozen = root / "frozen.json"; frozen.write_text(json.dumps(frozen_doctor(ready=False)))
             native = root / "native.json"; native.write_text(json.dumps(native_evidence_template("windows")))
             output = root / "qualification.json"

@@ -4,27 +4,99 @@ The Orchestrator is the sole owner of task lifecycle, one-active-conversation st
 
 ## Install and run
 
-Python 3.11 is required. Dependencies are resolved and hashed in `uv.lock`.
+Python 3.11 is required. Dependencies are resolved and hashed in `uv.lock`;
+the Windows lock includes the conditional `pywin32` DACL runtime.
+
+From the repository root, install the locked Orchestrator environment, then
+create one external Voice authentication key with that environment. Its parent
+directory must already exist and the destination must not exist:
 
 ```sh
 cd orchestrator
 uv sync --frozen --python 3.11
-cp config.example.json orchestrator.local.json
-# Replace the example database path and both private bearer tokens.
-PYTHONPATH=src:../src:../anamnesis/src uv run --frozen jarvis-orchestrator --config orchestrator.local.json serve
+cd ..
+PYTHONPATH=orchestrator/src:src orchestrator/.venv/bin/python \
+  -m jarvis_voice create-auth-key \
+  --output /absolute/private/path/voice-auth.json
 ```
 
-The server performs bounded capability discovery before opening the voice gateway. It never reads provider configuration from the environment. The model alias is fixed to `jarvis-local`; SDK retries and redirects are disabled.
+```sh
+PYTHONPATH=orchestrator/src:src orchestrator/.venv/bin/python \
+  scripts/materialize_orchestrator_config.py \
+  --output /absolute/private/path/orchestrator.local.json \
+  --database /absolute/private/path/state/orchestrator.sqlite3 \
+  --voice-auth-key /absolute/private/path/voice-auth.json
+cd orchestrator
+PYTHONPATH=src:../src uv run --frozen jarvis-orchestrator \
+  --config /absolute/private/path/orchestrator.local.json serve
+```
+
+The materializer refuses an existing output, writes an owner-private file,
+generates each bearer token from 48 bytes supplied by Python's operating-system
+CSPRNG and performs the production strict-loader round trip before and after
+publication. The loader proves only canonical unpadded URL-safe base64 format
+and a decoded capacity of 32–384 bytes; randomness cannot be inferred from a
+token value. On Windows the output directory and generated file must satisfy
+the restricted current-user/SYSTEM/Administrators DACL policy. Neither the
+command nor startup
+errors print token values or private paths.
+
+The private Voice config must contain the exact same absolute
+`voice_auth_key_file` path. Before accepting the first `jarvis.voice/1` hello,
+the gateway performs the bounded `jarvis.voice-auth/1` shared-key handshake;
+missing, malformed or mismatched keys fail closed. The server also performs
+bounded capability discovery before opening the voice gateway. It never reads
+provider configuration from the environment. The model alias is fixed to
+`jarvis-local`; SDK retries and redirects are disabled.
+
+This is a single-host boundary: Voice and Orchestrator remain on loopback and
+must run on the same Mac or the same PC. Authentication does not authorize a
+Mac-to-PC split and the key must not be copied between hosts. It authenticates
+the local peers but does not add TLS/encryption, process isolation or protection
+from a process already compromised under the same operating-system user.
+
+Use schema `jarvis-private-stack/2` for the joint operator manifest. There is no
+dual-key/live rotation: stop Voice and Orchestrator, create a new key at a new
+path, update both configs, restart Orchestrator then Voice and rerun
+authenticated `status`/`e2e` plus one native PTT turn. Pre-auth Voice 0.7 and
+`/1` operational transport
+evidence is not valid for this boundary; the detailed invalidation and package
+requalification rules are in the
+[private stack runbook](../docs/private-stack-run.md). The bounded
+foreground-only hardware procedure is the
+[macOS technical-beta operator runbook](../docs/macos-technical-beta-operator.md).
 
 Control examples:
 
 ```sh
-PYTHONPATH=src uv run --frozen jarvis-orchestrator --config orchestrator.local.json ready
-PYTHONPATH=src uv run --frozen jarvis-orchestrator --config orchestrator.local.json approvals list
-PYTHONPATH=src uv run --frozen jarvis-orchestrator --config orchestrator.local.json conversations active
+PYTHONPATH=src uv run --frozen jarvis-orchestrator --config /absolute/private/path/orchestrator.local.json ready
+PYTHONPATH=src uv run --frozen jarvis-orchestrator --config /absolute/private/path/orchestrator.local.json approvals list
+PYTHONPATH=src uv run --frozen jarvis-orchestrator --config /absolute/private/path/orchestrator.local.json conversations active
 ```
 
 Conversation deletion always prompts for the full conversation ID. Logical deletion does not claim forensic erasure of SQLite WAL or free pages.
+
+## Runtime readiness and controlled shutdown
+
+The loopback listeners bind with business admission closed. Readiness becomes
+true only after the gateway listener, first deadline sweep, first scheduler
+tick (when enabled), stop-file watcher and control thread each acknowledge a
+successful bind/tick. That final barrier seals critical-task registration;
+late registrations fail closed. Before it opens, authenticated Voice business
+connections are closed with `runtime_not_ready`, Control business routes return
+a retryable HTTP 503, and `/readyz` remains false. The authenticated Voice key
+probe and Control readiness diagnostics remain available without touching
+conversation state.
+
+Shutdown has one four-second monotonic budget shared by control-handler drain,
+gateway/scheduler cancellation, cloud-adapter close and final task reaping. An
+independent watchdog thread enforces the same wall-clock process deadline even
+if the asyncio loop or synchronous SQLite close stalls. A background stop file
+is durable intent: it is removed only after all adapters and the store close
+successfully. A hard/non-zero exit leaves it in place, so a service-manager
+retry cannot reopen business admission and instead completes the requested
+stop. `background stop` does not report success during the transient unlocked
+gap between a failed exit and that retry.
 
 ## Durable boundaries
 
@@ -62,7 +134,7 @@ configured Action Host socket, token and qualified executor.
 
 ```sh
 cd orchestrator
-PYTHONPATH=src:../src:../inference/src:../anamnesis/src uv run --frozen python -m unittest discover -s tests -v
+PYTHONPATH=src:../src:../inference/src uv run --frozen python -m unittest discover -s tests -v
 PYTHONPATH=src:../src uv run --frozen python -m compileall -q src ../src/jarvis_voice
 ```
 
@@ -75,8 +147,16 @@ remain disabled until separately qualified and activated by policy.
 Operational background startup, content-free diagnostics, verified SQLite
 backup/restore, the 1,000-turn synthetic lifecycle gate, 100-turn live gate,
 restart gate and 24-hour bounded soak are defined in
-[`docs/operational-ready-gate-v1.md`](docs/operational-ready-gate-v1.md). Cloud,
-memory and research readiness never substitutes for this whole-system gate.
+[`docs/operational-ready-gate-v1.md`](docs/operational-ready-gate-v1.md). The
+production aggregate accepts only fresh Ed25519-signed leaves bound to the
+pinned build, authenticated live inference identity, model, config profile,
+healthy current database diagnostics, native host profile and one closed
+72-hour qualification cohort. Its owner-private cohort receipt durably claims
+each fixed sequence before atomic evidence publication; exact retries are
+idempotent and changed hashes or destinations fail closed. Sequence 7 is
+deterministically one second after the latest leaf and is accepted only after
+the final live state/clock check remains inside the window. Cloud, memory and
+research readiness never substitutes for this whole-system gate.
 
 ## M1C cloud router (off by default)
 
@@ -155,10 +235,16 @@ uses its real closed `OpenMemoryRecallIndex` contract. Durable records remain
 under Orchestrator SQLite ownership so restart, epoch fencing, idempotency and
 conversation deletion remain enforceable.
 
-Set `memory_enabled:true` only with `../anamnesis/src` on `PYTHONPATH`. The
-adapter stores only explicit completed statements such as `Να θυμάσαι ότι…`
-or `Remember that…`. Non-empty recall selects `memory_local`; timeout, provider
-failure or no match safely falls back to `local`. See
+`uv sync --frozen` installs the locked local Anamnesis runtime distribution;
+no Anamnesis source directory belongs on `PYTHONPATH`. Set
+`memory_enabled:true` only after that frozen sync. Explicit statements such as
+`Να θυμάσαι ότι…` or `Remember that…` bypass recall, planners and models. The
+Orchestrator atomically commits the memory outcome, a code-owned localized
+reply, its content-free audit and the replayable response outbox. Normalized
+duplicates return `already_exists` without a second row; disabled memory
+returns `not_enabled` without a false acknowledgement. Non-empty recall selects
+`memory_local`; timeout, provider failure or no match safely falls back to
+`local`. See
 [`docs/anamnesis-memory-integration.md`](../docs/anamnesis-memory-integration.md)
 for the qualification inventory and limitations.
 
@@ -166,7 +252,10 @@ Explicit retrospective deletion is equally closed: `Forget that…` or
 `Ξέχασε ότι…` deletes only when the normalized command target equals exactly
 one stored record in the active conversation. Zero or multiple matches are
 content-free audited outcomes and leave all records unchanged; no model selects
-the record to delete.
+the record to delete. A pre-commit crash leaves no mutation or acknowledgement;
+a post-commit restart replays the same response without applying the command
+again. This removes only the saved-memory record, not canonical chat history;
+the deterministic reply names that limitation instead of claiming full erasure.
 
 ## Memory shadow mode
 

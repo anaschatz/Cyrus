@@ -30,8 +30,11 @@ gate.
 Windows evidence απαιτεί pass για Raw Input, WASAPI, SAPI5, tray,
 suspend/resume, lock/unlock, microphone change, missed key-up, packaged EXE,
 microphone recovery, sleep recovery και acoustic barge-in. Το runtime profile
-πρέπει να είναι signed package με σταθερό SHA-256 fingerprint. Το ξεχωριστό
-release gate συνεχίζει να επαληθεύει κάθε PE αρχείο με SignTool.
+πρέπει να είναι signed package και το fingerprint του πρέπει να ισούται με το
+SHA-256 του verified distribution manifest. Το ξεχωριστό release gate
+συνεχίζει να επαληθεύει κάθε PE αρχείο με SignTool. Η υπογραφή και το manifest
+οριστικοποιούνται πριν δημιουργηθεί το template· οποιαδήποτε μεταγενέστερη
+αλλαγή στο package ακυρώνει όλο το συγκεκριμένο evidence set.
 
 macOS evidence απαιτεί pass για CoreAudio, Accessibility permission, physical
 PTT event tap, τον επιλεγμένο TTS backend, suspend/resume, microphone change,
@@ -49,6 +52,16 @@ python3 scripts/run_native_voice_qualification.py template \
   --output "/absolute/private/evidence/macos-native.json"
 ```
 
+Για Windows, το template δένεται υποχρεωτικά με το ήδη υπογεγραμμένο και
+manifested distribution:
+
+```powershell
+py -3.11 scripts/run_native_voice_qualification.py template `
+  --platform windows `
+  --distribution C:\JARVIS-Dist\JARVIS-Voice `
+  --output C:\JARVIS-Evidence\windows-native.json
+```
+
 Αξιολόγηση:
 
 ```sh
@@ -57,12 +70,18 @@ python3 scripts/run_native_voice_qualification.py evaluate \
   --output "/absolute/private/evidence/macos-native-report.json"
 ```
 
+Στα Windows, το `evaluate` απαιτεί ξανά το ίδιο `--distribution` και απορρίπτει
+fingerprint mismatch.
+
 Το schema απορρίπτει άγνωστα/free-form πεδία. Δεν αποθηκεύει audio, transcript
-text, device identifiers ή protocol IDs. Το template ξεκινά με όλα `pending`
-και ο evaluator δεν εκτελεί ή προσποιείται hardware tests. Τα τελικά counters
-και metrics πρέπει να γραφτούν από τον native telemetry collector της ίδιας
-εκτέλεσης. Μέχρι να ολοκληρωθεί αυτός ο collector και να τρέξει στα πραγματικά
-μηχανήματα, το αποτέλεσμα παραμένει `qualification.native_blocked`.
+text ή device identifiers. Αποθηκεύει μόνο τα σταθερά product/protocol/auth
+version IDs και ένα SHA-256 runtime fingerprint, ώστε pre-authentication ή
+διαφορετικού build evidence να απορρίπτεται. Το template ξεκινά με όλα
+`pending` και ο evaluator δεν εκτελεί ή προσποιείται hardware tests. Τα τελικά
+counters και metrics πρέπει να γραφτούν από τον native telemetry collector της
+ίδιας εκτέλεσης. Μέχρι να ολοκληρωθεί αυτός ο collector και να τρέξει στα
+πραγματικά μηχανήματα, το αποτέλεσμα παραμένει
+`qualification.native_blocked`.
 
 ## macOS collector
 

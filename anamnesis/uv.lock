@@ -177,33 +177,44 @@ name = "anamnesis-memory-eval"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "fastembed" },
-    { name = "inspect-ai" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "openai" },
     { name = "pydantic" },
 ]
 
 [package.optional-dependencies]
 dev = [
+    { name = "fastembed" },
     { name = "hatchling" },
+    { name = "inspect-ai" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "openai" },
     { name = "pytest" },
     { name = "ruff" },
+]
+eval = [
+    { name = "fastembed" },
+    { name = "inspect-ai" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "openai" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "fastembed", specifier = ">=0.7,<0.8" },
+    { name = "fastembed", marker = "extra == 'dev'", specifier = ">=0.7,<0.8" },
+    { name = "fastembed", marker = "extra == 'eval'", specifier = ">=0.7,<0.8" },
     { name = "hatchling", marker = "extra == 'dev'", specifier = "==1.27.0" },
-    { name = "inspect-ai", specifier = ">=0.3.150,<0.4" },
-    { name = "numpy", specifier = ">=2.0,<3" },
-    { name = "openai", specifier = ">=2.45,<3" },
+    { name = "inspect-ai", marker = "extra == 'dev'", specifier = ">=0.3.150,<0.4" },
+    { name = "inspect-ai", marker = "extra == 'eval'", specifier = ">=0.3.150,<0.4" },
+    { name = "numpy", marker = "extra == 'dev'", specifier = ">=2.0,<3" },
+    { name = "numpy", marker = "extra == 'eval'", specifier = ">=2.0,<3" },
+    { name = "openai", marker = "extra == 'dev'", specifier = ">=2.45,<3" },
+    { name = "openai", marker = "extra == 'eval'", specifier = ">=2.45,<3" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<9" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["eval", "dev"]
 
 [[package]]
 name = "annotated-doc"

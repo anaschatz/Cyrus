@@ -50,7 +50,17 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
         schema = connection.execute(
             "SELECT value FROM schema_meta WHERE key='schema_version'"
         ).fetchone()
-        if schema is None or schema["value"] not in {"2", "3", "4", "5", "6", "7"}:
+        if schema is None or schema["value"] not in {
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+        }:
             raise RuntimeError("unsupported shadow audit database schema")
         rows = connection.execute(
             """SELECT e.event_sequence,e.epoch,e.event_type,e.payload_json,e.created_at,

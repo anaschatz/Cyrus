@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import anamnesis.openmemory_vllm as runtime_module
 import anamnesis.openmemory_vllm_report as report_module
 import anamnesis.openmemory_vllm_run as run_module
 from anamnesis.openmemory_vllm import (
@@ -73,6 +74,7 @@ def _patch_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_module, "OpenAIExternalVllmClient", FakeClient)
     monkeypatch.setattr(run_module, "HttpOperatorVllmProbe", FakeProbe)
     monkeypatch.setattr(run_module, "verify_vllm_artifact", lambda *args: None)
+    monkeypatch.setattr(runtime_module, "verify_vllm_artifact", lambda *args: None)
     monkeypatch.setattr(run_module, "_verify_source_commit", lambda *args: None)
     FakeClient.calls = []
     FakeProbe.calls = 0

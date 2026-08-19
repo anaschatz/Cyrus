@@ -22,6 +22,7 @@ from ..errors import BackendError
 from ..manifest import validate_model_directory
 from ..qualification import write_report
 from ..vad import SileroOnnxVad, validate_artifact
+from ..voice_auth import VoiceAuthError, load_voice_auth_key
 from .doctor import _default_voice_probe
 
 
@@ -263,6 +264,7 @@ def materialize_private_config(
     *,
     greek_voice: str,
     english_voice: str,
+    voice_auth_key: str,
 ) -> dict[str, object]:
     validation = validate_model_directory(model_directory)
     if not validation.ok:
@@ -288,7 +290,16 @@ def materialize_private_config(
     installed = _default_voice_probe()
     if greek_voice not in installed or english_voice not in installed:
         raise BackendError("materialization.voice_missing", "Configured system voice is not installed", subsystem="materialization")
+    try:
+        load_voice_auth_key(voice_auth_key)
+    except VoiceAuthError as exc:
+        raise BackendError(
+            "materialization.voice_auth_key_invalid",
+            "Voice authentication key is unavailable or invalid",
+            subsystem="materialization",
+        ) from exc
     raw["whisper_model_directory"] = str(Path(model_directory).expanduser())
+    raw["voice_auth_key_file"] = str(Path(voice_auth_key).expanduser())
     raw.setdefault("asr", {})["execution_profile"] = "cpu"
     raw.setdefault("vad", {})["artifact"] = dict(artifact)
     raw.setdefault("macos", {})["asr_backend"] = "faster_whisper_cpu_smoke"

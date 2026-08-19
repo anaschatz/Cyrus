@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from ..audio import resample_audio
 from ..backends import SpeechUnit
-from ..config import VoiceConfig
+from ..config import VoiceConfig, configured_voice_auth_key
 from ..core import VoiceCore
 from ..cloud_approval import (
     CloudApprovalController,
@@ -29,6 +29,7 @@ from ..delivery_journal import DeliveryDedupJournal, default_delivery_journal_pa
 from ..errors import BackendError
 from ..protocol import Envelope
 from ..ptt import ApprovalKeyPublisher, PttEvent, PttEventPublisher, PttTransition
+from ..private_state import default_voice_state_boundary, prepare_voice_journal_state
 from ..reliable import ReliableSubmissionManager
 from ..transcription import AsyncTranscriptionCoordinator
 from ..transport import LoopbackWebSocketTransport
@@ -66,6 +67,7 @@ class MacVoiceRuntime:
     ) -> None:
         if sys.platform != "darwin":
             raise BackendError("runtime.macos_only", "The macOS runtime requires native macOS", subsystem="runtime")
+        voice_auth_key = configured_voice_auth_key(config)
         artifact = config.vad.artifact
         if not artifact.path or artifact.size is None or not artifact.sha256:
             raise BackendError("vad.artifact_manifest_required", "Silero artifact manifest is required", subsystem="vad")
@@ -74,6 +76,18 @@ class MacVoiceRuntime:
             not config.macos.system_voices.get(locale) for locale in ("el-GR", "en-US")
         ):
             raise BackendError("tts.macos_voice_mapping_required", "Explicit Greek and English macOS voices are required", subsystem="tts")
+        journal_paths = (
+            default_delivery_journal_path(),
+            default_cloud_approval_journal_path(),
+            default_action_approval_journal_path(),
+        )
+        state_boundary = default_voice_state_boundary()
+        # One aggregate preparation makes every unsafe journal/sidecar fail
+        # before any SQLite connection or expensive native backend is opened.
+        prepare_voice_journal_state(
+            journal_paths,
+            trusted_boundary=state_boundary,
+        )
         self.config = config
         self.callbacks: queue.Queue[BackendCallback] = queue.Queue()
         started_callback = lambda unit: self.callbacks.put_nowait(BackendCallback("started", unit))
@@ -109,11 +123,20 @@ class MacVoiceRuntime:
                 on_completed=completed_callback,
             )
         self.asr = create_macos_asr_backend(config)
-        self.delivery_journal = DeliveryDedupJournal(default_delivery_journal_path())
+        self.delivery_journal = DeliveryDedupJournal(
+            journal_paths[0],
+            trusted_boundary=state_boundary,
+        )
         self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
-        self.cloud_journal = CloudApprovalJournal(default_cloud_approval_journal_path())
+        self.cloud_journal = CloudApprovalJournal(
+            journal_paths[1],
+            trusted_boundary=state_boundary,
+        )
         self.cloud_approval = CloudApprovalController(session_id=self.core.session_id, journal=self.cloud_journal)
-        self.action_journal = ActionApprovalJournal(default_action_approval_journal_path())
+        self.action_journal = ActionApprovalJournal(
+            journal_paths[2],
+            trusted_boundary=state_boundary,
+        )
         self.action_approval = ActionApprovalController(
             session_id=self.core.session_id,
             journal=self.action_journal,
@@ -143,7 +166,10 @@ class MacVoiceRuntime:
             minimum_speech_ms=config.vad.minimum_speech_ms,
             padding_ms=config.vad.padding_ms,
         )
-        self.transport = LoopbackWebSocketTransport(config.orchestrator_url)
+        self.transport = LoopbackWebSocketTransport(
+            config.orchestrator_url,
+            auth_key=voice_auth_key,
+        )
         self.publisher = PttEventPublisher(
             capacity=config.ptt_queue_capacity,
             maximum_hold_seconds=config.maximum_hold_seconds,

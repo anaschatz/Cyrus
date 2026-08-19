@@ -13,12 +13,13 @@ from typing import Any
 from .asr import FasterWhisperCpuBackend
 from . import PROTOCOL_VERSION, __version__
 from .app_paths import frozen_bundle_root, frozen_library_directory, require_external_mutable_path
-from .config import VoiceConfig, is_loopback_websocket_url
+from .config import VoiceConfig, configured_voice_auth_key, is_loopback_websocket_url
 from .errors import BackendError
 from .gpu import GpuAdmissionPolicy, GpuInventory, NvidiaSmiInventory
 from .manifest import BASE_MODEL_MANIFEST, validate_model_directory
 from .vad import validate_artifact
 from .windows.hardening import dll_policy_applied
+from .voice_auth import AUTH_PROTOCOL
 
 
 def _status(status: str, code: str, **details: object) -> dict[str, object]:
@@ -172,7 +173,27 @@ def doctor_report_config(
     artifact = config.vad.artifact
     vad_ok, vad_code = validate_artifact(artifact.path, artifact.size, artifact.sha256)
     vad = _status("ready" if vad_ok else "blocked", vad_code)
-    transport = _status("ready" if is_loopback_websocket_url(config.orchestrator_url) else "blocked", "transport.loopback_only" if is_loopback_websocket_url(config.orchestrator_url) else "transport.non_loopback_url")
+    transport_loopback = is_loopback_websocket_url(config.orchestrator_url)
+    transport_auth_code = "transport.authentication_key_required"
+    try:
+        configured_voice_auth_key(config)
+        transport_authenticated = True
+    except BackendError as exc:
+        transport_authenticated = False
+        if exc.code != "config.voice_auth_key_required":
+            transport_auth_code = "transport.authentication_key_invalid"
+    transport = _status(
+        "ready" if transport_loopback and transport_authenticated else "blocked",
+        (
+            "transport.loopback_authenticated"
+            if transport_loopback and transport_authenticated
+            else (
+                transport_auth_code
+                if transport_loopback
+                else "transport.non_loopback_url"
+            )
+        ),
+    )
 
     is_frozen = bool(getattr(sys, "frozen", False))
     bundle_root = frozen_bundle_root()
@@ -269,4 +290,4 @@ def doctor_report_config(
         or cuda_report["status"] == "blocked"
         or (config.asr.execution_profile == "cuda" and cuda_report["status"] != "ready")
     )
-    return {"ready": not blocked, "milestone": "windows-packaging-tray-hardening", "product_version": __version__, "protocol_version": PROTOCOL_VERSION, "checks": checks, "network_used": False, "gpu_used": gpu_used}
+    return {"ready": not blocked, "milestone": "windows-packaging-tray-hardening", "product_version": __version__, "protocol_version": PROTOCOL_VERSION, "voice_auth_protocol": AUTH_PROTOCOL, "checks": checks, "network_used": False, "gpu_used": gpu_used}

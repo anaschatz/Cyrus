@@ -168,7 +168,7 @@ async def _run_scenario(row: dict[str, object]) -> dict[str, object]:
                 gate=DeterministicLifecycleGateV3(),
             )
             assistant = _StaticAssistantModel()
-            config = OrchestratorConfig.from_mapping(
+            config = OrchestratorConfig.from_test_mapping(
                 {
                     "database_path": str(store.path),
                     "control_bearer_token": "control-private",

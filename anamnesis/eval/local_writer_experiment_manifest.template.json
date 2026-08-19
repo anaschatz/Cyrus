@@ -86,7 +86,7 @@
   "git_commit": null,
   "dependency_lock": {
     "path": "uv.lock",
-    "sha256": "f7207290df1b0da3519ea50f04cb88a15f1cf9bf950b0d1e990424113f9b5376"
+    "sha256": "c534d852a9e6364f34851d7753c3c4cde43f751bf8f6d7210a5ff5f2262c0f4b"
   },
   "research_contract": {
     "path": "RESEARCH.md",

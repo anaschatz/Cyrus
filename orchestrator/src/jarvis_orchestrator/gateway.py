@@ -4,27 +4,63 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
 
-from .domain import OrchestratorError, ReasonCode, TaskState, new_uuid4
+from .domain import (
+    OrchestratorError,
+    ReasonCode,
+    TaskState,
+    canonical_sha256,
+    new_uuid4,
+)
+from .runtime_supervisor import RuntimeProcessDeadline, RuntimeSupervisor
 from .service import OrchestratorService
+
+MAX_PENDING_AUTHENTICATIONS = 8
+AUTH_CAPACITY_WAIT_SECONDS = 0.05
+GATEWAY_SWEEPER_COMPONENT = "gateway_sweeper"
+GATEWAY_SWEEPER_FAILURE = "runtime_gateway_sweeper_failed"
+GATEWAY_LISTENER_COMPONENT = "gateway_listener"
+GATEWAY_LISTENER_FAILURE = "runtime_gateway_listener_failed"
 
 
 class VoiceGateway:
-    def __init__(self, service: OrchestratorService) -> None:
+    def __init__(
+        self,
+        service: OrchestratorService,
+        *,
+        auth_key: Any,
+        business_admission: Callable[[], bool] | None = None,
+    ) -> None:
+        from jarvis_voice.voice_auth import VoiceAuthKey
+
+        if not isinstance(auth_key, VoiceAuthKey):
+            raise RuntimeError("voice_auth_key_required")
         self.service = service
+        self.auth_key = auth_key
+        # Admission is fail-closed unless a lifecycle owner explicitly injects
+        # the shared readiness predicate.
+        self._business_admission = business_admission or (lambda: False)
         self._publication_locks: dict[str, asyncio.Lock] = {}
         self._execution_tasks: dict[str, asyncio.Task[Any]] = {}
         self._server: Any = None
         self._sweeper: asyncio.Task[Any] | None = None
+        self._server_monitor: asyncio.Task[Any] | None = None
         self._cloud_connections: dict[str, Any] = {}
         self._action_connections: dict[str, Any] = {}
+        self._auth_slots = asyncio.BoundedSemaphore(MAX_PENDING_AUTHENTICATIONS)
 
     def _lock(self, conversation_id: str) -> asyncio.Lock:
         return self._publication_locks.setdefault(conversation_id, asyncio.Lock())
 
-    async def start(self) -> None:
+    async def start(
+        self,
+        *,
+        supervisor: RuntimeSupervisor | None = None,
+        shutdown_deadline: RuntimeProcessDeadline | None = None,
+    ) -> None:
         try:
             from websockets.asyncio.server import serve
         except ImportError as exc:  # pragma: no cover - dependency gate
@@ -33,19 +69,87 @@ class VoiceGateway:
         self.service.set_execution_scheduler(
             lambda task_id: loop.call_soon_threadsafe(self._track_execution, task_id)
         )
-        self._server = await serve(
-            self.handle,
-            self.service.config.voice_host,
-            self.service.config.voice_port,
-            origins=[None],
-            max_size=64 * 1024,
-            max_queue=32,
-            open_timeout=2,
-            close_timeout=1,
-            ping_interval=10,
-            ping_timeout=10,
+        try:
+            self._server = await serve(
+                self.handle,
+                self.service.config.voice_host,
+                self.service.config.voice_port,
+                origins=[None],
+                max_size=64 * 1024,
+                max_queue=32,
+                open_timeout=2,
+                close_timeout=1,
+                ping_interval=10,
+                ping_timeout=10,
+            )
+            server = self._server
+            if supervisor is None:
+                # Standalone gateways retain the public API; the production CLI
+                # always supplies the process supervisor.
+                self._sweeper = asyncio.create_task(
+                    self._sweep_loop(), name="jarvis-deadline-sweeper"
+                )
+                self._server_monitor = asyncio.create_task(
+                    self._watch_server(server), name="jarvis-gateway-listener-monitor"
+                )
+            else:
+                self._sweeper = supervisor.start_task(
+                    GATEWAY_SWEEPER_COMPONENT,
+                    lambda: self._sweep_loop(
+                        lambda: supervisor.acknowledge_ready(
+                            GATEWAY_SWEEPER_COMPONENT
+                        )
+                    ),
+                    failure_code=GATEWAY_SWEEPER_FAILURE,
+                )
+                self._server_monitor = supervisor.start_task(
+                    GATEWAY_LISTENER_COMPONENT,
+                    lambda: self._watch_server(
+                        server,
+                        lambda: supervisor.acknowledge_ready(
+                            GATEWAY_LISTENER_COMPONENT
+                        ),
+                    ),
+                    failure_code=GATEWAY_LISTENER_FAILURE,
+                )
+        except BaseException:
+            cleanup_supervisor = supervisor or RuntimeSupervisor(
+                shutdown_timeout_seconds=3.0
+            )
+            cleanup_supervisor.begin_shutdown()
+            owned_deadline = shutdown_deadline is None
+            deadline = shutdown_deadline or cleanup_supervisor.process_deadline(3.0)
+            deadline.begin()
+            try:
+                await cleanup_supervisor.run_bounded_cleanup(
+                    "gateway_startup",
+                    self._rollback_failed_start,
+                    failure_code="runtime_gateway_startup_cleanup_failed",
+                    timeout_code="runtime_gateway_startup_cleanup_timeout",
+                    timeout_seconds=deadline.remaining(),
+                )
+            finally:
+                if owned_deadline:
+                    deadline.disarm()
+            raise
+
+    async def _rollback_failed_start(self) -> None:
+        self.service.set_execution_scheduler(None)
+        startup_tasks = tuple(
+            task
+            for task in (self._sweeper, self._server_monitor)
+            if task is not None
         )
-        self._sweeper = asyncio.create_task(self._sweep_loop(), name="jarvis-deadline-sweeper")
+        for task in startup_tasks:
+            task.cancel()
+        if startup_tasks:
+            await asyncio.gather(*startup_tasks, return_exceptions=True)
+        self._sweeper = None
+        self._server_monitor = None
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
 
     async def stop(self) -> None:
         self.service.set_execution_scheduler(None)
@@ -72,10 +176,30 @@ class VoiceGateway:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
+        if self._server_monitor is not None:
+            with suppress(asyncio.CancelledError):
+                await self._server_monitor
+            self._server_monitor = None
 
-    async def _sweep_loop(self) -> None:
+    @staticmethod
+    async def _watch_server(
+        server: Any,
+        ready: Callable[[], None] | None = None,
+    ) -> None:
+        if ready is not None:
+            ready()
+        await server.wait_closed()
+
+    async def _sweep_loop(
+        self,
+        ready: Callable[[], None] | None = None,
+    ) -> None:
+        acknowledged = False
         while True:
             self.service.sweep()
+            if not acknowledged and ready is not None:
+                ready()
+                acknowledged = True
             await asyncio.sleep(0.25)
 
     def _track_execution(self, task_id: str) -> None:
@@ -280,10 +404,60 @@ class VoiceGateway:
             ActionApprovalEventFactory,
         )
         from jarvis_voice.sequencing import SequenceResult, SequenceTracker
+        from jarvis_voice.voice_auth import VoiceAuthError
+        from jarvis_voice.voice_auth_transport import (
+            AUTH_PROBE_FRAME,
+            AUTH_PROBE_PATH,
+            AUTH_PROBE_SUCCESS_FRAME,
+            authenticate_async_server,
+        )
 
         peer = websocket.remote_address
         if not peer or peer[0] != "127.0.0.1":
             await websocket.close(code=1008, reason="loopback_required")
+            return
+        request = getattr(websocket, "request", None)
+        request_path = getattr(request, "path", "/")
+        if request_path not in {"/", AUTH_PROBE_PATH}:
+            await websocket.close(code=1008, reason="endpoint_not_allowed")
+            return
+        try:
+            await asyncio.wait_for(
+                self._auth_slots.acquire(),
+                timeout=AUTH_CAPACITY_WAIT_SECONDS,
+            )
+        except TimeoutError:
+            await websocket.close(code=1013, reason="authentication_capacity")
+            return
+        try:
+            connection_id = new_uuid4()
+            try:
+                raw_hello = await authenticate_async_server(
+                    websocket,
+                    self.auth_key,
+                    connection_id=connection_id,
+                )
+            except VoiceAuthError:
+                with suppress(Exception):
+                    await websocket.close(code=1008, reason="authentication_failed")
+                return
+        finally:
+            self._auth_slots.release()
+        if request_path == AUTH_PROBE_PATH:
+            expected_probe = AUTH_PROBE_FRAME.encode("ascii")
+            received_probe = (
+                raw_hello.encode("utf-8")
+                if isinstance(raw_hello, str)
+                else raw_hello
+            )
+            if received_probe != expected_probe:
+                with suppress(Exception):
+                    await websocket.close(code=1008, reason="authentication_probe_invalid")
+                return
+            await websocket.send(AUTH_PROBE_SUCCESS_FRAME)
+            return
+        if not self._business_admission():
+            await websocket.close(code=1013, reason="runtime_not_ready")
             return
         session_id: str | None = None
         writer: asyncio.Task[Any] | None = None
@@ -293,9 +467,7 @@ class VoiceGateway:
         scheduler_actions_negotiated = False
         action_negotiated = False
         capture_idle = True
-        connection_id = new_uuid4()
         try:
-            raw_hello = await asyncio.wait_for(websocket.recv(), timeout=2.0)
             hello = Envelope.from_json(raw_hello)
             if hello.type != "client.hello" or hello.seq != 1:
                 await websocket.close(code=1002, reason="hello_required")
@@ -304,7 +476,11 @@ class VoiceGateway:
             inbound_sequence.observe(hello)
             session_id = hello.session_id
             capabilities = hello.payload.get("capabilities", [])
-            cloud_negotiated = isinstance(capabilities, list) and CLOUD_APPROVAL_PROTOCOL in capabilities
+            cloud_negotiated = (
+                self.service.cloud_approval_available()
+                and isinstance(capabilities, list)
+                and CLOUD_APPROVAL_PROTOCOL in capabilities
+            )
             action_negotiated = (
                 self.service.tool_store is not None
                 and isinstance(capabilities, list)
@@ -602,7 +778,20 @@ class VoiceGateway:
                 elif event.type == "input.no_speech":
                     capture_idle = True
                 elif event.type in {"playback.completed", "playback.interrupted"} and event.response_id:
-                    self.service.handle_playback_terminal(event.response_id)
+                    self.service.handle_playback_terminal(
+                        event_id=event.event_id,
+                        semantic_sha256=canonical_sha256(
+                            {
+                                "type": event.type,
+                                "turn_id": event.turn_id,
+                                "response_id": event.response_id,
+                                "payload": dict(event.payload),
+                            }
+                        ),
+                        response_id=event.response_id,
+                        terminal_type=event.type,
+                        client_sent_at=event.sent_at,
+                    )
         except asyncio.CancelledError:
             raise
         except ProtocolError as exc:

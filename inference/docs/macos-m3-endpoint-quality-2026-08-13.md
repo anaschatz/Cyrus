@@ -67,3 +67,8 @@ are green.
 The next model-profile step is to evaluate a stronger M3/16 GB candidate with
 the same frozen corpus and the same strict structured/tool qualification, while
 retaining this profile as a technical integration baseline.
+
+The first such local challenger, Qwen3.5 9B `Q4_K_M`, was screened on
+2026-08-18 and also failed the bilingual gate despite completing 80/80 protocol
+cases. See `macos-m3-qwen35-9b-candidate-quality-2026-08-18.md` for the
+content-free result and rejection decision.

@@ -9,10 +9,10 @@ import sqlite3
 import sys
 import threading
 import time
-from contextlib import suppress
 from pathlib import Path
 
 from .errors import ProtocolError
+from .private_state import prepare_voice_journal_path
 from .protocol import Envelope
 
 
@@ -43,26 +43,42 @@ def semantic_fingerprint(event: Envelope) -> str:
 
 
 class DeliveryDedupJournal:
-    def __init__(self, path: str | Path, *, ttl_seconds: float = 60.0, maximum_rows: int = 4096, clock=time.time) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        ttl_seconds: float = 60.0,
+        maximum_rows: int = 4096,
+        clock=time.time,
+        trusted_boundary: str | Path | None = None,
+    ) -> None:
         if ttl_seconds <= 0 or maximum_rows < 1:
             raise ValueError("journal limits must be positive")
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with suppress(OSError):
-            os.chmod(self.path.parent, 0o700)
-        self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
-        self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.execute("PRAGMA synchronous=FULL")
-        self._connection.execute(
-            """CREATE TABLE IF NOT EXISTS delivery_dedup(
-                event_id TEXT PRIMARY KEY,
-                semantic_sha256 TEXT NOT NULL,
-                response_id TEXT,
-                expires_at REAL NOT NULL
-            )"""
+        self.path = prepare_voice_journal_path(
+            path,
+            trusted_boundary=trusted_boundary,
         )
-        with suppress(OSError):
-            os.chmod(self.path, 0o600)
+        self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
+        try:
+            self._connection.execute("PRAGMA journal_mode=WAL")
+            self._connection.execute("PRAGMA synchronous=FULL")
+            self._connection.execute(
+                """CREATE TABLE IF NOT EXISTS delivery_dedup(
+                    event_id TEXT PRIMARY KEY,
+                    semantic_sha256 TEXT NOT NULL,
+                    response_id TEXT,
+                    expires_at REAL NOT NULL
+                )"""
+            )
+            # SQLite may have materialized WAL/SHM after the first preparation.
+            # Re-audit them before the journal can receive an event.
+            prepare_voice_journal_path(
+                self.path,
+                trusted_boundary=trusted_boundary,
+            )
+        except BaseException:
+            self._connection.close()
+            raise
         self.ttl_seconds = ttl_seconds
         self.maximum_rows = maximum_rows
         self.clock = clock

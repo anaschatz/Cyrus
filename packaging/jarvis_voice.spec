@@ -16,7 +16,12 @@ hiddenimports = [
     "multiprocessing.popen_spawn_win32",
     "pythoncom",
     "pywintypes",
+    "ntsecuritycon",
+    "win32api",
     "win32com.client",
+    "win32con",
+    "win32file",
+    "win32security",
     "websockets.asyncio.server",
     "websockets.sync.client",
 ]

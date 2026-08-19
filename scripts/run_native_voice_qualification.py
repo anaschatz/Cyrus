@@ -20,7 +20,10 @@ from jarvis_voice.native_qualification import (  # noqa: E402
     load_native_evidence,
     write_native_evidence_template,
 )
-from jarvis_voice.qualification import write_report  # noqa: E402
+from jarvis_voice.qualification import (  # noqa: E402
+    verified_distribution_manifest_sha256,
+    write_report,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,16 +32,48 @@ def main(argv: list[str] | None = None) -> int:
     template = commands.add_parser("template")
     template.add_argument("--platform", choices=("windows", "macos"), required=True)
     template.add_argument("--output", type=Path, required=True)
+    template.add_argument("--distribution", type=Path)
     evaluate = commands.add_parser("evaluate")
     evaluate.add_argument("--evidence", type=Path, required=True)
+    evaluate.add_argument("--distribution", type=Path)
     evaluate.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "template":
-            write_native_evidence_template(args.output.resolve(), args.platform)
+            if args.platform == "windows" and args.distribution is None:
+                raise BackendError(
+                    "qualification.native_distribution_required",
+                    "Windows native evidence must be bound to a distribution",
+                    subsystem="qualification",
+                )
+            runtime_profile_sha256 = (
+                verified_distribution_manifest_sha256(args.distribution.resolve())
+                if args.distribution is not None
+                else None
+            )
+            write_native_evidence_template(
+                args.output.resolve(),
+                args.platform,
+                runtime_profile_sha256=runtime_profile_sha256,
+            )
             report = {"ready": False, "code": "qualification.native_template_created", "network_used": False}
         else:
-            report = evaluate_native_evidence(load_native_evidence(args.evidence.resolve()))
+            evidence = load_native_evidence(args.evidence.resolve())
+            if evidence["platform"] == "windows" and args.distribution is None:
+                raise BackendError(
+                    "qualification.native_distribution_required",
+                    "Windows native evidence must be bound to a distribution",
+                    subsystem="qualification",
+                )
+            expected_runtime_profile_sha256 = (
+                verified_distribution_manifest_sha256(args.distribution.resolve())
+                if args.distribution is not None
+                else None
+            )
+            report = evaluate_native_evidence(
+                evidence,
+                expected_runtime_profile_sha256=expected_runtime_profile_sha256,
+            )
             if args.output is not None:
                 write_report(args.output.resolve(), report)
     except BackendError as exc:

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .errors import ProtocolError
+from .private_state import prepare_voice_journal_path
 from .approval_arbiter import GlobalApprovalController
 
 
@@ -364,17 +365,26 @@ class CloudApprovalEventFactory:
 class CloudApprovalJournal:
     """Bounded persisted decision/presentation journal with no prompt content."""
 
-    def __init__(self, path: str | Path, *, hard_cap: int = 64) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        hard_cap: int = 64,
+        trusted_boundary: str | Path | None = None,
+    ) -> None:
+        self.path = prepare_voice_journal_path(
+            path,
+            trusted_boundary=trusted_boundary,
+        )
         self.hard_cap = hard_cap
         self._lock = threading.RLock()
         self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._closed = False
-        self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.executescript(
-            """
+        try:
+            self._connection.execute("PRAGMA journal_mode=WAL")
+            self._connection.executescript(
+                """
             CREATE TABLE IF NOT EXISTS cloud_events (
                 event_id TEXT PRIMARY KEY,
                 semantic_sha256 TEXT NOT NULL,
@@ -415,7 +425,14 @@ class CloudApprovalJournal:
             FROM cloud_events WHERE event_kind='requested' AND status='ARMED'
             ORDER BY rowid DESC LIMIT 1;
             """
-        )
+            )
+            prepare_voice_journal_path(
+                self.path,
+                trusted_boundary=trusted_boundary,
+            )
+        except BaseException:
+            self._connection.close()
+            raise
         self.prune()
 
     def close(self) -> None:

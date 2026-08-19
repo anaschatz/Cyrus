@@ -1,0 +1,352 @@
+name: Backend CI
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  UV_VERSION: "0.9.18"
+  UV_NO_PROGRESS: "1"
+  UV_PYTHON_DOWNLOADS: "never"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONHASHSEED: "0"
+
+jobs:
+  quality:
+    name: Locks, workflow contract, and static quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          check-latest: false
+
+      - name: Set up locked uv toolchain
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.18"
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            anamnesis/uv.lock
+            orchestrator/uv.lock
+          cache-suffix: quality-py311
+
+      - name: Verify every maintained lockfile
+        run: |
+          uv lock --check --project .
+          uv lock --check --project anamnesis
+          uv lock --check --project orchestrator
+
+      - name: Sync the locked quality environment
+        run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11
+
+      - name: Validate the workflow contract offline
+        env:
+          UV_OFFLINE: "1"
+        run: >-
+          uv run --project anamnesis --locked --extra dev --offline
+          python -m unittest tests.test_backend_ci_workflow -v
+
+      - name: Lint fatal Python errors offline
+        env:
+          UV_OFFLINE: "1"
+        run: >-
+          uv run --project anamnesis --locked --extra dev --offline
+          ruff check --select E9,F63,F7,F82
+          src tests anamnesis/src anamnesis/tests anamnesis/eval
+          inference/src inference/tests orchestrator/src orchestrator/tests
+
+      - name: Lint the declared Anamnesis contract offline
+        working-directory: anamnesis
+        env:
+          UV_OFFLINE: "1"
+        run: >-
+          uv run --locked --extra dev --offline
+          ruff check --config pyproject.toml src tests eval
+
+      - name: Check the declared Anamnesis format offline
+        working-directory: anamnesis
+        env:
+          UV_OFFLINE: "1"
+        run: >-
+          uv run --locked --extra dev --offline
+          ruff format --check --config pyproject.toml src tests eval
+
+      - name: Check committed patch whitespace
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$BASE_SHA...$HEAD_SHA"
+          else
+            git show --check --format= "$HEAD_SHA"
+          fi
+
+  component-tests:
+    name: Linux full tests (${{ matrix.component }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: voice
+            lockfile: uv.lock
+          - component: anamnesis
+            lockfile: anamnesis/uv.lock
+          - component: inference
+            lockfile: uv.lock
+          - component: orchestrator
+            lockfile: orchestrator/uv.lock
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          check-latest: false
+
+      - name: Set up locked uv toolchain
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.18"
+          enable-cache: true
+          cache-dependency-glob: ${{ matrix.lockfile }}
+          cache-suffix: tests-${{ matrix.component }}-py311
+
+      - name: Verify the Voice lockfile
+        if: matrix.component == 'voice'
+        run: uv lock --check --project .
+
+      - name: Verify the Anamnesis lockfile
+        if: matrix.component == 'anamnesis'
+        run: uv lock --check --project anamnesis
+
+      - name: Verify the root toolchain lock for Inference
+        if: matrix.component == 'inference'
+        run: uv lock --check --project .
+
+      - name: Verify the Orchestrator lockfile
+        if: matrix.component == 'orchestrator'
+        run: uv lock --check --project orchestrator
+
+      - name: Sync Voice from its lockfile
+        if: matrix.component == 'voice'
+        run: uv sync --locked --python 3.11
+
+      - name: Sync Anamnesis from its lockfile
+        if: matrix.component == 'anamnesis'
+        run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11
+
+      - name: Sync the locked Inference build toolchain
+        if: matrix.component == 'inference'
+        run: uv sync --locked --python 3.11
+
+      - name: Sync Orchestrator from its lockfile
+        if: matrix.component == 'orchestrator'
+        run: uv sync --project orchestrator --locked --no-editable --python 3.11
+
+      - name: Test Voice fully offline
+        if: matrix.component == 'voice'
+        env:
+          UV_OFFLINE: "1"
+        run: uv run --locked --offline python -m unittest discover -s tests -v
+
+      - name: Test Anamnesis fully offline
+        if: matrix.component == 'anamnesis'
+        working-directory: anamnesis
+        env:
+          UV_OFFLINE: "1"
+        run: >-
+          uv run --locked --extra dev --offline
+          python -m pytest -q
+
+      - name: Test Inference fully offline
+        if: matrix.component == 'inference'
+        env:
+          UV_OFFLINE: "1"
+          PYTHONPATH: inference/src
+        run: >-
+          uv run --locked --offline
+          python -m unittest discover -s inference/tests -v
+
+      - name: Test Orchestrator fully offline
+        if: matrix.component == 'orchestrator'
+        env:
+          UV_OFFLINE: "1"
+          PYTHONPATH: orchestrator/src:src:inference/src:anamnesis/src:research/src
+        run: >-
+          uv run --project orchestrator --locked --offline
+          python -m unittest discover -s orchestrator/tests -v
+
+  windows-security:
+    name: Windows configuration, private-state, DACL, memory, and migration
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          check-latest: false
+
+      - name: Set up locked uv toolchain
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.18"
+          enable-cache: true
+          cache-dependency-glob: orchestrator/uv.lock
+          cache-suffix: windows-security-py311
+
+      - name: Verify the Orchestrator lockfile
+        run: uv lock --check --project orchestrator
+
+      - name: Sync the Windows security environment
+        run: uv sync --project orchestrator --locked --no-editable --python 3.11
+
+      - name: Test native Windows security paths fully offline
+        env:
+          UV_OFFLINE: "1"
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = @(
+            (Join-Path $env:GITHUB_WORKSPACE "src"),
+            (Join-Path $env:GITHUB_WORKSPACE "orchestrator/src"),
+            (Join-Path $env:GITHUB_WORKSPACE "anamnesis/src"),
+            (Join-Path $env:GITHUB_WORKSPACE "inference/src"),
+            (Join-Path $env:GITHUB_WORKSPACE "research/src")
+          ) -join [IO.Path]::PathSeparator
+          uv run --project orchestrator --locked --offline python -m unittest discover -s tests -p "test_config_doctor.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s tests -p "test_voice_auth.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s tests -p "test_voice_private_state.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s tests -p "test_windows_shell.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s tests -p "test_windows_native.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_config_security.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_windows_private_file.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_stack_migration.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_private_state.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_materialize_orchestrator_config.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_memory_crypto.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_memory_key_provider.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_memory_storage_v10.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_memory_backup_operations.py" -v
+          uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_memory_backup_cli.py" -v
+
+  packaging:
+    name: Build, install, import, and entrypoint smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          check-latest: false
+
+      - name: Set up locked uv toolchain
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.18"
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            anamnesis/uv.lock
+            orchestrator/uv.lock
+          cache-suffix: packaging-py311
+
+      - name: Verify every packaging lockfile
+        run: |
+          uv lock --check --project .
+          uv lock --check --project anamnesis
+          uv lock --check --project orchestrator
+
+      - name: Sync Voice build dependencies
+        run: uv sync --locked --python 3.11
+
+      - name: Sync Anamnesis build dependencies
+        run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11
+
+      - name: Sync Orchestrator build dependencies
+        run: uv sync --project orchestrator --locked --no-editable --python 3.11
+
+      - name: Build all backend wheels fully offline
+        env:
+          UV_OFFLINE: "1"
+        run: |
+          mkdir -p "$RUNNER_TEMP/jarvis-wheels"
+          uv build --offline --no-build-isolation --python .venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" .
+          uv build --offline --no-build-isolation --python anamnesis/.venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" anamnesis
+          uv build --offline --no-build-isolation --python .venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" inference
+          uv build --offline --no-build-isolation --python .venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" orchestrator
+
+      - name: Install wheels into fresh environments fully offline
+        env:
+          UV_OFFLINE: "1"
+        run: |
+          uv venv --python 3.11 "$RUNNER_TEMP/smoke-voice"
+          uv venv --python 3.11 "$RUNNER_TEMP/smoke-anamnesis"
+          uv venv --python 3.11 "$RUNNER_TEMP/smoke-inference"
+          uv venv --python 3.11 "$RUNNER_TEMP/smoke-orchestrator"
+          uv export --project . --locked --offline --no-dev --no-emit-project --output-file "$RUNNER_TEMP/voice-requirements.txt"
+          uv export --project anamnesis --locked --offline --no-dev --no-emit-project --output-file "$RUNNER_TEMP/anamnesis-requirements.txt"
+          uv export --project orchestrator --locked --offline --no-dev --no-emit-project --no-emit-local --output-file "$RUNNER_TEMP/orchestrator-requirements.txt"
+          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-voice/bin/python" --requirements "$RUNNER_TEMP/voice-requirements.txt"
+          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-anamnesis/bin/python" --requirements "$RUNNER_TEMP/anamnesis-requirements.txt"
+          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-orchestrator/bin/python" --requirements "$RUNNER_TEMP/orchestrator-requirements.txt"
+          uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-voice/bin/python" "$RUNNER_TEMP"/jarvis-wheels/jarvis_voice-*.whl
+          uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-anamnesis/bin/python" "$RUNNER_TEMP"/jarvis-wheels/anamnesis_memory_eval-*.whl
+          uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-inference/bin/python" "$RUNNER_TEMP"/jarvis-wheels/jarvis_inference-*.whl
+          uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-orchestrator/bin/python" "$RUNNER_TEMP"/jarvis-wheels/anamnesis_memory_eval-*.whl "$RUNNER_TEMP"/jarvis-wheels/jarvis_orchestrator-*.whl
+
+      - name: Smoke installed imports and entrypoints fully offline
+        env:
+          UV_OFFLINE: "1"
+        run: |
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/smoke-voice/bin/python" -I -c "import jarvis_voice; assert jarvis_voice.__version__ == '0.8.0'"
+          "$RUNNER_TEMP/smoke-voice/bin/jarvis-voice" --help
+          "$RUNNER_TEMP/smoke-anamnesis/bin/python" -I -c "import anamnesis; assert anamnesis.__all__"
+          "$RUNNER_TEMP/smoke-anamnesis/bin/anamnesis-manifest" --help
+          "$RUNNER_TEMP/smoke-inference/bin/python" -I -c "import jarvis_inference; assert jarvis_inference.__version__ == '1.0.0'"
+          "$RUNNER_TEMP/smoke-inference/bin/jarvis-inference" --help
+          "$RUNNER_TEMP/smoke-orchestrator/bin/python" -I -c "import jarvis_orchestrator; assert jarvis_orchestrator.__version__ == '1.0.0'"
+          "$RUNNER_TEMP/smoke-orchestrator/bin/jarvis-orchestrator" --help
+          "$RUNNER_TEMP/smoke-orchestrator/bin/jarvis-action-host" --help
+          "$RUNNER_TEMP/smoke-orchestrator/bin/jarvis-stack" --help

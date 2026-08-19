@@ -23,8 +23,26 @@ class ApplicationPathTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         project = tomllib.loads((root / "pyproject.toml").read_text())
         self.assertEqual(project["project"]["version"], __version__)
-        self.assertIn("version=\"0.7.0.0\"", (root / "packaging" / "windows-manifest.xml").read_text())
-        self.assertIn("filevers=(0, 6, 0, 0)", (root / "packaging" / "windows-version-info.txt").read_text())
+        self.assertIn("version=\"0.8.0.0\"", (root / "packaging" / "windows-manifest.xml").read_text())
+        self.assertIn("filevers=(0, 8, 0, 0)", (root / "packaging" / "windows-version-info.txt").read_text())
+
+    def test_native_builds_gate_on_voice_and_full_orchestrator_suites(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        macos = (root / "scripts" / "build_macos.sh").read_text()
+        windows = (root / "scripts" / "build_windows.ps1").read_text()
+
+        self.assertIn("python3.11 -m unittest discover -s tests -v", macos)
+        self.assertIn(
+            "python3.11 -m unittest discover -s orchestrator/tests -v",
+            macos,
+        )
+        self.assertIn("orchestrator/src orchestrator/tests", macos)
+        self.assertIn("py -3.11 -m unittest discover -s tests -v", windows)
+        self.assertIn(
+            "py -3.11 -m unittest discover -s orchestrator/tests -v",
+            windows,
+        )
+        self.assertIn("orchestrator/src orchestrator/tests", windows)
 
     def test_per_user_tree_contains_no_machine_or_user_derived_name(self) -> None:
         paths = ApplicationPaths.from_environment({"LOCALAPPDATA": str(Path.cwd() / ".test-local-appdata")})
