@@ -144,6 +144,17 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         self.assertEqual(reply.turn_id, turn_id)
         self.assertEqual(reply.response_id, response_id)
 
+    def test_barge_in_sentence_is_bounded_without_artificial_repetition(self) -> None:
+        greek = MacSmokeLoopbackServer._response_sentences(greek=True, long_response=True)
+        english = MacSmokeLoopbackServer._response_sentences(greek=False, long_response=True)
+
+        self.assertEqual(len(greek), 2)
+        self.assertEqual(len(english), 2)
+        self.assertLessEqual(len(greek[0].encode("utf-8")), 512)
+        self.assertLessEqual(len(english[0].encode("utf-8")), 512)
+        self.assertEqual(greek[0].count("Αυτή"), 1)
+        self.assertEqual(english[0].count("This"), 1)
+
 
 class InteractiveSmokeScriptTests(unittest.TestCase):
     def test_script_requires_private_inputs_and_exposes_timeout(self) -> None:

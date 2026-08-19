@@ -282,6 +282,22 @@ class MacSmokeLoopbackServer:
             response_id=event.response_id,
         )
 
+    @staticmethod
+    def _response_sentences(*, greek: bool, long_response: bool) -> tuple[str, str]:
+        if not long_response:
+            return ("Βεβαίως.", "Η δοκιμή ολοκληρώθηκε.") if greek else ("Certainly.", "The test is complete.")
+        if greek:
+            return (
+                "Αυτή είναι μια αρκετά μεγάλη πρόταση για τη δοκιμή άμεσης "
+                "διακοπής της αναπαραγωγής όταν πατηθεί ξανά το πλήκτρο ομιλίας.",
+                "Η δεύτερη μονάδα δεν πρέπει να ακουστεί μετά τη διακοπή.",
+            )
+        return (
+            "This sentence is long enough to verify immediate playback "
+            "interruption when push to talk is pressed again.",
+            "The second unit must not be heard after cancellation.",
+        )
+
     async def _handle(self, websocket: Any) -> None:
         from ..protocol import new_uuid4
 
@@ -308,30 +324,10 @@ class MacSmokeLoopbackServer:
                 code = language.get("code", "en") if isinstance(language, Mapping) else "en"
                 greek = code == "el"
                 locale = "el-GR" if greek else "en-US"
-                if self._transcript_count >= 3:
-                    greek_barge_sentence = (
-                        "Αυτή είναι μια εσκεμμένα μεγάλη πρόταση για τη δοκιμή "
-                        "άμεσης διακοπής της αναπαραγωγής όταν πατηθεί ξανά το "
-                        "πλήκτρο ομιλίας."
-                    )
-                    english_barge_sentence = (
-                        "This is an intentionally long sentence used to verify "
-                        "immediate playback interruption when push to talk is "
-                        "pressed again."
-                    )
-                    sentences = (
-                        (
-                            " ".join([greek_barge_sentence] * 6),
-                            "Η δεύτερη μονάδα δεν πρέπει να ακουστεί μετά τη διακοπή.",
-                        )
-                        if greek
-                        else (
-                            " ".join([english_barge_sentence] * 8),
-                            "The second unit must not be heard after cancellation.",
-                        )
-                    )
-                else:
-                    sentences = ("Βεβαίως.", "Η δοκιμή ολοκληρώθηκε.") if greek else ("Certainly.", "The test is complete.")
+                sentences = self._response_sentences(
+                    greek=greek,
+                    long_response=self._transcript_count >= 3,
+                )
                 scripted = orchestrator.script_response(sentences, locale=locale, turn_id=event.turn_id, interleave_speech=True)
                 for reply in scripted.events:
                     await websocket.send(reply.to_json())
