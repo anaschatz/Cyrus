@@ -43,6 +43,7 @@ from .native_collector import mac_runtime_profile_fingerprint
 from .ptt import MacEventTapPttSource, mac_ptt_keycode, mac_ptt_vkey
 from .recovery import MacRecoveryRequest, MacRecoverySupervisor
 from .system_tts import MacSystemTtsBackend
+from .tts_router import MacLocaleRoutingTtsBackend
 from .greektts15_runtime import (
     GreekTtsF1Backend,
     IsolatedSoundDevicePcmPlayback,
@@ -72,9 +73,14 @@ class MacVoiceRuntime:
         if not artifact.path or artifact.size is None or not artifact.sha256:
             raise BackendError("vad.artifact_manifest_required", "Silero artifact manifest is required", subsystem="vad")
         mac_ptt_keycode(config.ptt_key)
-        if config.macos.tts_backend == "system_say" and any(
-            not config.macos.system_voices.get(locale) for locale in ("el-GR", "en-US")
-        ):
+        required_system_locales = (
+            ("el-GR", "en-US")
+            if config.macos.tts_backend == "system_say"
+            else ("en-US",)
+            if config.macos.tts_backend == "greektts15_f1"
+            else ()
+        )
+        if any(not config.macos.system_voices.get(locale) for locale in required_system_locales):
             raise BackendError("tts.macos_voice_mapping_required", "Explicit Greek and English macOS voices are required", subsystem="tts")
         journal_paths = (
             default_delivery_journal_path(),
@@ -96,7 +102,7 @@ class MacVoiceRuntime:
         if config.macos.tts_backend == "greektts15_f1":
             greek = config.macos.greektts15
             if greek.worker_python.path is not None:
-                self.tts = GreekTtsF1SidecarBackend(
+                greek_tts = GreekTtsF1SidecarBackend(
                     config=greek,
                     on_started=started_callback,
                     on_completed=completed_callback,
@@ -108,13 +114,22 @@ class MacVoiceRuntime:
                     greek.repository_root or "",
                 )
                 engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
-                self.tts = GreekTtsF1Backend(
+                greek_tts = GreekTtsF1Backend(
                     engine=engine,
                     playback_factory=IsolatedSoundDevicePcmPlayback,
                     on_started=started_callback,
                     on_completed=completed_callback,
                     warm_on_start=greek.warm_on_start,
                 )
+            self.tts = MacLocaleRoutingTtsBackend(
+                greek_backend=greek_tts,
+                fallback_backend=MacSystemTtsBackend(
+                    voice_mapping=config.macos.system_voices,
+                    on_started=started_callback,
+                    on_completed=completed_callback,
+                ),
+                fallback_locales={"en-US"},
+            )
             tts_warm_load_ms = self.tts.warm_load_ms
         else:
             self.tts = MacSystemTtsBackend(
@@ -429,6 +444,9 @@ class MacVoiceRuntime:
                             else:
                                 self.cloud_approval.mark_decision_sent(decision.event_id, now=now)
                 self._poll_transcription()
+                tts_error = getattr(self.tts, "last_error", None)
+                if isinstance(tts_error, BackendError):
+                    raise tts_error
                 while True:
                     try:
                         callback = self.callbacks.get_nowait()
