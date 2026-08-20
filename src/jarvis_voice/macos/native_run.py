@@ -30,6 +30,7 @@ from .greektts15_runtime import (
 from .greektts15_sidecar import GreekTtsF1SidecarBackend
 from .interactive_smoke import MacSmokeLoopbackServer
 from .audio_capture import CoreAudioCapture
+from .audio_queue_playback import MacAudioQueueStreamingPlayback
 from .native_collector import (
     AcousticResult,
     AcousticCalibrationSampler,
@@ -109,6 +110,7 @@ def create_macos_calibration_tts(
     if config.macos.tts_backend == "pocket_tts":
         return PocketTtsBackend(
             engine=PocketTtsCpuEngine(config.pocket_tts),
+            playback_factory=MacAudioQueueStreamingPlayback,
             fallback_backend=MacSystemTtsBackend(
                 voice_mapping=config.macos.system_voices,
                 on_started=on_started,

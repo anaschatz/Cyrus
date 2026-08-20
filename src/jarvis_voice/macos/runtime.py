@@ -41,6 +41,7 @@ from ..scheduler_protocol import SchedulerEnvelope
 from ..scheduler_runtime import SchedulerNativeRuntime
 from ..vad import SileroOnnxVad
 from .audio_capture import CoreAudioCapture
+from .audio_queue_playback import MacAudioQueueStreamingPlayback
 from .asr_selection import create_macos_asr_backend
 from .native_collector import mac_runtime_profile_fingerprint
 from .ptt import MacEventTapPttSource, mac_ptt_keycode, mac_ptt_vkey
@@ -152,6 +153,7 @@ class MacVoiceRuntime:
         elif config.macos.tts_backend == "pocket_tts":
             self.tts = PocketTtsBackend(
                 engine=PocketTtsCpuEngine(config.pocket_tts),
+                playback_factory=MacAudioQueueStreamingPlayback,
                 fallback_backend=MacSystemTtsBackend(
                     voice_mapping=config.macos.system_voices,
                     on_started=started_callback,
