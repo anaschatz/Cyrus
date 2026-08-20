@@ -27,6 +27,26 @@
     "threshold_ms": 200.0,
     "software_gate_passed": true
   },
+  "physical_ptt_cancellation": {
+    "physical_playback": true,
+    "physical_ptt": true,
+    "ptt_key": "CONTROL_OPTION",
+    "event_to_cancel_return_ms": 109.384,
+    "backend_idle": true,
+    "completion_suppressed": true,
+    "publisher_errors": 0,
+    "cancellation_gate_passed": true
+  },
+  "macos_streaming_quality": {
+    "generated_pcm_clean_via_afplay": true,
+    "portaudio_live_stream_clean": false,
+    "artifacts_observed": "Audible transient noise at stream start and some word boundaries.",
+    "system_audio_interference_observed": true,
+    "system_audio_recovered_after_test_processes_stopped": true,
+    "candidate_model_identified_as_artifact_source": false,
+    "ready": false,
+    "code": "qualification.macos_streaming_playback_quality_failed"
+  },
   "qwen_4b_coexistence": {
     "ready": true,
     "inference_scope": "loopback_only",
@@ -58,8 +78,11 @@
     "installed_runtime_changed": false,
     "active_backend": "system_say",
     "ready": false,
-    "blocker": "physical_acoustic_ptt_to_silence_not_measured",
-    "next_required_action": "Repeat calibration and physical PTT acoustic samples with a qualified wired or otherwise separable local audio path."
+    "blockers": [
+      "macos_native_streaming_playback_not_qualified",
+      "physical_acoustic_ptt_to_silence_not_measured"
+    ],
+    "next_required_action": "Replace the macOS PortAudio playback path with an owned native AVAudioEngine or AudioQueue adapter, then repeat human listening, physical PTT cancellation and acoustic qualification."
   },
   "privacy": {
     "audio_persisted": false,
