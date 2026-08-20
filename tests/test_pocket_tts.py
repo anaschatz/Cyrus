@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
@@ -17,6 +20,7 @@ from jarvis_voice.macos.native_collector import mac_runtime_profile_fingerprint
 from jarvis_voice.pocket_tts import (
     PocketAudioChunk,
     PocketTtsBackend,
+    SoundDeviceStreamingPlayback,
     validate_pocket_tts_artifact,
 )
 
@@ -38,12 +42,16 @@ class FakeEngine:
         self, text: str, cancelled: threading.Event
     ) -> object:
         self.texts.append(text)
-        for payload in (b"\x01\x00" * 480, b"\x02\x00" * 480):
+        for payload in (
+            b"\x01\x00" * 480,
+            b"\x02\x00" * 480,
+            b"\x03\x00" * 480,
+        ):
             if cancelled.is_set():
                 return
             self.first_chunk.set()
             yield PocketAudioChunk(payload)
-            if self.block:
+            if self.block and payload.startswith(b"\x03\x00"):
                 self.cancelled.wait(1.0)
 
     def cancel(self) -> None:
@@ -291,7 +299,7 @@ class PocketTtsBackendTests(unittest.TestCase):
         self.assertEqual(engine.texts, ["All systems are ready."])
         self.assertEqual(started, [1])
         self.assertEqual(completed, [(1, True)])
-        self.assertEqual(len(playback.chunks), 2)
+        self.assertEqual(len(playback.chunks), 3)
         self.assertTrue(playback.finished)
         self.assertEqual(fallback.units, [])
 
@@ -354,6 +362,95 @@ class PocketTtsBackendTests(unittest.TestCase):
         self.assertTrue(backend.wait_idle())
         self.assertTrue(backend.degraded_to_fallback)
         self.assertEqual(fallback.units, [selected])
+
+
+class SoundDeviceStreamingPlaybackTests(unittest.TestCase):
+    def test_writer_drains_chunks_in_order_before_finish(self) -> None:
+        writes: list[bytes] = []
+
+        class Stream:
+            def start(self): pass
+            def write(self, value): writes.append(value)
+            def stop(self): pass
+            def abort(self): pass
+            def close(self): pass
+
+        module = SimpleNamespace(RawOutputStream=lambda **_kwargs: Stream())
+        with mock.patch.dict(sys.modules, {"sounddevice": module}):
+            playback = SoundDeviceStreamingPlayback(queue_capacity=4)
+            playback.start(24_000)
+            playback.write(b"one")
+            playback.write(b"two")
+            playback.write(b"three")
+            playback.finish()
+
+        self.assertEqual(writes, [b"one", b"two", b"three"])
+
+    def test_abort_unblocks_writer_and_discards_pending_audio(self) -> None:
+        write_started = threading.Event()
+        aborted = threading.Event()
+        writes: list[bytes] = []
+
+        class Stream:
+            def start(self): pass
+            def write(self, value):
+                writes.append(value)
+                write_started.set()
+                aborted.wait(1.0)
+            def stop(self): pass
+            def abort(self): aborted.set()
+            def close(self): pass
+
+        module = SimpleNamespace(RawOutputStream=lambda **_kwargs: Stream())
+        with mock.patch.dict(sys.modules, {"sounddevice": module}):
+            playback = SoundDeviceStreamingPlayback(queue_capacity=4)
+            playback.start(24_000)
+            playback.write(b"active")
+            playback.write(b"stale")
+            self.assertTrue(write_started.wait(0.2))
+            started = time.perf_counter()
+            playback.abort()
+
+        self.assertLess(time.perf_counter() - started, 0.2)
+        self.assertTrue(aborted.is_set())
+        self.assertEqual(writes, [b"active"])
+
+    def test_abort_wins_race_with_finish_without_playback_error(self) -> None:
+        write_started = threading.Event()
+        aborted = threading.Event()
+        finish_errors: list[BaseException] = []
+
+        class Stream:
+            def start(self): pass
+            def write(self, _value):
+                write_started.set()
+                aborted.wait(1.0)
+            def stop(self):
+                if aborted.is_set():
+                    raise RuntimeError("stopped after abort")
+            def abort(self): aborted.set()
+            def close(self): pass
+
+        module = SimpleNamespace(RawOutputStream=lambda **_kwargs: Stream())
+        with mock.patch.dict(sys.modules, {"sounddevice": module}):
+            playback = SoundDeviceStreamingPlayback(queue_capacity=4)
+            playback.start(24_000)
+            playback.write(b"active")
+            self.assertTrue(write_started.wait(0.2))
+
+            def finish() -> None:
+                try:
+                    playback.finish()
+                except BaseException as exc:
+                    finish_errors.append(exc)
+
+            thread = threading.Thread(target=finish)
+            thread.start()
+            playback.abort()
+            thread.join(0.5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(finish_errors, [])
 
 
 if __name__ == "__main__":

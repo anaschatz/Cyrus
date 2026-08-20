@@ -23,6 +23,7 @@ POCKET_TTS_DISTRIBUTION_VERSION = "2.1.0"
 POCKET_TTS_TORCH_VERSION = "2.13.0"
 POCKET_TTS_PYYAML_VERSION = "6.0.3"
 POCKET_TTS_SAMPLE_RATE = 24_000
+POCKET_TTS_PREBUFFER_CHUNKS = 3
 PRIMARY_LOCALES = frozenset({"en-US"})
 
 
@@ -286,11 +287,16 @@ class PocketTtsCpuEngine:
 
 
 class SoundDeviceStreamingPlayback:
-    """Cross-platform low-latency PCM output with immediate buffer abort."""
+    """Bounded asynchronous PCM output with immediate buffer abort."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, queue_capacity: int = 32) -> None:
+        if queue_capacity < 1:
+            raise ValueError("Playback queue capacity must be positive")
         self._lock = threading.RLock()
         self._stream: Any | None = None
+        self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=queue_capacity)
+        self._writer: threading.Thread | None = None
+        self._writer_error: BaseException | None = None
         self._aborted = False
 
     def start(self, sample_rate: int) -> None:
@@ -319,34 +325,111 @@ class SoundDeviceStreamingPlayback:
                     stream.close()
                 return
             self._stream = stream
+            self._writer = threading.Thread(
+                target=self._run_writer,
+                name="jarvis-pocket-playback",
+                daemon=True,
+            )
+            self._writer.start()
+
+    def _run_writer(self) -> None:
+        try:
+            while True:
+                pcm16 = self._queue.get()
+                if pcm16 is None:
+                    return
+                with self._lock:
+                    if self._aborted:
+                        return
+                    stream = self._stream
+                if stream is None:
+                    return
+                stream.write(pcm16)
+        except BaseException as exc:
+            with self._lock:
+                if not self._aborted:
+                    self._writer_error = exc
+
+    def _raise_writer_error(self) -> None:
+        with self._lock:
+            error = self._writer_error
+        if error is not None:
+            raise BackendError(
+                "tts.pocket.playback_write_failed",
+                "Pocket TTS playback failed while writing audio",
+                subsystem="tts",
+            ) from error
 
     def write(self, pcm16: bytes) -> None:
         with self._lock:
             if self._aborted:
                 return
-            stream = self._stream
-        if stream is None:
+            ready = self._stream is not None
+        if not ready:
             raise BackendError(
                 "tts.pocket.playback_not_started",
                 "Pocket TTS playback is not ready",
                 subsystem="tts",
             )
-        stream.write(pcm16)
+        self._raise_writer_error()
+        try:
+            self._queue.put(pcm16, timeout=1.0)
+        except queue.Full as exc:
+            raise BackendError(
+                "tts.pocket.playback_queue_timeout",
+                "Pocket TTS playback queue stopped draining",
+                subsystem="tts",
+            ) from exc
+        self._raise_writer_error()
 
     def finish(self) -> None:
         with self._lock:
-            stream, self._stream = self._stream, None
+            stream = self._stream
+            writer = self._writer
         if stream is None:
             return
+        error: BaseException | None = None
         try:
-            stream.stop()
+            self._queue.put(None, timeout=1.0)
+            if writer is not None:
+                writer.join(timeout=10.0)
+                if writer.is_alive():
+                    raise BackendError(
+                        "tts.pocket.playback_finish_timeout",
+                        "Pocket TTS playback did not finish",
+                        subsystem="tts",
+                    )
+            self._raise_writer_error()
+            with self._lock:
+                aborted = self._aborted
+            if not aborted:
+                stream.stop()
+        except BaseException as exc:
+            error = exc
         finally:
-            stream.close()
+            try:
+                stream.close()
+            except BaseException as exc:
+                if error is None:
+                    error = exc
+            with self._lock:
+                self._stream = None
+                self._writer = None
+                aborted = self._aborted
+        if error is not None and not aborted:
+            raise error
 
     def abort(self) -> None:
         with self._lock:
             self._aborted = True
             stream, self._stream = self._stream, None
+            self._writer = None
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
+            self._queue.put_nowait(None)
         if stream is None:
             return
         try:
@@ -529,6 +612,7 @@ class PocketTtsBackend:
                 self._active = unit
                 self._active_cancel = cancelled
             playback: Playback | None = None
+            pending_audio: list[PocketAudioChunk] = []
             started = False
             retired = False
             try:
@@ -550,6 +634,9 @@ class PocketTtsBackend:
                                 subsystem="tts",
                             )
                         if playback is None:
+                            pending_audio.append(audio)
+                            if len(pending_audio) < POCKET_TTS_PREBUFFER_CHUNKS:
+                                continue
                             playback = self.playback_factory()
                             with self._lock:
                                 self._playback = playback
@@ -557,9 +644,23 @@ class PocketTtsBackend:
                             if self._is_stale(unit, cancelled):
                                 playback.abort()
                                 break
+                            for buffered in pending_audio:
+                                playback.write(buffered.pcm16)
+                            pending_audio.clear()
                             self.on_started(unit)
                             started = True
+                            continue
                         playback.write(audio.pcm16)
+                    if playback is None and pending_audio and not self._is_stale(unit, cancelled):
+                        playback = self.playback_factory()
+                        with self._lock:
+                            self._playback = playback
+                        playback.start(pending_audio[0].sample_rate)
+                        for buffered in pending_audio:
+                            playback.write(buffered.pcm16)
+                        pending_audio.clear()
+                        self.on_started(unit)
+                        started = True
                     if self._is_stale(unit, cancelled):
                         if playback is not None:
                             playback.abort()
