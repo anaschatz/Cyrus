@@ -39,18 +39,15 @@ from .research import (
     SpanSelectionV1,
 )
 
-try:  # pragma: no cover - verified in the pinned integration environment
-    from pydantic_ai.models.wrapper import WrapperModel
-except ImportError:  # pragma: no cover
-    WrapperModel = object  # type: ignore[assignment,misc]
+class BudgetedPydanticModel:
+    """Mixin for a lazily constructed Pydantic ``WrapperModel``.
 
-
-class BudgetedPydanticModel(WrapperModel):  # type: ignore[misc]
-    """Pydantic ``WrapperModel`` with graph-independent request accounting."""
+    The runtime subclass is created only by ``build_local_pydantic_port``.
+    Importing the Orchestrator core or CLI therefore does not import the model
+    SDK and still works in dependency-light operational environments.
+    """
 
     def __init__(self, wrapped: Any, store: OrchestratorStore, context_provider: Any) -> None:
-        if WrapperModel is object:
-            raise RuntimeError("pydantic-ai-slim[openai]==2.27.0 is required")
         super().__init__(wrapped)
         self._jarvis_store = store
         self._jarvis_context_provider = context_provider
@@ -718,12 +715,18 @@ def build_local_pydantic_port(
 ) -> PydanticAgentModelPort:
     """Build the environment-independent, retry-free production model stack."""
 
-    import httpx
-    from openai import AsyncOpenAI
-    from pydantic_ai import Agent
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.profiles.openai import OpenAIModelProfile
-    from pydantic_ai.providers.openai import OpenAIProvider
+    try:
+        import httpx
+        from openai import AsyncOpenAI
+        from pydantic_ai import Agent
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.models.wrapper import WrapperModel
+        from pydantic_ai.profiles.openai import OpenAIModelProfile
+        from pydantic_ai.providers.openai import OpenAIProvider
+    except ImportError as exc:  # pragma: no cover - exercised by dependency gate
+        raise RuntimeError(
+            "pydantic-ai-slim[openai]==2.27.0 and its locked dependencies are required"
+        ) from exc
 
     # Fail startup before opening either server if the registered planner
     # surface cannot be represented by the frozen appliance CommonSchema.
@@ -758,7 +761,10 @@ def build_local_pydantic_port(
         provider=OpenAIProvider(openai_client=client),
         profile=profile,
     )
-    budgeted = BudgetedPydanticModel(raw_model, store, _current_context)
+    class _RuntimeBudgetedPydanticModel(BudgetedPydanticModel, WrapperModel):
+        pass
+
+    budgeted = _RuntimeBudgetedPydanticModel(raw_model, store, _current_context)
     agent = Agent(
         budgeted,
         output_type=str,

@@ -44,12 +44,12 @@ from .cloud_contract import (
     TERRA_MODEL,
     TERRA_OUTPUT_FLOOR_PER_M,
     CloudApprovalBindingV1,
+    CloudModelResultV1,
     QualifiedEndpointV1,
     build_dispatch_body,
     reserve_cost_microusd,
 )
 from .cloud_privacy import JarvisPrivacyClassifierV1
-from .cloud_provider import CloudModelResultV1
 from .cloud_routing import (
     CandidateFactsV1,
     ContextScope,

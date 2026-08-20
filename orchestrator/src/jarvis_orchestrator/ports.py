@@ -5,8 +5,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from typing import Any, Protocol
 
-from .cloud_contract import QualifiedEndpointV1
-from .cloud_provider import CloudModelResultV1, OpenRouterRevalidationV1
+from .cloud_contract import (
+    CloudModelResultV1,
+    OpenRouterRevalidationV1,
+    QualifiedEndpointV1,
+)
 from .cloud_routing import ContextScope, OutputContract, TaskProfileV1
 from .domain import ModelChunk, ModelRequest
 from .memory import (

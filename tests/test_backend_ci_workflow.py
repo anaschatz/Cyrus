@@ -133,6 +133,7 @@ class BackendWorkflowTextContractTests(unittest.TestCase):
             "uv lock --check --project .",
             "uv lock --check --project anamnesis",
             "uv lock --check --project orchestrator",
+            "uv lock --check --project research",
             "python -m unittest discover -s tests -v",
             "python -m pytest -q",
             "python -m unittest discover -s inference/tests -v",
@@ -146,6 +147,7 @@ class BackendWorkflowTextContractTests(unittest.TestCase):
             "test_memory_backup_operations.py",
             "test_memory_backup_cli.py",
             "uv build --offline --no-build-isolation",
+            "--python .venv/bin/python --wheel --out-dir \"$RUNNER_TEMP/jarvis-wheels\" research",
             "uv export --project orchestrator --locked --offline",
             "uv pip install --offline --require-hashes",
             "uv pip install --offline --no-deps",
@@ -157,11 +159,17 @@ class BackendWorkflowTextContractTests(unittest.TestCase):
             'anamnesis-manifest" --help',
             'jarvis-inference" --help',
             'jarvis-orchestrator" --help',
+            'jarvis-research-qualify" --help',
             'git diff --check "$BASE_SHA...$HEAD_SHA"',
             'git show --check --format= "$HEAD_SHA"',
             "ruff format --check",
+            "python -m unittest tests.test_module_boundaries -v",
+            "research/src",
         ):
             self.assertIn(fragment, source)
+        self.assertNotIn(
+            "--python research/.venv/bin/python --wheel", source
+        )
 
     def test_raw_action_references_are_full_commit_pins(self) -> None:
         source = WORKFLOW.read_text(encoding="utf-8")

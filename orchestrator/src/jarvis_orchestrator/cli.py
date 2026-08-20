@@ -17,16 +17,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from .anamnesis_adapter import AnamnesisMemoryAdapter
 from .background import BackgroundServiceManager
-from .anamnesis_shadow import (
-    AnamnesisShadowAdapter,
-    DeterministicFirstLifecycleWriter,
-    DeterministicLifecycleGateV3,
-    DeterministicOnlyLifecycleWriterV3,
-    LocalLifecycleCompletionClient,
-    LocalStructuredLifecycleWriter,
-)
 from .config import OrchestratorConfig
 from .control import ControlApplication, ControlServer
 from .domain import OrchestratorError, canonical_sha256
@@ -40,7 +31,6 @@ from .memory_release import ShadowHistoryReaderFacade
 from .memory_crypto import MemoryEnvelopeCipherV1
 from .memory_key_provider import platform_memory_key_provider
 from .memory_runtime import ProviderBoundMemoryCryptoRuntime
-from .pydantic_adapter import build_local_pydantic_port
 from .service import OrchestratorService
 from .store import OrchestratorStore
 from .scheduler_contract import PackagedTimezoneProvider
@@ -54,17 +44,6 @@ from .tool_executor import ActionHostV2ToolExecutor
 from .tool_store import ToolStoreV1
 from .action_host_v2_client import ActionHostV2Client
 from .action_host_qualification import current_macos_build, load_native_qualification
-from .research_adapter import LoopbackResearchAdapter
-from .cloud_provider import (
-    OpenRouterCloudAdapter,
-    load_endpoint_registry,
-    load_openrouter_secret,
-)
-from .cloud_qualification import (
-    cloud_release_sha256,
-    load_cloud_release_qualification,
-    run_cloud_privacy_qualification,
-)
 from .operations import (
     ContentFreeOperationalLog,
     OperationalError,
@@ -445,6 +424,13 @@ async def _cloud_qualification_status(config: OrchestratorConfig) -> dict[str, A
             "terra_route_enabled": False,
             "version": "cloud-activation-ready-gate/1",
         }
+    from .cloud_provider import (
+        OpenRouterCloudAdapter,
+        load_endpoint_registry,
+        load_openrouter_secret,
+    )
+    from .cloud_qualification import load_cloud_release_qualification
+
     try:
         assert config.cloud_secret_file is not None
         assert config.cloud_qualification_file is not None
@@ -657,6 +643,8 @@ async def _run_components(
         raise RuntimeError("cloud routing requires qualified structured local inference")
     if config.tools_enabled and not (capabilities.json_schema or capabilities.tools):
         raise RuntimeError("tools require qualified structured local inference")
+    from .pydantic_adapter import build_local_pydantic_port
+
     model = build_local_pydantic_port(
         store,
         base_url=config.inference_base_url,
@@ -666,9 +654,23 @@ async def _run_components(
         json_schema=capabilities.json_schema,
         registered_tools=tool_registry.names if tool_registry is not None else (),
     )
-    active_memory = AnamnesisMemoryAdapter(store) if config.memory_enabled else None
+    if config.memory_enabled:
+        from .anamnesis_adapter import AnamnesisMemoryAdapter
+
+        active_memory = AnamnesisMemoryAdapter(store)
+    else:
+        active_memory = None
     shadow_memory = None
     if config.memory_shadow_enabled:
+        from .anamnesis_shadow import (
+            AnamnesisShadowAdapter,
+            DeterministicFirstLifecycleWriter,
+            DeterministicLifecycleGateV3,
+            DeterministicOnlyLifecycleWriterV3,
+            LocalLifecycleCompletionClient,
+            LocalStructuredLifecycleWriter,
+        )
+
         shadow_history = ShadowHistoryReaderFacade(store.memory_shadow_history)
         if config.memory_shadow_mode == "deterministic_only":
             shadow_memory = AnamnesisShadowAdapter(
@@ -701,6 +703,8 @@ async def _run_components(
     runtime_config = config
     store.disable_all_endpoint_qualifications()
     if config.research_enabled:
+        from .research_adapter import LoopbackResearchAdapter
+
         research_adapter = LoopbackResearchAdapter(
             base_url=config.research_base_url,
             bearer_token=config.research_bearer_token,
@@ -724,6 +728,13 @@ async def _run_components(
             },
         )
     if config.cloud_enabled:
+        from .cloud_provider import (
+            OpenRouterCloudAdapter,
+            load_endpoint_registry,
+            load_openrouter_secret,
+        )
+        from .cloud_qualification import load_cloud_release_qualification
+
         candidate_endpoints: tuple[Any, ...] = ()
         try:
             assert config.cloud_secret_file is not None
@@ -825,7 +836,7 @@ async def _run_servers(
     shadow_memory: Any,
     active_memory: Any,
     research_adapter: Any,
-    cloud_adapter: OpenRouterCloudAdapter | None,
+    cloud_adapter: Any | None,
     cloud_endpoints: tuple[Any, ...],
     structured_inference_ready: bool = True,
     tool_registry: ToolRegistryV1 | None = None,
@@ -1412,10 +1423,14 @@ def main(argv: list[str] | None = None) -> int:
                 _emit_operational(report, parsed.output)
                 return 0 if report["cloud_ready"] else 1
             if parsed.operation_command == "cloud-privacy-gate":
+                from .cloud_qualification import run_cloud_privacy_qualification
+
                 report = run_cloud_privacy_qualification()
                 _emit_operational(report, parsed.output)
                 return 0 if report["ready"] else 1
             if parsed.operation_command == "cloud-release-digest":
+                from .cloud_qualification import cloud_release_sha256
+
                 _print(
                     {
                         "sha256": cloud_release_sha256(parsed.release),

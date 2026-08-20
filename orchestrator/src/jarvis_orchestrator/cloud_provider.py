@@ -12,7 +12,12 @@ from decimal import Decimal, ROUND_CEILING
 from typing import Any, Mapping
 from pathlib import Path
 
-from .cloud_contract import EndpointHealthV1, QualifiedEndpointV1
+from .cloud_contract import (
+    CloudModelResultV1,
+    EndpointHealthV1,
+    OpenRouterRevalidationV1,
+    QualifiedEndpointV1,
+)
 from .domain import OrchestratorError, utc_text
 from .jcs import domain_sha256, jcs_bytes
 from .store import OrchestratorStore
@@ -64,28 +69,6 @@ else:  # pragma: no cover
     class GuardedOpenRouterTransport:  # type: ignore[no-redef]
         def __init__(self, *_: Any, **__: Any) -> None:
             raise RuntimeError("httpx is required")
-
-
-@dataclass(frozen=True, slots=True)
-class OpenRouterRevalidationV1:
-    endpoint: QualifiedEndpointV1
-    health: EndpointHealthV1
-    key_remaining_microusd: int
-    usage_monthly_microusd: int
-    limit_reset: str
-    key_limit_microusd: int = 5_000_000
-    key_policy_verified: bool = True
-
-
-@dataclass(frozen=True, slots=True)
-class CloudModelResultV1:
-    text: str
-    generation_id: str
-    input_tokens: int
-    output_tokens: int
-    reasoning_tokens: int
-    actual_microusd: int
-    receipt: Mapping[str, Any]
 
 
 def _decimal_microusd(value: Any) -> int:

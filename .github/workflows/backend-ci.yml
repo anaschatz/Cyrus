@@ -47,6 +47,7 @@ jobs:
             uv.lock
             anamnesis/uv.lock
             orchestrator/uv.lock
+            research/uv.lock
           cache-suffix: quality-py311
 
       - name: Verify every maintained lockfile
@@ -54,6 +55,7 @@ jobs:
           uv lock --check --project .
           uv lock --check --project anamnesis
           uv lock --check --project orchestrator
+          uv lock --check --project research
 
       - name: Sync the locked quality environment
         run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11
@@ -65,6 +67,13 @@ jobs:
           uv run --project anamnesis --locked --extra dev --offline
           python -m unittest tests.test_backend_ci_workflow -v
 
+      - name: Enforce the production module-size ratchet offline
+        env:
+          UV_OFFLINE: "1"
+        run: >-
+          uv run --project anamnesis --locked --extra dev --offline
+          python -m unittest tests.test_module_boundaries -v
+
       - name: Lint fatal Python errors offline
         env:
           UV_OFFLINE: "1"
@@ -73,6 +82,7 @@ jobs:
           ruff check --select E9,F63,F7,F82
           src tests anamnesis/src anamnesis/tests anamnesis/eval
           inference/src inference/tests orchestrator/src orchestrator/tests
+          research/src
 
       - name: Lint the declared Anamnesis contract offline
         working-directory: anamnesis
@@ -289,6 +299,7 @@ jobs:
             uv.lock
             anamnesis/uv.lock
             orchestrator/uv.lock
+            research/uv.lock
           cache-suffix: packaging-py311
 
       - name: Verify every packaging lockfile
@@ -296,6 +307,7 @@ jobs:
           uv lock --check --project .
           uv lock --check --project anamnesis
           uv lock --check --project orchestrator
+          uv lock --check --project research
 
       - name: Sync Voice build dependencies
         run: uv sync --locked --python 3.11
@@ -306,6 +318,9 @@ jobs:
       - name: Sync Orchestrator build dependencies
         run: uv sync --project orchestrator --locked --no-editable --python 3.11
 
+      - name: Sync Research build dependencies
+        run: uv sync --project research --locked --no-editable --python 3.11
+
       - name: Build all backend wheels fully offline
         env:
           UV_OFFLINE: "1"
@@ -315,6 +330,7 @@ jobs:
           uv build --offline --no-build-isolation --python anamnesis/.venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" anamnesis
           uv build --offline --no-build-isolation --python .venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" inference
           uv build --offline --no-build-isolation --python .venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" orchestrator
+          uv build --offline --no-build-isolation --python .venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" research
 
       - name: Install wheels into fresh environments fully offline
         env:
@@ -324,16 +340,20 @@ jobs:
           uv venv --python 3.11 "$RUNNER_TEMP/smoke-anamnesis"
           uv venv --python 3.11 "$RUNNER_TEMP/smoke-inference"
           uv venv --python 3.11 "$RUNNER_TEMP/smoke-orchestrator"
+          uv venv --python 3.11 "$RUNNER_TEMP/smoke-research"
           uv export --project . --locked --offline --no-dev --no-emit-project --output-file "$RUNNER_TEMP/voice-requirements.txt"
           uv export --project anamnesis --locked --offline --no-dev --no-emit-project --output-file "$RUNNER_TEMP/anamnesis-requirements.txt"
           uv export --project orchestrator --locked --offline --no-dev --no-emit-project --no-emit-local --output-file "$RUNNER_TEMP/orchestrator-requirements.txt"
+          uv export --project research --locked --offline --no-dev --no-emit-project --output-file "$RUNNER_TEMP/research-requirements.txt"
           uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-voice/bin/python" --requirements "$RUNNER_TEMP/voice-requirements.txt"
           uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-anamnesis/bin/python" --requirements "$RUNNER_TEMP/anamnesis-requirements.txt"
           uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-orchestrator/bin/python" --requirements "$RUNNER_TEMP/orchestrator-requirements.txt"
+          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-research/bin/python" --requirements "$RUNNER_TEMP/research-requirements.txt"
           uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-voice/bin/python" "$RUNNER_TEMP"/jarvis-wheels/jarvis_voice-*.whl
           uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-anamnesis/bin/python" "$RUNNER_TEMP"/jarvis-wheels/anamnesis_memory_eval-*.whl
           uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-inference/bin/python" "$RUNNER_TEMP"/jarvis-wheels/jarvis_inference-*.whl
           uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-orchestrator/bin/python" "$RUNNER_TEMP"/jarvis-wheels/anamnesis_memory_eval-*.whl "$RUNNER_TEMP"/jarvis-wheels/jarvis_orchestrator-*.whl
+          uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-research/bin/python" "$RUNNER_TEMP"/jarvis-wheels/jarvis_research-*.whl
 
       - name: Smoke installed imports and entrypoints fully offline
         env:
@@ -350,3 +370,5 @@ jobs:
           "$RUNNER_TEMP/smoke-orchestrator/bin/jarvis-orchestrator" --help
           "$RUNNER_TEMP/smoke-orchestrator/bin/jarvis-action-host" --help
           "$RUNNER_TEMP/smoke-orchestrator/bin/jarvis-stack" --help
+          "$RUNNER_TEMP/smoke-research/bin/python" -I -c "import jarvis_research; assert jarvis_research.__version__ == '1.0.0'"
+          "$RUNNER_TEMP/smoke-research/bin/jarvis-research-qualify" --help

@@ -21,12 +21,6 @@ from .domain import canonical_json, canonical_sha256
 from .memory import MemoryObservation, MemoryOperation, MemoryProposal
 from .memory_release import validate_shadow_audit_payload
 
-try:  # Present in the pinned production environment.
-    import httpx
-except ImportError:  # pragma: no cover - dependency-free core
-    httpx = None  # type: ignore[assignment]
-
-
 MAX_ACTIVE_CANDIDATES = 20
 MAX_WRITER_TEXT_BYTES = 8_192
 MAX_WRITER_CONTEXT_BYTES = 32_768
@@ -681,8 +675,6 @@ class LocalLifecycleCompletionClient:
         timeout_seconds: float,
         transport: Any | None = None,
     ) -> None:
-        if httpx is None:  # pragma: no cover - production dependency guard
-            raise RuntimeError("httpx is required for the lifecycle writer")
         parsed = urlparse(base_url)
         if (
             parsed.scheme != "http"
@@ -710,6 +702,11 @@ class LocalLifecycleCompletionClient:
         self._transport = transport
 
     async def complete(self, request: Mapping[str, Any]) -> LifecycleCompletion:
+        try:
+            import httpx
+        except ImportError as exc:  # pragma: no cover - dependency guard
+            raise RuntimeError("httpx is required for the lifecycle writer") from exc
+
         encoded = canonical_json(request).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {self._bearer_token}",

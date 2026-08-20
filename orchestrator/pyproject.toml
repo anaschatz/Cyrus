@@ -22,8 +22,14 @@ jarvis-orchestrator = "jarvis_orchestrator.cli:main"
 jarvis-action-host = "jarvis_orchestrator.action_host_daemon:main"
 jarvis-stack = "jarvis_orchestrator.stack_cli:main"
 
+[dependency-groups]
+dev = [
+  "jarvis-research==1.0.0",
+]
+
 [tool.uv.sources]
 anamnesis-memory-eval = { path = "../anamnesis" }
+jarvis-research = { path = "../research" }
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -42,31 +42,38 @@ def consume_dispatch_reservation() -> str:
     return permit.reservation_id
 
 
-try:  # Imported only in the pinned production environment.
-    import httpx
-except ImportError:  # pragma: no cover - dependency-free core
-    httpx = None  # type: ignore[assignment]
+class GuardedAsyncTransport:
+    """Lazily create the guarded HTTPX transport at model activation time."""
 
+    def __new__(cls, wrapped: Any | None = None) -> Any:
+        try:
+            import httpx
+        except ImportError as exc:  # pragma: no cover - dependency gate
+            raise RuntimeError(
+                "httpx from pydantic-ai-slim[openai]==2.27.0 is required"
+            ) from exc
 
-if httpx is not None:
-    class GuardedAsyncTransport(httpx.AsyncBaseTransport):
-        """One physical Chat Completions dispatch per persisted permit."""
+        class _RuntimeGuardedAsyncTransport(httpx.AsyncBaseTransport):
+            def __init__(self, selected: Any | None) -> None:
+                self._wrapped = selected or httpx.AsyncHTTPTransport(retries=0)
 
-        def __init__(self, wrapped: httpx.AsyncBaseTransport | None = None) -> None:
-            self._wrapped = wrapped or httpx.AsyncHTTPTransport(retries=0)
+            async def handle_async_request(
+                self, request: httpx.Request
+            ) -> httpx.Response:
+                if (
+                    request.method != "POST"
+                    or request.url.path != "/v1/chat/completions"
+                ):
+                    raise OrchestratorError(
+                        "model_transport_endpoint_forbidden", status=500
+                    )
+                consume_dispatch_reservation()
+                return await self._wrapped.handle_async_request(request)
 
-        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-            if request.method != "POST" or request.url.path != "/v1/chat/completions":
-                raise OrchestratorError("model_transport_endpoint_forbidden", status=500)
-            consume_dispatch_reservation()
-            return await self._wrapped.handle_async_request(request)
+            async def aclose(self) -> None:
+                await self._wrapped.aclose()
 
-        async def aclose(self) -> None:
-            await self._wrapped.aclose()
-else:  # pragma: no cover
-    class GuardedAsyncTransport:  # type: ignore[no-redef]
-        def __init__(self, *_: Any, **__: Any) -> None:
-            raise RuntimeError("httpx from pydantic-ai-slim[openai]==2.27.0 is required")
+        return _RuntimeGuardedAsyncTransport(wrapped)
 
 
 class BudgetedModelPort:

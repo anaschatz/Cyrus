@@ -7,23 +7,34 @@ payloads.
 
 ## Gate layout
 
-- `quality` checks the three maintained lockfiles, validates the workflow's
+- `quality` checks the four maintained lockfiles, validates the workflow's
   closed security contract, runs fatal Ruff checks over every backend, applies
-  Anamnesis's declared full Ruff/format policy, and rejects committed
-  whitespace errors. Pull requests check the immutable base-to-head commit
-  range; push and manual runs check the exact GitHub-provided head SHA.
+  Anamnesis's declared full Ruff/format policy, enforces a closed one-way size
+  ratchet over production modules, and rejects committed whitespace errors.
+  Existing modules above 1,000 lines have explicit non-growing ceilings; a new
+  monolith or growth beyond its ceiling fails CI. Pull requests check the
+  immutable base-to-head commit range; push and manual runs check the exact
+  GitHub-provided head SHA. The first structural reduction moves the versioned
+  SQLite DDL/migrations out of `store.py` and into the independently importable
+  `store_schema.py`; the ratchet requires subsequent splits to reduce rather
+  than regrow the remaining legacy modules.
 - `component-tests` runs every discoverable unit, security, migration, and
   fault-injection test on Linux with CPython 3.11. Dependency synchronization
   may use the package index; every subsequent test command runs with
-  `UV_OFFLINE=1` and `--offline`.
+  `UV_OFFLINE=1` and `--offline`. Research's integration suite lives under the
+  Orchestrator tests; the Orchestrator dev lock now installs the exact local
+  Research wheel contract and its pinned `publicsuffixlist` dependency.
 - `windows-security` executes the native Windows configuration, private-state,
   DACL, and stack-migration cases. It uses the Windows branch of the locked
   Orchestrator dependency graph, including its conditional `pywin32` pin.
-- `packaging` builds all four wheels without network access, installs each into
+- `packaging` builds all five wheels without network access, installs each into
   a newly created virtual environment from hash-bearing lock exports and the
   warmed uv cache, imports it with Python isolated mode, and runs its installed
   console entrypoint help path. Build isolation is disabled deliberately: the
   exact root or Anamnesis locked environment supplies the reviewed backend.
+  Research and Orchestrator both use the root locked setuptools toolchain for
+  wheel construction; their runtime dependencies still come from their own
+  checked lockfiles.
 
 Inference deliberately has no independent lockfile because its runtime has no
 dependencies. Its tests and setuptools build use the root Voice lock as the
@@ -64,7 +75,8 @@ Use only already-synchronized environments when local policy forbids downloads:
 anamnesis/.venv/bin/python -m unittest tests.test_backend_ci_workflow -v
 anamnesis/.venv/bin/ruff check --select E9,F63,F7,F82 \
   src tests anamnesis/src anamnesis/tests anamnesis/eval \
-  inference/src inference/tests orchestrator/src orchestrator/tests
+  inference/src inference/tests orchestrator/src orchestrator/tests \
+  research/src
 git show --check --format= HEAD
 ```
 

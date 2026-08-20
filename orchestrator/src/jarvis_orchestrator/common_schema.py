@@ -5,15 +5,21 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Mapping
 
-try:  # The dependency is intentionally optional for dependency-free core tests.
-    from pydantic_ai import JsonSchemaTransformer as _PydanticTransformer
-except ImportError:  # pragma: no cover - exercised when the pinned extra is installed
-    class _PydanticTransformer:  # type: ignore[no-redef]
-        def __init__(self, schema: dict[str, Any], **_: Any) -> None:
-            self.schema = schema
 
-        def transform(self, schema: dict[str, Any] | None = None) -> dict[str, Any]:
-            return schema or self.schema
+class _TransformerContract:
+    """Structural Pydantic transformer contract without importing its SDK.
+
+    Pydantic AI accepts a transformer class and constructs it with ``schema``
+    plus profile-specific keyword arguments. Keeping this tiny duck-typed
+    boundary local prevents dependency/model SDK imports from leaking into the
+    deterministic schema, store, control, and CLI import paths.
+    """
+
+    def __init__(self, schema: dict[str, Any], **_: Any) -> None:
+        self.schema = schema
+
+    def transform(self, schema: dict[str, Any] | None = None) -> dict[str, Any]:
+        return schema or self.schema
 
 
 ALLOWED = frozenset(
@@ -119,7 +125,7 @@ def transform_common_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
     return transformed
 
 
-class JarvisCommonSchemaTransformer(_PydanticTransformer):
+class JarvisCommonSchemaTransformer(_TransformerContract):
     """Pydantic-compatible transformer class, passed to model profiles as a class."""
 
     def walk(self) -> dict[str, Any]:

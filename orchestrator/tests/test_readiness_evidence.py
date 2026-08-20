@@ -910,6 +910,7 @@ class ReadinessEvidenceTests(unittest.TestCase):
                 _identity(),
                 _healthy_diagnostics(),
             ),
+            final_time_provider=lambda: NOW + timedelta(seconds=1),
         )
         verify_readiness_evidence(
             aggregate_path,
@@ -1297,6 +1298,7 @@ class ReadinessEvidenceTests(unittest.TestCase):
                 _identity(),
                 _healthy_diagnostics(),
             ),
+            final_time_provider=lambda: NOW + timedelta(seconds=1),
         )
         first_bytes = first_path.read_bytes()
         second_path = write_readiness_evidence(
@@ -1308,6 +1310,7 @@ class ReadinessEvidenceTests(unittest.TestCase):
                 _identity(),
                 _healthy_diagnostics(),
             ),
+            final_time_provider=lambda: NOW + timedelta(seconds=1),
         )
         self.assertEqual(second_path.read_bytes(), first_bytes)
         with self.assertRaisesRegex(
@@ -1323,6 +1326,7 @@ class ReadinessEvidenceTests(unittest.TestCase):
                     _identity(),
                     _healthy_diagnostics(),
                 ),
+                final_time_provider=lambda: NOW + timedelta(seconds=1),
             )
 
     def test_duplicate_leaf_sequence_conflicts_and_exact_retry_recovers(self) -> None:

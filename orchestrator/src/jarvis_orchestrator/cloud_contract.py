@@ -168,6 +168,28 @@ class EndpointHealthV1:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class OpenRouterRevalidationV1:
+    endpoint: QualifiedEndpointV1
+    health: EndpointHealthV1
+    key_remaining_microusd: int
+    usage_monthly_microusd: int
+    limit_reset: str
+    key_limit_microusd: int = 5_000_000
+    key_policy_verified: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class CloudModelResultV1:
+    text: str
+    generation_id: str
+    input_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+    actual_microusd: int
+    receipt: Mapping[str, Any]
+
+
 def provider_object(endpoint: QualifiedEndpointV1) -> dict[str, Any]:
     endpoint.validate()
     return {
