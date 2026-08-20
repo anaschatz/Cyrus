@@ -1,0 +1,79 @@
+{
+  "schema": "jarvis.voice.kokoro-onnx-qualification/1",
+  "date": "2026-08-20",
+  "host": {
+    "machine": "Apple M3",
+    "unified_memory_gib": 16,
+    "device": "CPU only"
+  },
+  "candidate": {
+    "engine": "Kokoro-82M ONNX INT8",
+    "runtime": "kokoro-onnx 0.6.1",
+    "onnxruntime": "1.27.0",
+    "language": "en-gb",
+    "speed": 0.96,
+    "voice_mix": {
+      "bm_george": 0.7,
+      "bm_fable": 0.3
+    },
+    "fallback": "macOS system TTS"
+  },
+  "artifacts": {
+    "model": {
+      "size": 92361271,
+      "sha256": "6e742170d309016e5891a994e1ce1559c702a2ccd0075e67ef7157974f6406cb"
+    },
+    "voices": {
+      "size": 28214398,
+      "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+    }
+  },
+  "runtime_profile": {
+    "provider": "CPUExecutionProvider",
+    "intra_op_threads": 2,
+    "inter_op_threads": 1,
+    "reason": "Two threads preserve LLM coexistence with only a small latency penalty versus the fastest four-thread sample."
+  },
+  "measurements": {
+    "warm_load_ms": 1076.9,
+    "peak_rss_mib": 358.0,
+    "synthesis_samples": [
+      {
+        "characters": 9,
+        "synthesis_ms": 3233.2,
+        "audio_seconds": 1.11,
+        "rtf": 2.91
+      },
+      {
+        "characters": 28,
+        "synthesis_ms": 3985.3,
+        "audio_seconds": 2.54,
+        "rtf": 1.57
+      },
+      {
+        "characters": 55,
+        "synthesis_ms": 5652.7,
+        "audio_seconds": 3.73,
+        "rtf": 1.51
+      }
+    ],
+    "thread_sweep_rtf": {
+      "1": 2.04,
+      "2": 1.60,
+      "4": 1.54,
+      "6": 1.81,
+      "8": 2.21
+    },
+    "software_cancel_dispatch_under_200ms": true,
+    "acoustic_interruption_measured": false,
+    "llm_coexistence_measured": false
+  },
+  "decision": {
+    "integrated": true,
+    "active_default": false,
+    "latency_gate_passed": false,
+    "ram_gate_passed": true,
+    "promotion_allowed": false,
+    "blocker": "Sentence synthesis is slower than real time on the M3 CPU and delays first audio by multiple seconds."
+  }
+}

@@ -199,6 +199,8 @@ def macos_doctor_report(
             voice_mix=dict(kokoro.voice_mix),
             warm_on_start=kokoro.warm_on_start,
             provider="CPUExecutionProvider",
+            intra_op_threads=2,
+            inter_op_threads=1,
             fallback="system_say",
             fallback_ready=fallback_ready,
             local_only=True,

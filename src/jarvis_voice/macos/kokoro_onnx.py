@@ -18,6 +18,8 @@ from ..errors import BackendError
 
 SAMPLE_RATE = 24_000
 PCM_BLOCK_SAMPLES = 480
+CPU_INTRA_OP_THREADS = 2
+CPU_INTER_OP_THREADS = 1
 
 
 def _sha256(path: Path) -> str:
@@ -122,8 +124,12 @@ class KokoroOnnxCpuEngine:
                     subsystem="tts",
                 ) from exc
             try:
+                session_options = ort.SessionOptions()
+                session_options.intra_op_num_threads = CPU_INTRA_OP_THREADS
+                session_options.inter_op_num_threads = CPU_INTER_OP_THREADS
                 session = ort.InferenceSession(
                     str(model),
+                    sess_options=session_options,
                     providers=["CPUExecutionProvider"],
                 )
                 if session.get_providers() != ["CPUExecutionProvider"]:
