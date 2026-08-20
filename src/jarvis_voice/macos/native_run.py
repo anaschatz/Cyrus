@@ -45,6 +45,26 @@ from .kokoro_onnx import KokoroOnnxCpuEngine, KokoroOnnxTtsBackend
 from ..pocket_tts import PocketTtsBackend, PocketTtsCpuEngine
 
 
+def _qualification_speech(config: VoiceConfig, *, long: bool) -> tuple[str, str]:
+    """Select speech that exercises the configured primary TTS backend."""
+
+    if config.macos.tts_backend in {"kokoro_onnx", "pocket_tts"}:
+        if long:
+            return (
+                "en-US",
+                "The voice is operating clearly and is waiting for you to press "
+                "push to talk for immediate playback interruption.",
+            )
+        return "en-US", "The voice is operating clearly."
+    if long:
+        return (
+            "el-GR",
+            "Η φωνή λειτουργεί καθαρά και περιμένει τώρα να πατήσεις "
+            "τα πλήκτρα για την άμεση διακοπή της αναπαραγωγής.",
+        )
+    return "el-GR", "Η φωνή λειτουργεί καθαρά."
+
+
 def create_macos_calibration_tts(
     config: VoiceConfig,
     *,
@@ -157,13 +177,14 @@ def calibrate_macos_acoustic_threshold(
         sampler.begin("ambient")
         sleeper(ambient_seconds)
         sampler.end()
+        locale, text = _qualification_speech(config, long=False)
         tts.enqueue(
             SpeechUnit(
                 response_id="acoustic-calibration",
                 epoch=1,
                 unit_index=1,
-                locale="el-GR",
-                text="Η φωνή λειτουργεί καθαρά.",
+                locale=locale,
+                text=text,
             )
         )
         if not started.wait(timeout=playback_timeout_seconds):
@@ -269,16 +290,14 @@ def run_macos_acoustic_barge_in_sample(
                     break
             epoch = sample_index * 2 - 1
             cancellation_epoch = epoch + 1
+            locale, text = _qualification_speech(config, long=True)
             tts.enqueue(
                 SpeechUnit(
                     response_id=f"acoustic-barge-in-sample-{sample_index}",
                     epoch=epoch,
                     unit_index=1,
-                    locale="el-GR",
-                    text=(
-                        "Η φωνή λειτουργεί καθαρά και περιμένει τώρα να πατήσεις "
-                        "τα πλήκτρα για την άμεση διακοπή της αναπαραγωγής."
-                    ),
+                    locale=locale,
+                    text=text,
                 )
             )
             if not started.wait(timeout=60.0):

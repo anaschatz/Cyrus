@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from array import array
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -355,6 +356,59 @@ class MacNativeRunTests(unittest.TestCase):
         self.assertTrue(state["capture_stopped"])
         self.assertTrue(state["ptt_stopped"])
         self.assertTrue(state["tts_closed"])
+
+    def test_focused_acoustic_sample_exercises_pocket_primary_in_english(self) -> None:
+        state: dict[str, object] = {}
+
+        class Monitor:
+            def __init__(self, **kwargs): del kwargs
+            def publish_audio(self, *args): pass
+            def arm(self, received_at):
+                del received_at
+                state["result"] = AcousticResult(True, 75.0, "qualification.acoustic_sample_valid")
+            def take_results(self):
+                result = state.pop("result", None)
+                return () if result is None else (result,)
+            def close(self): pass
+
+        class Capture:
+            def __init__(self, **kwargs): del kwargs
+            def start(self): pass
+            def stop(self): pass
+
+        class Ptt:
+            def __init__(self, publisher, **kwargs): state["publisher"] = publisher; del kwargs
+            def start(self): pass
+            def stop(self): pass
+
+        class Tts:
+            last_error = None
+            def __init__(self, on_started): self.on_started = on_started
+            def enqueue(self, unit):
+                state["unit"] = unit
+                self.on_started(unit)
+                state["publisher"].events.put_nowait(PttEvent(PttTransition.DOWN, time.perf_counter()))
+            def cancel(self, epoch, reason): del epoch, reason
+            def wait_idle(self, timeout): del timeout; return True
+            def close(self): pass
+
+        config = voice_config_from_mapping({"ptt_key": "CONTROL_OPTION"})
+        config = replace(config, macos=replace(config.macos, tts_backend="pocket_tts"))
+        with mock.patch("jarvis_voice.macos.native_run.sys.platform", "darwin"):
+            report = run_macos_acoustic_barge_in_sample(
+                config,
+                silence_threshold_dbfs=-53.303,
+                audio_path="built_in",
+                capture_factory=Capture,
+                tts_builder=lambda _config, *, on_started, on_completed: Tts(on_started),
+                ptt_source_factory=Ptt,
+                monitor_factory=Monitor,
+            )
+
+        self.assertTrue(report["ready"])
+        unit = state["unit"]
+        self.assertEqual(unit.locale, "en-US")
+        self.assertIn("push to talk", unit.text)
 
     def test_focused_acoustic_batch_reuses_runtime_and_advances_epochs(self) -> None:
         state: dict[str, object] = {"arms": 0}
