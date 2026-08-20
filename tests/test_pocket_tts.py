@@ -346,6 +346,39 @@ class PocketTtsBackendTests(unittest.TestCase):
         self.assertEqual(fallback.units, [selected])
         self.assertEqual(engine.texts, [])
 
+    def test_cancel_during_finish_suppresses_protocol_completion(self) -> None:
+        finish_started = threading.Event()
+        release_finish = threading.Event()
+        completed: list[int] = []
+
+        class FinishBlockingPlayback(FakePlayback):
+            def finish(self) -> None:
+                finish_started.set()
+                release_finish.wait(1.0)
+                self.finished = True
+
+            def abort(self) -> None:
+                super().abort()
+                release_finish.set()
+
+        playback = FinishBlockingPlayback()
+        backend = PocketTtsBackend(
+            engine=FakeEngine(),
+            fallback_backend=FakeFallback(),
+            playback_factory=lambda: playback,
+            on_completed=lambda unit: completed.append(unit.unit_index),
+            warm_on_start=False,
+        )
+        self.addCleanup(backend.close)
+        backend.enqueue(speech_unit())
+        self.assertTrue(finish_started.wait(0.5))
+
+        backend.cancel(1, "ptt_down")
+
+        self.assertTrue(backend.wait_idle())
+        self.assertTrue(playback.aborted.is_set())
+        self.assertEqual(completed, [])
+
     def test_warm_failure_permanently_degrades_to_fallback(self) -> None:
         fallback = FakeFallback()
         backend = PocketTtsBackend(
@@ -365,6 +398,28 @@ class PocketTtsBackendTests(unittest.TestCase):
 
 
 class SoundDeviceStreamingPlaybackTests(unittest.TestCase):
+    def test_stream_starts_only_after_initial_audio_is_buffered(self) -> None:
+        started = threading.Event()
+
+        class Stream:
+            def start(self): started.set()
+            def write(self, _value): pass
+            def stop(self): pass
+            def abort(self): pass
+            def close(self): pass
+
+        module = SimpleNamespace(RawOutputStream=lambda **_kwargs: Stream())
+        with mock.patch.dict(sys.modules, {"sounddevice": module}):
+            playback = SoundDeviceStreamingPlayback(queue_capacity=4)
+            playback.start(24_000)
+            self.assertFalse(started.is_set())
+            playback.write(b"one")
+            playback.write(b"two")
+            self.assertFalse(started.is_set())
+            playback.write(b"three")
+            self.assertTrue(started.wait(0.2))
+            playback.finish()
+
     def test_writer_drains_chunks_in_order_before_finish(self) -> None:
         writes: list[bytes] = []
 
@@ -407,6 +462,7 @@ class SoundDeviceStreamingPlaybackTests(unittest.TestCase):
             playback.start(24_000)
             playback.write(b"active")
             playback.write(b"stale")
+            playback.write(b"stale-two")
             self.assertTrue(write_started.wait(0.2))
             started = time.perf_counter()
             playback.abort()
@@ -436,6 +492,8 @@ class SoundDeviceStreamingPlaybackTests(unittest.TestCase):
             playback = SoundDeviceStreamingPlayback(queue_capacity=4)
             playback.start(24_000)
             playback.write(b"active")
+            playback.write(b"stale")
+            playback.write(b"stale-two")
             self.assertTrue(write_started.wait(0.2))
 
             def finish() -> None:

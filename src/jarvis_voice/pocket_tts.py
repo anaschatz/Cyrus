@@ -310,7 +310,6 @@ class SoundDeviceStreamingPlayback:
                 blocksize=0,
                 latency="low",
             )
-            stream.start()
         except Exception as exc:
             raise BackendError(
                 "tts.pocket.playback_open_failed",
@@ -325,12 +324,33 @@ class SoundDeviceStreamingPlayback:
                     stream.close()
                 return
             self._stream = stream
-            self._writer = threading.Thread(
+
+    def _ensure_writer(self, *, force: bool = False) -> None:
+        with self._lock:
+            if (
+                self._aborted
+                or self._stream is None
+                or self._writer is not None
+                or (not force and self._queue.qsize() < POCKET_TTS_PREBUFFER_CHUNKS)
+            ):
+                return
+            stream = self._stream
+            writer = threading.Thread(
                 target=self._run_writer,
                 name="jarvis-pocket-playback",
                 daemon=True,
             )
-            self._writer.start()
+            try:
+                stream.start()
+            except BaseException as exc:
+                self._writer_error = exc
+                raise BackendError(
+                    "tts.pocket.playback_start_failed",
+                    "Pocket TTS playback could not start",
+                    subsystem="tts",
+                ) from exc
+            self._writer = writer
+            writer.start()
 
     def _run_writer(self) -> None:
         try:
@@ -380,9 +400,11 @@ class SoundDeviceStreamingPlayback:
                 "Pocket TTS playback queue stopped draining",
                 subsystem="tts",
             ) from exc
+        self._ensure_writer()
         self._raise_writer_error()
 
     def finish(self) -> None:
+        self._ensure_writer(force=True)
         with self._lock:
             stream = self._stream
             writer = self._writer
@@ -400,22 +422,20 @@ class SoundDeviceStreamingPlayback:
                         subsystem="tts",
                     )
             self._raise_writer_error()
-            with self._lock:
-                aborted = self._aborted
-            if not aborted:
-                stream.stop()
         except BaseException as exc:
             error = exc
-        finally:
-            try:
-                stream.close()
-            except BaseException as exc:
-                if error is None:
-                    error = exc
-            with self._lock:
+        with self._lock:
+            aborted = self._aborted
+            owns_stream = self._stream is stream
+            if owns_stream:
                 self._stream = None
                 self._writer = None
-                aborted = self._aborted
+        if owns_stream and not aborted:
+            try:
+                if error is None:
+                    stream.stop()
+            finally:
+                stream.close()
         if error is not None and not aborted:
             raise error
 
@@ -672,6 +692,8 @@ class PocketTtsBackend:
                             subsystem="tts",
                         )
                     playback.finish()
+                    if self._is_stale(unit, cancelled):
+                        continue
                     self._retire(unit, cancelled, playback)
                     retired = True
                     self.on_completed(unit)
