@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import queue
 import tempfile
 import threading
 import time
@@ -23,6 +24,7 @@ from jarvis_voice.macos.greektts15_runtime import (
     load_approved_greektts_candidate,
     load_digest_bound_greektts_candidate,
     incremental_pcm_slice,
+    wait_for_decoded_result,
 )
 
 
@@ -217,6 +219,59 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertEqual(last, 600)
         with self.assertRaisesRegex(BackendError, "tts.greektts15.incremental_pcm_invalid"):
             incremental_pcm_slice(pcm, emitted_samples=4, stable_samples=7, previous_sample=None)
+
+    def test_final_decoder_wait_survives_a_transient_empty_queue(self) -> None:
+        decoded: queue.Queue[PcmChunk | Exception | None] = queue.Queue()
+        expected = PcmChunk(b"\x01\x00")
+
+        def publish_later() -> None:
+            time.sleep(0.03)
+            decoded.put(expected)
+
+        decoder = threading.Thread(target=publish_later)
+        decoder.start()
+        result = wait_for_decoded_result(
+            decoded,
+            decoder,
+            threading.Event(),
+            deadline=time.monotonic() + 0.2,
+            poll_seconds=0.01,
+        )
+        decoder.join()
+        self.assertEqual(result, expected)
+
+    def test_final_decoder_wait_is_bounded(self) -> None:
+        decoded: queue.Queue[PcmChunk | Exception | None] = queue.Queue()
+        release = threading.Event()
+        decoder = threading.Thread(target=lambda: release.wait(0.2))
+        decoder.start()
+        try:
+            with self.assertRaisesRegex(BackendError, "tts.greektts15.decoder_timeout"):
+                wait_for_decoded_result(
+                    decoded,
+                    decoder,
+                    threading.Event(),
+                    deadline=time.monotonic() + 0.03,
+                    poll_seconds=0.01,
+                )
+        finally:
+            release.set()
+            decoder.join()
+
+    def test_final_decoder_wait_rejects_silent_worker_exit(self) -> None:
+        decoded: queue.Queue[PcmChunk | Exception | None] = queue.Queue()
+        decoder = threading.Thread(target=lambda: None)
+        decoder.start()
+        decoder.join()
+
+        with self.assertRaisesRegex(BackendError, "tts.greektts15.decoder_stopped"):
+            wait_for_decoded_result(
+                decoded,
+                decoder,
+                threading.Event(),
+                deadline=time.monotonic() + 0.2,
+                poll_seconds=0.01,
+            )
 
     def test_warm_load_runs_on_the_persistent_inference_worker(self) -> None:
         engine = FakeWarmEngine()

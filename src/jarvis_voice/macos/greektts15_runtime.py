@@ -41,6 +41,8 @@ INCREMENTAL_STEP_FRAMES = 4
 INCREMENTAL_LOOKAHEAD_FRAMES = 4
 INCREMENTAL_BOUNDARY_RAMP_SAMPLES = 120
 COREAUDIO_WRITE_BLOCK_SAMPLES = 480
+DECODER_DRAIN_TIMEOUT_SECONDS = 15.0
+DECODER_DRAIN_POLL_SECONDS = 0.1
 PLAYBACK_HELPER_READY = b"R"
 PLAYBACK_HELPER_DATA = b"D"
 PLAYBACK_HELPER_FINISH = b"F"
@@ -188,6 +190,38 @@ def incremental_pcm_slice(
             chunk[index] = round(previous_sample * (1.0 - alpha) + chunk[index] * alpha)
     last = int(chunk[-1]) if chunk else previous_sample
     return chunk.tobytes(), stable_samples, last
+
+
+def wait_for_decoded_result(
+    decoded: queue.Queue[PcmChunk | Exception | None],
+    decoder: threading.Thread,
+    cancelled: threading.Event,
+    *,
+    deadline: float,
+    poll_seconds: float = DECODER_DRAIN_POLL_SECONDS,
+) -> PcmChunk | Exception | None:
+    """Wait through transient queue gaps while keeping final decode bounded."""
+
+    if poll_seconds <= 0:
+        raise ValueError("Decoder poll interval must be positive")
+    while not cancelled.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BackendError(
+                "tts.greektts15.decoder_timeout",
+                "GreekTTS decoder did not finish in time",
+                subsystem="tts",
+            )
+        try:
+            return decoded.get(timeout=min(poll_seconds, remaining))
+        except queue.Empty:
+            if not decoder.is_alive():
+                raise BackendError(
+                    "tts.greektts15.decoder_stopped",
+                    "GreekTTS decoder stopped without a terminal result",
+                    subsystem="tts",
+                )
+    return None
 
 
 class GreekTtsStreamingEngine(Protocol):
@@ -422,8 +456,14 @@ class MlxGreekTtsStreamingEngine:
                     break
                 except queue.Full:
                     continue
+            decoder_deadline = time.monotonic() + DECODER_DRAIN_TIMEOUT_SECONDS
             while not decoder_finished:
-                result = decoded.get(timeout=1.0)
+                result = wait_for_decoded_result(
+                    decoded,
+                    decoder,
+                    decoder_cancelled,
+                    deadline=decoder_deadline,
+                )
                 if result is None:
                     decoder_finished = True
                 elif isinstance(result, Exception):
