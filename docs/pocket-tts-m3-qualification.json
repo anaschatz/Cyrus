@@ -1,0 +1,72 @@
+{
+  "schema_version": "jarvis-pocket-tts-m3-qualification/1",
+  "collected_at": "2026-08-20",
+  "platform": {
+    "machine": "MacBook Air M3",
+    "memory_bytes": 17179869184,
+    "architecture": "arm64"
+  },
+  "candidate": {
+    "backend": "pocket_tts",
+    "distribution_version": "2.1.0",
+    "torch_version": "2.13.0",
+    "pyyaml_version": "6.0.3",
+    "voice": "george",
+    "locale": "en-US",
+    "device": "cpu",
+    "artifact_integrity_verified": true,
+    "remote_runtime_downloads": false
+  },
+  "programmatic_cancellation": {
+    "physical_playback": true,
+    "physical_ptt": false,
+    "audio_device_opened": true,
+    "first_chunk_ms": 109.19,
+    "cancel_return_ms": 104.756,
+    "synthesis_thread_stopped": true,
+    "threshold_ms": 200.0,
+    "software_gate_passed": true
+  },
+  "qwen_4b_coexistence": {
+    "ready": true,
+    "inference_scope": "loopback_only",
+    "llm_response_valid": true,
+    "llm_latency_ms": 1829.88,
+    "tts_first_chunk_ms": 115.612,
+    "tts_synthesis_ms": 1981.373,
+    "tts_audio_seconds": 6.8,
+    "tts_realtime_multiple": 3.432,
+    "tts_peak_process_rss_mib": 910.594,
+    "system_memory_free_percent_before": 58,
+    "system_memory_free_percent_after": 57,
+    "system_memory_free_percent_after_shutdown": 68,
+    "crash_observed": false,
+    "inference_listener_closed_after_test": true
+  },
+  "acoustic_calibration": {
+    "audio_path": "built_in",
+    "microphone_opened": true,
+    "physical_playback": true,
+    "raw_audio_persisted": false,
+    "attempts": 4,
+    "required_separation_db": 6.0,
+    "best_observed_separation_db": 3.476,
+    "ready": false,
+    "code": "qualification.acoustic_calibration_separation"
+  },
+  "promotion": {
+    "installed_runtime_changed": false,
+    "active_backend": "system_say",
+    "ready": false,
+    "blocker": "physical_acoustic_ptt_to_silence_not_measured",
+    "next_required_action": "Repeat calibration and physical PTT acoustic samples with a qualified wired or otherwise separable local audio path."
+  },
+  "privacy": {
+    "audio_persisted": false,
+    "transcript_persisted": false,
+    "model_response_persisted": false,
+    "secrets_persisted": false
+  },
+  "network_used": false,
+  "installation_performed": false
+}
