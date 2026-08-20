@@ -140,6 +140,29 @@ py -3.11 -m jarvis_voice verify-dist --directory ".\dist\JARVIS Voice"
 
 The manifest detects changes but does not authenticate the publisher. Authenticode signing/timestamping remains an explicit release gate. See the [Milestone 3 implementation prompt](docs/milestone-3-prompt.md) and [native Windows packaging procedure](docs/windows-packaging.md).
 
+## Native macOS HUD
+
+The initial macOS operator UI lives in [`macos/JarvisUI`](macos/JarvisUI). It is
+a native SwiftUI menu-bar app with an optional floating cyan HUD inspired by the
+project's JARVIS video references. The Voice runtime publishes only a strict,
+owner-only state enum (`idle`, `listening`, `processing`, `speaking`, `error`,
+or `offline`) with timestamps, a generation and a bounded input-activity scalar
+while listening. The reactor, waveform and processing rail react to that live
+signal; raw audio is never written to the UI state file. The UI never receives
+transcripts, prompts or responses. Build, test and demo instructions are in the
+[macOS UI README](macos/JarvisUI/README.md).
+
+## Pocket TTS candidate
+
+The optional English Pocket TTS adapter is CPU-only, streams validated local
+PCM and keeps the platform system voice as its fail-safe. Runtime downloads and
+model-name fallbacks are forbidden: the model, tokenizer and public `george`
+voice state must be absolute and SHA-256-bound. Two offline M3 source smokes
+reached their first chunk in 76.8–93.9 ms and 4.42–6.84x realtime, but the
+frozen technical beta remains on `system_say` until physical cancellation,
+coexistence and soak qualification pass. See
+[Pocket TTS English candidate](docs/pocket-tts-candidate.md).
+
 ## Native release qualification
 
 M4 adds strict, content-free evidence rather than another runtime feature. It requires a green source doctor, green doctor output produced by the packaged EXE, a valid post-sign distribution manifest, SignTool exit code `0` for every PE artifact, and sufficient passing CPU smoke samples. SignTool warnings and missing native evidence are release-blocking.

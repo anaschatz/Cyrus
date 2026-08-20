@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import queue
+import math
 import sys
 import threading
 import time
@@ -35,6 +36,7 @@ from ..reliable import ReliableSubmissionManager
 from ..transcription import AsyncTranscriptionCoordinator
 from ..transport import LoopbackWebSocketTransport
 from ..state import InputState
+from ..ui_state import VoiceUiState, VoiceUiStatePublisher
 from ..scheduler_protocol import SchedulerEnvelope
 from ..scheduler_runtime import SchedulerNativeRuntime
 from ..vad import SileroOnnxVad
@@ -226,11 +228,17 @@ class MacVoiceRuntime:
             key=config.ptt_key,
             approval_publisher=self.approval_keys,
         )
+        self._ui_activity_frames: queue.Queue[bytes] = queue.Queue(maxsize=1)
         self.audio = CoreAudioCapture(
             queue_capacity=config.audio_queue_capacity,
             maximum_utterance_seconds=config.maximum_utterance_seconds,
             device=config.audio_input_device,
-            frame_observer=audio_frame_observer,
+            frame_observer=lambda data, rate, timestamp: self._observe_audio_frame(
+                data,
+                rate,
+                timestamp,
+                external_observer=audio_frame_observer,
+            ),
         )
         self._running = False
         self._stop_requested = threading.Event()
@@ -242,8 +250,92 @@ class MacVoiceRuntime:
         self._next_response_token = 1
         self.reliable = ReliableSubmissionManager(time.monotonic)
         self.recovery = MacRecoverySupervisor()
+        try:
+            self.ui_state: VoiceUiStatePublisher | None = VoiceUiStatePublisher()
+        except BackendError:
+            # The UI is observational. A stale/unsafe/unwritable snapshot must
+            # never weaken or take down the authenticated Voice path.
+            self.ui_state = None
         if tts_warm_load_ms is not None:
             self._record_timing("tts_warm_ready", load_ms=tts_warm_load_ms)
+
+    def _publish_ui_state(self, state: VoiceUiState) -> None:
+        publisher = self.ui_state
+        if publisher is None:
+            return
+        try:
+            publisher.publish(state)
+        except BackendError:
+            self.ui_state = None
+            self._record_timing("ui_state_publisher_disabled")
+
+    def _heartbeat_ui_state(self) -> None:
+        publisher = self.ui_state
+        if publisher is None:
+            return
+        try:
+            publisher.heartbeat()
+        except BackendError:
+            self.ui_state = None
+            self._record_timing("ui_state_publisher_disabled")
+
+    def _observe_audio_frame(
+        self,
+        data: bytes,
+        sample_rate: int,
+        timestamp: float,
+        *,
+        external_observer: Callable[[bytes, int, float], None] | None,
+    ) -> None:
+        if external_observer is not None:
+            try:
+                external_observer(data, sample_rate, timestamp)
+            except Exception:
+                pass
+        publisher = getattr(self, "ui_state", None)
+        if publisher is None or publisher.state != VoiceUiState.LISTENING:
+            return
+        try:
+            self._ui_activity_frames.put_nowait(data)
+        except queue.Full:
+            # Keep only the latest already-owned bytes. Signal reduction stays
+            # out of the CoreAudio callback and cannot add real-time work.
+            try:
+                self._ui_activity_frames.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._ui_activity_frames.put_nowait(data)
+            except queue.Full:
+                pass
+
+    def _drain_ui_activity(self) -> None:
+        latest: bytes | None = None
+        while True:
+            try:
+                latest = self._ui_activity_frames.get_nowait()
+            except queue.Empty:
+                break
+        publisher = self.ui_state
+        if (
+            latest is None
+            or publisher is None
+            or publisher.state != VoiceUiState.LISTENING
+        ):
+            return
+        try:
+            samples = memoryview(latest).cast("f")
+            if not samples:
+                return
+            stride = max(1, len(samples) // 64)
+            selected = samples[::stride]
+            rms = math.sqrt(sum(float(value) ** 2 for value in selected) / len(selected))
+            # Speech around -35 to -12 dBFS maps into a useful visual range.
+            publisher.observe_input_activity(
+                min(1000, max(0, round(rms * 8_000)))
+            )
+        except (TypeError, ValueError):
+            return
 
     def _response_token(self, response_id: str | None) -> int:
         if response_id is None:
@@ -303,6 +395,7 @@ class MacVoiceRuntime:
                     "playback_completed_created",
                     response_token=self._response_token(event.response_id),
                 )
+                self._publish_ui_state(VoiceUiState.IDLE)
             self.transport.send(event)
 
     def _reconnect_pending(self) -> None:
@@ -341,6 +434,7 @@ class MacVoiceRuntime:
                 self._record_timing("tts_cancel_dispatched")
             self.transcription.cancel_current()
             self.audio.begin_turn()
+            self._publish_ui_state(VoiceUiState.LISTENING)
             self._send_all(outbound)
             return
         try:
@@ -352,17 +446,21 @@ class MacVoiceRuntime:
                 reason=event.reason,
             )
             captured = self.audio.end_turn()
+            self._publish_ui_state(VoiceUiState.PROCESSING)
             normalized = resample_audio(captured)
             prepared = self.core.prepare_transcription(normalized, self.vad)
             if prepared.turn_id is not None:
                 self._turn_cycles[prepared.turn_id] = self._ptt_cycle
             if isinstance(prepared, Envelope):
                 self._send_all([prepared])
+                if prepared.type in {"input.no_speech", "client.error"}:
+                    self._publish_ui_state(VoiceUiState.IDLE)
             else:
                 self.transcription.submit(prepared.turn_id, prepared.audio)
         except BackendError as exc:
             self.audio.abort_turn()
             self._send_all([self.core.input_failed(exc.code)])
+            self._publish_ui_state(VoiceUiState.IDLE)
 
     def _poll_transcription(self) -> None:
         outcome = self.transcription.poll()
@@ -378,6 +476,8 @@ class MacVoiceRuntime:
             event = self.core.transcription_failed(outcome.turn_id, code)
         if event is not None:
             self._send_all([event])
+            if event.type == "input.no_speech" or event.type == "client.error":
+                self._publish_ui_state(VoiceUiState.IDLE)
 
     def _discard_ptt_events(self) -> None:
         while True:
@@ -404,6 +504,7 @@ class MacVoiceRuntime:
             if request.kind == "sleep_resume":
                 self.ptt.start()
             self.recovery.succeeded()
+            self._publish_ui_state(VoiceUiState.IDLE)
             recovered_event = (
                 "sleep_resume_recovered"
                 if request.kind == "sleep_resume"
@@ -413,6 +514,7 @@ class MacVoiceRuntime:
         except Exception:
             self.recovery.failed(request.kind, monotonic_now=time.perf_counter())
             self._record_timing("native_io_recovery_failed", recovery_kind=request.kind)
+            self._publish_ui_state(VoiceUiState.ERROR)
 
     def run(self) -> None:  # pragma: no cover - native hardware/TCC loop
         if self._stop_requested.is_set():
@@ -425,8 +527,11 @@ class MacVoiceRuntime:
             self.ptt.start()
             self._record_timing("ptt_source_started")
             self.transport.send(self.core.client_hello())
+            self._publish_ui_state(VoiceUiState.IDLE)
             while self._running and not self._stop_requested.is_set():
                 now = time.perf_counter()
+                self._drain_ui_activity()
+                self._heartbeat_ui_state()
                 recovery = self.recovery.poll(
                     audio_healthy=self.audio.is_healthy,
                     monotonic_now=now,
@@ -497,6 +602,8 @@ class MacVoiceRuntime:
                         locale=callback.unit.locale,
                         response_token=self._response_token(callback.unit.response_id),
                     )
+                    if callback.kind == "started":
+                        self._publish_ui_state(VoiceUiState.SPEAKING)
                     events = (
                         self.core.on_tts_unit_started(callback.unit)
                         if callback.kind == "started"
@@ -552,6 +659,12 @@ class MacVoiceRuntime:
                             reason_code="voice_response_started",
                         ):
                             self.transport.send(receipt)
+                    if server_event.type == "response.started":
+                        self._publish_ui_state(VoiceUiState.PROCESSING)
+                    elif server_event.type == "response.cancel":
+                        self._publish_ui_state(VoiceUiState.IDLE)
+                    elif server_event.type == "server.error":
+                        self._publish_ui_state(VoiceUiState.ERROR)
                     if server_event.type == "response.speech.commit":
                         self._record_timing(
                             "speech_commit_received",
@@ -597,6 +710,7 @@ class MacVoiceRuntime:
     def close(self) -> None:
         self._running = False
         self._stop_requested.set()
+        self._publish_ui_state(VoiceUiState.OFFLINE)
         self.ptt.stop()
         self.audio.abort_turn()
         self.audio.stop()
