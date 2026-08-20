@@ -316,7 +316,39 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         playback = SoundDevicePcmPlayback(module)
         playback.write(PcmChunk(b"\x01\x00" * 1_000))
         playback.finish()
-        self.assertEqual([len(value) for value in module.stream.writes], [960, 960, 80])
+        self.assertEqual([len(value) for value in module.stream.writes], [960, 960, 80, 960])
+        finish_tail = array("h")
+        finish_tail.frombytes(module.stream.writes[-1])
+        self.assertEqual(len(finish_tail), 480)
+        self.assertEqual(finish_tail[-240:].tolist(), [0] * 240)
+
+    def test_coreaudio_natural_finish_fades_from_last_pcm_sample(self) -> None:
+        class Stream:
+            def __init__(self): self.writes: list[bytes] = []
+            def start(self): pass
+            def write(self, value): self.writes.append(value); return False
+            def stop(self): pass
+            def abort(self): pass
+            def close(self): pass
+
+        class SoundDevice:
+            def __init__(self): self.stream = Stream()
+            def CoreAudioSettings(self, **kwargs): return kwargs
+            def RawOutputStream(self, **kwargs):
+                del kwargs
+                return self.stream
+
+        module = SoundDevice()
+        playback = SoundDevicePcmPlayback(module)
+        playback.write(PcmChunk(array("h", [12_000]).tobytes()))
+        playback.finish()
+
+        tail = array("h")
+        tail.frombytes(module.stream.writes[-1])
+        self.assertLess(tail[0], 12_000)
+        self.assertGreater(tail[0], 0)
+        self.assertEqual(tail[239], 0)
+        self.assertEqual(tail[240:].tolist(), [0] * 240)
 
     def test_approved_manifest_is_bound_to_exact_adapter_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

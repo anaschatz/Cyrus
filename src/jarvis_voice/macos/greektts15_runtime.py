@@ -9,6 +9,7 @@ import multiprocessing
 import os
 import queue
 import re
+import sys
 import threading
 import time
 from array import array
@@ -41,6 +42,8 @@ INCREMENTAL_STEP_FRAMES = 4
 INCREMENTAL_LOOKAHEAD_FRAMES = 4
 INCREMENTAL_BOUNDARY_RAMP_SAMPLES = 120
 COREAUDIO_WRITE_BLOCK_SAMPLES = 480
+COREAUDIO_FINISH_FADE_SAMPLES = 240
+COREAUDIO_FINISH_SILENCE_SAMPLES = 240
 PLAYBACK_HELPER_READY = b"R"
 PLAYBACK_HELPER_DATA = b"D"
 PLAYBACK_HELPER_FINISH = b"F"
@@ -467,6 +470,7 @@ class SoundDevicePcmPlayback:
         self._lock = threading.Lock()
         self._abort_requested = threading.Event()
         self._closed = False
+        self._last_sample: int | None = None
         settings = sounddevice_module.CoreAudioSettings(
             change_device_parameters=False,
             fail_if_conversion_required=False,
@@ -492,7 +496,13 @@ class SoundDevicePcmPlayback:
             with self._lock:
                 if self._closed or self._abort_requested.is_set():
                     return
-                underflowed = self._stream.write(chunk.pcm16[offset : offset + block_bytes])
+                block = chunk.pcm16[offset : offset + block_bytes]
+                underflowed = self._stream.write(block)
+                self._last_sample = int.from_bytes(
+                    block[-2:],
+                    byteorder=sys.byteorder,
+                    signed=True,
+                )
             if underflowed:
                 raise BackendError("tts.playback_underflow", "CoreAudio playback underflowed", subsystem="tts")
 
@@ -501,8 +511,26 @@ class SoundDevicePcmPlayback:
             if self._closed:
                 return
             self._closed = True
-            self._stream.stop()
-            self._stream.close()
+            underflowed = False
+            try:
+                if self._last_sample is not None:
+                    tail = array(
+                        "h",
+                        (
+                            round(
+                                self._last_sample
+                                * (1.0 - ((index + 1) / COREAUDIO_FINISH_FADE_SAMPLES))
+                            )
+                            for index in range(COREAUDIO_FINISH_FADE_SAMPLES)
+                        ),
+                    )
+                    tail.extend([0] * COREAUDIO_FINISH_SILENCE_SAMPLES)
+                    underflowed = bool(self._stream.write(tail.tobytes()))
+                self._stream.stop()
+            finally:
+                self._stream.close()
+            if underflowed:
+                raise BackendError("tts.playback_underflow", "CoreAudio playback underflowed", subsystem="tts")
 
     def abort(self) -> None:
         self._abort_requested.set()
