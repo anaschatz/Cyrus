@@ -400,10 +400,13 @@ class PocketTtsBackendTests(unittest.TestCase):
 class SoundDeviceStreamingPlaybackTests(unittest.TestCase):
     def test_stream_starts_only_after_initial_audio_is_buffered(self) -> None:
         started = threading.Event()
+        calls: list[str] = []
 
         class Stream:
-            def start(self): started.set()
-            def write(self, _value): pass
+            def start(self):
+                calls.append("start")
+                started.set()
+            def write(self, _value): calls.append("write")
             def stop(self): pass
             def abort(self): pass
             def close(self): pass
@@ -419,6 +422,8 @@ class SoundDeviceStreamingPlaybackTests(unittest.TestCase):
             playback.write(b"three")
             self.assertTrue(started.wait(0.2))
             playback.finish()
+
+        self.assertEqual(calls[:2], ["start", "write"])
 
     def test_writer_drains_chunks_in_order_before_finish(self) -> None:
         writes: list[bytes] = []

@@ -297,6 +297,7 @@ class SoundDeviceStreamingPlayback:
         self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=queue_capacity)
         self._writer: threading.Thread | None = None
         self._writer_error: BaseException | None = None
+        self._stream_started = False
         self._aborted = False
 
     def start(self, sample_rate: int) -> None:
@@ -324,6 +325,7 @@ class SoundDeviceStreamingPlayback:
                     stream.close()
                 return
             self._stream = stream
+            self._stream_started = False
 
     def _ensure_writer(self, *, force: bool = False) -> None:
         with self._lock:
@@ -334,21 +336,11 @@ class SoundDeviceStreamingPlayback:
                 or (not force and self._queue.qsize() < POCKET_TTS_PREBUFFER_CHUNKS)
             ):
                 return
-            stream = self._stream
             writer = threading.Thread(
                 target=self._run_writer,
                 name="jarvis-pocket-playback",
                 daemon=True,
             )
-            try:
-                stream.start()
-            except BaseException as exc:
-                self._writer_error = exc
-                raise BackendError(
-                    "tts.pocket.playback_start_failed",
-                    "Pocket TTS playback could not start",
-                    subsystem="tts",
-                ) from exc
             self._writer = writer
             writer.start()
 
@@ -362,8 +354,15 @@ class SoundDeviceStreamingPlayback:
                     if self._aborted:
                         return
                     stream = self._stream
+                    stream_started = self._stream_started
                 if stream is None:
                     return
+                if not stream_started:
+                    stream.start()
+                    with self._lock:
+                        if self._aborted:
+                            return
+                        self._stream_started = True
                 stream.write(pcm16)
         except BaseException as exc:
             with self._lock:
@@ -430,6 +429,7 @@ class SoundDeviceStreamingPlayback:
             if owns_stream:
                 self._stream = None
                 self._writer = None
+                self._stream_started = False
         if owns_stream and not aborted:
             try:
                 if error is None:
@@ -444,6 +444,7 @@ class SoundDeviceStreamingPlayback:
             self._aborted = True
             stream, self._stream = self._stream, None
             self._writer = None
+            self._stream_started = False
             while True:
                 try:
                     self._queue.get_nowait()
