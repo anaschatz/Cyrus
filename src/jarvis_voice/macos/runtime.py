@@ -52,6 +52,7 @@ from .greektts15_runtime import (
 )
 from .greektts15_sidecar import GreekTtsF1SidecarBackend
 from .language_policy import MacSessionLanguagePolicy
+from .kokoro_onnx import KokoroOnnxCpuEngine, KokoroOnnxTtsBackend
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +79,7 @@ class MacVoiceRuntime:
             ("el-GR", "en-US")
             if config.macos.tts_backend == "system_say"
             else ("en-US",)
-            if config.macos.tts_backend == "greektts15_f1"
+            if config.macos.tts_backend in {"greektts15_f1", "kokoro_onnx"}
             else ()
         )
         if any(not config.macos.system_voices.get(locale) for locale in required_system_locales):
@@ -130,6 +131,19 @@ class MacVoiceRuntime:
                     on_completed=completed_callback,
                 ),
                 fallback_locales={"en-US"},
+            )
+            tts_warm_load_ms = self.tts.warm_load_ms
+        elif config.macos.tts_backend == "kokoro_onnx":
+            self.tts = KokoroOnnxTtsBackend(
+                engine=KokoroOnnxCpuEngine(config.macos.kokoro_onnx),
+                fallback_backend=MacSystemTtsBackend(
+                    voice_mapping=config.macos.system_voices,
+                    on_started=started_callback,
+                    on_completed=completed_callback,
+                ),
+                on_started=started_callback,
+                on_completed=completed_callback,
+                warm_on_start=config.macos.kokoro_onnx.warm_on_start,
             )
             tts_warm_load_ms = self.tts.warm_load_ms
         else:

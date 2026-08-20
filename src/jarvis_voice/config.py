@@ -96,11 +96,24 @@ class GreekTts15Config:
 
 
 @dataclass(frozen=True, slots=True)
+class KokoroOnnxConfig:
+    model: ArtifactConfig = field(default_factory=ArtifactConfig)
+    voices: ArtifactConfig = field(default_factory=ArtifactConfig)
+    language: str = "en-gb"
+    speed: float = 0.96
+    voice_mix: Mapping[str, float] = field(
+        default_factory=lambda: {"bm_george": 0.70, "bm_fable": 0.30}
+    )
+    warm_on_start: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class MacosConfig:
     asr_backend: str = "whisper_cpp"
     tts_backend: str = "system_say"
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
     greektts15: GreekTts15Config = field(default_factory=GreekTts15Config)
+    kokoro_onnx: KokoroOnnxConfig = field(default_factory=KokoroOnnxConfig)
     system_voices: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -193,6 +206,10 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     whisper_cpp_data = macos_data.get("whisper_cpp", {}) if isinstance(macos_data, Mapping) else None
     greektts15_data = macos_data.get("greektts15", {}) if isinstance(macos_data, Mapping) else None
     greektts15_worker_data = greektts15_data.get("worker_python", {}) if isinstance(greektts15_data, Mapping) else None
+    kokoro_data = macos_data.get("kokoro_onnx", {}) if isinstance(macos_data, Mapping) else None
+    kokoro_model_data = kokoro_data.get("model", {}) if isinstance(kokoro_data, Mapping) else None
+    kokoro_voices_data = kokoro_data.get("voices", {}) if isinstance(kokoro_data, Mapping) else None
+    kokoro_mix_data = kokoro_data.get("voice_mix", {"bm_george": 0.70, "bm_fable": 0.30}) if isinstance(kokoro_data, Mapping) else None
     executable_data = whisper_cpp_data.get("executable", {}) if isinstance(whisper_cpp_data, Mapping) else None
     mac_model_data = whisper_cpp_data.get("model", {}) if isinstance(whisper_cpp_data, Mapping) else None
     if not isinstance(vad_data, Mapping) or not isinstance(artifact_data, Mapping):
@@ -210,7 +227,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     }:
         raise BackendError("config.invalid_field", "Scheduler configuration is invalid", subsystem="config", safe_context={"field": "scheduler"})
     if not isinstance(macos_data, Mapping) or set(macos_data) - {
-        "asr_backend", "tts_backend", "whisper_cpp", "greektts15", "system_voices"
+        "asr_backend", "tts_backend", "whisper_cpp", "greektts15", "kokoro_onnx", "system_voices"
     }:
         raise BackendError("config.invalid_field", "macOS configuration has unknown fields", subsystem="config", safe_context={"field": "macos"})
     if not isinstance(whisper_cpp_data, Mapping) or set(whisper_cpp_data) - {
@@ -227,6 +244,18 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "GreekTTS runtime configuration is invalid", subsystem="config", safe_context={"field": "macos.greektts15"})
     if not isinstance(greektts15_worker_data, Mapping) or set(greektts15_worker_data) - {"path", "size", "sha256"}:
         raise BackendError("config.invalid_field", "GreekTTS worker manifest is invalid", subsystem="config", safe_context={"field": "macos.greektts15.worker_python"})
+    if not isinstance(kokoro_data, Mapping) or set(kokoro_data) - {
+        "model", "voices", "language", "speed", "voice_mix", "warm_on_start"
+    }:
+        raise BackendError("config.invalid_field", "Kokoro ONNX configuration is invalid", subsystem="config", safe_context={"field": "macos.kokoro_onnx"})
+    if (
+        not isinstance(kokoro_model_data, Mapping)
+        or set(kokoro_model_data) - {"path", "size", "sha256"}
+        or not isinstance(kokoro_voices_data, Mapping)
+        or set(kokoro_voices_data) - {"path", "size", "sha256"}
+        or not isinstance(kokoro_mix_data, Mapping)
+    ):
+        raise BackendError("config.invalid_field", "Kokoro ONNX artifact manifest is invalid", subsystem="config", safe_context={"field": "macos.kokoro_onnx"})
     url = str(data.get("orchestrator_url", "ws://127.0.0.1:8765"))
     if not is_loopback_websocket_url(url):
         raise BackendError("config.non_loopback_orchestrator", "Only loopback WebSocket URLs are permitted", subsystem="config", safe_context={"field": "orchestrator_url"})
@@ -337,6 +366,14 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                     greektts15_worker_data.get("sha256"),
                 ),
             ),
+            kokoro_onnx=KokoroOnnxConfig(
+                model=ArtifactConfig(kokoro_model_data.get("path"), kokoro_model_data.get("size"), kokoro_model_data.get("sha256")),
+                voices=ArtifactConfig(kokoro_voices_data.get("path"), kokoro_voices_data.get("size"), kokoro_voices_data.get("sha256")),
+                language=str(kokoro_data.get("language", "en-gb")).lower(),
+                speed=float(kokoro_data.get("speed", 0.96)),
+                voice_mix={str(name): float(weight) for name, weight in kokoro_mix_data.items()},
+                warm_on_start=_boolean(kokoro_data.get("warm_on_start", True), "macos.kokoro_onnx.warm_on_start"),
+            ),
             system_voices=dict(macos_voices),
         ),
         logging_level=str(data.get("logging_level", "INFO")).upper(),
@@ -366,8 +403,27 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "ASR execution profile must be cpu or cuda", subsystem="config", safe_context={"field": "asr.execution_profile"})
     if config.asr.cuda.residency not in {"turn_scoped", "warm"}:
         raise BackendError("config.invalid_field", "CUDA residency must be turn_scoped or warm", subsystem="config", safe_context={"field": "asr.cuda.residency"})
-    if config.macos.tts_backend not in {"system_say", "greektts15_f1"}:
+    if config.macos.tts_backend not in {"system_say", "greektts15_f1", "kokoro_onnx"}:
         raise BackendError("config.invalid_field", "macOS TTS backend is invalid", subsystem="config", safe_context={"field": "macos.tts_backend"})
+    if config.macos.tts_backend == "kokoro_onnx":
+        kokoro = config.macos.kokoro_onnx
+        if (
+            kokoro.language != "en-gb"
+            or abs(kokoro.speed - 0.96) > 1e-9
+            or dict(kokoro.voice_mix) != {"bm_george": 0.70, "bm_fable": 0.30}
+        ):
+            raise BackendError("config.kokoro_candidate_locked", "Kokoro candidate settings do not match the approved profile", subsystem="config")
+        for artifact in (kokoro.model, kokoro.voices):
+            if (
+                not isinstance(artifact.path, str)
+                or not Path(artifact.path).is_absolute()
+                or not isinstance(artifact.size, int)
+                or isinstance(artifact.size, bool)
+                or artifact.size < 1
+                or not isinstance(artifact.sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", artifact.sha256) is None
+            ):
+                raise BackendError("config.kokoro_profile_required", "Kokoro requires absolute, digest-bound artifacts", subsystem="config")
     if config.macos.tts_backend == "greektts15_f1":
         greek = config.macos.greektts15
         paths = (greek.model_root, greek.approval_manifest_path, greek.repository_root)

@@ -31,6 +31,7 @@ DIRECT_REQUIREMENTS: Mapping[str, str] = {
     "sounddevice": "0.5.3",
     "soxr": "1.1.0",
     "onnxruntime": "1.27.0",
+    "kokoro-onnx": "0.6.1",
     "websockets": "15.0.1",
 }
 SILERO_VERSION = "6.2.1"

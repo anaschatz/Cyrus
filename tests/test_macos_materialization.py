@@ -52,7 +52,7 @@ class WheelhouseLockTests(unittest.TestCase):
             raw = json.loads(manifest.read_text())
         self.assertTrue(result["ready"])
         self.assertEqual(validated["status"], "ready")
-        self.assertEqual(len(raw["wheels"]), 6)
+        self.assertEqual(len(raw["wheels"]), 7)
         self.assertEqual(raw["top_level"], dict(DIRECT_REQUIREMENTS))
 
     def test_missing_direct_requirement_and_wrong_platform_are_rejected(self) -> None:

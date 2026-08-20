@@ -41,6 +41,7 @@ from .native_collector import (
 from .ptt import MacEventTapPttSource, mac_ptt_vkey
 from .runtime import MacVoiceRuntime
 from .system_tts import MacSystemTtsBackend
+from .kokoro_onnx import KokoroOnnxCpuEngine, KokoroOnnxTtsBackend
 
 
 def create_macos_calibration_tts(
@@ -71,6 +72,18 @@ def create_macos_calibration_tts(
             on_started=on_started,
             on_completed=on_completed,
             warm_on_start=greek.warm_on_start,
+        )
+    if config.macos.tts_backend == "kokoro_onnx":
+        return KokoroOnnxTtsBackend(
+            engine=KokoroOnnxCpuEngine(config.macos.kokoro_onnx),
+            fallback_backend=MacSystemTtsBackend(
+                voice_mapping=config.macos.system_voices,
+                on_started=on_started,
+                on_completed=on_completed,
+            ),
+            on_started=on_started,
+            on_completed=on_completed,
+            warm_on_start=config.macos.kokoro_onnx.warm_on_start,
         )
     return MacSystemTtsBackend(
         voice_mapping=config.macos.system_voices,

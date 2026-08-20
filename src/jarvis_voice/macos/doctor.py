@@ -21,6 +21,7 @@ from .whisper_cpp import _validate_artifact
 from .greektts15_pilot import validate_greektts_model_root
 from .greektts15_runtime import load_digest_bound_greektts_candidate
 from .greektts15_sidecar import validate_worker_python
+from .kokoro_onnx import validate_kokoro_artifact
 from ..voice_auth import AUTH_PROTOCOL
 
 
@@ -125,6 +126,8 @@ def macos_doctor_report(
     if config.macos.tts_backend == "greektts15_f1":
         if config.macos.greektts15.worker_python.path is None:
             dependency_names.extend(("mlx", "mlx-lm", "torch", "snac"))
+    elif config.macos.tts_backend == "kokoro_onnx":
+        dependency_names.extend(("kokoro-onnx", "numpy"))
     selected_dependencies: dict[str, Mapping[str, object]] = (
         dict(dependencies)
         if dependencies is not None
@@ -172,6 +175,34 @@ def macos_doctor_report(
             "temporary_smoke_profile": True,
         }
         whisper_cpp_check = _status("deferred", "asr.whisper_cpp_not_selected")
+    elif config.macos.tts_backend == "kokoro_onnx":
+        kokoro = config.macos.kokoro_onnx
+        try:
+            validate_kokoro_artifact(kokoro.model, "model")
+            validate_kokoro_artifact(kokoro.voices, "voices")
+            installed = (voice_probe or _default_voice_probe)()
+            fallback_voice = config.macos.system_voices.get("en-US")
+            fallback_ready = bool(fallback_voice and fallback_voice in installed)
+            candidate_ready = (
+                selected_dependencies.get("kokoro-onnx", {}).get("status") == "ready"
+                and fallback_ready
+            )
+        except Exception:
+            candidate_ready = False
+            fallback_ready = False
+        tts = _status(
+            "ready" if candidate_ready else "blocked",
+            "tts.kokoro_onnx_profile_ready" if candidate_ready else "tts.kokoro_onnx_profile_invalid",
+            backend="kokoro_onnx",
+            language=kokoro.language,
+            speed=kokoro.speed,
+            voice_mix=dict(kokoro.voice_mix),
+            warm_on_start=kokoro.warm_on_start,
+            provider="CPUExecutionProvider",
+            fallback="system_say",
+            fallback_ready=fallback_ready,
+            local_only=True,
+        )
     else:
         asr = {
             **whisper_cpp_check,

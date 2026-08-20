@@ -76,6 +76,14 @@
         "sha256": null
       }
     },
+    "kokoro_onnx": {
+      "model": {"path": null, "size": null, "sha256": null},
+      "voices": {"path": null, "size": null, "sha256": null},
+      "language": "en-gb",
+      "speed": 0.96,
+      "voice_mix": {"bm_george": 0.7, "bm_fable": 0.3},
+      "warm_on_start": true
+    },
     "system_voices": {"el-GR": "", "en-US": ""}
   },
   "logging_level": "INFO"
