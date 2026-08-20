@@ -24,6 +24,11 @@ from ..native_qualification import (
     MINIMUM_ACOUSTIC_SAMPLES,
     native_evidence_template,
 )
+from ..pocket_tts import (
+    POCKET_TTS_DISTRIBUTION_VERSION,
+    POCKET_TTS_PYYAML_VERSION,
+    POCKET_TTS_TORCH_VERSION,
+)
 from ..voice_auth import AUTH_PROTOCOL
 
 
@@ -101,7 +106,24 @@ def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
                 }
             )
             if config.macos.tts_backend == "greektts15_f1"
-            else {"voice_mapping": dict(sorted(config.macos.system_voices.items()))}
+            else (
+                {
+                    "distribution_version": POCKET_TTS_DISTRIBUTION_VERSION,
+                    "torch_version": POCKET_TTS_TORCH_VERSION,
+                    "pyyaml_version": POCKET_TTS_PYYAML_VERSION,
+                    "model_sha256": config.pocket_tts.model.sha256,
+                    "tokenizer_sha256": config.pocket_tts.tokenizer.sha256,
+                    "voice_state_sha256": config.pocket_tts.voice_state.sha256,
+                    "temperature": config.pocket_tts.temperature,
+                    "max_tokens": config.pocket_tts.max_tokens,
+                    "warm_on_start": config.pocket_tts.warm_on_start,
+                    "fallback_voice_mapping": dict(
+                        sorted(config.macos.system_voices.items())
+                    ),
+                }
+                if config.macos.tts_backend == "pocket_tts"
+                else {"voice_mapping": dict(sorted(config.macos.system_voices.items()))}
+            )
         ),
     }
     encoded = json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")

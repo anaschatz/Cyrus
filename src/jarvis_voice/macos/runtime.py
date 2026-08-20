@@ -30,6 +30,7 @@ from ..errors import BackendError
 from ..protocol import Envelope
 from ..ptt import ApprovalKeyPublisher, PttEvent, PttEventPublisher, PttTransition
 from ..private_state import default_voice_state_boundary, prepare_voice_journal_state
+from ..pocket_tts import PocketTtsBackend, PocketTtsCpuEngine
 from ..reliable import ReliableSubmissionManager
 from ..transcription import AsyncTranscriptionCoordinator
 from ..transport import LoopbackWebSocketTransport
@@ -77,7 +78,7 @@ class MacVoiceRuntime:
         mac_ptt_keycode(config.ptt_key)
         required_system_locales = (
             ("el-GR", "en-US")
-            if config.macos.tts_backend == "system_say"
+            if config.macos.tts_backend in {"system_say", "pocket_tts"}
             else ("en-US",)
             if config.macos.tts_backend in {"greektts15_f1", "kokoro_onnx"}
             else ()
@@ -144,6 +145,19 @@ class MacVoiceRuntime:
                 on_started=started_callback,
                 on_completed=completed_callback,
                 warm_on_start=config.macos.kokoro_onnx.warm_on_start,
+            )
+            tts_warm_load_ms = self.tts.warm_load_ms
+        elif config.macos.tts_backend == "pocket_tts":
+            self.tts = PocketTtsBackend(
+                engine=PocketTtsCpuEngine(config.pocket_tts),
+                fallback_backend=MacSystemTtsBackend(
+                    voice_mapping=config.macos.system_voices,
+                    on_started=started_callback,
+                    on_completed=completed_callback,
+                ),
+                on_started=started_callback,
+                on_completed=completed_callback,
+                warm_on_start=config.pocket_tts.warm_on_start,
             )
             tts_warm_load_ms = self.tts.warm_load_ms
         else:

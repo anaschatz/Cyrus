@@ -29,6 +29,7 @@ from .delivery_journal import DeliveryDedupJournal, default_delivery_journal_pat
 from .errors import BackendError
 from .ptt import ApprovalKeyPublisher, PttEvent, PttEventPublisher, PttTransition, function_key_vkey
 from .private_state import default_voice_state_boundary, prepare_voice_journal_state
+from .pocket_tts import PocketTtsBackend, PocketTtsCpuEngine
 from .reliable import ReliableSubmissionManager
 from .transport import LoopbackWebSocketTransport
 from .transcription import AsyncTranscriptionCoordinator
@@ -71,11 +72,27 @@ class WindowsVoiceRuntime:
         )
         self.config = config
         self.callbacks: queue.Queue[BackendCallback] = queue.Queue()
-        self.tts = SapiTtsBackend(
-            voice_mapping=config.sapi_voices,
-            on_started=lambda unit: self.callbacks.put_nowait(BackendCallback("started", unit)),
-            on_completed=lambda unit: self.callbacks.put_nowait(BackendCallback("completed", unit)),
+        started_callback = lambda unit: self.callbacks.put_nowait(
+            BackendCallback("started", unit)
         )
+        completed_callback = lambda unit: self.callbacks.put_nowait(
+            BackendCallback("completed", unit)
+        )
+        system_tts = SapiTtsBackend(
+            voice_mapping=config.sapi_voices,
+            on_started=started_callback,
+            on_completed=completed_callback,
+        )
+        if config.windows_tts_backend == "pocket_tts":
+            self.tts = PocketTtsBackend(
+                engine=PocketTtsCpuEngine(config.pocket_tts),
+                fallback_backend=system_tts,
+                on_started=started_callback,
+                on_completed=completed_callback,
+                warm_on_start=config.pocket_tts.warm_on_start,
+            )
+        else:
+            self.tts = system_tts
         self.asr = (asr_factory or AsrBackendFactory()).create(config)
         self.delivery_journal = DeliveryDedupJournal(
             journal_paths[0],

@@ -42,6 +42,7 @@ from .ptt import MacEventTapPttSource, mac_ptt_vkey
 from .runtime import MacVoiceRuntime
 from .system_tts import MacSystemTtsBackend
 from .kokoro_onnx import KokoroOnnxCpuEngine, KokoroOnnxTtsBackend
+from ..pocket_tts import PocketTtsBackend, PocketTtsCpuEngine
 
 
 def create_macos_calibration_tts(
@@ -84,6 +85,18 @@ def create_macos_calibration_tts(
             on_started=on_started,
             on_completed=on_completed,
             warm_on_start=config.macos.kokoro_onnx.warm_on_start,
+        )
+    if config.macos.tts_backend == "pocket_tts":
+        return PocketTtsBackend(
+            engine=PocketTtsCpuEngine(config.pocket_tts),
+            fallback_backend=MacSystemTtsBackend(
+                voice_mapping=config.macos.system_voices,
+                on_started=on_started,
+                on_completed=on_completed,
+            ),
+            on_started=on_started,
+            on_completed=on_completed,
+            warm_on_start=config.pocket_tts.warm_on_start,
         )
     return MacSystemTtsBackend(
         voice_mapping=config.macos.system_voices,

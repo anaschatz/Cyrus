@@ -20,6 +20,12 @@ from .manifest import BASE_MODEL_MANIFEST, validate_model_directory
 from .vad import validate_artifact
 from .windows.hardening import dll_policy_applied
 from .voice_auth import AUTH_PROTOCOL
+from .pocket_tts import (
+    POCKET_TTS_DISTRIBUTION_VERSION,
+    POCKET_TTS_PYYAML_VERSION,
+    POCKET_TTS_TORCH_VERSION,
+    validate_pocket_tts_artifact,
+)
 
 
 def _status(status: str, code: str, **details: object) -> dict[str, object]:
@@ -147,7 +153,18 @@ def doctor_report_config(
         machine=platform.machine(),
         python=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
     )
-    dependencies = {name: _dependency(name) for name in ("faster-whisper", "ctranslate2", "sounddevice", "soxr", "onnxruntime", "websockets", "pywin32")}
+    dependency_names = [
+        "faster-whisper",
+        "ctranslate2",
+        "sounddevice",
+        "soxr",
+        "onnxruntime",
+        "websockets",
+        "pywin32",
+    ]
+    if config.windows_tts_backend == "pocket_tts":
+        dependency_names.extend(("pocket-tts", "torch", "PyYAML"))
+    dependencies = {name: _dependency(name) for name in dependency_names}
     manifest = validate_model_directory(config.whisper_model_directory, BASE_MODEL_MANIFEST)
     model: dict[str, Any] = {
         "id": BASE_MODEL_MANIFEST.model_id,
@@ -203,7 +220,16 @@ def doctor_report_config(
         mutable_status = "ready"
         mutable_code = "packaging.mutable_paths_external"
         try:
-            for configured_path in (config.whisper_model_directory, config.vad.artifact.path):
+            mutable_paths = [config.whisper_model_directory, config.vad.artifact.path]
+            if config.windows_tts_backend == "pocket_tts":
+                mutable_paths.extend(
+                    (
+                        config.pocket_tts.model.path,
+                        config.pocket_tts.tokenizer.path,
+                        config.pocket_tts.voice_state.path,
+                    )
+                )
+            for configured_path in mutable_paths:
                 if configured_path:
                     require_external_mutable_path(configured_path, bundle_root)
         except BackendError:
@@ -265,6 +291,47 @@ def doctor_report_config(
         except Exception:
             sapi = _status("blocked", "tts.sapi_probe_failed")
 
+    if config.windows_tts_backend == "pocket_tts":
+        try:
+            for name, artifact in (
+                ("model", config.pocket_tts.model),
+                ("tokenizer", config.pocket_tts.tokenizer),
+                ("voice_state", config.pocket_tts.voice_state),
+            ):
+                validate_pocket_tts_artifact(artifact, name)
+            dependency = dependencies.get("pocket-tts", {})
+            pocket_ready = (
+                is_windows
+                and dependency.get("status") == "ready"
+                and dependency.get("version") == POCKET_TTS_DISTRIBUTION_VERSION
+                and dependencies.get("torch", {}).get("status") == "ready"
+                and dependencies.get("torch", {}).get("version")
+                == POCKET_TTS_TORCH_VERSION
+                and dependencies.get("PyYAML", {}).get("status") == "ready"
+                and dependencies.get("PyYAML", {}).get("version")
+                == POCKET_TTS_PYYAML_VERSION
+                and sapi.get("status") == "ready"
+            )
+        except Exception:
+            pocket_ready = False
+        tts = _status(
+            "ready" if pocket_ready else "blocked",
+            "tts.pocket_profile_ready" if pocket_ready else "tts.pocket_profile_invalid",
+            backend="pocket_tts",
+            provider="cpu",
+            distribution_version=POCKET_TTS_DISTRIBUTION_VERSION,
+            torch_version=POCKET_TTS_TORCH_VERSION,
+            pyyaml_version=POCKET_TTS_PYYAML_VERSION,
+            sample_rate=24_000,
+            streaming=True,
+            fallback="sapi5",
+            local_only=True,
+            network_fallback=False,
+        )
+    else:
+        tts = dict(sapi)
+        tts["backend"] = "sapi5"
+
     cuda_report, gpu_used = _cuda_report(
         config,
         is_windows=is_windows,
@@ -278,13 +345,13 @@ def doctor_report_config(
         "asr.cpu_fallback_ready" if manifest.ok and dependencies["faster-whisper"]["status"] == "ready" else "asr.cpu_fallback_unavailable",
         enabled=config.asr.cuda.fallback_to_cpu,
     )
-    checks = {"host": host, "dependencies": dependencies, "model": model, "vad": vad, "raw_input": raw_input, "audio": audio, "sapi": sapi, "transport": transport, "asr_profile": _status("ready", "asr.profile_selected", profile=config.asr.execution_profile), "cpu_fallback": cpu_fallback, "cuda": cuda_report, "tray": tray, "packaging": packaging}
+    checks = {"host": host, "dependencies": dependencies, "model": model, "vad": vad, "raw_input": raw_input, "audio": audio, "sapi": sapi, "tts": tts, "transport": transport, "asr_profile": _status("ready", "asr.profile_selected", profile=config.asr.execution_profile), "cpu_fallback": cpu_fallback, "cuda": cuda_report, "tray": tray, "packaging": packaging}
     blocked = (
         host["status"] == "blocked"
         or any(item["status"] == "blocked" for item in dependencies.values())
         or not manifest.ok
         or model["load_probe"]["status"] == "blocked"
-        or any(item["status"] == "blocked" for item in (vad, raw_input, audio, sapi, transport))
+        or any(item["status"] == "blocked" for item in (vad, raw_input, audio, sapi, tts, transport))
         or tray["status"] == "blocked"
         or packaging["status"] == "blocked"
         or cuda_report["status"] == "blocked"

@@ -50,7 +50,16 @@
   },
   "orchestrator_url": "ws://127.0.0.1:8765",
   "voice_auth_key_file": null,
+  "windows_tts_backend": "sapi5",
   "sapi_voices": {"el-GR": "", "en-US": ""},
+  "pocket_tts": {
+    "model": {"path": null, "size": null, "sha256": null},
+    "tokenizer": {"path": null, "size": null, "sha256": null},
+    "voice_state": {"path": null, "size": null, "sha256": null},
+    "temperature": 0.7,
+    "max_tokens": 50,
+    "warm_on_start": true
+  },
   "macos": {
     "asr_backend": "whisper_cpp",
     "tts_backend": "system_say",

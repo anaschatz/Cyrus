@@ -22,6 +22,12 @@ from .greektts15_pilot import validate_greektts_model_root
 from .greektts15_runtime import load_digest_bound_greektts_candidate
 from .greektts15_sidecar import validate_worker_python
 from .kokoro_onnx import validate_kokoro_artifact
+from ..pocket_tts import (
+    POCKET_TTS_DISTRIBUTION_VERSION,
+    POCKET_TTS_PYYAML_VERSION,
+    POCKET_TTS_TORCH_VERSION,
+    validate_pocket_tts_artifact,
+)
 from ..voice_auth import AUTH_PROTOCOL
 
 
@@ -128,6 +134,8 @@ def macos_doctor_report(
             dependency_names.extend(("mlx", "mlx-lm", "torch", "snac"))
     elif config.macos.tts_backend == "kokoro_onnx":
         dependency_names.extend(("kokoro-onnx", "numpy"))
+    elif config.macos.tts_backend == "pocket_tts":
+        dependency_names.extend(("pocket-tts", "torch", "PyYAML"))
     selected_dependencies: dict[str, Mapping[str, object]] = (
         dict(dependencies)
         if dependencies is not None
@@ -175,36 +183,6 @@ def macos_doctor_report(
             "temporary_smoke_profile": True,
         }
         whisper_cpp_check = _status("deferred", "asr.whisper_cpp_not_selected")
-    elif config.macos.tts_backend == "kokoro_onnx":
-        kokoro = config.macos.kokoro_onnx
-        try:
-            validate_kokoro_artifact(kokoro.model, "model")
-            validate_kokoro_artifact(kokoro.voices, "voices")
-            installed = (voice_probe or _default_voice_probe)()
-            fallback_voice = config.macos.system_voices.get("en-US")
-            fallback_ready = bool(fallback_voice and fallback_voice in installed)
-            candidate_ready = (
-                selected_dependencies.get("kokoro-onnx", {}).get("status") == "ready"
-                and fallback_ready
-            )
-        except Exception:
-            candidate_ready = False
-            fallback_ready = False
-        tts = _status(
-            "ready" if candidate_ready else "blocked",
-            "tts.kokoro_onnx_profile_ready" if candidate_ready else "tts.kokoro_onnx_profile_invalid",
-            backend="kokoro_onnx",
-            language=kokoro.language,
-            speed=kokoro.speed,
-            voice_mix=dict(kokoro.voice_mix),
-            warm_on_start=kokoro.warm_on_start,
-            provider="CPUExecutionProvider",
-            intra_op_threads=2,
-            inter_op_threads=1,
-            fallback="system_say",
-            fallback_ready=fallback_ready,
-            local_only=True,
-        )
     else:
         asr = {
             **whisper_cpp_check,
@@ -295,6 +273,85 @@ def macos_doctor_report(
             warm_on_start=greek.warm_on_start,
             local_only=True,
             process_isolated=greek.worker_python.path is not None,
+        )
+    elif config.macos.tts_backend == "kokoro_onnx":
+        kokoro = config.macos.kokoro_onnx
+        configured = config.macos.system_voices
+        try:
+            validate_kokoro_artifact(kokoro.model, "model")
+            validate_kokoro_artifact(kokoro.voices, "voices")
+            installed = (voice_probe or _default_voice_probe)()
+            fallback_voice = configured.get("en-US")
+            fallback_ready = bool(fallback_voice and fallback_voice in installed)
+            candidate_ready = (
+                selected_dependencies.get("kokoro-onnx", {}).get("status") == "ready"
+                and fallback_ready
+            )
+        except Exception:
+            candidate_ready = False
+            fallback_ready = False
+        tts = _status(
+            "ready" if candidate_ready else "blocked",
+            "tts.kokoro_onnx_profile_ready" if candidate_ready else "tts.kokoro_onnx_profile_invalid",
+            backend="kokoro_onnx",
+            language=kokoro.language,
+            speed=kokoro.speed,
+            voice_mix=dict(kokoro.voice_mix),
+            warm_on_start=kokoro.warm_on_start,
+            provider="CPUExecutionProvider",
+            fallback="system_say",
+            fallback_ready=fallback_ready,
+            local_only=True,
+        )
+    elif config.macos.tts_backend == "pocket_tts":
+        pocket = config.pocket_tts
+        configured = config.macos.system_voices
+        try:
+            for name, artifact in (
+                ("model", pocket.model),
+                ("tokenizer", pocket.tokenizer),
+                ("voice_state", pocket.voice_state),
+            ):
+                validate_pocket_tts_artifact(artifact, name)
+            installed = (voice_probe or _default_voice_probe)()
+            missing_fallbacks = sorted(
+                locale
+                for locale in {"el-GR", "en-US"}
+                if not configured.get(locale) or configured.get(locale) not in installed
+            )
+            dependency = selected_dependencies.get("pocket-tts", {})
+            candidate_ready = (
+                dependency.get("status") == "ready"
+                and dependency.get("version") == POCKET_TTS_DISTRIBUTION_VERSION
+                and selected_dependencies.get("torch", {}).get("status") == "ready"
+                and selected_dependencies.get("torch", {}).get("version")
+                == POCKET_TTS_TORCH_VERSION
+                and selected_dependencies.get("PyYAML", {}).get("status") == "ready"
+                and selected_dependencies.get("PyYAML", {}).get("version")
+                == POCKET_TTS_PYYAML_VERSION
+                and not missing_fallbacks
+            )
+        except Exception:
+            candidate_ready = False
+            missing_fallbacks = ["el-GR", "en-US"]
+        tts = _status(
+            "ready" if candidate_ready else "blocked",
+            "tts.pocket_profile_ready" if candidate_ready else "tts.pocket_profile_invalid",
+            backend="pocket_tts",
+            distribution_version=POCKET_TTS_DISTRIBUTION_VERSION,
+            torch_version=POCKET_TTS_TORCH_VERSION,
+            pyyaml_version=POCKET_TTS_PYYAML_VERSION,
+            language="en-US",
+            voice_profile="george",
+            sample_rate=24_000,
+            streaming=True,
+            provider="cpu",
+            max_tokens=pocket.max_tokens,
+            warm_on_start=pocket.warm_on_start,
+            fallback="system_say",
+            missing_fallback_locales=missing_fallbacks,
+            local_only=True,
+            network_fallback=False,
         )
     else:
         configured = config.macos.system_voices

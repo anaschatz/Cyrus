@@ -108,6 +108,16 @@ class KokoroOnnxConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PocketTtsConfig:
+    model: ArtifactConfig = field(default_factory=ArtifactConfig)
+    tokenizer: ArtifactConfig = field(default_factory=ArtifactConfig)
+    voice_state: ArtifactConfig = field(default_factory=ArtifactConfig)
+    temperature: float = 0.7
+    max_tokens: int = 50
+    warm_on_start: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class MacosConfig:
     asr_backend: str = "whisper_cpp"
     tts_backend: str = "system_say"
@@ -132,7 +142,9 @@ class VoiceConfig:
     vad: VadConfig = field(default_factory=VadConfig)
     orchestrator_url: str = "ws://127.0.0.1:8765"
     voice_auth_key_file: str | None = None
+    windows_tts_backend: str = "sapi5"
     sapi_voices: Mapping[str, str] = field(default_factory=dict)
+    pocket_tts: PocketTtsConfig = field(default_factory=PocketTtsConfig)
     macos: MacosConfig = field(default_factory=MacosConfig)
     logging_level: str = "INFO"
 
@@ -210,6 +222,10 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     kokoro_model_data = kokoro_data.get("model", {}) if isinstance(kokoro_data, Mapping) else None
     kokoro_voices_data = kokoro_data.get("voices", {}) if isinstance(kokoro_data, Mapping) else None
     kokoro_mix_data = kokoro_data.get("voice_mix", {"bm_george": 0.70, "bm_fable": 0.30}) if isinstance(kokoro_data, Mapping) else None
+    pocket_data = data.get("pocket_tts", {})
+    pocket_model_data = pocket_data.get("model", {}) if isinstance(pocket_data, Mapping) else None
+    pocket_tokenizer_data = pocket_data.get("tokenizer", {}) if isinstance(pocket_data, Mapping) else None
+    pocket_voice_data = pocket_data.get("voice_state", {}) if isinstance(pocket_data, Mapping) else None
     executable_data = whisper_cpp_data.get("executable", {}) if isinstance(whisper_cpp_data, Mapping) else None
     mac_model_data = whisper_cpp_data.get("model", {}) if isinstance(whisper_cpp_data, Mapping) else None
     if not isinstance(vad_data, Mapping) or not isinstance(artifact_data, Mapping):
@@ -256,6 +272,29 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         or not isinstance(kokoro_mix_data, Mapping)
     ):
         raise BackendError("config.invalid_field", "Kokoro ONNX artifact manifest is invalid", subsystem="config", safe_context={"field": "macos.kokoro_onnx"})
+    if not isinstance(pocket_data, Mapping) or set(pocket_data) - {
+        "model", "tokenizer", "voice_state", "temperature", "max_tokens", "warm_on_start"
+    }:
+        raise BackendError(
+            "config.invalid_field",
+            "Pocket TTS configuration is invalid",
+            subsystem="config",
+            safe_context={"field": "pocket_tts"},
+        )
+    for field_name, artifact_data_value in (
+        ("model", pocket_model_data),
+        ("tokenizer", pocket_tokenizer_data),
+        ("voice_state", pocket_voice_data),
+    ):
+        if not isinstance(artifact_data_value, Mapping) or set(artifact_data_value) - {
+            "path", "size", "sha256"
+        }:
+            raise BackendError(
+                "config.invalid_field",
+                "Pocket TTS artifact manifest is invalid",
+                subsystem="config",
+                safe_context={"field": f"pocket_tts.{field_name}"},
+            )
     url = str(data.get("orchestrator_url", "ws://127.0.0.1:8765"))
     if not is_loopback_websocket_url(url):
         raise BackendError("config.non_loopback_orchestrator", "Only loopback WebSocket URLs are permitted", subsystem="config", safe_context={"field": "orchestrator_url"})
@@ -340,7 +379,28 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         ),
         orchestrator_url=url,
         voice_auth_key_file=voice_auth_key_file,
+        windows_tts_backend=str(data.get("windows_tts_backend", "sapi5")).lower(),
         sapi_voices=dict(voices),
+        pocket_tts=PocketTtsConfig(
+            model=ArtifactConfig(
+                pocket_model_data.get("path"),
+                pocket_model_data.get("size"),
+                pocket_model_data.get("sha256"),
+            ),
+            tokenizer=ArtifactConfig(
+                pocket_tokenizer_data.get("path"),
+                pocket_tokenizer_data.get("size"),
+                pocket_tokenizer_data.get("sha256"),
+            ),
+            voice_state=ArtifactConfig(
+                pocket_voice_data.get("path"),
+                pocket_voice_data.get("size"),
+                pocket_voice_data.get("sha256"),
+            ),
+            temperature=float(pocket_data.get("temperature", 0.7)),
+            max_tokens=_positive_int(pocket_data.get("max_tokens", 50), "pocket_tts.max_tokens"),
+            warm_on_start=_boolean(pocket_data.get("warm_on_start", True), "pocket_tts.warm_on_start"),
+        ),
         macos=MacosConfig(
             asr_backend=str(macos_data.get("asr_backend", "whisper_cpp")).lower(),
             tts_backend=str(macos_data.get("tts_backend", "system_say")).lower(),
@@ -403,8 +463,38 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "ASR execution profile must be cpu or cuda", subsystem="config", safe_context={"field": "asr.execution_profile"})
     if config.asr.cuda.residency not in {"turn_scoped", "warm"}:
         raise BackendError("config.invalid_field", "CUDA residency must be turn_scoped or warm", subsystem="config", safe_context={"field": "asr.cuda.residency"})
-    if config.macos.tts_backend not in {"system_say", "greektts15_f1", "kokoro_onnx"}:
+    if config.windows_tts_backend not in {"sapi5", "pocket_tts"}:
+        raise BackendError(
+            "config.invalid_field",
+            "Windows TTS backend is invalid",
+            subsystem="config",
+            safe_context={"field": "windows_tts_backend"},
+        )
+    if config.macos.tts_backend not in {"system_say", "greektts15_f1", "kokoro_onnx", "pocket_tts"}:
         raise BackendError("config.invalid_field", "macOS TTS backend is invalid", subsystem="config", safe_context={"field": "macos.tts_backend"})
+    if "pocket_tts" in {config.windows_tts_backend, config.macos.tts_backend}:
+        pocket = config.pocket_tts
+        if abs(pocket.temperature - 0.7) > 1e-9 or pocket.max_tokens != 50:
+            raise BackendError(
+                "config.pocket_tts_candidate_locked",
+                "Pocket TTS settings do not match the approved candidate profile",
+                subsystem="config",
+            )
+        for artifact in (pocket.model, pocket.tokenizer, pocket.voice_state):
+            if (
+                not isinstance(artifact.path, str)
+                or not Path(artifact.path).is_absolute()
+                or not isinstance(artifact.size, int)
+                or isinstance(artifact.size, bool)
+                or artifact.size < 1
+                or not isinstance(artifact.sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", artifact.sha256) is None
+            ):
+                raise BackendError(
+                    "config.pocket_tts_profile_required",
+                    "Pocket TTS requires absolute, digest-bound artifacts",
+                    subsystem="config",
+                )
     if config.macos.tts_backend == "kokoro_onnx":
         kokoro = config.macos.kokoro_onnx
         if (
