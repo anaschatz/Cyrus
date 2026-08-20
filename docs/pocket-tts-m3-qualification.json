@@ -40,12 +40,22 @@
   "macos_streaming_quality": {
     "generated_pcm_clean_via_afplay": true,
     "portaudio_live_stream_clean": false,
-    "artifacts_observed": "Audible transient noise at stream start and some word boundaries.",
+    "portaudio_artifacts_observed": "Audible transient noise at stream start and some word boundaries.",
     "system_audio_interference_observed": true,
     "system_audio_recovered_after_test_processes_stopped": true,
     "candidate_model_identified_as_artifact_source": false,
-    "ready": false,
-    "code": "qualification.macos_streaming_playback_quality_failed"
+    "native_audioqueue_live_stream_clean": true,
+    "native_audioqueue_human_listening_passed": true,
+    "native_audioqueue_integrated_first_chunk_ms": 132.897,
+    "native_audioqueue_integrated_chunks": 55,
+    "native_audioqueue_event_to_cancel_return_ms": 6.848,
+    "native_audioqueue_cancel_call_ms": 6.651,
+    "native_audioqueue_callback_errors": 0,
+    "native_audioqueue_stop_status": 0,
+    "native_audioqueue_dispose_status": 0,
+    "implementation_commit": "bc21a62",
+    "ready": true,
+    "code": "qualification.macos_native_streaming_playback_qualified"
   },
   "qwen_4b_coexistence": {
     "ready": true,
@@ -79,10 +89,9 @@
     "active_backend": "system_say",
     "ready": false,
     "blockers": [
-      "macos_native_streaming_playback_not_qualified",
       "physical_acoustic_ptt_to_silence_not_measured"
     ],
-    "next_required_action": "Replace the macOS PortAudio playback path with an owned native AVAudioEngine or AudioQueue adapter, then repeat human listening, physical PTT cancellation and acoustic qualification."
+    "next_required_action": "Repeat acoustic calibration and physical PTT-to-silence qualification through the native AudioQueue path; activate the Pocket profile only if that final gate passes."
   },
   "privacy": {
     "audio_persisted": false,
