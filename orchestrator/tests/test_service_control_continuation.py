@@ -41,17 +41,73 @@ class FakeModel:
         yield ModelChunk("ά σου. Δεύτερη πρόταση.", ModelUsage(output_tokens=8, input_tokens=4))
 
 
-def config(path: Path) -> OrchestratorConfig:
+def config(path: Path, *, response_language: str = "match_input") -> OrchestratorConfig:
     return OrchestratorConfig.from_test_mapping(
         {
             "database_path": str(path),
             "control_bearer_token": "control-private",
             "inference_bearer_token": "inference-private",
+            "response_language": response_language,
         }
     )
 
 
 class ServiceAndControlTests(StoreCase, unittest.TestCase):
+    def test_english_only_profile_understands_greek_and_commits_english_speech(self) -> None:
+        class EnglishModel:
+            def __init__(self) -> None:
+                self.requests: list[ModelRequest] = []
+
+            async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
+                self.requests.append(request)
+                yield ModelChunk("Understood. The system is ready.", ModelUsage(output_tokens=8))
+
+        store = self.make_store()
+        model = EnglishModel()
+        service = OrchestratorService(
+            config(store.path, response_language="en"),
+            store,
+            BudgetedModelPort(store, model),
+        )
+        task = self.admitted(
+            store,
+            event_id=str(uuid.uuid4()),
+            turn_id=str(uuid.uuid4()),
+            now=utc_now(),
+        )
+
+        completed = asyncio.run(service.execute_task(task.task_id))
+
+        self.assertEqual(completed.state, TaskState.COMPLETED)
+        self.assertIn("always answer in clear natural English", model.requests[0].system_prompt)
+        events = store.claim_outbox(task.conversation_id, "english-only")
+        speech = [event for event in events if event.event_type == "response.speech.commit"]
+        self.assertEqual([event.payload["locale"] for event in speech], ["en-US", "en-US"])
+        self.assertEqual(
+            [event.payload["text"] for event in speech],
+            ["Understood.", "The system is ready."],
+        )
+
+    def test_english_only_profile_rejects_greek_model_output_before_speech(self) -> None:
+        store = self.make_store()
+        service = OrchestratorService(
+            config(store.path, response_language="en"),
+            store,
+            BudgetedModelPort(store, FakeModel()),
+        )
+        task = self.admitted(
+            store,
+            event_id=str(uuid.uuid4()),
+            turn_id=str(uuid.uuid4()),
+            now=utc_now(),
+        )
+
+        failed = asyncio.run(service.execute_task(task.task_id))
+
+        self.assertEqual(failed.state, TaskState.FAILED)
+        events = store.claim_outbox(task.conversation_id, "english-only-rejected")
+        self.assertFalse(any(event.event_type == "response.speech.commit" for event in events))
+
     def test_m1a_guarded_pydantic_admission_commit_and_reconnect(self) -> None:
         try:
             import httpx

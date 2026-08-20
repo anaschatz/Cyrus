@@ -264,6 +264,7 @@ class OrchestratorConfig:
     readiness_inference_runtime_identity_sha256: str = ""
     model_timeout_seconds: float = 120.0
     default_speech_locale: str = "el-GR"
+    response_language: str = "match_input"
     active_budget_seconds: float = 120.0
     absolute_lifetime_seconds: float = 900.0
     approval_ttl_seconds: float = 600.0
@@ -507,6 +508,10 @@ class OrchestratorConfig:
             raise ValueError("research feature flags must be boolean")
         if not isinstance(self.cloud_enabled, bool) or not isinstance(self.cloud_terra_enabled, bool):
             raise ValueError("cloud feature flags must be boolean")
+        if self.response_language not in {"match_input", "en"}:
+            raise ValueError("response_language is invalid")
+        if self.response_language == "en" and self.research_enabled:
+            raise ValueError("English-only responses do not yet support research mode")
         if self.scheduler_default_locale not in {"el-GR", "en-US"}:
             raise ValueError("scheduler_default_locale is invalid")
         try:

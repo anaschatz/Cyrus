@@ -21,6 +21,7 @@
   "readiness_inference_runtime_identity_sha256": "",
   "model_timeout_seconds": 120,
   "default_speech_locale": "el-GR",
+  "response_language": "match_input",
   "active_budget_seconds": 120,
   "absolute_lifetime_seconds": 900,
   "approval_ttl_seconds": 600,

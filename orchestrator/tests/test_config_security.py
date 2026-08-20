@@ -60,6 +60,19 @@ class ConfigSecurityTests(unittest.TestCase):
         self.assertNotIn(CONTROL_TOKEN, repr(config))
         self.assertNotIn(INFERENCE_TOKEN, repr(config))
 
+    def test_response_language_is_closed_and_research_fails_closed(self) -> None:
+        for value in ("el", "auto", "EN", ""):
+            with self.subTest(value=value):
+                document = self.document()
+                document["response_language"] = value
+                with self.assertRaisesRegex(ValueError, "response_language"):
+                    OrchestratorConfig.load(self.write_document(document))
+
+        document = self.document()
+        document.update({"response_language": "en", "research_enabled": True})
+        with self.assertRaisesRegex(ValueError, "do not yet support research"):
+            OrchestratorConfig.from_test_mapping(document)
+
     def test_file_size_is_bounded_before_parsing(self) -> None:
         self.write(b" " * (_MAX_CONFIGURATION_BYTES + 1))
 
