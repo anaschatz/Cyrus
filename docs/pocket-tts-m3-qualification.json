@@ -78,20 +78,37 @@
     "microphone_opened": true,
     "physical_playback": true,
     "raw_audio_persisted": false,
-    "attempts": 4,
-    "required_separation_db": 6.0,
-    "best_observed_separation_db": 3.476,
+    "legacy_portaudio_attempts": 4,
+    "legacy_portaudio_best_separation_db": 3.476,
+    "native_audioqueue_ambient_p95_dbfs": -68.16,
+    "native_audioqueue_playback_p80_dbfs": -43.341,
+    "native_audioqueue_separation_db": 24.818,
+    "native_audioqueue_silence_threshold_dbfs": -65.16,
+    "profile_fingerprint_sha256": "11aa82c2ec3278c670ad9421fd53c4eed7228fb41db18c4ff3f1dc5295d61d29",
+    "ready": true,
+    "code": "qualification.acoustic_calibration_completed"
+  },
+  "acoustic_barge_in": {
+    "audio_path": "built_in",
+    "physical_playback": true,
+    "physical_ptt": true,
+    "ptt_key": "CONTROL_OPTION",
+    "cancel_call_ms": 8.747,
+    "ptt_to_acoustic_silence_ms": 461.973,
+    "cancel_to_backend_idle_ms": 523.582,
+    "threshold_ms": 200.0,
+    "raw_audio_persisted": false,
     "ready": false,
-    "code": "qualification.acoustic_calibration_separation"
+    "code": "qualification.acoustic_sample_threshold_exceeded"
   },
   "promotion": {
     "installed_runtime_changed": false,
     "active_backend": "system_say",
     "ready": false,
     "blockers": [
-      "physical_acoustic_ptt_to_silence_not_measured"
+      "physical_acoustic_ptt_to_silence_threshold_exceeded"
     ],
-    "next_required_action": "Repeat acoustic calibration and physical PTT-to-silence qualification through the native AudioQueue path; activate the Pocket profile only if that final gate passes."
+    "next_required_action": "Collect content-free post-cancel dBFS timing to separate built-in speaker ring-down from physical key noise, then repeat the strict acoustic gate without weakening its 200 ms threshold."
   },
   "privacy": {
     "audio_persisted": false,
