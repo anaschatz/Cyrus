@@ -101,6 +101,34 @@ class AcousticSilenceMonitorTests(unittest.TestCase):
         self.assertFalse(results[0].valid)
         self.assertEqual(results[0].code, "qualification.acoustic_preroll_not_audible")
 
+    def test_tiny_coreaudio_callbacks_use_same_20ms_rms_as_calibration(self) -> None:
+        monitor = AcousticSilenceMonitor(silence_threshold_dbfs=-65.16)
+        sample_rate = 48_000
+        loud = array("f", [0.1] * 960).tobytes()
+        quiet = array("f", [0.0002] * 64).tobytes()
+        transient = array("f", [0.0008] * 64).tobytes()
+        try:
+            monitor.publish_audio(loud, sample_rate, 0.98)
+            monitor.arm(1.0)
+            timestamp = 1.0
+            for callback_index in range(45):
+                timestamp += 64 / sample_rate
+                monitor.publish_audio(
+                    transient if callback_index % 15 == 0 else quiet,
+                    sample_rate,
+                    timestamp,
+                )
+            deadline = time.monotonic() + 1.0
+            results: tuple[AcousticResult, ...] = ()
+            while time.monotonic() < deadline and not results:
+                results = monitor.take_results()
+                time.sleep(0.005)
+        finally:
+            monitor.close()
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].valid)
+        self.assertAlmostEqual(results[0].latency_ms or -1, 0.0, delta=1.0)
+
     def test_calibration_keeps_only_levels_and_derives_separated_threshold(self) -> None:
         sampler = AcousticCalibrationSampler()
         sampler.begin("ambient")

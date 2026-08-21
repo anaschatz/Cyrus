@@ -383,6 +383,43 @@ class AcousticSilenceMonitor:
         armed_at: float | None = None
         audible = False
         silence_started: float | None = None
+        pending = bytearray()
+        pending_rate: int | None = None
+        pending_start: float | None = None
+
+        def process_window(pcm: bytes, frame_start: float, frame_end: float) -> None:
+            nonlocal armed_at, audible, silence_started
+            level, _sample_count = self._level_dbfs(pcm)
+            history.append((frame_end, level))
+            while history and history[0][0] < frame_end - self.pre_roll_seconds:
+                history.popleft()
+            if armed_at is None:
+                return
+            if self._overflow.is_set():
+                self._results.put(AcousticResult(False, None, "qualification.acoustic_queue_overflow"))
+                self._overflow.clear()
+                armed_at = None
+                return
+            if not audible and level >= self.audible_threshold_dbfs and frame_end <= armed_at + 0.05:
+                audible = True
+            if not audible:
+                if frame_end - armed_at > 0.25:
+                    self._results.put(AcousticResult(False, None, "qualification.acoustic_preroll_not_audible"))
+                    armed_at = None
+                return
+            if level <= self.silence_threshold_dbfs:
+                silence_started = frame_start if silence_started is None else silence_started
+                if frame_end - silence_started >= self.silence_hold_seconds:
+                    latency = max(0.0, (silence_started - armed_at) * 1000.0)
+                    self._results.put(AcousticResult(True, round(latency, 3), "qualification.acoustic_sample_valid"))
+                    armed_at = None
+                    silence_started = None
+            else:
+                silence_started = None
+            if armed_at is not None and frame_end - armed_at > 2.0:
+                self._results.put(AcousticResult(False, None, "qualification.acoustic_silence_timeout"))
+                armed_at = None
+
         while not self._stop.is_set():
             try:
                 command = self._commands.get(timeout=0.1)
@@ -404,39 +441,27 @@ class AcousticSilenceMonitor:
                     armed_at = None
                 continue
             _kind, pcm, sample_rate, received_at = command
-            level, sample_count = self._level_dbfs(pcm)
-            duration = sample_count / int(sample_rate)
-            frame_end = float(received_at)
-            frame_start = frame_end - duration
-            history.append((frame_end, level))
-            while history and history[0][0] < frame_end - self.pre_roll_seconds:
-                history.popleft()
-            if armed_at is None:
-                continue
-            if self._overflow.is_set():
-                self._results.put(AcousticResult(False, None, "qualification.acoustic_queue_overflow"))
-                self._overflow.clear()
-                armed_at = None
-                continue
-            if not audible and level >= self.audible_threshold_dbfs and frame_end <= armed_at + 0.05:
-                audible = True
-            if not audible:
-                if frame_end - armed_at > 0.25:
-                    self._results.put(AcousticResult(False, None, "qualification.acoustic_preroll_not_audible"))
-                    armed_at = None
-                continue
-            if level <= self.silence_threshold_dbfs:
-                silence_started = frame_start if silence_started is None else silence_started
-                if frame_end - silence_started >= self.silence_hold_seconds:
-                    latency = max(0.0, (silence_started - armed_at) * 1000.0)
-                    self._results.put(AcousticResult(True, round(latency, 3), "qualification.acoustic_sample_valid"))
-                    armed_at = None
-                    silence_started = None
-            else:
-                silence_started = None
-            if armed_at is not None and frame_end - armed_at > 2.0:
-                self._results.put(AcousticResult(False, None, "qualification.acoustic_silence_timeout"))
-                armed_at = None
+            sample_rate = int(sample_rate)
+            sample_count = len(pcm) // 4
+            if pending_rate is not None and pending_rate != sample_rate:
+                self._overflow.set()
+                pending.clear()
+                pending_start = None
+            pending_rate = sample_rate
+            if pending_start is None:
+                pending_start = float(received_at) - sample_count / sample_rate
+            pending.extend(pcm)
+            window_samples = max(1, round(sample_rate * 0.02))
+            window_bytes = window_samples * 4
+            window_seconds = window_samples / sample_rate
+            while len(pending) >= window_bytes and pending_start is not None:
+                window = bytes(pending[:window_bytes])
+                del pending[:window_bytes]
+                window_end = pending_start + window_seconds
+                process_window(window, pending_start, window_end)
+                pending_start = window_end
+            if not pending:
+                pending_start = None
 
     def close(self) -> None:
         self._stop.set()
