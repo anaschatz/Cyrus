@@ -206,6 +206,20 @@
     "private_stack_validation_ready": true,
     "physical_retest_pending": true
   },
+  "superseded_stream_correction": {
+    "trigger": "Multiple physical PTT turns were admitted while prior local-model streams were still cancelling.",
+    "observed_terminal_state": "BUDGET_EXHAUSTED",
+    "observed_terminal_reason": "active_budget_exhausted",
+    "latest_turn_output_tokens": 0,
+    "diagnosis": "The replacement execution could begin before the superseded streaming request completed its async transport cleanup.",
+    "orchestrator_commit": "774e8fd",
+    "cancellation_cleanup_awaited_before_replacement": true,
+    "targeted_tests_passed": 31,
+    "committed_wheel_installed": true,
+    "private_stack_validation_ready": true,
+    "physical_retest_pending": true,
+    "content_in_repository_evidence": false
+  },
   "privacy": {
     "audio_persisted": false,
     "qualification_transcript_persisted": false,
