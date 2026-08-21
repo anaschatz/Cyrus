@@ -93,10 +93,25 @@
     "physical_playback": true,
     "physical_ptt": true,
     "ptt_key": "CONTROL_OPTION",
-    "cancel_call_ms": 8.747,
-    "ptt_to_acoustic_silence_ms": 461.973,
-    "cancel_to_backend_idle_ms": 523.582,
+    "monitor_window_ms": 20,
+    "monitor_window_alignment_commit": "cab3cfc",
+    "cancel_call_ms": 3.269,
+    "ptt_to_acoustic_silence_ms": 316.958,
+    "cancel_to_backend_idle_ms": 381.115,
     "threshold_ms": 200.0,
+    "automatic_cancel_control": {
+      "cancel_return_ms": 11.605,
+      "post_cancel_peak_dbfs": -31.274,
+      "post_cancel_median_dbfs": -65.592,
+      "continuous_acoustic_decay_through_ms": 268.471,
+      "physical_key_noise_required_for_tail": false
+    },
+    "small_buffer_control": {
+      "buffer_bytes": 1024,
+      "buffer_duration_ms": 21.333,
+      "tail_improved": false
+    },
+    "diagnosis": "Built-in speaker, room and microphone acoustic decay; not AudioQueue stop latency, physical key noise or native buffer size.",
     "raw_audio_persisted": false,
     "ready": false,
     "code": "qualification.acoustic_sample_threshold_exceeded"
@@ -108,7 +123,7 @@
     "blockers": [
       "physical_acoustic_ptt_to_silence_threshold_exceeded"
     ],
-    "next_required_action": "Collect content-free post-cancel dBFS timing to separate built-in speaker ring-down from physical key noise, then repeat the strict acoustic gate without weakening its 200 ms threshold."
+    "next_required_action": "Repeat physical acoustic PTT-to-silence qualification with wired headphones or another local audio path that does not acoustically couple the built-in speaker to the microphone; keep the strict 200 ms threshold unchanged."
   },
   "privacy": {
     "audio_persisted": false,
