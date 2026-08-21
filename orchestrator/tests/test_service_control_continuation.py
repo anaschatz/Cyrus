@@ -80,6 +80,7 @@ class ServiceAndControlTests(StoreCase, unittest.TestCase):
 
         self.assertEqual(completed.state, TaskState.COMPLETED)
         self.assertIn("always answer in clear natural English", model.requests[0].system_prompt)
+        self.assertIn("do not merely repeat or paraphrase", model.requests[0].system_prompt)
         events = store.claim_outbox(task.conversation_id, "english-only")
         speech = [event for event in events if event.event_type == "response.speech.commit"]
         self.assertEqual([event.payload["locale"] for event in speech], ["en-US", "en-US"])
