@@ -233,6 +233,16 @@
     "physical_retest_pending": true,
     "content_in_repository_evidence": false
   },
+  "owner_beta_response_cap": {
+    "previous_final_response_output_tokens": 256,
+    "active_final_response_output_tokens": 64,
+    "reason": "Bound local voice response latency and repetition while the long-lived service path is physically requalified.",
+    "exact_context_probe_256_tokens_completed": true,
+    "exact_context_probe_elapsed_ms": 10085.567,
+    "private_profile_backup_created": true,
+    "private_stack_validation_ready": true,
+    "physical_retest_pending": true
+  },
   "privacy": {
     "audio_persisted": false,
     "qualification_transcript_persisted": false,
