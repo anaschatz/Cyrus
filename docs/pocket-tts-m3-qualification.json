@@ -128,7 +128,7 @@
     "production_blockers": [
       "physical_acoustic_ptt_to_silence_threshold_exceeded"
     ],
-    "next_required_action": "Obtain the operator's human-perceived transcription and voice-quality confirmation, then begin the bounded multi-turn owner-beta qualification; retain the built-in acoustic limitation for production gating."
+    "next_required_action": "Repeat one physical Greek-input turn with the committed English-only Orchestrator profile and require a useful English Pocket response without perceived repetition before beginning the bounded multi-turn owner-beta qualification."
   },
   "installed_profile": {
     "runtime": "CPython 3.11",
@@ -166,6 +166,8 @@
   "owner_beta_physical_turn": {
     "version": "jarvis-macos-physical-turn/2",
     "ready": true,
+    "transport_ready": true,
+    "human_quality_ready": false,
     "exactly_one_new_turn": true,
     "accepted_transcript_ack": true,
     "one_local_final_model_request": true,
@@ -180,7 +182,29 @@
     "voice_connection_continuous": true,
     "shutdown_complete": true,
     "orphan_processes_or_listeners": 0,
-    "content_in_repository_evidence": false
+    "content_in_repository_evidence": false,
+    "human_observation": "The response used Greek system TTS, appeared to stall, and mostly restated the request instead of answering it.",
+    "content_free_diagnosis": {
+      "input_language": "el",
+      "speech_locale": "el-GR",
+      "speech_units": 1,
+      "duplicate_speech_units": 0,
+      "duplicate_response_sentences": 0,
+      "answer_unique_word_overlap_ratio": 0.625,
+      "pocket_backend_used": false,
+      "system_tts_fallback_used": true
+    }
+  },
+  "english_pocket_correction": {
+    "orchestrator_commit": "88f9ab6",
+    "committed_wheel_installed": true,
+    "response_language": "en",
+    "understands_greek_input": true,
+    "speech_locale": "en-US",
+    "anti_restatement_instruction": true,
+    "private_profile_backup_created": true,
+    "private_stack_validation_ready": true,
+    "physical_retest_pending": true
   },
   "privacy": {
     "audio_persisted": false,
