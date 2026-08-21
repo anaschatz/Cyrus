@@ -220,6 +220,19 @@
     "physical_retest_pending": true,
     "content_in_repository_evidence": false
   },
+  "foreground_lease_correction": {
+    "observed_failure_code": "live_lease_runtime_failed",
+    "effect": "The supervisor stopped inference, Orchestrator and Voice during an active physical turn.",
+    "diagnosis": "One transient ps or lsof inspection failure was treated as a confirmed process/listener identity mismatch.",
+    "orchestrator_commit": "0a3cc08",
+    "probe_attempts": 3,
+    "maximum_retry_window_ms": 100,
+    "persistent_identity_or_listener_mismatch_fails_closed": true,
+    "targeted_tests_passed": 51,
+    "committed_wheel_installed": true,
+    "physical_retest_pending": true,
+    "content_in_repository_evidence": false
+  },
   "privacy": {
     "audio_persisted": false,
     "qualification_transcript_persisted": false,
