@@ -117,8 +117,8 @@
     "code": "qualification.acoustic_sample_threshold_exceeded"
   },
   "promotion": {
-    "installed_runtime_changed": false,
-    "active_backend": "system_say",
+    "installed_runtime_changed": true,
+    "active_backend": "pocket_tts",
     "ready": false,
     "owner_beta_ready": true,
     "production_ready": false,
@@ -128,7 +128,28 @@
     "production_blockers": [
       "physical_acoustic_ptt_to_silence_threshold_exceeded"
     ],
-    "next_required_action": "Activate the Pocket TTS source-runtime profile for the owner beta without representing the waived built-in acoustic gate as a production pass."
+    "next_required_action": "Run one complete physical bilingual-input, English-output owner-beta turn through the foreground stack; retain the built-in acoustic limitation for production gating."
+  },
+  "installed_profile": {
+    "runtime": "CPython 3.11",
+    "jarvis_voice_version": "0.8.0",
+    "jarvis_voice_source": "committed wheel",
+    "pocket_tts_version": "2.1.0",
+    "torch_version": "2.13.0",
+    "pyyaml_version": "6.0.3",
+    "artifacts_permanent": true,
+    "artifacts_integrity_verified": true,
+    "profile_backups_created": true,
+    "api_key_required": false,
+    "runtime_model_downloads": false,
+    "dependency_install_network_used": true,
+    "installed_smoke": {
+      "ready": true,
+      "backend": "pocket_tts",
+      "streaming_chunks": 58,
+      "first_chunk_ms": 85.564,
+      "native_audioqueue": true
+    }
   },
   "privacy": {
     "audio_persisted": false,
