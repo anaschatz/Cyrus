@@ -734,6 +734,39 @@ class AtomicControlIdempotencyTests(StoreCase, unittest.TestCase):
 
         asyncio.run(scenario())
 
+    def test_superseded_execution_cleanup_finishes_before_replacement(self) -> None:
+        class CancellingService:
+            def __init__(self) -> None:
+                self.started = asyncio.Event()
+                self.cleanup_finished = asyncio.Event()
+
+            async def execute_task(self, task_id: str) -> str:
+                self.started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    await asyncio.sleep(0)
+                    self.cleanup_finished.set()
+                return task_id
+
+        async def scenario() -> None:
+            service = CancellingService()
+            gateway = VoiceGateway(
+                service,  # type: ignore[arg-type]
+                auth_key=VoiceAuthKey(1, b"a" * 32),
+                business_admission=lambda: True,
+            )
+            gateway._track_execution("superseded-task")
+            await service.started.wait()
+            superseded = gateway._execution_tasks["superseded-task"]
+
+            await gateway._cancel_superseded_executions("replacement-task")
+
+            self.assertTrue(service.cleanup_finished.is_set())
+            self.assertTrue(superseded.done())
+
+        asyncio.run(scenario())
+
 
 if __name__ == "__main__":
     unittest.main()

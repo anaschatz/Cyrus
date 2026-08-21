@@ -215,10 +215,20 @@ class VoiceGateway:
         if task is not None:
             task.cancel()
 
-    def _cancel_superseded_executions(self, current_task_id: str) -> None:
-        for task_id, task in tuple(self._execution_tasks.items()):
-            if task_id != current_task_id:
-                task.cancel()
+    async def _cancel_superseded_executions(self, current_task_id: str) -> None:
+        superseded = tuple(
+            task
+            for task_id, task in self._execution_tasks.items()
+            if task_id != current_task_id and not task.done()
+        )
+        for task in superseded:
+            task.cancel()
+        if superseded:
+            # A cancelled streaming request owns the inference connection until
+            # its async context exits.  Starting the replacement turn before
+            # that cleanup settles can leave the single-request appliance busy
+            # behind an already-superseded generation.
+            await asyncio.gather(*superseded, return_exceptions=True)
 
     async def _publish(
         self,
@@ -758,7 +768,7 @@ class VoiceGateway:
                     capture_idle = True
                     admission = self.service.admit_envelope(event)
                     if admission.task is not None:
-                        self._cancel_superseded_executions(admission.task.task_id)
+                        await self._cancel_superseded_executions(admission.task.task_id)
                         self._track_execution(admission.task.task_id)
                 elif event.type == "response.cancel":
                     conversation = self.service.store.active_conversation()
