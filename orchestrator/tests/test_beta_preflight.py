@@ -165,6 +165,66 @@ class MacosBetaPreflightTests(unittest.TestCase):
         self.assertNotIn("Melina", json.dumps(report))
         self.assertNotIn(str(self.root), json.dumps(report))
 
+    def test_verified_pocket_profile_can_enter_technical_preflight(self) -> None:
+        document = json.loads(self.voice.read_text(encoding="utf-8"))
+        document["macos"]["tts_backend"] = "pocket_tts"
+        document["pocket_tts"] = {
+            "model": {
+                "path": str(self.root / "model.safetensors"),
+                "size": 1,
+                "sha256": "a" * 64,
+            },
+            "tokenizer": {
+                "path": str(self.root / "tokenizer.model"),
+                "size": 1,
+                "sha256": "b" * 64,
+            },
+            "voice_state": {
+                "path": str(self.root / "george.safetensors"),
+                "size": 1,
+                "sha256": "c" * 64,
+            },
+        }
+        self.voice.write_bytes(canonical(document) + b"\n")
+
+        report = evaluate_macos_beta_preflight(
+            PrivateStackConfig.load(self.stack_path),
+            doctor_report={"ready": True},
+            private_state_report=self.private_state(True),
+            voice_private_state_report=self.voice_private_state(True),
+        )
+
+        self.assertTrue(report["technical_beta_preflight_ready"])
+        self.assertTrue(report["checks"]["selected_voice_profile"])
+        self.assertFalse(report["production_ready"])
+
+    def test_unapproved_tts_backend_cannot_enter_technical_preflight(self) -> None:
+        document = json.loads(self.voice.read_text(encoding="utf-8"))
+        document["macos"]["tts_backend"] = "kokoro_onnx"
+        document["macos"]["kokoro_onnx"] = {
+            "model": {
+                "path": str(self.root / "model.onnx"),
+                "size": 1,
+                "sha256": "a" * 64,
+            },
+            "voices": {
+                "path": str(self.root / "voices.bin"),
+                "size": 1,
+                "sha256": "b" * 64,
+            },
+        }
+        self.voice.write_bytes(canonical(document) + b"\n")
+
+        report = evaluate_macos_beta_preflight(
+            PrivateStackConfig.load(self.stack_path),
+            doctor_report={"ready": True},
+            private_state_report=self.private_state(True),
+            voice_private_state_report=self.voice_private_state(True),
+        )
+
+        self.assertFalse(report["technical_beta_preflight_ready"])
+        self.assertFalse(report["checks"]["selected_voice_profile"])
+
     def test_memory_flag_without_live_crypto_evidence_is_blocked(self) -> None:
         document = dict(self.orchestrator_document)
         document["memory_enabled"] = True

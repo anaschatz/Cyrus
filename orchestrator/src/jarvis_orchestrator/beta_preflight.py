@@ -19,6 +19,7 @@ VOICE_PROBE_SCOPE = "current_process_identity"
 _GENERIC_VOICE_BLOCKER = "voice.environment_not_ready"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REASON_CODE_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_.-")
+_TECHNICAL_BETA_TTS_BACKENDS = frozenset({"system_say", "pocket_tts"})
 
 
 def _valid_reason_code(value: object) -> bool:
@@ -200,7 +201,7 @@ def evaluate_macos_beta_preflight(
     )
     selected_voice_profile = (
         voice.macos.asr_backend == "faster_whisper_cpu_smoke"
-        and voice.macos.tts_backend == "system_say"
+        and voice.macos.tts_backend in _TECHNICAL_BETA_TTS_BACKENDS
         and voice.ptt_key in {"CONTROL_OPTION", "RIGHT_OPTION"}
     )
     voice_blockers = _voice_blocker_codes(doctor)
