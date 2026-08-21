@@ -128,7 +128,7 @@
     "production_blockers": [
       "physical_acoustic_ptt_to_silence_threshold_exceeded"
     ],
-    "next_required_action": "Run one complete physical bilingual-input, English-output owner-beta turn through the foreground stack; retain the built-in acoustic limitation for production gating."
+    "next_required_action": "Obtain the operator's human-perceived transcription and voice-quality confirmation, then begin the bounded multi-turn owner-beta qualification; retain the built-in acoustic limitation for production gating."
   },
   "installed_profile": {
     "runtime": "CPython 3.11",
@@ -151,12 +151,45 @@
       "native_audioqueue": true
     }
   },
+  "memory_migration": {
+    "source_schema": 8,
+    "target_schema": 10,
+    "storage_state": "ENCRYPTED",
+    "backup_created": true,
+    "backup_integrity": "ok",
+    "database_integrity": "ok",
+    "legacy_plaintext_tables_remaining": 0,
+    "content_printed": false,
+    "network_used": false,
+    "ready": true
+  },
+  "owner_beta_physical_turn": {
+    "version": "jarvis-macos-physical-turn/2",
+    "ready": true,
+    "exactly_one_new_turn": true,
+    "accepted_transcript_ack": true,
+    "one_local_final_model_request": true,
+    "response_events_ordered": true,
+    "speech_commits": 1,
+    "speech_done_events": 1,
+    "playback_completed_receipt": true,
+    "delivery_retired_after_playback": true,
+    "no_duplicate_submission": true,
+    "no_stale_output": true,
+    "no_cancel_error_or_failure": true,
+    "voice_connection_continuous": true,
+    "shutdown_complete": true,
+    "orphan_processes_or_listeners": 0,
+    "content_in_repository_evidence": false
+  },
   "privacy": {
     "audio_persisted": false,
-    "transcript_persisted": false,
-    "model_response_persisted": false,
+    "qualification_transcript_persisted": false,
+    "qualification_model_response_persisted": false,
+    "physical_turn_content_persisted_only_in_private_runtime": true,
     "secrets_persisted": false
   },
-  "network_used": false,
-  "installation_performed": false
+  "qualification_network_used": false,
+  "activation_network_used": true,
+  "installation_performed": true
 }
