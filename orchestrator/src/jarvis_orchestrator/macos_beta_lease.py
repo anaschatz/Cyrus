@@ -32,6 +32,8 @@ LEASE_SCHEMA_VERSION = "jarvis-macos-beta-live-lease/1"
 LEASE_MAX_AGE_NS = 3_000_000_000
 LEASE_FUTURE_TOLERANCE_NS = 1_000_000_000
 LEASE_HEARTBEAT_INTERVAL_NS = 500_000_000
+LEASE_PROBE_ATTEMPTS = 3
+LEASE_PROBE_RETRY_SECONDS = 0.05
 _MAX_LEASE_BYTES = 32 * 1024
 _COMPONENTS = ("inference", "orchestrator", "voice")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -352,17 +354,25 @@ class LiveSessionLease:
     inspect_process: ProcessInspector = _inspect_process
     listener_pids: ListenerInspector = _listener_pids
     now_ns: Callable[[], int] = time.time_ns
+    sleep: Callable[[float], None] = time.sleep
     _last_write_ns: int = 0
 
     def heartbeat(self, *, force: bool = False) -> None:
         current = self.now_ns()
         if not force and current - self._last_write_ns < LEASE_HEARTBEAT_INTERVAL_NS:
             return
-        if not _processes_match(
-            self.core,
-            inspect_process=self.inspect_process,
-            listener_pids=self.listener_pids,
-        ):
+        matched = False
+        for attempt in range(LEASE_PROBE_ATTEMPTS):
+            if _processes_match(
+                self.core,
+                inspect_process=self.inspect_process,
+                listener_pids=self.listener_pids,
+            ):
+                matched = True
+                break
+            if attempt + 1 < LEASE_PROBE_ATTEMPTS:
+                self.sleep(LEASE_PROBE_RETRY_SECONDS)
+        if not matched:
             raise RuntimeError("live_lease_process_mismatch")
         self.core["heartbeat_unix_ns"] = current
         _write_private(self.path, _signed(self.core, self.key))

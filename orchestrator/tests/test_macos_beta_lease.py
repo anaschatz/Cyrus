@@ -202,6 +202,38 @@ class MacOSBetaLeaseTests(unittest.TestCase):
         self.listeners[8766] = frozenset({9999})
         self.assertFalse(self.valid())
 
+    def test_heartbeat_tolerates_one_transient_listener_probe_failure(self) -> None:
+        lease = self.activate()
+        self.now[0] += 500_000_000
+        calls = 0
+        sleeps: list[float] = []
+
+        def flaky_listener(port: int) -> frozenset[int] | None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return None
+            return self.listeners.get(port)
+
+        lease.listener_pids = flaky_listener
+        lease.sleep = sleeps.append
+        lease.heartbeat()
+
+        self.assertEqual(sleeps, [0.05])
+        self.assertTrue(self.valid())
+
+    def test_heartbeat_persistent_listener_mismatch_still_fails_closed(self) -> None:
+        lease = self.activate()
+        self.now[0] += 500_000_000
+        sleeps: list[float] = []
+        lease.listener_pids = lambda _port: frozenset({9999})
+        lease.sleep = sleeps.append
+
+        with self.assertRaisesRegex(RuntimeError, "live_lease_process_mismatch"):
+            lease.heartbeat()
+
+        self.assertEqual(sleeps, [0.05, 0.05])
+
     def test_tampered_or_arbitrary_lease_fails_closed(self) -> None:
         self.assertFalse(self.valid())
         self.activate()
