@@ -120,10 +120,15 @@
     "installed_runtime_changed": false,
     "active_backend": "system_say",
     "ready": false,
-    "blockers": [
+    "owner_beta_ready": true,
+    "production_ready": false,
+    "owner_accepted_limitations": [
+      "built_in_acoustic_ptt_to_silence_exceeds_200ms"
+    ],
+    "production_blockers": [
       "physical_acoustic_ptt_to_silence_threshold_exceeded"
     ],
-    "next_required_action": "Repeat physical acoustic PTT-to-silence qualification with wired headphones or another local audio path that does not acoustically couple the built-in speaker to the microphone; keep the strict 200 ms threshold unchanged."
+    "next_required_action": "Activate the Pocket TTS source-runtime profile for the owner beta without representing the waived built-in acoustic gate as a production pass."
   },
   "privacy": {
     "audio_persisted": false,
