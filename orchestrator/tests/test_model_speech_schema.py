@@ -121,6 +121,58 @@ class ModelBudgetTests(StoreCase, unittest.TestCase):
         self.assertEqual(asyncio.run(collect())[-1].usage.output_tokens, 2)
         self.assertEqual(captured, [snapshot("pydantic_text_stream.json")])
 
+    def test_text_stream_uses_a_fresh_http_client_after_cancellation(self) -> None:
+        try:
+            import httpx
+        except ImportError:
+            self.skipTest("pinned Pydantic AI integration environment required")
+        calls = 0
+        first_request_entered = asyncio.Event()
+
+        async def handler(request):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                first_request_entered.set()
+                await asyncio.sleep(60)
+            chunks = [
+                {"id": "chatcmpl-x", "object": "chat.completion.chunk", "created": 1, "model": "jarvis-local", "choices": [{"index": 0, "delta": {"content": "recovered"}, "logprobs": None, "finish_reason": None}], "usage": None},
+                {"id": "chatcmpl-x", "object": "chat.completion.chunk", "created": 1, "model": "jarvis-local", "choices": [{"index": 0, "delta": {}, "logprobs": None, "finish_reason": "stop"}], "usage": None},
+                {"id": "chatcmpl-x", "object": "chat.completion.chunk", "created": 1, "model": "jarvis-local", "choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}},
+            ]
+            body = "".join(f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=body.encode())
+
+        store = self.make_store()
+        first_task = self.live_executing_task(store)
+        port = build_local_pydantic_port(
+            store,
+            base_url="http://127.0.0.1:9/v1",
+            bearer_token="private",
+            timeout_seconds=2,
+            http_transport=httpx.MockTransport(handler),
+        )
+
+        async def exercise():
+            first = asyncio.create_task(
+                anext(port.stream(ModelRequest(
+                    first_task.task_id, first_task.epoch, "final", "system",
+                    ({"role": "user", "content": "first"},), 32, timeout_seconds=2,
+                )))
+            )
+            await first_request_entered.wait()
+            first.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+            return [chunk async for chunk in port.stream(ModelRequest(
+                first_task.task_id, first_task.epoch, "final", "system",
+                ({"role": "user", "content": "second"},), 32, timeout_seconds=2,
+            ))]
+
+        result = asyncio.run(exercise())
+        self.assertEqual(result[0].text, "recovered")
+        self.assertEqual(calls, 2)
+
     def test_pinned_pydantic_route_payload_snapshots_and_appliance_oracle(self) -> None:
         try:
             import httpx
