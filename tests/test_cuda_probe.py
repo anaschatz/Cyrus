@@ -41,6 +41,38 @@ class ActiveCudaProbeTests(unittest.TestCase):
         self.assertNotIn("must-not-escape", str(report))
         self.assertEqual(report["vram_free_samples_mb"]["after_worker_exit"], 6990)
 
+    def test_turbo_active_probe_receives_the_selected_manifest(self) -> None:
+        captured = []
+
+        class CapturingProbeBackend(ProbeBackend):
+            def __init__(self, worker_config, **kwargs) -> None:
+                captured.append(worker_config)
+                super().__init__(worker_config, **kwargs)
+
+        config = voice_config_from_mapping(
+            {
+                "whisper_model_directory": "explicit-local-turbo-directory",
+                "asr": {
+                    "model_profile": "large-v3-turbo",
+                    "execution_profile": "cuda",
+                    "cuda": {
+                        "device_index": 0,
+                        "minimum_free_vram_mb": 2_048,
+                        "reserve_for_other_workloads_mb": 2_048,
+                    },
+                },
+            }
+        )
+        run_active_cuda_probe(
+            config,
+            inventory=Inventory(),
+            backend_factory=CapturingProbeBackend,
+        )
+        self.assertEqual(
+            captured[0].manifest.model_id,
+            "dropbox-dash/faster-whisper-large-v3-turbo",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

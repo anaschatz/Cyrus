@@ -12,11 +12,14 @@ from pathlib import Path
 from typing import Iterable
 
 from .errors import BackendError
-from .manifest import BASE_MODEL_MANIFEST
+from .manifest import BASE_MODEL_MANIFEST, LARGE_V3_TURBO_MODEL_MANIFEST
 from .qualification import write_report
 
 AUDIT_SCHEMA_VERSION = 1
-CT2_RUNTIME_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
+CT2_RUNTIME_FILE_SETS = (
+    tuple(item.name for item in BASE_MODEL_MANIFEST.files),
+    tuple(item.name for item in LARGE_V3_TURBO_MODEL_MANIFEST.files),
+)
 SKIP_DIRECTORY_NAMES = frozenset({
     ".git",
     ".Trash",
@@ -189,18 +192,24 @@ def discover_artifacts(
         if state.truncated:
             break
 
-        if all(name in file_entries for name in CT2_RUNTIME_FILES):
-            artifacts = tuple(Path(file_entries[name].path) for name in CT2_RUNTIME_FILES)
-            candidate = Candidate(
-                "faster_whisper_ct2",
-                directory,
-                "windows_faster_whisper",
-                artifacts,
-                any(file_entries[name].is_symlink() for name in CT2_RUNTIME_FILES),
-                any(_is_dataless(path) for path in artifacts),
-            )
-            if not add(candidate):
+        for runtime_files in CT2_RUNTIME_FILE_SETS:
+            if all(name in file_entries for name in runtime_files):
+                artifacts = tuple(
+                    Path(file_entries[name].path) for name in runtime_files
+                )
+                candidate = Candidate(
+                    "faster_whisper_ct2",
+                    directory,
+                    "windows_faster_whisper",
+                    artifacts,
+                    any(file_entries[name].is_symlink() for name in runtime_files),
+                    any(_is_dataless(path) for path in artifacts),
+                )
+                if not add(candidate):
+                    break
                 break
+        if state.truncated:
+            break
         for child in reversed(child_directories):
             stack.append((child, depth + 1))
     ordered = sorted(candidates.values(), key=lambda item: (item.kind, item.path.as_posix()))
@@ -261,10 +270,25 @@ def _candidate_record(candidate: Candidate, roots: list[Path], *, hash_candidate
         "artifacts": artifacts,
     }
     if candidate.kind == "faster_whisper_ct2":
-        expected = {item.name: (item.size, item.sha256) for item in BASE_MODEL_MANIFEST.files}
         actual = {
             Path(str(item["path"])).name: (item.get("size"), item.get("sha256"))
             for item in artifacts
+        }
+        manifests = {
+            "base": BASE_MODEL_MANIFEST,
+            "large-v3-turbo": LARGE_V3_TURBO_MODEL_MANIFEST,
+        }
+        selected_profile, selected_manifest = next(
+            (
+                (profile, manifest)
+                for profile, manifest in manifests.items()
+                if {item.name for item in manifest.files} == set(actual)
+            ),
+            ("unknown", BASE_MODEL_MANIFEST),
+        )
+        expected = {
+            item.name: (item.size, item.sha256)
+            for item in selected_manifest.files
         }
         if not hash_candidates:
             match_status = "not_requested"
@@ -274,8 +298,9 @@ def _candidate_record(candidate: Candidate, roots: list[Path], *, hash_candidate
             match_status = "mismatch"
         record["pinned_manifest"] = {
             "status": match_status,
-            "model_id": BASE_MODEL_MANIFEST.model_id,
-            "revision": BASE_MODEL_MANIFEST.revision,
+            "profile": selected_profile,
+            "model_id": selected_manifest.model_id,
+            "revision": selected_manifest.revision,
         }
     return record
 

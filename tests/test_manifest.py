@@ -8,8 +8,11 @@ from pathlib import Path
 import _bootstrap  # noqa: F401
 
 from jarvis_voice.manifest import (
+    LARGE_V3_TURBO_MODEL_MANIFEST,
+    MODEL_PROFILE_LARGE_V3_TURBO,
     ModelFileSpec,
     ModelManifest,
+    model_manifest_for_profile,
     validate_model_directory,
 )
 
@@ -69,6 +72,33 @@ class ManifestTests(unittest.TestCase):
     def test_explicit_directory_is_required(self) -> None:
         result = validate_model_directory(None, self.manifest)
         self.assertEqual(result.code, "model.directory_required")
+
+    def test_large_v3_turbo_manifest_is_exact_and_profile_selected(self) -> None:
+        manifest = model_manifest_for_profile(MODEL_PROFILE_LARGE_V3_TURBO)
+        self.assertIs(manifest, LARGE_V3_TURBO_MODEL_MANIFEST)
+        self.assertEqual(
+            manifest.revision,
+            "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+        )
+        self.assertEqual(
+            tuple(item.name for item in manifest.files),
+            (
+                "config.json",
+                "model.bin",
+                "preprocessor_config.json",
+                "tokenizer.json",
+                "vocabulary.json",
+            ),
+        )
+        self.assertEqual(sum(item.size for item in manifest.files), 1_621_665_983)
+        self.assertEqual(
+            next(item.sha256 for item in manifest.files if item.name == "model.bin"),
+            "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+        )
+
+    def test_unknown_model_profile_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported Whisper"):
+            model_manifest_for_profile("automatic-download")
 
 
 if __name__ == "__main__":

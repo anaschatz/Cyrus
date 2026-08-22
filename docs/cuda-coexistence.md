@@ -2,6 +2,11 @@
 
 Milestone 2 requires native Windows 11 x64 with an NVIDIA GPU and the representative local LLM workload. Source implementation and fake tests on another host are not hardware approval.
 
+The pinned `large-v3-turbo` model contract and the initial RTX 5080 16-GB
+settings are defined in `windows-whisper-large-v3-turbo.md`. The Base and Turbo
+profiles share this coexistence gate; selecting Turbo does not authorize a
+download, CUDA installation, or warm residency.
+
 ## Installation gate
 
 Before installing anything, record and present for approval:

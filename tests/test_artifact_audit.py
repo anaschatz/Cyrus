@@ -120,6 +120,57 @@ class ArtifactAuditTests(unittest.TestCase):
         self.assertEqual([(item.kind, item.symlink) for item in candidates], [("faster_whisper_ct2", True)])
         self.assertEqual(state.symlink_directories_skipped, 1)
 
+    def test_turbo_ct2_shape_and_manifest_are_recognized(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            model = root / "turbo"
+            evidence = root / "evidence"
+            model.mkdir()
+            evidence.mkdir()
+            names = (
+                "config.json",
+                "model.bin",
+                "preprocessor_config.json",
+                "tokenizer.json",
+                "vocabulary.json",
+            )
+            specs = []
+            for name in names:
+                content = ("turbo-" + name).encode()
+                (model / name).write_bytes(content)
+                specs.append(
+                    ModelFileSpec(
+                        name,
+                        len(content),
+                        hashlib.sha256(content).hexdigest(),
+                    )
+                )
+            manifest = ModelManifest(
+                "test/turbo",
+                "test-turbo-revision",
+                "faster-whisper/ctranslate2-fp16",
+                tuple(specs),
+            )
+            with mock.patch(
+                "jarvis_voice.artifact_audit.LARGE_V3_TURBO_MODEL_MANIFEST",
+                manifest,
+            ):
+                run_artifact_audit(
+                    [root],
+                    output=evidence / "summary.json",
+                    private_manifest=evidence / "private.json",
+                    hash_candidates=True,
+                )
+            private = json.loads((evidence / "private.json").read_text())
+        candidate = next(
+            item
+            for item in private["candidates"]
+            if item["kind"] == "faster_whisper_ct2"
+        )
+        self.assertEqual(candidate["pinned_manifest"]["profile"], "large-v3-turbo")
+        self.assertEqual(candidate["pinned_manifest"]["status"], "match")
+        self.assertEqual(candidate["pinned_manifest"]["model_id"], "test/turbo")
+
     def test_limits_make_partial_result_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)

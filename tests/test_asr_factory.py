@@ -68,6 +68,46 @@ class AsrFactoryTests(unittest.TestCase):
         self.assertIsInstance(backend, FallbackAsrBackend)
         self.assertEqual(kwargs["residency"], "turn_scoped")
 
+    def test_turbo_manifest_is_shared_by_cuda_and_cpu_fallback(self) -> None:
+        cpu_arguments = []
+        cuda_arguments = []
+
+        def cpu_factory(*args, **kwargs):
+            cpu_arguments.append((args, kwargs))
+            return Backend()
+
+        def cuda_factory(worker_config, **kwargs):
+            cuda_arguments.append((worker_config, kwargs))
+            return Backend()
+
+        config = voice_config_from_mapping(
+            {
+                "whisper_model_directory": "explicit-local-turbo-directory",
+                "asr": {
+                    "model_profile": "large-v3-turbo",
+                    "execution_profile": "cuda",
+                    "cuda": {
+                        "device_index": 0,
+                        "minimum_free_vram_mb": 2_048,
+                        "reserve_for_other_workloads_mb": 2_048,
+                    },
+                },
+            }
+        )
+        AsrBackendFactory(
+            inventory_factory=Inventory,
+            cpu_factory=cpu_factory,
+            cuda_backend_factory=cuda_factory,
+        ).create(config)
+        cpu_manifest = cpu_arguments[0][1]["manifest"]
+        cuda_manifest = cuda_arguments[0][0].manifest
+        self.assertIs(cpu_manifest, cuda_manifest)
+        self.assertEqual(
+            cuda_manifest.model_id,
+            "dropbox-dash/faster-whisper-large-v3-turbo",
+        )
+        self.assertEqual(len(cuda_manifest.files), 5)
+
     def test_fallback_uses_same_audio_once_and_never_emits_partial_cuda_result(self) -> None:
         cuda = Backend(error=BackendError("cuda.oom", "secret cuda details", subsystem="cuda")); cpu = Backend()
         backend = FallbackAsrBackend(cuda, cpu, enabled=True, fallbackable_codes=frozenset({"cuda.oom"}))

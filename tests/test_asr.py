@@ -61,7 +61,15 @@ class AsrTests(unittest.TestCase):
         self.assertEqual(result.language.score, 0.96)
         self.assertFalse(result.asr_score.calibrated)
         self.assertNotIn("confidence", result.to_payload())
-        self.assertEqual(model.calls[0][1], {"vad_filter": False, "task": "transcribe"})
+        self.assertEqual(
+            model.calls[0][1],
+            {
+                "vad_filter": False,
+                "task": "transcribe",
+                "beam_size": 5,
+                "condition_on_previous_text": False,
+            },
+        )
 
     def test_weighted_logprob_is_not_labeled_probability(self) -> None:
         raw, score = weighted_logprob([SimpleNamespace(avg_logprob=-0.2, tokens=[1, 2]), SimpleNamespace(avg_logprob=-0.5, tokens=[3])])
@@ -119,6 +127,13 @@ class AsrTests(unittest.TestCase):
         self.assertEqual(
             [call.get("language") for call in model.calls],
             [None, "el", "en"],
+        )
+        self.assertTrue(
+            all(
+                call["beam_size"] == 5
+                and call["condition_on_previous_text"] is False
+                for call in model.calls
+            )
         )
 
     def test_requires_16_khz_audio(self) -> None:

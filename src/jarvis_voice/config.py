@@ -10,6 +10,7 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 
 from .errors import BackendError
+from .manifest import MODEL_MANIFESTS, MODEL_PROFILE_LARGE_V3_TURBO
 from .voice_auth import VoiceAuthError, VoiceAuthKey, load_voice_auth_key
 
 
@@ -44,6 +45,7 @@ class CudaAsrConfig:
 
 @dataclass(frozen=True, slots=True)
 class AsrConfig:
+    model_profile: str = "base"
     execution_profile: str = "cpu"
     cpu_compute_type: str = "int8"
     cuda: CudaAsrConfig = field(default_factory=CudaAsrConfig)
@@ -331,6 +333,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         audio_input_device=data.get("audio_input_device"),
         whisper_model_directory=data.get("whisper_model_directory"),
         asr=AsrConfig(
+            model_profile=str(asr_data.get("model_profile", "base")).lower(),
             execution_profile=str(asr_data.get("execution_profile", "cpu")).lower(),
             cpu_compute_type=str(asr_data.get("cpu_compute_type", "int8")),
             cuda=CudaAsrConfig(
@@ -461,6 +464,13 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "Durations must be positive", subsystem="config", safe_context={"field": "duration"})
     if config.asr.execution_profile not in {"cpu", "cuda"}:
         raise BackendError("config.invalid_field", "ASR execution profile must be cpu or cuda", subsystem="config", safe_context={"field": "asr.execution_profile"})
+    if config.asr.model_profile not in MODEL_MANIFESTS:
+        raise BackendError(
+            "config.invalid_field",
+            "ASR model profile is not supported",
+            subsystem="config",
+            safe_context={"field": "asr.model_profile"},
+        )
     if config.asr.cuda.residency not in {"turn_scoped", "warm"}:
         raise BackendError("config.invalid_field", "CUDA residency must be turn_scoped or warm", subsystem="config", safe_context={"field": "asr.cuda.residency"})
     if config.windows_tts_backend not in {"sapi5", "pocket_tts"}:
@@ -541,6 +551,22 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         or config.asr.cuda.device_index < 0
     ):
         raise BackendError("config.cuda_device_required", "CUDA profile requires an explicit non-negative device index", subsystem="config", safe_context={"field": "asr.cuda.device_index"})
+    if (
+        config.asr.model_profile == MODEL_PROFILE_LARGE_V3_TURBO
+        and config.asr.execution_profile == "cuda"
+        and (
+            config.asr.cuda.compute_type != "int8_float16"
+            or config.asr.cuda.minimum_free_vram_mb < 2_048
+            or config.asr.cuda.reserve_for_other_workloads_mb < 2_048
+            or not config.asr.cuda.fallback_to_cpu
+        )
+    ):
+        raise BackendError(
+            "config.large_v3_turbo_cuda_profile_required",
+            "Large-v3-turbo CUDA requires the qualified coexistence safety profile",
+            subsystem="config",
+            safe_context={"field": "asr.cuda"},
+        )
     if config.asr.cuda.worker_start_timeout_seconds <= 0 or config.asr.cuda.transcription_timeout_seconds <= 0:
         raise BackendError("config.invalid_field", "CUDA timeouts must be positive", subsystem="config", safe_context={"field": "asr.cuda.timeout"})
     if config.application.shutdown_timeout_seconds <= 0:

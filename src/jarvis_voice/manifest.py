@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,59 @@ BASE_MODEL_MANIFEST = ModelManifest(
         ),
     ),
 )
+
+
+LARGE_V3_TURBO_MODEL_MANIFEST = ModelManifest(
+    model_id="dropbox-dash/faster-whisper-large-v3-turbo",
+    revision="0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    engine="faster-whisper/ctranslate2-fp16",
+    files=(
+        ModelFileSpec(
+            "config.json",
+            2_263,
+            "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e",
+        ),
+        ModelFileSpec(
+            "model.bin",
+            1_617_884_929,
+            "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+        ),
+        ModelFileSpec(
+            "preprocessor_config.json",
+            340,
+            "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+        ),
+        ModelFileSpec(
+            "tokenizer.json",
+            2_710_337,
+            "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd",
+        ),
+        ModelFileSpec(
+            "vocabulary.json",
+            1_068_114,
+            "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+        ),
+    ),
+)
+
+
+MODEL_PROFILE_BASE = "base"
+MODEL_PROFILE_LARGE_V3_TURBO = "large-v3-turbo"
+MODEL_MANIFESTS = MappingProxyType(
+    {
+        MODEL_PROFILE_BASE: BASE_MODEL_MANIFEST,
+        MODEL_PROFILE_LARGE_V3_TURBO: LARGE_V3_TURBO_MODEL_MANIFEST,
+    }
+)
+
+
+def model_manifest_for_profile(profile: str) -> ModelManifest:
+    """Return one closed built-in manifest; runtime discovery is forbidden."""
+
+    try:
+        return MODEL_MANIFESTS[profile]
+    except KeyError as exc:
+        raise ValueError("Unsupported Whisper model profile") from exc
 
 
 def _sha256(model_file: Path) -> str:
@@ -169,4 +223,3 @@ def validate_model_directory(
         "All local model artifacts match the pinned manifest",
         files_checked=checked,
     )
-

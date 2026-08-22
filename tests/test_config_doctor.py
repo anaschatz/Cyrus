@@ -71,6 +71,7 @@ class ConfigDoctorTests(unittest.TestCase):
         config = load_voice_config(Path(__file__).resolve().parents[1] / "config.example.json")
         self.assertEqual(config.ptt_key, "F9")
         self.assertEqual(config.orchestrator_url, "ws://127.0.0.1:8765")
+        self.assertEqual(config.asr.model_profile, "base")
         self.assertEqual(config.asr.execution_profile, "cpu")
         self.assertIsNone(config.asr.cuda.device_index)
         self.assertEqual(config.asr.cuda.residency, "turn_scoped")
@@ -104,6 +105,40 @@ class ConfigDoctorTests(unittest.TestCase):
         config = voice_config_from_mapping({"asr": {"execution_profile": "cuda", "cuda": {"device_index": 0}}})
         self.assertEqual(config.asr.cuda.device_index, 0)
 
+    def test_large_v3_turbo_cuda_profile_is_closed_and_llm_safe(self) -> None:
+        with self.assertRaisesRegex(BackendError, "config.invalid_field"):
+            voice_config_from_mapping({"asr": {"model_profile": "latest"}})
+        with self.assertRaisesRegex(
+            BackendError,
+            "config.large_v3_turbo_cuda_profile_required",
+        ):
+            voice_config_from_mapping(
+                {
+                    "asr": {
+                        "model_profile": "large-v3-turbo",
+                        "execution_profile": "cuda",
+                        "cuda": {"device_index": 0},
+                    }
+                }
+            )
+        config = voice_config_from_mapping(
+            {
+                "asr": {
+                    "model_profile": "large-v3-turbo",
+                    "execution_profile": "cuda",
+                    "cuda": {
+                        "device_index": 0,
+                        "compute_type": "int8_float16",
+                        "minimum_free_vram_mb": 2_048,
+                        "reserve_for_other_workloads_mb": 2_048,
+                        "fallback_to_cpu": True,
+                    },
+                }
+            }
+        )
+        self.assertEqual(config.asr.model_profile, "large-v3-turbo")
+        self.assertEqual(config.asr.cuda.minimum_free_vram_mb, 2_048)
+
     def test_passive_cuda_doctor_never_runs_active_probe(self) -> None:
         config = voice_config_from_mapping({
             "whisper_model_directory": "/private/secret-model",
@@ -115,6 +150,26 @@ class ConfigDoctorTests(unittest.TestCase):
         self.assertEqual(report["checks"]["cuda"]["active_probe"]["status"], "deferred")
         self.assertEqual(report["checks"]["cuda"]["admission"]["available_for_voice_mb"], 4096)
         self.assertNotIn("secret-model", encoded)
+
+    def test_doctor_reports_selected_turbo_manifest_without_discovery(self) -> None:
+        config = voice_config_from_mapping(
+            {
+                "whisper_model_directory": "/private/missing-turbo-pack",
+                "asr": {"model_profile": "large-v3-turbo"},
+            }
+        )
+        report = doctor_report_config(config)
+        model = report["checks"]["model"]
+        self.assertEqual(model["profile"], "large-v3-turbo")
+        self.assertEqual(
+            model["id"],
+            "dropbox-dash/faster-whisper-large-v3-turbo",
+        )
+        self.assertEqual(
+            model["revision"],
+            "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+        )
+        self.assertEqual(model["manifest"]["code"], "model.directory_missing")
 
     def test_active_probe_requires_cuda_profile(self) -> None:
         report = doctor_report_config(voice_config_from_mapping({}), active_cuda_probe=True)

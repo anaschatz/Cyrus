@@ -12,6 +12,7 @@ from .config import VoiceConfig
 from .cuda_worker import CudaFasterWhisperBackend, CudaWorkerConfig
 from .errors import BackendError
 from .gpu import GpuInventory, NvidiaSmiInventory
+from .manifest import model_manifest_for_profile
 
 
 def run_active_cuda_probe(
@@ -34,6 +35,7 @@ def run_active_cuda_probe(
         cuda.worker_start_timeout_seconds,
         cuda.transcription_timeout_seconds,
         round(config.maximum_utterance_seconds * 16_000 * 4),
+        model_manifest_for_profile(config.asr.model_profile),
     )
     backend = backend_factory(
         worker_config,

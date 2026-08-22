@@ -13,6 +13,12 @@ from .manifest import BASE_MODEL_MANIFEST, ModelManifest, validate_model_directo
 
 BILINGUAL_LANGUAGE_CANDIDATES = ("el", "en")
 BILINGUAL_RESOLUTION_THRESHOLD = 0.8
+ISOLATED_TURN_OPTIONS = {
+    "vad_filter": False,
+    "task": "transcribe",
+    "beam_size": 5,
+    "condition_on_previous_text": False,
+}
 
 
 def weighted_logprob(segments: Iterable[Any]) -> tuple[float, float]:
@@ -36,6 +42,53 @@ def choose_cpu_compute_type(requested: str, supported: Iterable[str]) -> str:
         if candidate in available:
             return candidate
     raise BackendError("asr.cpu_compute_type_unsupported", "No supported CPU compute type is available", subsystem="asr")
+
+
+def decode_bilingual_transcript(
+    model: Any,
+    samples: Any,
+) -> tuple[str, str, float, list[Any]]:
+    """Decode one isolated PTT turn with a deterministic Greek/English tie-break."""
+
+    segments_iter, info = model.transcribe(samples, **ISOLATED_TURN_OPTIONS)
+    segments = list(segments_iter)
+    detected_language = str(getattr(info, "language", "und"))
+    detected_score = float(getattr(info, "language_probability", 0.0))
+    text = unicodedata.normalize(
+        "NFC",
+        "".join(str(segment.text) for segment in segments).strip(),
+    )
+    if detected_score < BILINGUAL_RESOLUTION_THRESHOLD:
+        candidates: list[tuple[float, str, list[Any], str]] = []
+        for language in BILINGUAL_LANGUAGE_CANDIDATES:
+            candidate_iter, _candidate_info = model.transcribe(
+                samples,
+                **ISOLATED_TURN_OPTIONS,
+                language=language,
+            )
+            candidate_segments = list(candidate_iter)
+            candidate_text = unicodedata.normalize(
+                "NFC",
+                "".join(
+                    str(segment.text) for segment in candidate_segments
+                ).strip(),
+            )
+            candidate_raw, _candidate_score = weighted_logprob(candidate_segments)
+            if candidate_text and math.isfinite(candidate_raw):
+                candidates.append(
+                    (candidate_raw, language, candidate_segments, candidate_text)
+                )
+        if candidates:
+            chosen = max(candidates, key=lambda item: item[0])
+            maximum_raw = max(item[0] for item in candidates)
+            weights = [math.exp(item[0] - maximum_raw) for item in candidates]
+            total_weight = sum(weights)
+            chosen_index = candidates.index(chosen)
+            detected_language = chosen[1]
+            detected_score = weights[chosen_index] / total_weight
+            segments = chosen[2]
+            text = chosen[3]
+    return text, detected_language, detected_score, segments
 
 
 class FasterWhisperCpuBackend:
@@ -78,49 +131,9 @@ class FasterWhisperCpuBackend:
             samples: Any = audio.samples
         else:
             samples = numpy.asarray(audio.samples, dtype=numpy.float32)
-        segments_iter, info = self._model.transcribe(
-            samples,
-            vad_filter=False,
-            task="transcribe",
+        text, detected_language, detected_score, segments = (
+            decode_bilingual_transcript(self._model, samples)
         )
-        segments = list(segments_iter)
-        detected_language = str(getattr(info, "language", "und"))
-        detected_score = float(getattr(info, "language_probability", 0.0))
-        text = unicodedata.normalize(
-            "NFC",
-            "".join(str(segment.text) for segment in segments).strip(),
-        )
-        if detected_score < BILINGUAL_RESOLUTION_THRESHOLD:
-            candidates: list[tuple[float, str, list[Any], str]] = []
-            for language in BILINGUAL_LANGUAGE_CANDIDATES:
-                candidate_iter, _candidate_info = self._model.transcribe(
-                    samples,
-                    vad_filter=False,
-                    task="transcribe",
-                    language=language,
-                )
-                candidate_segments = list(candidate_iter)
-                candidate_text = unicodedata.normalize(
-                    "NFC",
-                    "".join(
-                        str(segment.text) for segment in candidate_segments
-                    ).strip(),
-                )
-                candidate_raw, _candidate_score = weighted_logprob(candidate_segments)
-                if candidate_text and math.isfinite(candidate_raw):
-                    candidates.append(
-                        (candidate_raw, language, candidate_segments, candidate_text)
-                    )
-            if candidates:
-                chosen = max(candidates, key=lambda item: item[0])
-                maximum_raw = max(item[0] for item in candidates)
-                weights = [math.exp(item[0] - maximum_raw) for item in candidates]
-                total_weight = sum(weights)
-                chosen_index = candidates.index(chosen)
-                detected_language = chosen[1]
-                detected_score = weights[chosen_index] / total_weight
-                segments = chosen[2]
-                text = chosen[3]
         if not text:
             raise BackendError("asr.empty_transcript", "ASR produced no transcript", subsystem="asr")
         raw, score = weighted_logprob(segments)

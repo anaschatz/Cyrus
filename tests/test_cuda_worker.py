@@ -39,8 +39,11 @@ class MemoryConnection:
 class FakeModel:
     def __init__(self, failure: BaseException | None = None) -> None:
         self.failure = failure
+        self.calls: list[dict[str, object]] = []
 
     def transcribe(self, samples, **kwargs):
+        del samples
+        self.calls.append(dict(kwargs))
         if self.failure:
             raise self.failure
         segment = SimpleNamespace(text="Γεια σου.", avg_logprob=-0.2, tokens=[1, 2])
@@ -112,11 +115,63 @@ class CudaWorkerTests(unittest.TestCase):
         audio = array("f", [0.1]).tobytes()
         connection = MemoryConnection([{"type": "transcribe", "request_id": "r", "sample_rate": 16_000, "audio": audio}, {"type": "shutdown"}])
         created = []
-        run_cuda_worker(connection, self.config(), model_factory=lambda *args, **kwargs: created.append((args, kwargs)) or FakeModel())
+        model = FakeModel()
+        run_cuda_worker(connection, self.config(), model_factory=lambda *args, **kwargs: created.append((args, kwargs)) or model)
         args, kwargs = created[0]
         self.assertEqual(args, (str(self.directory),))
         self.assertEqual(kwargs, {"device": "cuda", "device_index": 0, "compute_type": "int8_float16", "local_files_only": True})
+        self.assertEqual(
+            model.calls,
+            [
+                {
+                    "vad_filter": False,
+                    "task": "transcribe",
+                    "beam_size": 5,
+                    "condition_on_previous_text": False,
+                }
+            ],
+        )
         self.assertEqual([frame["type"] for frame in connection.sent], ["ready", "result", "shutdown.complete"])
+
+    def test_worker_uses_same_low_confidence_bilingual_tie_break_as_cpu(self) -> None:
+        class AmbiguousModel(FakeModel):
+            def transcribe(self, samples, **kwargs):
+                del samples
+                self.calls.append(dict(kwargs))
+                language = kwargs.get("language")
+                score = -0.2 if language == "el" else -0.8
+                text = "καθαρός ουρανός" if language == "el" else "uncertain"
+                segment = SimpleNamespace(text=text, avg_logprob=score, tokens=[1, 2])
+                return iter([segment]), SimpleNamespace(
+                    language="el",
+                    language_probability=0.6,
+                )
+
+        audio = array("f", [0.1]).tobytes()
+        connection = MemoryConnection(
+            [
+                {
+                    "type": "transcribe",
+                    "request_id": "r",
+                    "sample_rate": 16_000,
+                    "audio": audio,
+                },
+                {"type": "shutdown"},
+            ]
+        )
+        model = AmbiguousModel()
+        run_cuda_worker(
+            connection,
+            self.config(),
+            model_factory=lambda *args, **kwargs: model,
+        )
+        result = connection.sent[1]
+        self.assertEqual(result["text"], "καθαρός ουρανός")
+        self.assertEqual(result["language_code"], "el")
+        self.assertEqual(
+            [call.get("language") for call in model.calls],
+            [None, "el", "en"],
+        )
 
     def test_manifest_failure_happens_before_worker_model_factory(self) -> None:
         self.config()

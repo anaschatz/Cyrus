@@ -16,7 +16,11 @@ from .app_paths import frozen_bundle_root, frozen_library_directory, require_ext
 from .config import VoiceConfig, configured_voice_auth_key, is_loopback_websocket_url
 from .errors import BackendError
 from .gpu import GpuAdmissionPolicy, GpuInventory, NvidiaSmiInventory
-from .manifest import BASE_MODEL_MANIFEST, validate_model_directory
+from .manifest import (
+    BASE_MODEL_MANIFEST,
+    model_manifest_for_profile,
+    validate_model_directory,
+)
 from .vad import validate_artifact
 from .windows.hardening import dll_policy_applied
 from .voice_auth import AUTH_PROTOCOL
@@ -165,10 +169,15 @@ def doctor_report_config(
     if config.windows_tts_backend == "pocket_tts":
         dependency_names.extend(("pocket-tts", "torch", "PyYAML"))
     dependencies = {name: _dependency(name) for name in dependency_names}
-    manifest = validate_model_directory(config.whisper_model_directory, BASE_MODEL_MANIFEST)
+    selected_manifest = model_manifest_for_profile(config.asr.model_profile)
+    manifest = validate_model_directory(
+        config.whisper_model_directory,
+        selected_manifest,
+    )
     model: dict[str, Any] = {
-        "id": BASE_MODEL_MANIFEST.model_id,
-        "revision": BASE_MODEL_MANIFEST.revision,
+        "profile": config.asr.model_profile,
+        "id": selected_manifest.model_id,
+        "revision": selected_manifest.revision,
         "manifest": manifest.to_dict(),
     }
     if not manifest.ok:
@@ -181,7 +190,11 @@ def doctor_report_config(
         model["load_probe"] = _status("deferred", "asr.native_windows_probe_required")
     else:  # pragma: no cover - native Windows only
         try:
-            FasterWhisperCpuBackend(config.whisper_model_directory or "", compute_type=config.asr.cpu_compute_type).load()
+            FasterWhisperCpuBackend(
+                config.whisper_model_directory or "",
+                compute_type=config.asr.cpu_compute_type,
+                manifest=selected_manifest,
+            ).load()
         except Exception:
             model["load_probe"] = _status("blocked", "asr.offline_cpu_load_failed")
         else:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import multiprocessing
 import threading
 import time
-import unicodedata
 import uuid
 from array import array
 from collections.abc import Callable
@@ -13,7 +12,7 @@ from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Any, Protocol
 
-from .asr import weighted_logprob
+from .asr import decode_bilingual_transcript, weighted_logprob
 from .backends import AsrScore, AudioChunk, LanguageMetadata, TranscriptResult
 from .errors import BackendError
 from .gpu import AdmissionDecision, GpuAdmissionPolicy, GpuInventory, require_admission
@@ -125,9 +124,9 @@ def run_cuda_worker(
                 else:
                     samples = numpy.frombuffer(audio_bytes, dtype=numpy.float32)
                 inference_started = clock()
-                segment_iterator, info = model.transcribe(samples, vad_filter=False, task="transcribe")
-                segments = list(segment_iterator)
-                text = unicodedata.normalize("NFC", "".join(str(segment.text) for segment in segments).strip())
+                text, detected_language, detected_score, segments = (
+                    decode_bilingual_transcript(model, samples)
+                )
                 if not text:
                     raise BackendError("asr.empty_transcript", "ASR produced no transcript", subsystem="asr")
                 raw, score = weighted_logprob(segments)
@@ -136,8 +135,8 @@ def run_cuda_worker(
                         "type": "result",
                         "request_id": request_id,
                         "text": text,
-                        "language_code": str(getattr(info, "language", "und")),
-                        "language_score": float(getattr(info, "language_probability", 0.0)),
+                        "language_code": detected_language,
+                        "language_score": detected_score,
                         "asr_score": score,
                         "raw_avg_logprob": raw,
                         "inference_duration_seconds": clock() - inference_started,
