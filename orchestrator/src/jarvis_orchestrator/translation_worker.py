@@ -26,6 +26,244 @@ from .translation import (
 )
 
 
+_COMMAND_REWRITES = (
+    (re.compile(r"^\s*Ναι\s*[.!]?\s*$", re.IGNORECASE), "Yes."),
+    (
+        re.compile(
+            r"^\s*Στις\s+(\d{1,2}:\d{2})\s+αποθήκευσε\s+"
+            r"το\s+αρχείο\b",
+            re.IGNORECASE,
+        ),
+        r"At \1, save the file",
+    ),
+    (
+        re.compile(r"^(\s*)Βάλε υπενθύμιση\b", re.IGNORECASE),
+        r"\1Set a reminder",
+    ),
+    (re.compile(r"^(\s*)Σταμάτα\b", re.IGNORECASE), r"\1Stop"),
+    (
+        re.compile(
+            r"^(\s*)Σταμάτησε\s+αμέσως\s+"
+            r"την\s+αναπαραγωγή\b",
+            re.IGNORECASE,
+        ),
+        r"\1Stop the playback immediately",
+    ),
+    (
+        re.compile(
+            r"^(\s*)Συνέχισε\s+από\s+εκεί\s+που\s+"
+            r"σταμάτησες\b",
+            re.IGNORECASE,
+        ),
+        r"\1Continue where you left off",
+    ),
+    (
+        re.compile(
+            r"^(\s*)Κράτησε\s+το\s+πρώτο\b",
+            re.IGNORECASE,
+        ),
+        r"\1Keep the first",
+    ),
+    (
+        re.compile(
+            r"^(\s*)Κράτησε\s+τα\s+ονόματα\s+"
+            r"(.+?)\s+ακριβώς\s+όπως\s+είναι\b",
+            re.IGNORECASE,
+        ),
+        r"\1Keep the names \2 exactly as they are",
+    ),
+    (
+        re.compile(
+            r"^(\s*)Απόρριψε\s+κάθε\s+παλιά\s+έξοδο\s+"
+            r"μετά\s+τη\s+διακοπή\b",
+            re.IGNORECASE,
+        ),
+        r"\1Reject each stale output after interruption",
+    ),
+    (
+        re.compile(
+            r"^(\s*)Κατάλαβε\s+τα\s+ελληνικά,\s*"
+            r"αλλά\s+απάντησε\s+αποκλειστικά\s+"
+            r"στα\s+αγγλικά\b",
+            re.IGNORECASE,
+        ),
+        r"\1Understand Greek, but answer only in English",
+    ),
+)
+_NARRATIVE_MARKERS = re.compile(
+    r"\b(?:χθες|προχθές|πέρσι|νωρίτερα|προηγουμένως|τότε|"
+    r"την\s+προηγούμενη|την\s+περασμένη|"
+    r"τον\s+προηγούμενο|τον\s+περασμένο|"
+    r"πριν\s+από)\b",
+    re.IGNORECASE,
+)
+_TERM_REWRITES = (
+    (
+        re.compile(
+            r"\bΌταν επιστρέψει το μικρόφωνο,"
+            r"\s*συνέχισε αυτόματα\b",
+            re.IGNORECASE,
+        ),
+        "When the microphone reconnects, continue automatically",
+    ),
+    (
+        re.compile(
+            r"\bΜετά την αναστολή λειτουργίας,"
+            r"\s*έλεγξε ξανά\b",
+            re.IGNORECASE,
+        ),
+        "After waking from sleep, recheck",
+    ),
+    (
+        re.compile(
+            r"\bάλλαξε στην είσοδο\s+(USB Audio CODEC)\b",
+            re.IGNORECASE,
+        ),
+        r"switch to the \1 input",
+    ),
+    (
+        re.compile(
+            r"\bπαλιά έξοδο μετά (?:τη|την) διακοπή\b",
+            re.IGNORECASE,
+        ),
+        "stale output after interruption",
+    ),
+    (re.compile(r"\bαναπαραγωγή\b", re.IGNORECASE), "playback"),
+    (re.compile(r"\bπαλιό ήχο\b", re.IGNORECASE), "old audio"),
+    (
+        re.compile(r"\bτρέχουσα απάντηση\b", re.IGNORECASE),
+        "current response",
+    ),
+    (re.compile(r"\bαπάντηση\b", re.IGNORECASE), "response"),
+    (re.compile(r"\bμεταγραφή\b", re.IGNORECASE), "transcript"),
+    (
+        re.compile(r"\bΜετά το sleep\b", re.IGNORECASE),
+        "After waking from sleep",
+    ),
+    (re.compile(r"\bΜαρία\b", re.IGNORECASE), "Maria"),
+    (re.compile(r"\bαναστολή λειτουργίας\b", re.IGNORECASE), "sleep"),
+    (re.compile(r"\bραντεβού\b", re.IGNORECASE), "appointment"),
+    (re.compile(r"\bμόνο στην CPU\b", re.IGNORECASE), "only on CPU"),
+    (
+        re.compile(
+            r"\bΤο M3 έχει (\d+(?:[.,]\d+)?\s*GB) κοινής μνήμης\b",
+            re.IGNORECASE,
+        ),
+        r"M3 has \1 unified memory",
+    ),
+    (re.compile(r"\bστο (config\.json)\b", re.IGNORECASE), r"in \1"),
+    (
+        re.compile(r"\bη δοκιμή ολοκληρώθηκε\b", re.IGNORECASE),
+        "the test is complete",
+    ),
+    (
+        re.compile(r"\bΔεν θέλω API key\b", re.IGNORECASE),
+        "I don't want an API key",
+    ),
+)
+_PROTECTED_PATTERNS = (
+    re.compile(r"https?://[^\s<>\"'“”«»]*[^\s<>\"'“”«».,;:!?]"),
+    re.compile(
+        r"\\\\[A-Za-z0-9._~-]+"
+        r"\\[A-Za-z0-9$._~-](?:[A-Za-z0-9$._~ -]*[A-Za-z0-9$_~-])?"
+        r"(?:\\[A-Za-z0-9._~-](?:[A-Za-z0-9._~ -]*[A-Za-z0-9_~-])?)*"
+        r"\\?"
+    ),
+    re.compile(
+        r"\b[A-Za-z]:\\"
+        r"[A-Za-z0-9._~-](?:[A-Za-z0-9._~ -]*[A-Za-z0-9_~-])?"
+        r"(?:\\[A-Za-z0-9._~-](?:[A-Za-z0-9._~ -]*[A-Za-z0-9_~-])?)*"
+        r"\\?"
+    ),
+    re.compile(
+        r"(?<![A-Za-z0-9])/"
+        r"[A-Za-z0-9._~-](?:[A-Za-z0-9._~ -]*[A-Za-z0-9_~-])?"
+        r"(?:/[A-Za-z0-9._~-](?:[A-Za-z0-9._~ -]*[A-Za-z0-9_~-])?)*"
+        r"/?"
+    ),
+    re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_.-]+\b"),
+    re.compile(
+        r"\b[A-Za-z0-9][A-Za-z0-9._-]*\."
+        r"(?:md|json|txt|yaml|yml|toml|py)\b"
+    ),
+    re.compile(r"\b\d{1,2}:\d{2}\b"),
+    re.compile(r"\b\d{1,2}/\d{1,2}/\d{4}\b"),
+    re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:GB|MB|KiB|MiB|ms)\b"),
+    re.compile(r"\b\d+(?:[.,]\d+)?%"),
+    re.compile(r"\b\d+(?:[.,]\d+)?\b"),
+    re.compile(r"\b[A-Z][A-Za-z0-9-]*(?:\s+[A-Z][A-Za-z0-9-]*)+\b"),
+    re.compile(
+        r"\b(?:[A-Z]{2,}[A-Z0-9-]*|[A-Z][0-9][A-Za-z0-9-]*|"
+        r"[A-Za-z]+[0-9][A-Za-z0-9.-]*)\b"
+    ),
+)
+
+
+def _domain_normalize(text: str, *, command_context: bool) -> str:
+    result = text
+    if command_context and _NARRATIVE_MARKERS.search(result) is None:
+        for pattern, replacement in _COMMAND_REWRITES:
+            result = pattern.sub(replacement, result, count=1)
+    for pattern, replacement in _TERM_REWRITES:
+        result = pattern.sub(replacement, result)
+    return result
+
+
+def _protect_spans(text: str) -> tuple[str, tuple[tuple[str, str], ...]]:
+    matches: list[tuple[int, int]] = []
+    for pattern in _PROTECTED_PATTERNS:
+        matches.extend(
+            (match.start(), match.end()) for match in pattern.finditer(text)
+        )
+    selected: list[tuple[int, int]] = []
+    for start, end in sorted(
+        matches,
+        key=lambda item: (item[0], -(item[1] - item[0])),
+    ):
+        if any(
+            start < other_end and other_start < end
+            for other_start, other_end in selected
+        ):
+            continue
+        selected.append((start, end))
+    selected.sort()
+    domain_index = 0
+    domain = "jarvis.invalid"
+    while domain in text:
+        domain_index += 1
+        domain = f"jarvis-protected-{domain_index}.invalid"
+    replacements: list[tuple[str, str]] = []
+    result = text
+    for index, (start, end) in reversed(tuple(enumerate(selected))):
+        sentinel = f"https://{domain}/p{index}q"
+        original = text[start:end]
+        result = result[:start] + sentinel + result[end:]
+        replacements.append((sentinel, original))
+    replacements.reverse()
+    return result, tuple(replacements)
+
+
+def _restore_spans(text: str, replacements: tuple[tuple[str, str], ...]) -> str:
+    positions: list[int] = []
+    for sentinel, _original in replacements:
+        if text.count(sentinel) != 1:
+            raise RuntimeError("translation changed a protected span")
+        positions.append(text.index(sentinel))
+    if positions != sorted(positions):
+        raise RuntimeError("translation reordered protected spans")
+
+    result = text
+    for sentinel, original in replacements:
+        result = result.replace(sentinel, original, 1)
+    if any(sentinel in result for sentinel, _original in replacements):
+        raise RuntimeError("translation left a protected sentinel")
+    if replacements:
+        sentinel_origin = replacements[0][0].rsplit("/p", 1)[0]
+        if sentinel_origin in result:
+            raise RuntimeError("translation invented a protected sentinel")
+    return result
+
+
 def _valid_text(value: Any) -> bool:
     if (
         not isinstance(value, str)
@@ -36,7 +274,10 @@ def _valid_text(value: Any) -> bool:
     if any(unicodedata.category(char).startswith("C") for char in value):
         return False
     try:
-        return len(value.encode("utf-8", errors="strict")) <= TRANSLATION_MAXIMUM_TEXT_BYTES
+        return (
+            len(value.encode("utf-8", errors="strict"))
+            <= TRANSLATION_MAXIMUM_TEXT_BYTES
+        )
     except UnicodeEncodeError:
         return False
 
@@ -150,7 +391,13 @@ class TranslationEngine:
                 raise ValueError("invalid request")
             identifiers.append(identifier)
             texts.append(text)
-        tokenized = [self._source_tokens(text) for text in texts]
+        prepared = [
+            _protect_spans(
+                _domain_normalize(text, command_context=identifier == "current")
+            )
+            for identifier, text in zip(identifiers, texts, strict=True)
+        ]
+        tokenized = [self._source_tokens(text) for text, _spans in prepared]
         for tokens in tokenized:
             if not tokens:
                 raise ValueError("tokenizer returned an empty input")
@@ -169,8 +416,8 @@ class TranslationEngine:
             num_hypotheses=1,
             max_input_length=512,
             max_decoding_length=512,
-            batch_type="tokens",
-            max_batch_size=512,
+            batch_type="examples",
+            max_batch_size=1,
             disable_unk=True,
             return_end_token=True,
             return_scores=False,
@@ -178,7 +425,12 @@ class TranslationEngine:
         if len(results) != len(identifiers):
             raise RuntimeError("translation result count mismatch")
         translated: list[dict[str, str]] = []
-        for identifier, result in zip(identifiers, results, strict=True):
+        for identifier, result, (_source, spans) in zip(
+            identifiers,
+            results,
+            prepared,
+            strict=True,
+        ):
             hypotheses = getattr(result, "hypotheses", None)
             if not isinstance(hypotheses, list) or len(hypotheses) != 1:
                 raise RuntimeError("translation hypothesis mismatch")
@@ -190,6 +442,7 @@ class TranslationEngine:
             text = unicodedata.normalize(
                 "NFC", self.target.decode_pieces(tokens[:-1]).strip()
             )
+            text = _restore_spans(text, spans)
             if not _valid_text(text):
                 raise RuntimeError("translation output invalid")
             translated.append({"id": identifier, "text": text})

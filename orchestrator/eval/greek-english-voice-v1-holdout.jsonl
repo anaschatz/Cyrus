@@ -1,0 +1,25 @@
+{"id":"holdout-proceed","source":"Βεβαίως, προχώρα.","required_any":[["of course","certainly","sure"],["proceed","go ahead"]]}
+{"id":"holdout-disconnected","source":"Μη συνεχίσεις αν το μικρόφωνο παραμένει αποσυνδεδεμένο.","required_all":["microphone","disconnected"],"required_any":[["do not continue","don't continue"]]}
+{"id":"holdout-alarm-scope","source":"Ακύρωσε το πρώτο ξυπνητήρι, αλλά άφησε το δεύτερο ενεργό.","required_all":["cancel","first","second","active"],"ordered":["first","second"]}
+{"id":"holdout-reminder-file","source":"Σε δέκα λεπτά θύμισέ μου να ελέγξω το README.md.","required_all":["ten minutes","remind","check"],"preserve":["README.md"]}
+{"id":"holdout-cpu-threads","source":"Χρησιμοποίησε μόνο 4 CPU threads, χωρίς GPU.","required_all":["only","without"],"preserve":["4","CPU","GPU"]}
+{"id":"holdout-streaming-sentence","source":"Ξεκίνα να μιλάς μόλις είναι έτοιμη η πρώτη πλήρης πρόταση.","required_all":["start","first","sentence"],"required_any":[["speak","speaking","talking"],["complete","full"],["as soon as","once"]]}
+{"id":"holdout-barge-in","source":"Μόλις πατήσω F9, σταμάτα αμέσως τον ήχο.","required_all":["press","stop","audio","immediately"],"preserve":["F9"]}
+{"id":"holdout-missed-keyup","source":"Αν χαθεί το key-up, κάνε forced release.","required_all":["if"],"preserve":["key-up","forced release"]}
+{"id":"holdout-wake-return","source":"Το μικρόφωνο επανήλθε μετά την αφύπνιση του Mac.","required_all":["microphone","after"],"required_any":[["returned","came back"],["wake","waking","woke up"]],"preserve":["Mac"]}
+{"id":"holdout-exactly-once","source":"Κάθε turn πρέπει να παράγεται ακριβώς μία φορά.","required_all":["exactly","once"],"required_any":[["each","every"]],"preserve":["turn"]}
+{"id":"holdout-terminal-url","source":"Έλεγξε το https://example.com/health.","required_all":["check"],"preserve":["https://example.com/health"]}
+{"id":"holdout-windows-path","source":"Άνοιξε το C:\\Program Files\\JARVIS\\config.json χωρίς να το αλλάξεις.","required_all":["open","without"],"preserve":["C:\\Program Files\\JARVIS\\config.json"]}
+{"id":"holdout-posix-path","source":"Αντέγραψε το /Users/demo/JARVIS MARK 0/settings.yaml στο backup.","required_all":["copy","backup"],"preserve":["/Users/demo/JARVIS MARK 0/settings.yaml"]}
+{"id":"holdout-calendar-name","source":"Κλείσε συνάντηση με τη Μαρία στις 03/09/2026, ώρα 11:40.","required_all":["meeting","Maria"],"preserve":["03/09/2026","11:40"]}
+{"id":"holdout-memory-limit","source":"Το μοντέλο έχει λιγότερα από 512 MB διαθέσιμα.","required_all":["model","less than","available"],"preserve":["512 MB"]}
+{"id":"holdout-exclusive-device","source":"Χρησιμοποίησε είτε CPU είτε GPU, όχι και τα δύο.","required_all":["either","or","not both"],"preserve":["CPU","GPU"]}
+{"id":"holdout-final-voice-language","source":"Παρότι η ερώτηση είναι στα ελληνικά, η τελική φωνή να είναι αγγλική.","required_all":["question","Greek","final","voice","English"],"required_any":[["although","even though"]]}
+{"id":"holdout-stopped-narrative","source":"Το σύστημα σταμάτησε να λειτουργεί χθες.","required_all":["system","stopped","working","yesterday"]}
+{"id":"holdout-george-config","source":"Ο Γιώργος ζήτησε να μην αλλάξει το config.json.","required_all":["George","asked"],"required_any":[["not to change","do not change"]],"preserve":["config.json"]}
+{"id":"holdout-slower-repeat","source":"Μπορείς να επαναλάβεις την τελευταία πρόταση πιο αργά;","required_all":["repeat","last sentence","slower"]}
+{"id":"holdout-latency-question","source":"Πόσο χρόνο χρειάστηκε η μετάφραση;","required_all":["how long","translation"]}
+{"id":"holdout-offline-worker","source":"Ο worker δεν πρέπει να κατεβάζει τίποτα από το δίκτυο.","required_all":["worker","network"],"required_any":[["must not download","should not download"]]}
+{"id":"holdout-product-names","source":"Κράτησε τα ονόματα Pocket TTS και Qwen3-4B ακριβώς όπως είναι.","required_all":["names","exactly"],"preserve":["Pocket TTS","Qwen3-4B"]}
+{"id":"holdout-ram-stability","source":"Μετά από 250 turns, η RAM έμεινε σταθερή.","required_all":["after","stable"],"preserve":["250","turns","RAM"]}
+{"id":"holdout-ordered-recording","source":"Πρώτα έλεγξε το μικρόφωνο, μετά ξεκίνα την εγγραφή.","required_all":["check","microphone","start","recording"],"ordered":["check","start"]}

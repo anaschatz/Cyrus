@@ -30,7 +30,12 @@ from jarvis_orchestrator.translation import (
     contains_greek,
     load_translation_manifest,
 )
-from jarvis_orchestrator.translation_worker import translate_document
+from jarvis_orchestrator.translation_worker import (
+    _domain_normalize,
+    _protect_spans,
+    _restore_spans,
+    translate_document,
+)
 from jarvis_orchestrator import translation_worker
 
 
@@ -153,6 +158,10 @@ class TranslationTests(unittest.TestCase):
                             "ντε",
                             "β",
                             "ού",
+                            "▁Ρ",
+                            "ύ",
+                            "θ",
+                            "μιση",
                             "▁αύριο",
                             ".",
                         ]
@@ -609,7 +618,10 @@ class TranslationTests(unittest.TestCase):
         ):
             response = translate_document(request, self.model_root)
 
-        self.assertEqual(captured["tokenized"], [["▁Το", "▁σύστημα", "</s>"]])
+        self.assertEqual(
+            captured["tokenized"],
+            [["▁Το", "▁σύστημα", "</s>"]],
+        )
         self.assertEqual(
             captured["constructor"],
             {
@@ -624,11 +636,18 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(settings["beam_size"], 4)
         self.assertEqual(settings["max_input_length"], 512)
         self.assertEqual(settings["max_decoding_length"], 512)
+        self.assertEqual(settings["batch_type"], "examples")
+        self.assertEqual(settings["max_batch_size"], 1)
         self.assertTrue(settings["disable_unk"])
         self.assertTrue(settings["return_end_token"])
-        self.assertEqual(response["items"], [{"id": "current", "text": "The system."}])
+        self.assertEqual(
+            response["items"],
+            [{"id": "current", "text": "The system."}],
+        )
 
-    def test_worker_resegments_source_piece_missing_from_shared_vocabulary(self) -> None:
+    def test_worker_resegments_source_piece_missing_from_shared_vocabulary(
+        self,
+    ) -> None:
         captured: dict[str, object] = {}
 
         class Processor:
@@ -637,23 +656,23 @@ class TranslationTests(unittest.TestCase):
 
             def encode(self, text: str, *, out_type):
                 del out_type
-                if not self.source or text != "Ραντεβού αύριο.":
+                if not self.source or text != "Ρύθμιση αύριο.":
                     raise AssertionError("unexpected tokenizer input")
-                return ["▁Ραντεβού", "▁αύριο", "."]
+                return ["▁Ρύθμιση", "▁αύριο", "."]
 
             def nbest_encode(self, text: str, *, nbest_size: int, out_type):
                 del out_type
-                if text != "Ραντεβού αύριο." or nbest_size != 128:
+                if text != "Ρύθμιση αύριο." or nbest_size != 128:
                     raise AssertionError("unexpected nbest request")
                 return [
-                    ["▁Ραντεβού", "▁αύριο", "."],
-                    ["▁Ρα", "ντε", "β", "ού", "▁αύριο", "."],
+                    ["▁Ρύθμιση", "▁αύριο", "."],
+                    ["▁Ρ", "ύ", "θ", "μιση", "▁αύριο", "."],
                 ]
 
             def decode_pieces(self, tokens):
-                if self.source or tokens != ["▁Appointment", "▁tomorrow", "."]:
+                if self.source or tokens != ["▁Setting", "▁tomorrow", "."]:
                     raise AssertionError("unexpected decoder tokens")
-                return "Appointment tomorrow."
+                return "Setting tomorrow."
 
         class Translator:
             def __init__(self, model_root: str, **kwargs) -> None:
@@ -664,7 +683,7 @@ class TranslationTests(unittest.TestCase):
                 captured["tokenized"] = tokenized
                 return [
                     types.SimpleNamespace(
-                        hypotheses=[["▁Appointment", "▁tomorrow", ".", "</s>"]]
+                        hypotheses=[["▁Setting", "▁tomorrow", ".", "</s>"]]
                     )
                 ]
 
@@ -677,7 +696,7 @@ class TranslationTests(unittest.TestCase):
         request = {
             "version": "jarvis.input-translation-request/1",
             "request_id": "request",
-            "items": [{"id": "current", "text": "Ραντεβού αύριο."}],
+            "items": [{"id": "current", "text": "Ρύθμιση αύριο."}],
         }
         with patch.dict(
             sys.modules,
@@ -687,12 +706,214 @@ class TranslationTests(unittest.TestCase):
 
         self.assertEqual(
             captured["tokenized"],
-            [["▁Ρα", "ντε", "β", "ού", "▁αύριο", ".", "</s>"]],
+            [["▁Ρ", "ύ", "θ", "μιση", "▁αύριο", ".", "</s>"]],
         )
         self.assertEqual(
             response["items"],
-            [{"id": "current", "text": "Appointment tomorrow."}],
+            [{"id": "current", "text": "Setting tomorrow."}],
         )
+
+    def test_domain_normalization_repairs_ambiguous_voice_terms(self) -> None:
+        self.assertEqual(
+            _domain_normalize("Ναι.", command_context=True),
+            "Yes.",
+        )
+        self.assertEqual(
+            _domain_normalize(
+                "Σταμάτησε αμέσως την αναπαραγωγή και απόρριψε "
+                "την παλιά έξοδο μετά τη διακοπή.",
+                command_context=True,
+            ),
+            "Stop the playback immediately και απόρριψε την "
+            "stale output after interruption.",
+        )
+        self.assertEqual(
+            _domain_normalize(
+                "Ραντεβού αύριο μετά την αναστολή "
+                "λειτουργίας.",
+                command_context=True,
+            ),
+            "appointment αύριο μετά την sleep.",
+        )
+        self.assertEqual(
+            _domain_normalize(
+                "Σταμάτησε να λειτουργεί χθες.",
+                command_context=True,
+            ),
+            "Σταμάτησε να λειτουργεί χθες.",
+        )
+        self.assertEqual(
+            _domain_normalize(
+                "Χθες απάντησε στην ερώτηση.",
+                command_context=True,
+            ),
+            "Χθες απάντησε στην ερώτηση.",
+        )
+        self.assertEqual(
+            _domain_normalize(
+                "Το M3 έχει 16 GB κοινής μνήμης.",
+                command_context=False,
+            ),
+            "M3 has 16 GB unified memory.",
+        )
+        self.assertEqual(
+            _domain_normalize(
+                "Το PC έχει 16 GB κοινής μνήμης.",
+                command_context=False,
+            ),
+            "Το PC έχει 16 GB κοινής μνήμης.",
+        )
+        self.assertEqual(
+            _domain_normalize(
+                "Κράτησε τα ονόματα Pocket TTS και Qwen3-4B "
+                "ακριβώς όπως είναι.",
+                command_context=True,
+            ),
+            "Keep the names Pocket TTS και Qwen3-4B exactly as they are.",
+        )
+        self.assertEqual(
+            _domain_normalize(
+                "Το αρχείο έμεινε ακριβώς όπως είναι.",
+                command_context=True,
+            ),
+            "Το αρχείο έμεινε ακριβώς όπως είναι.",
+        )
+
+    def test_machine_spans_round_trip_byte_exactly(self) -> None:
+        source = (
+            "Άνοιξε το https://example.com/status?device=m3&lang=el, το "
+            "/Users/demo/JARVIS MARK 0/README.md, το "
+            "C:\\Program Files\\JARVIS\\config.json με F9, "
+            "το C:\\Program Files\\JARVIS\\my config.json, το "
+            "\\\\server\\share και το "
+            "\\\\server\\share\\JARVIS\\config.json, το "
+            "/Users/demo/JARVIS MARK 0/models/ και το "
+            "Voice Interface και LLM."
+        )
+        protected, replacements = _protect_spans(source)
+
+        self.assertNotIn("https://example.com", protected)
+        self.assertNotIn("/Users/demo", protected)
+        self.assertNotIn("C:\\Program Files", protected)
+        self.assertNotIn("\\\\server\\share", protected)
+        self.assertNotIn("/Users/demo/JARVIS MARK 0/models", protected)
+        self.assertNotIn("Voice Interface", protected)
+        self.assertNotIn("LLM", protected)
+        self.assertEqual(_restore_spans(protected, replacements), source)
+        with self.assertRaisesRegex(RuntimeError, "protected span"):
+            _restore_spans(
+                protected.replace("jarvis.invalid", "broken.invalid", 1),
+                replacements,
+            )
+
+        collision = (
+            "Έλεγξε το https://jarvis.invalid/p0 και το "
+            "https://jarvis-protected-1.invalid/p0 χωρίς να "
+            "αλλάξεις το LLM."
+        )
+        protected, replacements = _protect_spans(collision)
+        self.assertIn("jarvis-protected-2.invalid", protected)
+        self.assertEqual(_restore_spans(protected, replacements), collision)
+
+        ordered_source = "Χρησιμοποίησε F9 για το πρώτο και F10 για το δεύτερο."
+        protected, replacements = _protect_spans(ordered_source)
+        first, second = replacements[0][0], replacements[1][0]
+        swapped = protected.replace(first, "__SWAP__", 1)
+        swapped = swapped.replace(second, first, 1).replace("__SWAP__", second, 1)
+        with self.assertRaisesRegex(RuntimeError, "reordered protected spans"):
+            _restore_spans(swapped, replacements)
+        sentinel_origin = replacements[0][0].rsplit("/p", 1)[0]
+        with self.assertRaisesRegex(RuntimeError, "invented a protected sentinel"):
+            _restore_spans(
+                protected + f" {sentinel_origin}/p999q",
+                replacements,
+            )
+
+    def test_worker_does_not_treat_current_narrative_as_an_imperative(
+        self,
+    ) -> None:
+        encoded: list[str] = []
+
+        class Processor:
+            def __init__(self, *, model_file: str) -> None:
+                self.source = model_file.endswith("source.spm")
+
+            def encode(self, text: str, *, out_type):
+                if out_type is not str or not self.source:
+                    raise AssertionError("unexpected tokenizer input")
+                encoded.append(text)
+                return ["▁δοκιμή"]
+
+            def decode_pieces(self, tokens):
+                if self.source or tokens != ["▁result"]:
+                    raise AssertionError("unexpected decoder tokens")
+                return "Result."
+
+        class Translator:
+            def __init__(self, model_root: str, **kwargs) -> None:
+                del model_root, kwargs
+
+            def translate_batch(self, tokenized, **kwargs):
+                del kwargs
+                return [
+                    types.SimpleNamespace(hypotheses=[["▁result", "</s>"]])
+                    for _tokens in tokenized
+                ]
+
+        ctranslate2 = types.ModuleType("ctranslate2")
+        ctranslate2.__version__ = TRANSLATION_CTRANSLATE2_VERSION
+        ctranslate2.Translator = Translator
+        sentencepiece = types.ModuleType("sentencepiece")
+        sentencepiece.__version__ = TRANSLATION_SENTENCEPIECE_VERSION
+        sentencepiece.SentencePieceProcessor = Processor
+        request = {
+            "version": "jarvis.input-translation-request/1",
+            "request_id": "request",
+            "items": [
+                {
+                    "id": "current",
+                    "text": "Σταμάτησε να λειτουργεί χθες.",
+                },
+                {"id": "history.0.user", "text": "Σταμάτησε χθες."},
+            ],
+        }
+
+        with patch.dict(
+            sys.modules,
+            {"ctranslate2": ctranslate2, "sentencepiece": sentencepiece},
+        ):
+            response = translate_document(request, self.model_root)
+
+        self.assertEqual(
+            encoded,
+            [
+                "Σταμάτησε να λειτουργεί χθες.",
+                "Σταμάτησε χθες.",
+            ],
+        )
+        self.assertEqual(
+            response["items"],
+            [
+                {"id": "current", "text": "Result."},
+                {"id": "history.0.user", "text": "Result."},
+            ],
+        )
+
+    def test_machine_spans_exclude_terminal_url_punctuation_and_protect_numbers(
+        self,
+    ) -> None:
+        source = (
+            "Άνοιξε το https://example.com/status. "
+            "Περίμενε 8 δευτερόλεπτα."
+        )
+
+        protected, replacements = _protect_spans(source)
+
+        originals = [original for _sentinel, original in replacements]
+        self.assertIn("https://example.com/status", originals)
+        self.assertNotIn("https://example.com/status.", originals)
+        self.assertIn("8", originals)
+        self.assertEqual(_restore_spans(protected, replacements), source)
 
     def test_worker_main_reuses_one_engine_for_multiple_requests(self) -> None:
         requests = [

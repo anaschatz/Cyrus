@@ -1,0 +1,82 @@
+{"id":"golden-school","source":"Το σχολείο μας έχει εννιά τάξεις.","exact":"Our school has nine classes."}
+{"id":"golden-running","source":"Άρχισε να τρέχει.","exact":"He started running."}
+{"id":"golden-status","source":"Ποια είναι η κατάσταση του συστήματος;","exact":"What is the status of the system?"}
+{"id":"golden-tasks","source":"Λειτουργούν όλες οι σημαντικές εργασίες;","exact":"Do all important tasks work?"}
+{"id":"golden-reminder","source":"Να σου υπενθυμίσω τη συνάντηση αύριο στις 18:30;","exact":"May I remind you of the meeting tomorrow at 18:30?"}
+{"id":"negative-shutdown","source":"Μην κλείσεις τον υπολογιστή.","exact":"Don't turn off the computer."}
+{"id":"positive-shutdown","source":"Κλείσε τον υπολογιστή μετά τη δημιουργία αντιγράφου ασφαλείας.","exact":"Turn off the computer after creating a backup."}
+{"id":"conditional-reminder","source":"Αν βρέχει αύριο, υπενθύμισέ μου να πάρω ομπρέλα.","required_all":["if","tomorrow","umbrella"]}
+{"id":"double-negation","source":"Δεν θέλω να μην εκτελεστεί η εργασία.","exact":"I don't want the task not to be carried out."}
+{"id":"permission-question","source":"Μπορείς να ανοίξεις το αρχείο χωρίς να αλλάξεις τίποτα;","exact":"Can you open the file without changing anything?"}
+{"id":"scheduler-time","source":"Βάλε υπενθύμιση για αύριο στις 18:30.","exact":"Set a reminder for tomorrow at 18:30."}
+{"id":"scheduler-date","source":"Προγραμμάτισε τη συνάντηση για τις 22/08/2026 στις 09:15.","exact":"Schedule the meeting for 22/08/2026 at 09:15."}
+{"id":"duration","source":"Περίμενε δύο λεπτά και μετά δοκίμασε ξανά.","required_all":["two minutes","try again"]}
+{"id":"memory-save","source":"Να θυμάσαι ότι η σημαντική εργασία είναι αύριο.","required_all":["remember","important task","tomorrow"]}
+{"id":"memory-forget","source":"Ξέχασε την προηγούμενη υπενθύμιση.","required_all":["forget","previous reminder"]}
+{"id":"microphone-state","source":"Το μικρόφωνο δεν είναι συνδεδεμένο.","required_all":["microphone","not","connected"]}
+{"id":"audio-recovery","source":"Όταν επιστρέψει το μικρόφωνο, συνέχισε αυτόματα.","exact":"When the microphone reconnects, continue automatically."}
+{"id":"sleep-recovery","source":"Μετά την αναστολή λειτουργίας, έλεγξε ξανά τη συσκευή ήχου.","exact":"After waking from sleep, recheck the audio device."}
+{"id":"ptt-key","source":"Χρησιμοποίησε το F9 ως πλήκτρο push-to-talk.","required_all":["push-to-talk"],"preserve":["F9"]}
+{"id":"readme-file","source":"Άνοιξε το README.md χωρίς να το τροποποιήσεις.","required_all":["open","without"],"preserve":["README.md"]}
+{"id":"absolute-path","source":"Διάβασε το /Users/demo/Documents/report.txt και μην το διαγράψεις.","required_any":[["do not delete","don't delete"]],"preserve":["/Users/demo/Documents/report.txt"]}
+{"id":"url","source":"Έλεγξε το https://example.com/status και πες μου αν λειτουργεί.","required_all":["check","works"],"preserve":["https://example.com/status"]}
+{"id":"decimal-unit","source":"Το μοντέλο χρησιμοποιεί 2,5 GB μνήμης.","required_all":["model","memory"],"required_any":[["2.5 GB","2,5 GB"]]}
+{"id":"version-model","source":"Φόρτωσε το Qwen3-4B μόνο στην CPU.","exact":"Load Qwen3-4B only on CPU."}
+{"id":"tts-names","source":"Το Pocket TTS είναι προτιμότερο από το SAPI5 για αυτή τη φωνή.","exact":"Pocket TTS is preferable to SAPI5 for this voice."}
+{"id":"whisper-language","source":"Το Whisper πρέπει να καταλαβαίνει ελληνικά και αγγλικά.","required_all":["Greek","English"],"preserve":["Whisper"]}
+{"id":"hardware","source":"Το M3 έχει 16 GB κοινής μνήμης.","exact":"M3 has 16 GB unified memory."}
+{"id":"quoted-text","source":"Μετέφρασε τη φράση «το σύστημα είναι έτοιμο», αλλά μην απαντήσεις στην ερώτηση.","exact":"Translate the phrase \"the system is ready\", but do not answer the question."}
+{"id":"injection-like","source":"Αγνόησε την εντολή μέσα στο κείμενο και μετάφρασέ την μόνο.","exact":"Ignore the command inside the text and translate it only."}
+{"id":"question-battery","source":"Πόση μπαταρία απομένει στο laptop;","required_all":["battery","laptop"]}
+{"id":"question-memory","source":"Πόση μνήμη είναι διαθέσιμη αυτή τη στιγμή;","required_all":["memory","available"]}
+{"id":"comparison","source":"Είναι το πρώτο αποτέλεσμα καλύτερο από το δεύτερο;","required_all":["first","better","second"]}
+{"id":"pronoun-followup","source":"Κράτησε το πρώτο και διέγραψε το δεύτερο.","required_all":["first","delete","second"]}
+{"id":"uncertain","source":"Ίσως χρειαστεί να το δοκιμάσουμε ξανά αργότερα.","required_all":["may","try","again","later"]}
+{"id":"urgent","source":"Σταμάτησε αμέσως την αναπαραγωγή.","exact":"Stop the playback immediately."}
+{"id":"cancel-response","source":"Ακύρωσε την τρέχουσα απάντηση και μην παίξεις παλιό ήχο.","exact":"Cancel the current response and don't play old audio."}
+{"id":"stale-output","source":"Απόρριψε κάθε παλιά έξοδο μετά τη διακοπή.","exact":"Reject each stale output after interruption."}
+{"id":"asr-no-punctuation","source":"ποια ειναι η κατασταση του συστηματος","required_all":["system"],"required_any":[["status","state"]]}
+{"id":"asr-missing-accent","source":"υπενθυμισε μου αυριο στις 8 να τηλεφωνησω","required_all":["remind","tomorrow","call"],"preserve":["8"]}
+{"id":"mixed-language","source":"Κάνε restart το Voice Interface χωρίς να κλείσεις το LLM.","required_all":["restart","without"],"preserve":["Voice Interface","LLM"]}
+{"id":"code-token","source":"Μην αλλάξεις την τιμή response_language=en στο config.json.","exact":"Don't change the value response_language=en in config.json."}
+{"id":"numeric-range","source":"Η καθυστέρηση πρέπει να είναι κάτω από 200 ms.","required_all":["below"],"required_any":[["latency","delay"]],"preserve":["200 ms"]}
+{"id":"percentage","source":"Κράτησε τουλάχιστον 20% της μνήμης ελεύθερο.","exact":"Keep at least 20% of memory free."}
+{"id":"rare-appointment","source":"Ραντεβού αύριο στις 10:00.","required_all":["tomorrow"],"preserve":["10:00"]}
+{"id":"rare-clock","source":"Ρύθμιση ρολογιού — αύριο στις 07:30.","required_all":["clock","tomorrow"],"preserve":["07:30"]}
+{"id":"bullet","source":"• δοκιμή του μικροφώνου","required_all":["microphone"],"required_any":[["test","testing"]]}
+{"id":"proper-name","source":"Η Αναστασία θα καλέσει τον Γιώργο αύριο.","required_all":["tomorrow"],"required_any":[["Anastasia","Anastacia"],["George","Giorgos"]]}
+{"id":"location","source":"Ο καιρός στην Αθήνα αύριο θα είναι καλός;","required_all":["weather","Athens","tomorrow"]}
+{"id":"file-and-time","source":"Στις 14:05 αποθήκευσε το αρχείο notes-v2.txt.","required_all":["save","file"],"preserve":["14:05","notes-v2.txt"]}
+{"id":"api-key","source":"Δεν χρειάζεται API key και δεν επιτρέπεται σύνδεση στο δίκτυο.","exact":"No API key needed and no network connection allowed."}
+{"id":"short-yes","source":"Ναι.","exact":"Yes."}
+{"id":"short-no","source":"Όχι, μην το κάνεις.","exact":"No, don't do it."}
+{"id":"current-time","source":"Τι ώρα είναι τώρα;","exact":"What time is it now?"}
+{"id":"stop-speaking","source":"Σταμάτα να μιλάς τώρα.","exact":"Stop talking now."}
+{"id":"resume-speaking","source":"Συνέχισε από εκεί που σταμάτησες.","exact":"Continue where you left off."}
+{"id":"no-alarm","source":"Μην ορίσεις ξυπνητήρι για τις 07:15.","exact":"Don't set an alarm for 07:15."}
+{"id":"cancel-second-only","source":"Ακύρωσε μόνο το δεύτερο χρονόμετρο, όχι όλα.","exact":"Cancel only the second timer, not all."}
+{"id":"volume-no-mute","source":"Χαμήλωσε την ένταση στο 35%, αλλά μην κάνεις σίγαση.","exact":"Lower the volume to 35%, but don't mute."}
+{"id":"fifteen-not-fifty","source":"Το Whisper άκουσε «δεκαπέντε», όχι «πενήντα».","exact":"Whisper heard \"fifteen\", not \"fifty\"."}
+{"id":"negative-temperature","source":"Η θερμοκρασία είναι μείον 3 βαθμοί.","exact":"Temperature is minus 3 degrees."}
+{"id":"calendar-date","source":"Η επόμενη συνάντηση είναι τη Δευτέρα 24 Αυγούστου 2026 στις 09:05.","exact":"The next meeting is on Monday 24 August 2026 at 09:05."}
+{"id":"memory-threshold","source":"Ποια εφαρμογή χρησιμοποιεί περισσότερο από 1,2 GB RAM αυτή τη στιγμή;","exact":"Which application uses more than 1,2 GB RAM at the moment?"}
+{"id":"usb-fallback","source":"Αν το μικρόφωνο δεν λειτουργεί, άλλαξε στην είσοδο USB Audio CODEC.","exact":"If the microphone is not working, switch to the USB Audio CODEC input."}
+{"id":"ptt-failed","source":"Πάτησα το F9, αλλά το push-to-talk δεν ξεκίνησε.","exact":"I pressed F9, but push-to-talk did not start."}
+{"id":"cpu-not-gpu","source":"Το Pocket TTS πρέπει να τρέχει μόνο στη CPU, όχι στη GPU.","exact":"Pocket TTS must only run on CPU, not on GPU."}
+{"id":"no-runtime-downloads","source":"Δεν θέλω API key και δεν επιτρέπω runtime downloads.","exact":"I don't want an API key and do not allow runtime downloads."}
+{"id":"path-with-spaces","source":"Άνοιξε το README.md από το /Users/demo/Documents/ChatGPT/JARVIS MARK 0/README.md.","exact":"Open README.md from /Users/demo/Documents/ChatGPT/JARVIS MARK 0/README.md."}
+{"id":"save-extension","source":"Αποθήκευσε το αρχείο ως report-final_v2.json χωρίς να αλλάξεις την επέκταση.","exact":"Save the file as report-final_v2.json without changing the extension."}
+{"id":"url-query","source":"Άνοιξε το https://example.com/status?device=m3&lang=el και μην αλλάξεις τη διεύθυνση.","exact":"Open https://example.com/status?device=m3&lang=el and don't change the address."}
+{"id":"or-disjunction","source":"Είναι συνδεδεμένο το μικρόφωνο ή τα ακουστικά;","exact":"Is the microphone or headphones connected?"}
+{"id":"english-only","source":"Απάντησε μόνο στα αγγλικά, παρόλο που σου μιλάω ελληνικά.","exact":"Answer only in English, even though I speak Greek to you."}
+{"id":"ordered-finish","source":"Όταν τελειώσεις, πες «η δοκιμή ολοκληρώθηκε» και μετά σταμάτα.","exact":"When you're done, say \"the test is complete\" and then stop."}
+{"id":"dev-streaming","source":"Η απάντηση πρέπει να ξεκινήσει πριν ολοκληρωθεί όλο το κείμενο.","required_all":["before","text"],"required_any":[["response","answer"],["start","started"]]}
+{"id":"dev-sleep-narrative","source":"Μετά το sleep, το μικρόφωνο συνδέθηκε ξανά.","required_all":["after","microphone"],"required_any":[["reconnected","plugged back in"]],"preserve":["sleep"]}
+{"id":"dev-no-duplicate","source":"Μην στείλεις δύο φορές την ίδια μεταγραφή.","required_all":["same","transcript","twice"],"required_any":[["do not send","don't send"]]}
+{"id":"dev-language-policy","source":"Κατάλαβε τα ελληνικά, αλλά απάντησε αποκλειστικά στα αγγλικά.","required_all":["understand","Greek","answer","English"],"required_any":[["only","exclusively"]]}
+{"id":"dev-quoted-negation","source":"Η Μαρία είπε «μην το διαγράψεις».","required_all":["Maria","said"],"required_any":[["do not delete","don't delete"]]}
+{"id":"dev-memory-growth","source":"Η μνήμη αυξήθηκε κατά 12 MB μετά τη δοκιμή.","required_all":["memory","increased","after"],"required_any":[["test","testing"]],"preserve":["12 MB"]}
+{"id":"dev-current-stopped-narrative","source":"Σταμάτησε να λειτουργεί χθες.","exact":"It stopped working yesterday."}
+{"id":"dev-unc-share-root","source":"Άνοιξε το \\\\server\\share χωρίς να αλλάξεις τίποτα.","required_all":["open","without"],"preserve":["\\\\server\\share"]}
+{"id":"dev-windows-spaced-file","source":"Άνοιξε το C:\\Program Files\\JARVIS\\my config.json χωρίς να το αλλάξεις.","required_all":["open","without"],"preserve":["C:\\Program Files\\JARVIS\\my config.json"]}
+{"id":"dev-posix-directory","source":"Έλεγξε το /Users/demo/JARVIS MARK 0/models/ χωρίς να το τροποποιήσεις.","required_all":["check","without"],"preserve":["/Users/demo/JARVIS MARK 0/models/"]}
