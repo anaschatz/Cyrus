@@ -1,0 +1,72 @@
+{
+  "version": "jarvis.translation-build-lock/1",
+  "model_id": "Helsinki-NLP/opus-mt-tc-big-el-en",
+  "revision": "a69108562775c6727edf3540346f9d8900b73634",
+  "license": "CC-BY-4.0",
+  "source_language": "el",
+  "target_language": "en",
+  "source_files": [
+    {"path": "README.md", "size": 5959, "sha256": "4392ea31df3288ed502f43d1a6946a0f5df687f437976c4b17ec2a38daabe5f1"},
+    {"path": "config.json", "size": 1137, "sha256": "74a2e3223e486497acd40af7200a6e30e39d3eb033f6e97b96c919c401a0762d"},
+    {"path": "generation_config.json", "size": 301, "sha256": "615f94a6d4048e4e36a4deb53a5568579b34561fed3ed51c2b0d74c94a4cbee1"},
+    {"path": "pytorch_model.bin", "size": 593887683, "sha256": "2a30b159a0e11459c18e5613255087f3adfa3ecaffb551e9609638fe69ca6d6d"},
+    {"path": "source.spm", "size": 1003051, "sha256": "1f78d71e80e2dc22697802dfea24855499c5d482d1c47611f96a96af0b38ea4f"},
+    {"path": "special_tokens_map.json", "size": 65, "sha256": "09059cedc26bc46bc09a52f05b92d4922e11917e87f3b92059bb1a63a59ab2c4"},
+    {"path": "target.spm", "size": 798530, "sha256": "eb161fb698225d722b251738042d6e27481a66ba96477ab0fb046d8aa937ab2c"},
+    {"path": "tokenizer_config.json", "size": 337, "sha256": "ff45a3a17d2730f46ca937763d394cb75f1defb68c4262f33525ffae2c697fd2"},
+    {"path": "vocab.json", "size": 2378080, "sha256": "9471bb9e28087dbc7961228a7a7495d3f6dd3e5a6c62cfc89d9efd2fc243340e"}
+  ],
+  "builder": {
+    "python_implementation": "CPython",
+    "python_version": "3.11.14",
+    "packages": {
+      "Jinja2": "3.1.6",
+      "MarkupSafe": "3.0.3",
+      "PyYAML": "6.0.3",
+      "certifi": "2026.7.22",
+      "charset-normalizer": "3.5.1",
+      "ctranslate2": "4.8.1",
+      "filelock": "3.32.3",
+      "fsspec": "2026.7.0",
+      "hf-xet": "1.6.0",
+      "huggingface-hub": "0.36.0",
+      "idna": "3.19",
+      "mpmath": "1.3.0",
+      "networkx": "3.6.1",
+      "numpy": "2.4.6",
+      "packaging": "26.3",
+      "regex": "2026.7.19",
+      "requests": "2.34.2",
+      "safetensors": "0.8.0",
+      "sentencepiece": "0.2.2",
+      "setuptools": "84.0.0",
+      "sympy": "1.14.0",
+      "tokenizers": "0.22.2",
+      "torch": "2.13.0",
+      "tqdm": "4.70.0",
+      "transformers": "4.57.6",
+      "typing_extensions": "4.16.0",
+      "urllib3": "2.7.0"
+    }
+  },
+  "conversion": {
+    "api": "ctranslate2.converters.TransformersConverter",
+    "activation_scales": null,
+    "copy_files": ["source.spm", "target.spm"],
+    "load_as_float16": true,
+    "revision": null,
+    "low_cpu_mem_usage": false,
+    "trust_remote_code": false,
+    "vocab_mapping": null,
+    "quantization": "int8",
+    "force": false,
+    "network_allowed": false
+  },
+  "runtime_files": [
+    {"path": "config.json", "size": 223, "sha256": "8f6496adfc930cbfecbe8281112197705c488fab47d34b4829b06d7f478909af"},
+    {"path": "model.bin", "size": 239799963, "sha256": "5b467e13bdcab24710b98088ffce535117a72f33de6ff0a2c3c2d520f8ff4429"},
+    {"path": "shared_vocabulary.json", "size": 1977376, "sha256": "de77938983aa10bc06e52ed06ab217e25e4545b61b04341034c0d3f0b6efcea7"},
+    {"path": "source.spm", "size": 1003051, "sha256": "1f78d71e80e2dc22697802dfea24855499c5d482d1c47611f96a96af0b38ea4f"},
+    {"path": "target.spm", "size": 798530, "sha256": "eb161fb698225d722b251738042d6e27481a66ba96477ab0fb046d8aa937ab2c"}
+  ]
+}

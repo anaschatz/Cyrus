@@ -1,0 +1,14 @@
+Greek-to-English translation model attribution
+
+Model: Helsinki-NLP/opus-mt-tc-big-el-en
+Pinned revision: a69108562775c6727edf3540346f9d8900b73634
+Upstream: https://huggingface.co/Helsinki-NLP/opus-mt-tc-big-el-en
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+The runtime artifact is a local CTranslate2 INT8 conversion of the pinned
+upstream model. The conversion changes the storage and numeric representation;
+it does not add training data or claim authorship of the upstream model.
+
+OPUS-MT model authors and contributors retain attribution stated in the pinned
+upstream model card and its cited OPUS/Marian research.

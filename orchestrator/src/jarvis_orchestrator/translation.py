@@ -46,22 +46,9 @@ TRANSLATION_REQUIRED_FILES = frozenset(
         "target.spm",
     }
 )
-_CONVERSION_POLICY = {
-    "converter": "ct2-transformers-converter",
-    "ctranslate2_version": TRANSLATION_CTRANSLATE2_VERSION,
-    "transformers_version": "4.57.6",
-    "torch_version": "2.13.0",
-    "sentencepiece_version": TRANSLATION_SENTENCEPIECE_VERSION,
-    "model_id": TRANSLATION_MODEL_ID,
-    "revision": TRANSLATION_MODEL_REVISION,
-    "quantization": TRANSLATION_COMPUTE_TYPE,
-    "load_as_float16": True,
-    "copied_files": ["source.spm", "target.spm"],
-    "runtime_files": sorted(TRANSLATION_REQUIRED_FILES),
-}
-TRANSLATION_CONVERSION_POLICY_SHA256 = hashlib.sha256(
-    canonical_json(_CONVERSION_POLICY).encode("utf-8")
-).hexdigest()
+TRANSLATION_CONVERSION_POLICY_SHA256 = (
+    "f8ddf73f7c934859be026eef29efe23eb2ed95aa7f2effb318f7ba1a0b6dd0a1"
+)
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _REVISION = re.compile(r"[0-9a-f]{40}")
 _COMPONENT_ID = re.compile(r"[a-z][a-z0-9_.:-]{0,63}")
