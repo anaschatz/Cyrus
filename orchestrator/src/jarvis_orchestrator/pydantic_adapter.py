@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextvars
 import asyncio
+import json
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from contextlib import suppress
@@ -27,7 +28,13 @@ from .domain import (
     canonical_json,
 )
 from .history import canonical_messages_to_pydantic
-from .model import DispatchPermit, GuardedAsyncTransport, _dispatch_reservation
+from .model import (
+    BudgetedModelPort,
+    DispatchPermit,
+    GuardedAsyncTransport,
+    LocalInferenceModelPort,
+    _dispatch_reservation,
+)
 from .store import OrchestratorStore
 from .tool_contracts import ToolDefinitionV1
 from .research import (
@@ -132,6 +139,83 @@ def _current_context() -> PydanticDispatchContext:
     return result
 
 
+class _DirectLocalTextStreamPort:
+    """Incremental, cancellation-safe final text stream for the local appliance."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        bearer_token: str,
+        timeout_seconds: float,
+        http_transport: Any | None,
+    ) -> None:
+        self._url = base_url.rstrip("/") + "/chat/completions"
+        self._bearer_token = bearer_token
+        self._timeout_seconds = timeout_seconds
+        self._http_transport = http_transport
+        self._payload_builder = LocalInferenceModelPort(
+            base_url=base_url,
+            bearer_token=bearer_token,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def stream(self, request: ModelRequest):
+        import httpx
+
+        payload = self._payload_builder._payload(request)
+        timeout = self._timeout_seconds
+        if request.timeout_seconds is not None:
+            timeout = min(timeout, request.timeout_seconds)
+        client = httpx.AsyncClient(
+            transport=GuardedAsyncTransport(self._http_transport),
+            follow_redirects=False,
+            timeout=timeout,
+            trust_env=False,
+        )
+        try:
+            async with client.stream(
+                "POST",
+                self._url,
+                content=canonical_json(payload).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {self._bearer_token}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    parsed = json.loads(data)
+                    usage_raw = parsed.get("usage")
+                    usage = None
+                    if isinstance(usage_raw, dict):
+                        usage = ModelUsage(
+                            usage_raw.get("completion_tokens"),
+                            usage_raw.get("prompt_tokens"),
+                        )
+                    choices = parsed.get("choices") or []
+                    text = ""
+                    if choices:
+                        text = choices[0].get("delta", {}).get("content") or ""
+                    yield ModelChunk(text, usage)
+        except asyncio.CancelledError:
+            raise
+        except OrchestratorError:
+            raise
+        except (httpx.HTTPError, json.JSONDecodeError, UnicodeError) as exc:
+            raise OrchestratorError(
+                "backend_failure", status=503, retryable=True
+            ) from exc
+        finally:
+            await client.aclose()
+
+
 class PydanticAgentModelPort:
     """Text ModelPort backed by the pinned Pydantic AI Agent runtime."""
 
@@ -145,6 +229,7 @@ class PydanticAgentModelPort:
         json_schema_capable: bool,
         registered_tools: tuple[str, ...],
         stream_runtime_factory: Any | None = None,
+        final_stream_port: Any | None = None,
     ) -> None:
         self._agent = agent
         self.__budgeted_model = budgeted_model
@@ -153,9 +238,15 @@ class PydanticAgentModelPort:
         self._json_schema_capable = json_schema_capable
         self._registered_tools = frozenset(registered_tools)
         self._stream_runtime_factory = stream_runtime_factory
+        self._final_stream_port = final_stream_port
 
     async def stream(self, request: ModelRequest):
         from pydantic_ai.usage import UsageLimits
+
+        if self._final_stream_port is not None and request.purpose == "final":
+            async for chunk in self._final_stream_port.stream(request):
+                yield chunk
+            return
 
         agent = self._agent
         stream_http_client = None
@@ -787,6 +878,15 @@ def build_local_pydantic_port(
         stream_agent, _stream_budgeted, stream_http_client = make_runtime()
         return stream_agent, stream_http_client
 
+    final_stream_port = BudgetedModelPort(
+        store,
+        _DirectLocalTextStreamPort(
+            base_url=base_url,
+            bearer_token=bearer_token,
+            timeout_seconds=timeout_seconds,
+            http_transport=http_transport,
+        ),
+    )
     return PydanticAgentModelPort(
         agent,
         budgeted,
@@ -795,4 +895,5 @@ def build_local_pydantic_port(
         json_schema_capable=json_schema,
         registered_tools=registered_tools,
         stream_runtime_factory=make_stream_runtime,
+        final_stream_port=final_stream_port,
     )
