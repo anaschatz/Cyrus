@@ -13,7 +13,11 @@ from jarvis_voice.config import voice_config_from_mapping
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.asr_selection import create_macos_asr_backend, with_faster_whisper_cpu_smoke
 from jarvis_voice.macos.doctor import macos_doctor_report
-from jarvis_voice.manifest import ManifestValidationResult
+from jarvis_voice.manifest import (
+    BASE_MODEL_MANIFEST,
+    LARGE_V3_TURBO_MODEL_MANIFEST,
+    ManifestValidationResult,
+)
 from jarvis_voice.voice_auth import create_voice_auth_key_file
 
 
@@ -36,8 +40,8 @@ class MacCpuSmokeSelectionTests(unittest.TestCase):
     def test_factory_constructs_only_the_selected_backend(self) -> None:
         calls: list[tuple[str, object]] = []
 
-        def cpu_factory(model_directory: str, *, compute_type: str):
-            calls.append(("cpu", (model_directory, compute_type)))
+        def cpu_factory(model_directory: str, *, compute_type: str, manifest):  # type: ignore[no-untyped-def]
+            calls.append(("cpu", (model_directory, compute_type, manifest)))
             return object()
 
         def cpp_factory(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -47,21 +51,47 @@ class MacCpuSmokeSelectionTests(unittest.TestCase):
         selected = with_faster_whisper_cpu_smoke(voice_config_from_mapping({}), "/private/local/model")
         backend = create_macos_asr_backend(selected, cpu_factory=cpu_factory, whisper_cpp_factory=cpp_factory)  # type: ignore[arg-type]
         self.assertIsNotNone(backend)
-        self.assertEqual(calls, [("cpu", ("/private/local/model", "int8"))])
+        self.assertEqual(
+            calls,
+            [("cpu", ("/private/local/model", "int8", BASE_MODEL_MANIFEST))],
+        )
 
         calls.clear()
         create_macos_asr_backend(voice_config_from_mapping({}), cpu_factory=cpu_factory, whisper_cpp_factory=cpp_factory)  # type: ignore[arg-type]
         self.assertEqual(calls[0][0], "cpp")
 
+    def test_factory_propagates_large_v3_turbo_manifest(self) -> None:
+        selected = with_faster_whisper_cpu_smoke(
+            voice_config_from_mapping(
+                {"asr": {"model_profile": "large-v3-turbo"}}
+            ),
+            "/private/local/turbo-model",
+        )
+        cpu_factory = mock.Mock(return_value=object())
+
+        create_macos_asr_backend(selected, cpu_factory=cpu_factory)
+
+        self.assertIs(
+            cpu_factory.call_args.kwargs["manifest"],
+            LARGE_V3_TURBO_MODEL_MANIFEST,
+        )
+
 
 class MacCpuSmokeDoctorTests(unittest.TestCase):
-    def _config(self, vad_path: Path, auth_key_path: Path):
+    def _config(
+        self,
+        vad_path: Path,
+        auth_key_path: Path,
+        *,
+        model_profile: str = "base",
+    ):
         raw = vad_path.read_bytes()
         import hashlib
 
         base = voice_config_from_mapping({
             "orchestrator_url": "ws://127.0.0.1:8765",
             "voice_auth_key_file": str(auth_key_path),
+            "asr": {"model_profile": model_profile},
             "vad": {"artifact": {"path": str(vad_path), "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}},
             "macos": {"system_voices": {"el-GR": "GreekVoice", "en-US": "EnglishVoice"}},
         })
@@ -96,6 +126,7 @@ class MacCpuSmokeDoctorTests(unittest.TestCase):
         self.assertTrue(report["ready"])
         self.assertEqual(report["milestone"], "macos-cpu-smoke")
         self.assertEqual(report["checks"]["asr"]["backend"], "faster_whisper_cpu_smoke")
+        self.assertEqual(report["checks"]["asr"]["model_profile"], "base")
         self.assertFalse(report["checks"]["asr"]["model_loaded"])
         self.assertFalse(report["checks"]["asr"]["network_fallback"])
         self.assertEqual(report["checks"]["whisper_cpp"]["status"], "deferred")
@@ -104,6 +135,42 @@ class MacCpuSmokeDoctorTests(unittest.TestCase):
         self.assertNotIn("ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66", encoded)
         self.assertFalse(report["network_used"])
         self.assertFalse(report["content_captured"])
+
+    def test_doctor_reports_selected_turbo_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            vad = Path(temp) / "silero.onnx"
+            vad.write_bytes(b"vad")
+            auth_key = Path(temp) / "voice-auth.json"
+            create_voice_auth_key_file(auth_key, key=b"k" * 32)
+            config = self._config(
+                vad,
+                auth_key,
+                model_profile="large-v3-turbo",
+            )
+            dependencies = {
+                name: {"status": "ready", "code": "dependency.available"}
+                for name in ("sounddevice", "soxr", "onnxruntime", "websockets", "faster-whisper", "ctranslate2", "numpy")
+            }
+            report = macos_doctor_report(
+                config,
+                platform_name="darwin",
+                machine="arm64",
+                macos_version="14.6",
+                python_version=(3, 11),
+                pointer_bits=64,
+                permission_probe=lambda: True,
+                audio_probe=lambda device: True,
+                voice_probe=lambda: {"GreekVoice", "EnglishVoice"},
+                dependencies=dependencies,
+                model_validator=lambda path: ManifestValidationResult(True, "model.manifest_valid", "valid", files_checked=5),
+            )
+
+        self.assertEqual(report["checks"]["asr"]["model_profile"], "large-v3-turbo")
+        self.assertEqual(
+            report["checks"]["asr"]["model_id"],
+            "dropbox-dash/faster-whisper-large-v3-turbo",
+        )
+        self.assertEqual(report["checks"]["asr"]["files_checked"], 5)
 
     def test_invalid_model_and_missing_dependencies_are_blocking(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

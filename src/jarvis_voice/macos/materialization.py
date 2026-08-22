@@ -19,7 +19,7 @@ from ..asr import FasterWhisperCpuBackend
 from ..backends import AudioChunk
 from ..config import load_voice_config, voice_config_from_mapping
 from ..errors import BackendError
-from ..manifest import validate_model_directory
+from ..manifest import model_manifest_for_profile, validate_model_directory
 from ..qualification import write_report
 from ..vad import SileroOnnxVad, validate_artifact
 from ..voice_auth import VoiceAuthError, load_voice_auth_key
@@ -267,9 +267,6 @@ def materialize_private_config(
     english_voice: str,
     voice_auth_key: str,
 ) -> dict[str, object]:
-    validation = validate_model_directory(model_directory)
-    if not validation.ok:
-        raise BackendError(validation.code, "Whisper model validation failed", subsystem="materialization")
     try:
         raw = json.loads(Path(base_config).read_text(encoding="utf-8"))
         vad_raw = json.loads(Path(vad_manifest).read_text(encoding="utf-8"))
@@ -284,6 +281,13 @@ def materialize_private_config(
         or set(vad_raw["artifact"]) != {"path", "size", "sha256"}
     ):
         raise BackendError("materialization.vad_manifest_invalid", "VAD manifest is invalid", subsystem="materialization")
+    base_voice_config = voice_config_from_mapping(raw)
+    validation = validate_model_directory(
+        model_directory,
+        model_manifest_for_profile(base_voice_config.asr.model_profile),
+    )
+    if not validation.ok:
+        raise BackendError(validation.code, "Whisper model validation failed", subsystem="materialization")
     artifact = vad_raw["artifact"]
     ok, code = validate_artifact(artifact.get("path"), artifact.get("size"), artifact.get("sha256"))
     if not ok:
@@ -305,7 +309,6 @@ def materialize_private_config(
     raw.setdefault("vad", {})["artifact"] = dict(artifact)
     raw.setdefault("macos", {})["asr_backend"] = "faster_whisper_cpu_smoke"
     raw["macos"]["system_voices"] = {"el-GR": greek_voice, "en-US": english_voice}
-    load_voice_config(base_config)
     voice_config_from_mapping(raw)
     write_report(output, raw)
     return {"ready": True, "code": "materialization.private_config_written", "network_used": False}
@@ -313,7 +316,11 @@ def materialize_private_config(
 
 def probe_local_backends(config_path: str, model_directory: str) -> dict[str, object]:
     config = load_voice_config(config_path)
-    asr = FasterWhisperCpuBackend(model_directory, compute_type=config.asr.cpu_compute_type)
+    asr = FasterWhisperCpuBackend(
+        model_directory,
+        compute_type=config.asr.cpu_compute_type,
+        manifest=model_manifest_for_profile(config.asr.model_profile),
+    )
     artifact = config.vad.artifact
     if not artifact.path or artifact.size is None or not artifact.sha256:
         raise BackendError("vad.artifact_manifest_required", "VAD manifest is required", subsystem="materialization")

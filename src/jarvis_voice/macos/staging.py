@@ -13,7 +13,11 @@ from typing import Protocol
 
 from .. import PROTOCOL_VERSION, __version__
 from ..config import VoiceConfig
-from ..manifest import ManifestValidationResult, validate_model_directory
+from ..manifest import (
+    ManifestValidationResult,
+    model_manifest_for_profile,
+    validate_model_directory,
+)
 from ..vad import validate_artifact
 from .doctor import _default_voice_probe, _macos_version_tuple, _status
 from .ptt import CoreGraphicsEventTapAdapter
@@ -187,16 +191,23 @@ def macos_staging_report(
     wheelhouse: str | None = None,
     wheelhouse_manifest: str | None = None,
     python_runner: Callable[..., CompletedProbe] = subprocess.run,
-    model_validator: Callable[[str | None], ManifestValidationResult] = validate_model_directory,
+    model_validator: Callable[[str | None], ManifestValidationResult] | None = None,
     permission_probe: Callable[[], bool] | None = None,
     voice_probe: Callable[[], set[str]] | None = None,
 ) -> dict[str, object]:
     python = probe_python(python_executable, runner=python_runner)
-    model_validation = model_validator(config.whisper_model_directory)
+    manifest = model_manifest_for_profile(config.asr.model_profile)
+    model_validation = (
+        model_validator(config.whisper_model_directory)
+        if model_validator is not None
+        else validate_model_directory(config.whisper_model_directory, manifest)
+    )
     model = _status(
         "ready" if model_validation.ok else "blocked",
         "staging.faster_whisper_model_valid" if model_validation.ok else model_validation.code,
         files_checked=model_validation.files_checked,
+        model_profile=config.asr.model_profile,
+        model_id=manifest.model_id,
         model_loaded=False,
     )
     artifact = config.vad.artifact

@@ -25,7 +25,7 @@ from jarvis_voice.macos.materialization import (
 )
 from jarvis_voice.macos.staging import validate_wheelhouse
 from jarvis_voice.errors import BackendError
-from jarvis_voice.manifest import ManifestValidationResult
+from jarvis_voice.manifest import LARGE_V3_TURBO_MODEL_MANIFEST, ManifestValidationResult
 from jarvis_voice.voice_auth import create_voice_auth_key_file
 
 
@@ -170,11 +170,46 @@ class PrivateConfigTests(unittest.TestCase):
         self.assertEqual(raw["whisper_model_directory"], "/private/model")
         self.assertEqual(raw["voice_auth_key_file"], str(auth_key))
 
+    def test_materialization_validates_selected_turbo_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            base = root / "base.json"
+            base.write_text(json.dumps({
+                "asr": {"model_profile": "large-v3-turbo"},
+                "vad": {"artifact": {"path": None, "size": None, "sha256": None}},
+            }))
+            vad = root / "silero.onnx"
+            vad.write_bytes(b"vad")
+            manifest = root / "vad.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 1,
+                "artifact": {"path": str(vad), "size": 3, "sha256": hashlib.sha256(b"vad").hexdigest()},
+                "source": {"package": "silero-vad", "version": "6.2.1", "wheel_sha256": "source"},
+            }))
+            auth_key = root / "voice-auth.json"
+            create_voice_auth_key_file(auth_key, key=b"k" * 32)
+            validator = mock.Mock(return_value=ManifestValidationResult(True, "model.manifest_valid", "valid", files_checked=5))
+            with (
+                mock.patch("jarvis_voice.macos.materialization.validate_model_directory", validator),
+                mock.patch("jarvis_voice.macos.materialization._default_voice_probe", return_value={"Melina", "Samantha"}),
+            ):
+                materialize_private_config(
+                    str(base),
+                    "/private/turbo-model",
+                    str(manifest),
+                    str(root / "voice.json"),
+                    greek_voice="Melina",
+                    english_voice="Samantha",
+                    voice_auth_key=str(auth_key),
+                )
+
+        self.assertIs(validator.call_args.args[1], LARGE_V3_TURBO_MODEL_MANIFEST)
+
 
 class BackendProbeTests(unittest.TestCase):
     def test_probe_uses_speech_detected_and_never_opens_microphone(self) -> None:
         fake_config = SimpleNamespace(
-            asr=SimpleNamespace(cpu_compute_type="int8"),
+            asr=SimpleNamespace(cpu_compute_type="int8", model_profile="base"),
             vad=SimpleNamespace(
                 artifact=SimpleNamespace(path="/vad", size=3, sha256="hash"),
                 threshold=0.5,

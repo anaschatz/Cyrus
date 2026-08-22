@@ -134,6 +134,11 @@ class StagingReportTests(unittest.TestCase):
         self.assertEqual(report["next_action"], "staging.offline_install_requires_explicit_approval")
         self.assertFalse(report["installation_performed"])
         self.assertFalse(report["network_used"])
+        self.assertEqual(report["checks"]["model"]["model_profile"], "base")
+        self.assertEqual(
+            report["checks"]["model"]["model_id"],
+            "Systran/faster-whisper-base",
+        )
         self.assertNotIn(str(root), encoded)
         self.assertNotIn("secret-model", encoded)
         self.assertNotRegex(encoded, r"[0-9a-f]{64}")

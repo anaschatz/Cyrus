@@ -14,7 +14,11 @@ from typing import Any
 from .. import PROTOCOL_VERSION, __version__
 from ..config import VoiceConfig, configured_voice_auth_key, is_loopback_websocket_url
 from ..errors import BackendError
-from ..manifest import ManifestValidationResult, validate_model_directory
+from ..manifest import (
+    ManifestValidationResult,
+    model_manifest_for_profile,
+    validate_model_directory,
+)
 from ..vad import validate_artifact
 from .ptt import CoreGraphicsEventTapAdapter, mac_ptt_keycode
 from .whisper_cpp import _validate_artifact
@@ -168,13 +172,19 @@ def macos_doctor_report(
         "initial_prompt": False,
     }
     if config.macos.asr_backend == "faster_whisper_cpu_smoke":
-        validation = (model_validator or validate_model_directory)(config.whisper_model_directory)
+        manifest = model_manifest_for_profile(config.asr.model_profile)
+        validation = (
+            model_validator(config.whisper_model_directory)
+            if model_validator is not None
+            else validate_model_directory(config.whisper_model_directory, manifest)
+        )
         asr = {
             "status": "ready" if validation.ok else "blocked",
             "code": "asr.faster_whisper_model_valid" if validation.ok else validation.code,
             "backend": "faster_whisper_cpu_smoke",
-            "engine": "faster-whisper/ctranslate2",
-            "model_id": "Systran/faster-whisper-base",
+            "engine": manifest.engine,
+            "model_id": manifest.model_id,
+            "model_profile": config.asr.model_profile,
             "files_checked": validation.files_checked,
             "local_files_only": True,
             "network_fallback": False,

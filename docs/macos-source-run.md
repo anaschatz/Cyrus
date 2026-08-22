@@ -14,6 +14,34 @@ M5 adds source-run parity only. It does not install dependencies, build `whisper
 
 The existing Windows `faster-whisper` model directory is a different runtime format. Pointing the macOS sidecar at that directory is rejected; M5 never attempts implicit conversion or a tokenizer/model fallback.
 
+## Optional faster-whisper large-v3-turbo profile
+
+The source runtime can instead use the same pinned CTranslate2
+`large-v3-turbo` pack as Windows on CPU. This is an explicit profile, not an
+automatic replacement for `whisper.cpp`:
+
+```json
+{
+  "whisper_model_directory": "/absolute/path/to/faster-whisper-large-v3-turbo-0a363e9",
+  "asr": {
+    "model_profile": "large-v3-turbo",
+    "execution_profile": "cpu",
+    "cpu_compute_type": "int8"
+  },
+  "macos": {
+    "asr_backend": "faster_whisper_cpu_smoke"
+  }
+}
+```
+
+The directory is accepted only when its five runtime files match the pinned
+sizes and SHA-256 values in `LARGE_V3_TURBO_MODEL_MANIFEST`. Loading always
+uses `local_files_only=True`; runtime downloads and tokenizer fallback remain
+forbidden. On a 16-GB Mac, qualify this profile together with the actual LLM
+and TTS because unified memory, rather than separate VRAM, is shared by all
+three workloads. Keep the Base model/config as a rollback profile until the
+physical Greek/English A/B gate passes.
+
 ## Provision the authenticated local boundary
 
 Create one per-install key outside the repository. Its private parent directory

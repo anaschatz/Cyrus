@@ -10,6 +10,7 @@ from ..asr import FasterWhisperCpuBackend
 from ..backends import AsrBackend
 from ..config import VoiceConfig
 from ..errors import BackendError
+from ..manifest import model_manifest_for_profile
 from .whisper_cpp import WhisperCppSidecarBackend
 
 
@@ -53,6 +54,7 @@ def create_macos_asr_backend(
         return cpu_factory(
             config.whisper_model_directory,
             compute_type=config.asr.cpu_compute_type,
+            manifest=model_manifest_for_profile(config.asr.model_profile),
         )
     if config.macos.asr_backend == "whisper_cpp":
         return whisper_cpp_factory(
