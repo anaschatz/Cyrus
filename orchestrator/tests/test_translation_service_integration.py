@@ -12,7 +12,14 @@ import _bootstrap  # noqa: F401
 
 from jarvis_orchestrator.config import OrchestratorConfig
 from jarvis_orchestrator.context_assembler import ContextAssemblyError
-from jarvis_orchestrator.domain import CanonicalTurnV1, ModelChunk, ModelRequest, TaskState
+from jarvis_orchestrator.domain import (
+    CanonicalTurnV1,
+    ModelChunk,
+    ModelRequest,
+    ModelUsage,
+    TaskSnapshot,
+    TaskState,
+)
 from jarvis_orchestrator.memory import MemoryItem, MemoryRecall
 from jarvis_orchestrator.model import BudgetedModelPort
 from jarvis_orchestrator.service import OrchestratorService
@@ -28,6 +35,15 @@ class NeverModel:
         self.requests.append(request)
         raise AssertionError("model dispatch was not expected")
         yield  # pragma: no cover
+
+
+class RecordingModel:
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
+    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
+        self.requests.append(request)
+        yield ModelChunk("Ready.", ModelUsage(output_tokens=2, input_tokens=4))
 
 
 class RecordingTranslator:
@@ -210,5 +226,36 @@ class TranslationServiceIntegrationTests(unittest.TestCase):
         ]
         self.assertEqual(len(cancelled), 1)
         self.assertFalse(cancelled[0].payload["partial_output"])
+
+    def test_model_deadline_is_recomputed_after_translation(self) -> None:
+        translator = RecordingTranslator({"current": "Answer in English."})
+        model = RecordingModel()
+        service = OrchestratorService(
+            self.config(enabled=True),
+            self.store,
+            BudgetedModelPort(self.store, model),
+            input_translator=translator,
+        )
+        task = self.admit("Απάντησε στα αγγλικά.")
+
+        with (
+            patch.object(
+                TaskSnapshot,
+                "remaining_active_seconds",
+                side_effect=(10.0, 4.0),
+            ),
+            patch.object(
+                TaskSnapshot,
+                "remaining_absolute_seconds",
+                side_effect=(10.0, 3.0),
+            ),
+        ):
+            terminal = asyncio.run(service.execute_task(task.task_id))
+
+        self.assertEqual(terminal.state, TaskState.COMPLETED)
+        self.assertEqual(len(model.requests), 1)
+        self.assertEqual(model.requests[0].timeout_seconds, 3.0)
+
+
 if __name__ == "__main__":
     unittest.main()

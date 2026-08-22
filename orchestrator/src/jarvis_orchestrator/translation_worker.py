@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -60,6 +61,20 @@ class TranslationEngine:
         self.target = sentencepiece.SentencePieceProcessor(
             model_file=str(model_root / "target.spm")
         )
+        raw_vocabulary = (model_root / "shared_vocabulary.json").read_bytes()
+        if len(raw_vocabulary) > 16 * 1024 * 1024:
+            raise RuntimeError("translation vocabulary is too large")
+        vocabulary = json.loads(raw_vocabulary.decode("utf-8"))
+        if (
+            not isinstance(vocabulary, list)
+            or not vocabulary
+            or any(not isinstance(token, str) or not token for token in vocabulary)
+            or len(set(vocabulary)) != len(vocabulary)
+            or "<unk>" not in vocabulary
+            or "</s>" not in vocabulary
+        ):
+            raise RuntimeError("translation vocabulary is invalid")
+        self.source_vocabulary = frozenset(vocabulary)
         self.translator = ctranslate2.Translator(
             str(model_root),
             device="cpu",
@@ -68,6 +83,47 @@ class TranslationEngine:
             intra_threads=1,
             max_queued_batches=1,
         )
+
+    def _source_tokens(self, text: str) -> list[str]:
+        normalized = text.translate(
+            {
+                ord("\u2013"): "-",
+                ord("\u2014"): "-",
+                ord("\u2022"): "-",
+            }
+        )
+
+        def selected(value: str) -> list[str] | None:
+            candidates = self.source.nbest_encode(
+                value,
+                nbest_size=128,
+                out_type=str,
+            )
+            return next(
+                (
+                    list(candidate)
+                    for candidate in candidates
+                    if candidate
+                    and all(token in self.source_vocabulary for token in candidate)
+                ),
+                None,
+            )
+
+        direct = self.source.encode(normalized, out_type=str)
+        if direct and all(token in self.source_vocabulary for token in direct):
+            return list(direct)
+        whole = selected(normalized)
+        if whole is not None:
+            return whole
+        tokens: list[str] = []
+        for span in re.findall(r"\S+", normalized):
+            replacement = selected(span)
+            if replacement is None:
+                raise ValueError("input contains an unsupported token")
+            tokens.extend(replacement)
+        if not tokens:
+            raise ValueError("tokenizer returned an empty input")
+        return tokens
 
     def translate(self, document: Any) -> dict[str, object]:
         if (
@@ -94,13 +150,18 @@ class TranslationEngine:
                 raise ValueError("invalid request")
             identifiers.append(identifier)
             texts.append(text)
-        tokenized = [self.source.encode(text, out_type=str) for text in texts]
+        tokenized = [self._source_tokens(text) for text in texts]
         for tokens in tokenized:
             if not tokens:
                 raise ValueError("tokenizer returned an empty input")
             if tokens[-1] != "</s>":
                 tokens.append("</s>")
-        if any(len(tokens) > 512 or "<unk>" in tokens for tokens in tokenized):
+        if any(
+            len(tokens) > 512
+            or "<unk>" in tokens
+            or any(token not in self.source_vocabulary for token in tokens)
+            for tokens in tokenized
+        ):
             raise ValueError("input token bound exceeded")
         results = self.translator.translate_batch(
             tokenized,

@@ -93,6 +93,14 @@ def validate_translation_output(value: Any) -> str:
     text = _bounded_text(value)
     if contains_greek(text) or "<unk>" in text or "\ufffd" in text or "\u2047" in text:
         raise ContextAssemblyError("input_translation_invalid", status=502)
+    if not any(char.isalnum() for char in text):
+        raise ContextAssemblyError("input_translation_invalid", status=502)
+    if any(
+        unicodedata.category(char).startswith("L")
+        and "LATIN" not in unicodedata.name(char, "")
+        for char in text
+    ):
+        raise ContextAssemblyError("input_translation_invalid", status=502)
     return text
 
 
@@ -267,6 +275,18 @@ def load_translation_manifest(
         raise ValueError("translation model artifact set is invalid")
     if computed_total != total_size:
         raise ValueError("translation model total size mismatch")
+    if [artifact.path for artifact in artifacts] != sorted(names):
+        raise ValueError("translation model artifacts are not sorted")
+    try:
+        root_entries = tuple(root.iterdir())
+    except OSError as exc:
+        raise ValueError("translation model root is unreadable") from exc
+    if (
+        len(root_entries) != len(TRANSLATION_REQUIRED_FILES)
+        or any(entry.is_symlink() or not entry.is_file() for entry in root_entries)
+        or {entry.name for entry in root_entries} != TRANSLATION_REQUIRED_FILES
+    ):
+        raise ValueError("translation model artifact set is invalid")
     return TranslationModelManifest(
         model_id=TRANSLATION_MODEL_ID,
         revision=revision,
@@ -318,6 +338,8 @@ class OpusCTranslate2TranslationPort:
         self.process_factory = process_factory
         self._worker_lock = asyncio.Lock()
         self._process: Any | None = None
+        self._process_changed = asyncio.Event()
+        self._closed = False
         if (
             isinstance(timeout_seconds, bool)
             or not isinstance(timeout_seconds, (int, float))
@@ -333,29 +355,40 @@ class OpusCTranslate2TranslationPort:
         )
 
     @staticmethod
-    async def _stop(process: Any) -> None:
+    def _signal(process: Any, *, force: bool) -> None:
         if process.returncode is not None:
             return
         try:
             pid = getattr(process, "pid", None)
             if os.name == "posix" and isinstance(pid, int) and pid > 0:
-                os.killpg(pid, signal.SIGTERM)
+                os.killpg(pid, signal.SIGKILL if force else signal.SIGTERM)
+            elif force:
+                process.kill()
             else:
                 process.terminate()
         except ProcessLookupError:
+            pass
+
+    @classmethod
+    async def _stop(cls, process: Any) -> None:
+        if process.returncode is not None:
             return
+        cls._signal(process, force=False)
         try:
             await asyncio.wait_for(process.wait(), timeout=0.5)
+            return
+        except asyncio.CancelledError:
+            cls._signal(process, force=True)
+            raise
         except asyncio.TimeoutError:
-            try:
-                pid = getattr(process, "pid", None)
-                if os.name == "posix" and isinstance(pid, int) and pid > 0:
-                    os.killpg(pid, signal.SIGKILL)
-                else:
-                    process.kill()
-            except ProcessLookupError:
-                return
-            await process.wait()
+            cls._signal(process, force=True)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=0.5)
+        except asyncio.CancelledError:
+            cls._signal(process, force=True)
+            raise
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("input translation worker did not exit") from exc
 
     def _process_options(self) -> dict[str, Any]:
         environment = {
@@ -367,6 +400,11 @@ class OpusCTranslate2TranslationPort:
             "NO_PROXY": "*",
             "no_proxy": "*",
         }
+        if os.name == "nt":  # pragma: no cover - native Windows CI
+            for name in ("SystemRoot", "WINDIR", "TEMP", "TMP", "ComSpec"):
+                value = os.environ.get(name)
+                if value:
+                    environment[name] = value
         options: dict[str, Any] = {
             "stdin": asyncio.subprocess.PIPE,
             "stdout": asyncio.subprocess.PIPE,
@@ -383,14 +421,21 @@ class OpusCTranslate2TranslationPort:
 
     async def _discard_worker_locked(self) -> None:
         process = self._process
-        self._process = None
         if process is not None:
             await self._stop(process)
+            if process.returncode is None:
+                raise RuntimeError("input translation worker was not reaped")
+            if self._process is process:
+                self._process = None
+                self._process_changed.set()
 
     async def _start_locked(self) -> Any:
+        if self._closed:
+            raise ContextAssemblyError("input_translation_unavailable", status=502)
         if self._process is not None and self._process.returncode is None:
             return self._process
         self._process = None
+        self._process_changed.set()
         try:
             process = await self.process_factory(
                 str(self.worker_python),
@@ -410,11 +455,17 @@ class OpusCTranslate2TranslationPort:
                 "input_translation_unavailable", status=502
             ) from exc
         self._process = process
+        self._process_changed.set()
         if process.stdout is None or process.stdin is None:
             raise ContextAssemblyError("input_translation_unavailable", status=502)
         try:
             raw = await process.stdout.readline()
-            ready = json.loads(raw.decode("utf-8"))
+            if not raw.endswith(b"\n"):
+                raise ValueError("unterminated translation ready frame")
+            ready = json.loads(
+                raw.decode("utf-8"),
+                object_pairs_hook=_closed_json_object,
+            )
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             raise ContextAssemblyError(
                 "input_translation_unavailable", status=502
@@ -444,7 +495,30 @@ class OpusCTranslate2TranslationPort:
 
     async def close(self) -> None:
         async with self._worker_lock:
+            self._closed = True
+            self._process_changed.set()
             await self._discard_worker_locked()
+
+    async def monitor(self) -> None:
+        """Fail the owning runtime if the warm worker exits while idle."""
+
+        while True:
+            async with self._worker_lock:
+                if self._closed:
+                    return
+                process = self._process
+                self._process_changed.clear()
+            if process is None:
+                await self._process_changed.wait()
+                continue
+            await process.wait()
+            async with self._worker_lock:
+                if self._closed:
+                    return
+                if self._process is process:
+                    self._process = None
+                    self._process_changed.set()
+                    raise RuntimeError("input translation worker exited")
 
     @staticmethod
     def _decode_response(
@@ -453,7 +527,11 @@ class OpusCTranslate2TranslationPort:
         request_id: str,
         normalized: Mapping[str, str],
     ) -> Mapping[str, str]:
-        if not raw or len(raw) > TRANSLATION_MAXIMUM_RESPONSE_BYTES:
+        if (
+            not raw
+            or len(raw) > TRANSLATION_MAXIMUM_RESPONSE_BYTES
+            or not raw.endswith(b"\n")
+        ):
             raise ContextAssemblyError("input_translation_invalid", status=502)
         try:
             response = json.loads(

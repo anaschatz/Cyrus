@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -30,6 +31,7 @@ from jarvis_orchestrator.translation import (
     load_translation_manifest,
 )
 from jarvis_orchestrator.translation_worker import translate_document
+from jarvis_orchestrator import translation_worker
 
 
 class FakeStdin:
@@ -94,7 +96,30 @@ class FakeProcess:
         self.returncode = -9
 
     async def wait(self) -> int:
-        return 0 if self.returncode is None else self.returncode
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
+class SlowStopProcess(FakeProcess):
+    def __init__(self, responder) -> None:
+        super().__init__(responder)
+        self.wait_entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+        self.release.set()
+
+    async def wait(self) -> int:
+        self.wait_entered.set()
+        await self.release.wait()
+        assert self.returncode is not None
+        return self.returncode
 
 
 class TranslationTests(unittest.TestCase):
@@ -115,7 +140,26 @@ class TranslationTests(unittest.TestCase):
             "target.spm",
         ):
             path = self.model_root / name
-            path.write_bytes(("artifact:" + name).encode())
+            if name == "shared_vocabulary.json":
+                path.write_bytes(
+                    canonical_json(
+                        [
+                            "<unk>",
+                            "</s>",
+                            "▁Το",
+                            "▁σύστημα",
+                            "▁δοκιμή",
+                            "▁Ρα",
+                            "ντε",
+                            "β",
+                            "ού",
+                            "▁αύριο",
+                            ".",
+                        ]
+                    ).encode()
+                )
+            else:
+                path.write_bytes(("artifact:" + name).encode())
             raw = path.read_bytes()
             self.files.append(
                 {
@@ -180,6 +224,24 @@ class TranslationTests(unittest.TestCase):
         unexpected = self.model_root / "runtime-download.bin"
         unexpected.write_bytes(b"forbidden")
         with self.assertRaisesRegex(ValueError, "artifact set"):
+            load_translation_manifest(
+                self.model_root,
+                self.manifest_path,
+                self.write_manifest(),
+            )
+
+    def test_manifest_rejects_extra_directories_and_unsorted_files(self) -> None:
+        (self.model_root / "empty").mkdir()
+        with self.assertRaisesRegex(ValueError, "artifact set"):
+            load_translation_manifest(
+                self.model_root,
+                self.manifest_path,
+                self.write_manifest(),
+            )
+        (self.model_root / "empty").rmdir()
+
+        self.manifest_document["files"] = list(reversed(self.files))
+        with self.assertRaisesRegex(ValueError, "not sorted"):
             load_translation_manifest(
                 self.model_root,
                 self.manifest_path,
@@ -275,6 +337,18 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "input_translation_unavailable")
         self.assertTrue(process.terminated)
 
+    def test_port_rejects_unterminated_ready_record(self) -> None:
+        ready = canonical_json(
+            {"version": TRANSLATION_READY_VERSION, "status": "ready"}
+        ).encode()
+        process = FakeProcess(lambda raw: b"", ready=ready)
+
+        with self.assertRaises(ContextAssemblyError) as raised:
+            asyncio.run(self.port(process).start())
+
+        self.assertEqual(raised.exception.code, "input_translation_unavailable")
+        self.assertTrue(process.terminated)
+
     def test_port_maps_readiness_io_failure_and_stops_worker(self) -> None:
         process = FakeProcess(lambda raw: b"", ready=OSError("broken pipe"))
         port = self.port(process)
@@ -358,11 +432,89 @@ class TranslationTests(unittest.TestCase):
         self.assertTrue(first.terminated)
         self.assertTrue(second.terminated)
 
+    def test_port_rejects_unterminated_response_record(self) -> None:
+        def responder(raw: bytes) -> bytes:
+            request = json.loads(raw)
+            return canonical_json(
+                {
+                    "version": "jarvis.input-translation-response/1",
+                    "request_id": request["request_id"],
+                    "items": [{"id": "current", "text": "Ready."}],
+                }
+            ).encode()
+
+        process = FakeProcess(responder)
+        with self.assertRaises(ContextAssemblyError) as raised:
+            asyncio.run(
+                self.port(process).translate(
+                    task_id="task",
+                    epoch=1,
+                    items={"current": "Έτοιμο"},
+                )
+            )
+
+        self.assertEqual(raised.exception.code, "input_translation_invalid")
+        self.assertTrue(process.terminated)
+
+    def test_close_is_idempotent_and_terminal(self) -> None:
+        process = FakeProcess(lambda raw: b"")
+        port = self.port(process)
+
+        async def exercise() -> None:
+            await port.close()
+            await port.close()
+            with self.assertRaises(ContextAssemblyError) as raised:
+                await port.translate(
+                    task_id="late",
+                    epoch=1,
+                    items={"current": "Αργά"},
+                )
+            self.assertEqual(
+                raised.exception.code,
+                "input_translation_unavailable",
+            )
+
+        asyncio.run(exercise())
+        self.assertEqual(process.spawned, 0)
+
+    def test_cancelled_close_keeps_worker_owned_until_reaped(self) -> None:
+        process = SlowStopProcess(lambda raw: b"")
+        port = self.port(process)
+
+        async def exercise() -> None:
+            await port.start()
+            closing = asyncio.create_task(port.close())
+            await process.wait_entered.wait()
+            closing.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await closing
+            self.assertIs(port._process, process)
+            self.assertTrue(process.killed)
+            await port.close()
+            self.assertIsNone(port._process)
+
+        asyncio.run(exercise())
+
+    def test_idle_worker_exit_is_reported_by_monitor(self) -> None:
+        process = FakeProcess(lambda raw: b"")
+        port = self.port(process)
+
+        async def exercise() -> None:
+            await port.start()
+            with self.assertRaisesRegex(RuntimeError, "worker exited"):
+                await port.monitor()
+            await port.close()
+
+        asyncio.run(exercise())
+
     def test_port_rejects_greek_or_unknown_output(self) -> None:
         for bad_text in (
             "Το σύστημα είναι έτοιμο.",
             "The <unk> system",
             "   ",
+            "...",
+            "Привет",
+            "你好",
             "The \ufffd system",
             "The \u2047 system",
         ):
@@ -475,6 +627,130 @@ class TranslationTests(unittest.TestCase):
         self.assertTrue(settings["disable_unk"])
         self.assertTrue(settings["return_end_token"])
         self.assertEqual(response["items"], [{"id": "current", "text": "The system."}])
+
+    def test_worker_resegments_source_piece_missing_from_shared_vocabulary(self) -> None:
+        captured: dict[str, object] = {}
+
+        class Processor:
+            def __init__(self, *, model_file: str) -> None:
+                self.source = model_file.endswith("source.spm")
+
+            def encode(self, text: str, *, out_type):
+                del out_type
+                if not self.source or text != "Ραντεβού αύριο.":
+                    raise AssertionError("unexpected tokenizer input")
+                return ["▁Ραντεβού", "▁αύριο", "."]
+
+            def nbest_encode(self, text: str, *, nbest_size: int, out_type):
+                del out_type
+                if text != "Ραντεβού αύριο." or nbest_size != 128:
+                    raise AssertionError("unexpected nbest request")
+                return [
+                    ["▁Ραντεβού", "▁αύριο", "."],
+                    ["▁Ρα", "ντε", "β", "ού", "▁αύριο", "."],
+                ]
+
+            def decode_pieces(self, tokens):
+                if self.source or tokens != ["▁Appointment", "▁tomorrow", "."]:
+                    raise AssertionError("unexpected decoder tokens")
+                return "Appointment tomorrow."
+
+        class Translator:
+            def __init__(self, model_root: str, **kwargs) -> None:
+                del model_root, kwargs
+
+            def translate_batch(self, tokenized, **kwargs):
+                del kwargs
+                captured["tokenized"] = tokenized
+                return [
+                    types.SimpleNamespace(
+                        hypotheses=[["▁Appointment", "▁tomorrow", ".", "</s>"]]
+                    )
+                ]
+
+        ctranslate2 = types.ModuleType("ctranslate2")
+        ctranslate2.__version__ = TRANSLATION_CTRANSLATE2_VERSION
+        ctranslate2.Translator = Translator
+        sentencepiece = types.ModuleType("sentencepiece")
+        sentencepiece.__version__ = TRANSLATION_SENTENCEPIECE_VERSION
+        sentencepiece.SentencePieceProcessor = Processor
+        request = {
+            "version": "jarvis.input-translation-request/1",
+            "request_id": "request",
+            "items": [{"id": "current", "text": "Ραντεβού αύριο."}],
+        }
+        with patch.dict(
+            sys.modules,
+            {"ctranslate2": ctranslate2, "sentencepiece": sentencepiece},
+        ):
+            response = translate_document(request, self.model_root)
+
+        self.assertEqual(
+            captured["tokenized"],
+            [["▁Ρα", "ντε", "β", "ού", "▁αύριο", ".", "</s>"]],
+        )
+        self.assertEqual(
+            response["items"],
+            [{"id": "current", "text": "Appointment tomorrow."}],
+        )
+
+    def test_worker_main_reuses_one_engine_for_multiple_requests(self) -> None:
+        requests = [
+            {
+                "version": "jarvis.input-translation-request/1",
+                "request_id": selected,
+                "items": [{"id": "current", "text": "Δοκιμή"}],
+            }
+            for selected in ("one", "two")
+        ]
+        incoming = io.BytesIO(
+            b"".join((canonical_json(item) + "\n").encode() for item in requests)
+        )
+        outgoing = io.BytesIO()
+        constructed = 0
+
+        class Endpoint:
+            def __init__(self, stream: io.BytesIO) -> None:
+                self.buffer = stream
+
+        class Engine:
+            def __init__(self, model_root: Path) -> None:
+                nonlocal constructed
+                del model_root
+                constructed += 1
+
+            def translate(self, document):
+                return {
+                    "version": "jarvis.input-translation-response/1",
+                    "request_id": document["request_id"],
+                    "items": [{"id": "current", "text": "Test"}],
+                }
+
+        with (
+            patch.object(translation_worker, "TranslationEngine", Engine),
+            patch.object(translation_worker, "load_translation_manifest"),
+            patch.object(translation_worker.sys, "stdin", Endpoint(incoming)),
+            patch.object(translation_worker.sys, "stdout", Endpoint(outgoing)),
+        ):
+            result = translation_worker.main(
+                [
+                    "--model-root",
+                    str(self.model_root),
+                    "--manifest-path",
+                    str(self.manifest_path),
+                    "--manifest-sha256",
+                    "1" * 64,
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(constructed, 1)
+        records = [json.loads(line) for line in outgoing.getvalue().splitlines()]
+        self.assertEqual(
+            records[0],
+            {"version": TRANSLATION_READY_VERSION, "status": "ready"},
+        )
+        self.assertEqual([item["request_id"] for item in records[1:]], ["one", "two"])
 
     def test_worker_rejects_incomplete_translation_without_eos(self) -> None:
         class Processor:

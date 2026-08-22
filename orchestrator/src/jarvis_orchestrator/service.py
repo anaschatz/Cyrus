@@ -1831,6 +1831,13 @@ class OrchestratorService:
                 recall,
                 tool_projection,
             )
+            remaining_seconds = min(
+                task.remaining_active_seconds(limit=self.config.active_budget_seconds),
+                task.remaining_absolute_seconds(),
+                self.config.model_timeout_seconds,
+            )
+            if remaining_seconds <= 0:
+                raise BudgetExhaustedError()
             request = ModelRequest(
                 task_id=task_id,
                 epoch=task.epoch,

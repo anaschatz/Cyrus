@@ -990,6 +990,12 @@ async def _run_servers(
     try:
         if input_translator is not None:
             await input_translator.start()
+            supervisor.start_task(
+                "input_translation",
+                input_translator.monitor,
+                failure_code="runtime_input_translation_worker_failed",
+            )
+            supervisor.acknowledge_ready("input_translation")
         # Treat a partial start as cleanup-owned before any await can fail.
         gateway_started = True
         await gateway.start(
