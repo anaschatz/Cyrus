@@ -226,7 +226,7 @@ class WhisperCppSidecarBackend:
                 "--model", str(model),
                 "--threads", str(self.config.threads),
                 "--language", self.config.language,
-                "--no-context",
+                "--max-context", "0",
                 "--flash-attn",
             ]
             try:

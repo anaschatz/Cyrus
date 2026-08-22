@@ -331,7 +331,9 @@ class WhisperCppTests(unittest.TestCase):
             backend.close()
         argv = argv_seen[0]
         self.assertIn("127.0.0.1", argv)
-        self.assertIn("--no-context", argv)
+        context_index = argv.index("--max-context")
+        self.assertEqual(argv[context_index + 1], "0")
+        self.assertNotIn("--no-context", argv)
         self.assertIn("--flash-attn", argv)
         self.assertNotIn("--convert", argv)
         self.assertNotIn("--prompt", argv)

@@ -106,6 +106,11 @@ PYTHONPATH=src python3.11 -m jarvis_voice run-macos --config /explicit/path/to/v
 
 The runtime starts the owned `whisper-server` lazily on first speech turn. It binds only to `127.0.0.1`, generates a fresh unreported request-path token, disables context carry-over, never enables ffmpeg conversion and sends an in-memory 16-kHz WAV to that private path's `/inference` endpoint. The upstream server example itself warns that file-upload servers need sandboxing; this adapter therefore keeps the process unprivileged, loopback-only, bounded and supervised.
 
+For the pinned v1.9.2 server, context is bounded explicitly with
+`--max-context 0`. The obsolete `--no-context` command-line switch is not
+accepted by that release; v1.9.2 already defaults its internal `no_context`
+field to true.
+
 The PTT event tap is listen-only and does not suppress the configured F1–F20 key. `PTT_DOWN` tombstones stale output, terminates active `say` or ASR work and begins the next capture. Ambient speech without PTT does not interrupt in v1.
 
 ## Native qualification
