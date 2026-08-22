@@ -23,6 +23,7 @@ from jarvis_orchestrator.translation import (
     TRANSLATION_MANIFEST_VERSION,
     TRANSLATION_MODEL_ID,
     TRANSLATION_MODEL_REVISION,
+    TRANSLATION_READY_VERSION,
     TRANSLATION_SENTENCEPIECE_VERSION,
     OpusCTranslate2TranslationPort,
     contains_greek,
@@ -31,21 +32,58 @@ from jarvis_orchestrator.translation import (
 from jarvis_orchestrator.translation_worker import translate_document
 
 
+class FakeStdin:
+    def __init__(self, process) -> None:
+        self.process = process
+
+    def write(self, raw: bytes) -> None:
+        self.process.raw = raw
+
+    async def drain(self) -> None:
+        return None
+
+
+class FakeStdout:
+    def __init__(self, process) -> None:
+        self.process = process
+        self.reads = 0
+
+    async def readline(self) -> bytes:
+        self.reads += 1
+        if self.reads == 1:
+            if isinstance(self.process.ready, BaseException):
+                raise self.process.ready
+            return self.process.ready
+        self.process.entered.set()
+        if self.process.block:
+            await asyncio.Event().wait()
+        return self.process.responder(self.process.raw)
+
+
 class FakeProcess:
-    def __init__(self, responder, *, block: bool = False) -> None:
+    def __init__(
+        self,
+        responder,
+        *,
+        block: bool = False,
+        ready: bytes | BaseException | None = None,
+    ) -> None:
         self.responder = responder
         self.block = block
         self.returncode = None
         self.entered = asyncio.Event()
         self.terminated = False
         self.killed = False
-
-    async def communicate(self, raw):
-        self.entered.set()
-        if self.block:
-            await asyncio.Event().wait()
-        self.returncode = 0
-        return self.responder(raw), b""
+        self.raw = b""
+        self.stdin = FakeStdin(self)
+        self.stdout = FakeStdout(self)
+        self.spawned = 0
+        self.ready = ready or (
+            canonical_json(
+                {"version": TRANSLATION_READY_VERSION, "status": "ready"}
+            )
+            + "\n"
+        ).encode()
 
     def terminate(self) -> None:
         self.terminated = True
@@ -113,8 +151,9 @@ class TranslationTests(unittest.TestCase):
         self.manifest_path.write_bytes(raw)
         return hashlib.sha256(raw).hexdigest()
 
-    def port(self, process):
+    def port(self, process, *, timeout_seconds: float = 2):
         async def factory(*args, **kwargs):
+            process.spawned += 1
             self.assertIn("-I", args)
             self.assertEqual(kwargs["stderr"], asyncio.subprocess.DEVNULL)
             self.assertEqual(kwargs["env"]["HF_HUB_OFFLINE"], "1")
@@ -124,7 +163,7 @@ class TranslationTests(unittest.TestCase):
             model_root=self.model_root,
             manifest_path=self.manifest_path,
             manifest_sha256=self.write_manifest(),
-            timeout_seconds=2,
+            timeout_seconds=timeout_seconds,
             worker_python=self.worker_python,
             process_factory=factory,
         )
@@ -201,15 +240,123 @@ class TranslationTests(unittest.TestCase):
             return (canonical_json(response) + "\n").encode()
 
         process = FakeProcess(responder)
-        result = asyncio.run(
-            self.port(process).translate(
+        port = self.port(process)
+
+        async def exercise():
+            await port.start()
+            await port.start()
+            first = await port.translate(
                 task_id="task",
                 epoch=1,
                 items={"current": "Το σύστημα είναι έτοιμο."},
             )
-        )
+            second = await port.translate(
+                task_id="task",
+                epoch=1,
+                items={"current": "Το σύστημα είναι έτοιμο."},
+            )
+            await port.close()
+            return first, second
+
+        result, repeated = asyncio.run(exercise())
         self.assertEqual(result, {"current": "The system is ready."})
+        self.assertEqual(repeated, result)
         self.assertFalse(contains_greek(result["current"]))
+        self.assertEqual(process.spawned, 1)
+        self.assertTrue(process.terminated)
+
+    def test_port_rejects_malformed_ready_record_and_stops_worker(self) -> None:
+        process = FakeProcess(lambda raw: b"", ready=b"{}\n")
+        port = self.port(process)
+
+        with self.assertRaises(ContextAssemblyError) as raised:
+            asyncio.run(port.start())
+
+        self.assertEqual(raised.exception.code, "input_translation_unavailable")
+        self.assertTrue(process.terminated)
+
+    def test_port_maps_readiness_io_failure_and_stops_worker(self) -> None:
+        process = FakeProcess(lambda raw: b"", ready=OSError("broken pipe"))
+        port = self.port(process)
+
+        with self.assertRaises(ContextAssemblyError) as raised:
+            asyncio.run(port.start())
+
+        self.assertEqual(raised.exception.code, "input_translation_unavailable")
+        self.assertTrue(process.terminated)
+
+    def test_port_timeout_stops_worker(self) -> None:
+        process = FakeProcess(lambda raw: b"", block=True)
+        port = self.port(process, timeout_seconds=0.1)
+
+        with self.assertRaises(ContextAssemblyError) as raised:
+            asyncio.run(
+                port.translate(
+                    task_id="task",
+                    epoch=1,
+                    items={"current": "Ελληνικά"},
+                )
+            )
+
+        self.assertEqual(raised.exception.code, "input_translation_timeout")
+        self.assertTrue(process.terminated)
+
+    def test_port_restarts_cleanly_after_cancellation(self) -> None:
+        first = FakeProcess(lambda raw: b"", block=True)
+
+        def responder(raw: bytes) -> bytes:
+            request = json.loads(raw)
+            return (
+                canonical_json(
+                    {
+                        "version": "jarvis.input-translation-response/1",
+                        "request_id": request["request_id"],
+                        "items": [{"id": "current", "text": "Ready."}],
+                    }
+                )
+                + "\n"
+            ).encode()
+
+        second = FakeProcess(responder)
+        processes = iter((first, second))
+
+        async def factory(*args, **kwargs):
+            del args, kwargs
+            return next(processes)
+
+        port = OpusCTranslate2TranslationPort(
+            model_root=self.model_root,
+            manifest_path=self.manifest_path,
+            manifest_sha256=self.write_manifest(),
+            timeout_seconds=2,
+            worker_python=self.worker_python,
+            process_factory=factory,
+        )
+
+        async def exercise() -> dict[str, str]:
+            task = asyncio.create_task(
+                port.translate(
+                    task_id="first",
+                    epoch=1,
+                    items={"current": "Πρώτο"},
+                )
+            )
+            await first.entered.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            result = await port.translate(
+                task_id="second",
+                epoch=2,
+                items={"current": "Δεύτερο"},
+            )
+            await port.close()
+            return dict(result)
+
+        result = asyncio.run(exercise())
+        self.assertEqual(result, {"current": "Ready."})
+        self.assertTrue(first.terminated)
+        self.assertTrue(second.terminated)
 
     def test_port_rejects_greek_or_unknown_output(self) -> None:
         for bad_text in (

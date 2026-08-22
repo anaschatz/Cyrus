@@ -24,6 +24,7 @@ from .domain import canonical_json
 TRANSLATION_MANIFEST_VERSION = "jarvis.translation-model-manifest/1"
 TRANSLATION_REQUEST_VERSION = "jarvis.input-translation-request/1"
 TRANSLATION_RESPONSE_VERSION = "jarvis.input-translation-response/1"
+TRANSLATION_READY_VERSION = "jarvis.input-translation-ready/1"
 TRANSLATION_BACKEND = "opus-mt-ct2"
 TRANSLATION_MODEL_ID = "Helsinki-NLP/opus-mt-tc-big-el-en"
 TRANSLATION_MODEL_REVISION = "a69108562775c6727edf3540346f9d8900b73634"
@@ -297,7 +298,7 @@ class DisabledTranslationPort:
 
 
 class OpusCTranslate2TranslationPort:
-    """Spawn one owned process per batch so cancellation releases all model RAM."""
+    """Own one warm worker; cancellation kills it before a replacement can run."""
 
     def __init__(
         self,
@@ -316,6 +317,7 @@ class OpusCTranslate2TranslationPort:
         self.worker_python = Path(sys.executable) if worker_python is None else worker_python
         self.process_factory = process_factory
         self._worker_lock = asyncio.Lock()
+        self._process: Any | None = None
         if (
             isinstance(timeout_seconds, bool)
             or not isinstance(timeout_seconds, (int, float))
@@ -355,6 +357,131 @@ class OpusCTranslate2TranslationPort:
                 return
             await process.wait()
 
+    def _process_options(self) -> dict[str, Any]:
+        environment = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "PYTHONHASHSEED": "0",
+            "PYTHONNOUSERSITE": "1",
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            "NO_PROXY": "*",
+            "no_proxy": "*",
+        }
+        options: dict[str, Any] = {
+            "stdin": asyncio.subprocess.PIPE,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.DEVNULL,
+            "env": environment,
+            "limit": TRANSLATION_MAXIMUM_RESPONSE_BYTES + 1,
+            "close_fds": True,
+        }
+        if os.name == "posix":
+            options["start_new_session"] = True
+        elif os.name == "nt":  # pragma: no cover - native Windows CI
+            options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        return options
+
+    async def _discard_worker_locked(self) -> None:
+        process = self._process
+        self._process = None
+        if process is not None:
+            await self._stop(process)
+
+    async def _start_locked(self) -> Any:
+        if self._process is not None and self._process.returncode is None:
+            return self._process
+        self._process = None
+        try:
+            process = await self.process_factory(
+                str(self.worker_python),
+                "-I",
+                "-m",
+                "jarvis_orchestrator.translation_worker",
+                "--model-root",
+                str(self.model_root),
+                "--manifest-path",
+                str(self.manifest_path),
+                "--manifest-sha256",
+                self.manifest_sha256,
+                **self._process_options(),
+            )
+        except (OSError, ValueError) as exc:
+            raise ContextAssemblyError(
+                "input_translation_unavailable", status=502
+            ) from exc
+        self._process = process
+        if process.stdout is None or process.stdin is None:
+            raise ContextAssemblyError("input_translation_unavailable", status=502)
+        try:
+            raw = await process.stdout.readline()
+            ready = json.loads(raw.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ContextAssemblyError(
+                "input_translation_unavailable", status=502
+            ) from exc
+        if (
+            process.returncode is not None
+            or ready
+            != {"version": TRANSLATION_READY_VERSION, "status": "ready"}
+        ):
+            raise ContextAssemblyError("input_translation_unavailable", status=502)
+        return process
+
+    async def start(self) -> None:
+        try:
+            async with asyncio.timeout(float(self.timeout_seconds)):
+                async with self._worker_lock:
+                    try:
+                        await self._start_locked()
+                    except asyncio.CancelledError:
+                        await self._discard_worker_locked()
+                        raise
+                    except ContextAssemblyError:
+                        await self._discard_worker_locked()
+                        raise
+        except (TimeoutError, asyncio.TimeoutError) as exc:
+            raise ContextAssemblyError("input_translation_timeout", status=502) from exc
+
+    async def close(self) -> None:
+        async with self._worker_lock:
+            await self._discard_worker_locked()
+
+    @staticmethod
+    def _decode_response(
+        raw: bytes,
+        *,
+        request_id: str,
+        normalized: Mapping[str, str],
+    ) -> Mapping[str, str]:
+        if not raw or len(raw) > TRANSLATION_MAXIMUM_RESPONSE_BYTES:
+            raise ContextAssemblyError("input_translation_invalid", status=502)
+        try:
+            response = json.loads(
+                raw.decode("utf-8"),
+                object_pairs_hook=_closed_json_object,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ContextAssemblyError("input_translation_invalid", status=502) from exc
+        if (
+            not isinstance(response, dict)
+            or set(response) != {"version", "request_id", "items"}
+            or response.get("version") != TRANSLATION_RESPONSE_VERSION
+            or response.get("request_id") != request_id
+            or not isinstance(response.get("items"), list)
+        ):
+            raise ContextAssemblyError("input_translation_invalid", status=502)
+        translated: dict[str, str] = {}
+        for item in response["items"]:
+            if not isinstance(item, dict) or set(item) != {"id", "text"}:
+                raise ContextAssemblyError("input_translation_invalid", status=502)
+            component_id = item.get("id")
+            if component_id not in normalized or component_id in translated:
+                raise ContextAssemblyError("input_translation_invalid", status=502)
+            translated[component_id] = validate_translation_output(item.get("text"))
+        if tuple(translated) != tuple(normalized):
+            raise ContextAssemblyError("input_translation_invalid", status=502)
+        return translated
+
     async def translate(
         self,
         *,
@@ -382,91 +509,38 @@ class OpusCTranslate2TranslationPort:
         raw = (canonical_json(payload) + "\n").encode("utf-8")
         if len(raw) > TRANSLATION_MAXIMUM_REQUEST_BYTES:
             raise ContextAssemblyError("input_translation_too_large", status=502)
-        environment = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "PYTHONHASHSEED": "0",
-            "PYTHONNOUSERSITE": "1",
-            "HF_HUB_OFFLINE": "1",
-            "TRANSFORMERS_OFFLINE": "1",
-            "NO_PROXY": "*",
-            "no_proxy": "*",
-        }
-        process_options: dict[str, Any] = {
-            "stdin": asyncio.subprocess.PIPE,
-            "stdout": asyncio.subprocess.PIPE,
-            "stderr": asyncio.subprocess.DEVNULL,
-            "env": environment,
-            "limit": TRANSLATION_MAXIMUM_RESPONSE_BYTES + 1,
-            "close_fds": True,
-        }
-        if os.name == "posix":
-            process_options["start_new_session"] = True
-        elif os.name == "nt":  # pragma: no cover - exercised in native Windows CI
-            process_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        process = None
         try:
             async with asyncio.timeout(float(self.timeout_seconds)):
                 async with self._worker_lock:
                     try:
-                        process = await self.process_factory(
-                            str(self.worker_python),
-                            "-I",
-                            "-m",
-                            "jarvis_orchestrator.translation_worker",
-                            "--model-root",
-                            str(self.model_root),
-                            "--manifest-path",
-                            str(self.manifest_path),
-                            "--manifest-sha256",
-                            self.manifest_sha256,
-                            **process_options,
+                        process = await self._start_locked()
+                        process.stdin.write(raw)
+                        await process.stdin.drain()
+                        response = await process.stdout.readline()
+                        if process.returncode is not None:
+                            raise ContextAssemblyError(
+                                "input_translation_failed", status=502
+                            )
+                        return self._decode_response(
+                            response,
+                            request_id=request_id,
+                            normalized=normalized,
                         )
-                        stdout, _stderr = await process.communicate(raw)
                     except asyncio.CancelledError:
-                        if process is not None:
-                            await self._stop(process)
+                        await self._discard_worker_locked()
+                        raise
+                    except ContextAssemblyError:
+                        await self._discard_worker_locked()
                         raise
                     except (OSError, ValueError) as exc:
-                        if process is not None:
-                            await self._stop(process)
-                        code = (
-                            "input_translation_unavailable"
-                            if process is None
-                            else "input_translation_failed"
-                        )
-                        raise ContextAssemblyError(code, status=502) from exc
+                        await self._discard_worker_locked()
+                        raise ContextAssemblyError(
+                            "input_translation_failed", status=502
+                        ) from exc
         except asyncio.CancelledError:
             raise
         except (TimeoutError, asyncio.TimeoutError) as exc:
             raise ContextAssemblyError("input_translation_timeout", status=502) from exc
-        assert process is not None
-        if process.returncode != 0:
-            raise ContextAssemblyError("input_translation_failed", status=502)
-        if not stdout or len(stdout) > TRANSLATION_MAXIMUM_RESPONSE_BYTES:
-            raise ContextAssemblyError("input_translation_invalid", status=502)
-        try:
-            response = json.loads(stdout.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ContextAssemblyError("input_translation_invalid", status=502) from exc
-        if (
-            not isinstance(response, dict)
-            or set(response) != {"version", "request_id", "items"}
-            or response.get("version") != TRANSLATION_RESPONSE_VERSION
-            or response.get("request_id") != request_id
-            or not isinstance(response.get("items"), list)
-        ):
-            raise ContextAssemblyError("input_translation_invalid", status=502)
-        translated: dict[str, str] = {}
-        for item in response["items"]:
-            if not isinstance(item, dict) or set(item) != {"id", "text"}:
-                raise ContextAssemblyError("input_translation_invalid", status=502)
-            component_id = item.get("id")
-            if component_id not in normalized or component_id in translated:
-                raise ContextAssemblyError("input_translation_invalid", status=502)
-            translated[component_id] = validate_translation_output(item.get("text"))
-        if tuple(translated) != tuple(normalized):
-            raise ContextAssemblyError("input_translation_invalid", status=502)
-        return translated
 
 
 __all__ = [
@@ -480,6 +554,7 @@ __all__ = [
     "TRANSLATION_MANIFEST_VERSION",
     "TRANSLATION_MODEL_ID",
     "TRANSLATION_MODEL_REVISION",
+    "TRANSLATION_READY_VERSION",
     "TRANSLATION_SENTENCEPIECE_VERSION",
     "TranslationModelManifest",
     "TranslationPort",

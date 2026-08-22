@@ -988,6 +988,8 @@ async def _run_servers(
     primary_failure: BaseException | None = None
 
     try:
+        if input_translator is not None:
+            await input_translator.start()
         # Treat a partial start as cleanup-owned before any await can fail.
         gateway_started = True
         await gateway.start(
@@ -1067,6 +1069,17 @@ async def _run_servers(
                         scheduler_worker.stop,
                         failure_code="runtime_scheduler_shutdown_failed",
                         timeout_code="runtime_scheduler_shutdown_timeout",
+                        timeout_seconds=deadline.remaining(),
+                    )
+                except RuntimeFailure as exc:
+                    cleanup_failure = cleanup_failure or exc
+            if input_translator is not None:
+                try:
+                    await supervisor.run_bounded_cleanup(
+                        "input_translation",
+                        input_translator.close,
+                        failure_code="runtime_input_translation_shutdown_failed",
+                        timeout_code="runtime_input_translation_shutdown_timeout",
                         timeout_seconds=deadline.remaining(),
                     )
                 except RuntimeFailure as exc:
