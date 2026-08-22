@@ -1,4 +1,4 @@
-"""The only component that owns the complete JARVIS task lifecycle."""
+"""The only component that owns the complete CYRUS task lifecycle."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from typing import Any
 from .config import OrchestratorConfig
 from .context_assembler import (
     CURRENT_TRANSCRIPT_MAX_BYTES,
-    HISTORY_MAX_PAIRS,
     RECALL_MAX_ITEMS,
     ContextAssemblerV1,
     ContextAssemblyError,
@@ -118,12 +117,12 @@ from .tool_store import ToolStoreV1
 from .tool_state import ToolRunState
 
 SYSTEM_PROMPT = (
-    "You are JARVIS, a concise bilingual Greek/English local voice assistant. "
+    "You are CYRUS, a concise bilingual Greek/English local voice assistant. "
     "Answer the user's latest request directly. Never claim to have executed a tool that was not supplied. "
     "Return only the concise final answer; do not emit private reasoning. /no_think"
 )
 ENGLISH_ONLY_SYSTEM_PROMPT = (
-    "You are JARVIS, a concise local voice assistant. Understand user input in Greek or English, "
+    "You are CYRUS, a concise local voice assistant. Understand user input in Greek or English, "
     "but always answer in clear natural English. Never switch the response to Greek. "
     "Answer the actual request with useful information; do not merely repeat or paraphrase the user's words. "
     "Never claim to have executed a tool that was not supplied. Return only the concise final answer; "
@@ -136,6 +135,7 @@ MEMORY_SAFETY_PROMPT = (
 )
 BETA_SESSION_SCHEMA_VERSION = "jarvis-orchestrator-beta-session/2"
 EXPLICIT_MEMORY_COMMAND_MAX_BYTES = 8_192
+FINAL_LOCAL_HISTORY_PAIRS = 1
 
 
 def valid_voice_connection_tracker_id(value: Any) -> bool:
@@ -471,7 +471,11 @@ class OrchestratorService:
     ) -> ContextAssemblyV1:
         history = self.store.recent_canonical_turns(
             task.conversation_id,
-            limit_pairs=HISTORY_MAX_PAIRS,
+            # The qualified compact local model can deterministically emit an
+            # immediate EOS when older repetitive voice turns are included.
+            # Keep one complete pair for direct follow-ups; durable memory is
+            # assembled separately and remains available when enabled.
+            limit_pairs=FINAL_LOCAL_HISTORY_PAIRS,
         )
         return self.context_assembler.assemble(
             system_prompt=self._system_prompt(memory=bool(recall.items)),

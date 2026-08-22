@@ -620,25 +620,31 @@ class ContextAssemblerServiceIntegrationTests(unittest.TestCase):
             TaskState.COMPLETED,
         )
         second = self.admit(store, "second request")
+        self.assertEqual(
+            asyncio.run(service.execute_task(second.task_id)).state,
+            TaskState.COMPLETED,
+        )
+        third = self.admit(store, "third request")
         with patch.object(
             OrchestratorStore,
             "canonical_conversation",
             side_effect=AssertionError("full conversation load is forbidden"),
         ):
             self.assertEqual(
-                asyncio.run(service.execute_task(second.task_id)).state,
+                asyncio.run(service.execute_task(third.task_id)).state,
                 TaskState.COMPLETED,
             )
 
-        self.assertEqual(len(model.requests), 2)
+        self.assertEqual(len(model.requests), 3)
         request = model.requests[-1]
         self.assertEqual(
             [message["role"] for message in request.messages],
             ["user", "assistant", "user"],
         )
-        self.assertEqual(request.messages[0]["content"], "first request")
+        self.assertEqual(request.messages[0]["content"], "second request")
         self.assertEqual(request.messages[1]["content"], "Done.")
-        self.assertIn("second request", request.messages[-1]["content"])
+        self.assertIn("third request", request.messages[-1]["content"])
+        self.assertNotIn("first request", str(request.messages))
         self.assertTrue(request.messages[-1]["content"].endswith("\n/no_think"))
         boundary = {
             "system_prompt": request.system_prompt,
