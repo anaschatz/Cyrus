@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jarvis-inference"
 version = "1.0.0"
-description = "Stateless, fail-closed local inference appliance for JARVIS"
+description = "Stateless, fail-closed local inference appliance for CYRUS"
 requires-python = ">=3.11"
 dependencies = []
 license-files = []
@@ -16,6 +16,9 @@ mlx = ["mlx-lm==0.31.3", "outlines==1.3.2"]
 test = []
 
 [project.scripts]
+cyrus-inference = "jarvis_inference.cli:main"
+cyrus-qwen35-sampling-candidate = "jarvis_inference.qwen35_sampling_candidate:main"
+# Compatibility aliases retained for qualified appliance bundles.
 jarvis-inference = "jarvis_inference.cli:main"
 jarvis-qwen35-sampling-candidate = "jarvis_inference.qwen35_sampling_candidate:main"
 

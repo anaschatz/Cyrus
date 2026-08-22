@@ -823,7 +823,7 @@ def _now() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jarvis-research-online-qualify")
+    parser = argparse.ArgumentParser(prog="cyrus-research-online-qualify")
     parser.add_argument("--benchmark", required=True, type=Path)
     parser.add_argument("--images", required=True, type=Path)
     parser.add_argument("--thresholds", required=True, type=Path)

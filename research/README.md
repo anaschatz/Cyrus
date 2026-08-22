@@ -1,11 +1,11 @@
-# JARVIS Research System v1
+# CYRUS Research System v1
 
 This directory freezes the deployment boundary for the off-by-default Research
 System. It does not make an unqualified provider image production-ready.
 
-`jarvis-research-api` is the model-free executable for `/v1/qualification` and
+`cyrus-research-api` is the model-free executable for `/v1/qualification` and
 `/v1/research`. It returns only `ResearchCorpusV1`; span selection remains the
-Orchestrator's second model request. `jarvis-research-qualify` runs the live,
+Orchestrator's second model request. `cyrus-research-qualify` runs the live,
 fail-closed SearXNG/direct-fetch gate and emits canonical JSON evidence plus its
 SHA-256 digest.
 
@@ -13,8 +13,8 @@ The checked-in `qualification.test.json` has fixture digests only. Production
 must supply a strict eight-field qualification file and Docker secret files.
 No secret is accepted through a command-line argument or returned by the API.
 
-Run the sidecar with `uv run --frozen jarvis-research-api`. The live gate is
-`uv run --frozen jarvis-research-qualify --manifest <manifest.json> --output
+Run the sidecar with `uv run --frozen cyrus-research-api`. The live gate is
+`uv run --frozen cyrus-research-qualify --manifest <manifest.json> --output
 <evidence.json>`. A manifest contains the loopback `/v1` endpoint, paths to the
 bearer secret and Compose directory, all mandatory fixture requests and raw
 query/URL markers that must be absent from container logs. The output is
@@ -52,16 +52,16 @@ public, private, mixed and rebinding answers; the HTTP fixture covers robots,
 redirect, MIME, compression, language and date cases. It publishes no host
 ports and both qualification networks are `internal: true`.
 
-The repo-owned `jarvis-egress-guard` executable performs authenticated
+The repo-owned `cyrus-egress-guard` executable performs authenticated
 absolute-form HTTP and CONNECT proxying, resolves A/AAAA itself, rejects the
 complete answer if any address is non-global or configured container-internal,
-and connects to a selected pinned IP. `jarvis-searx-proxy-bridge` is isolated
+and connects to a selected pinned IP. `cyrus-searx-proxy-bridge` is isolated
 between SearXNG and the guard and reads the proxy credential from a Docker
 secret; SearXNG receives neither the credential nor an authenticated proxy URL.
 
 Run the fixture lab with both Compose files and `--profile qualification`.
 The checked-in `qualification.manifest.template.json` is strict and complete.
-It is not production evidence: only `jarvis-research-qualify` output from live
+It is not production evidence: only `cyrus-research-qualify` output from live
 containers and immutable images can produce an accepted gate.
 
 ## Gates
@@ -84,7 +84,7 @@ qualification evidence and force a rejected result.  A reviewer can validate
 the artifact and export a JSONL worksheet without invoking a model:
 
 ```console
-uv run --frozen jarvis-research-benchmark \
+uv run --frozen cyrus-research-benchmark \
   --benchmark benchmarks/retrieval-benchmark-seed-v1.json \
   --review-jsonl /secure/review/retrieval-qrels-v1.jsonl
 ```
@@ -100,7 +100,7 @@ The metric thresholds are explicit in
 fallback.  A fail-closed evidence record can be produced with:
 
 ```console
-uv run --frozen jarvis-research-online-qualify \
+uv run --frozen cyrus-research-online-qualify \
   --benchmark benchmarks/retrieval-benchmark-seed-v1.json \
   --images image-manifest.production.json \
   --thresholds online-qualification-thresholds-v1.json \

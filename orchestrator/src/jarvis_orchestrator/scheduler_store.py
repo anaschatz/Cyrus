@@ -1536,7 +1536,7 @@ class SchedulerStore:
             "notification_id": identifier,
             "occurrence_id": occurrence_row["occurrence_id"],
             "private_body": "Έχεις μια υπενθύμιση." if content["locale"] == "el-GR" else "You have a reminder.",
-            "private_title": "JARVIS",
+            "private_title": "CYRUS",
             "scheduled_at_utc": occurrence_row["scheduled_at_utc"],
             "silent": False,
             "title": content["title"],

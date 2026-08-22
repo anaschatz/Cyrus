@@ -1,4 +1,4 @@
-# JARVIS Orchestrator Core v1.0
+# CYRUS Orchestrator Core v1.0
 
 The Orchestrator is the sole owner of task lifecycle, one-active-conversation state, routing, budgets, approvals, epochs, cancellation, canonical history and the durable server-event outbox. The voice package remains a transport/TTS client and the inference package remains a frozen local appliance.
 
@@ -27,7 +27,7 @@ PYTHONPATH=orchestrator/src:src orchestrator/.venv/bin/python \
   --database /absolute/private/path/state/orchestrator.sqlite3 \
   --voice-auth-key /absolute/private/path/voice-auth.json
 cd orchestrator
-PYTHONPATH=src:../src uv run --frozen jarvis-orchestrator \
+PYTHONPATH=src:../src uv run --frozen cyrus-orchestrator \
   --config /absolute/private/path/orchestrator.local.json serve
 ```
 
@@ -69,9 +69,9 @@ foreground-only hardware procedure is the
 Control examples:
 
 ```sh
-PYTHONPATH=src uv run --frozen jarvis-orchestrator --config /absolute/private/path/orchestrator.local.json ready
-PYTHONPATH=src uv run --frozen jarvis-orchestrator --config /absolute/private/path/orchestrator.local.json approvals list
-PYTHONPATH=src uv run --frozen jarvis-orchestrator --config /absolute/private/path/orchestrator.local.json conversations active
+PYTHONPATH=src uv run --frozen cyrus-orchestrator --config /absolute/private/path/orchestrator.local.json ready
+PYTHONPATH=src uv run --frozen cyrus-orchestrator --config /absolute/private/path/orchestrator.local.json approvals list
+PYTHONPATH=src uv run --frozen cyrus-orchestrator --config /absolute/private/path/orchestrator.local.json conversations active
 ```
 
 Conversation deletion always prompts for the full conversation ID. Logical deletion does not claim forensic erasure of SQLite WAL or free pages.
@@ -297,12 +297,12 @@ tokens in 1.167, 1.570 and 2.067 seconds. Lifecycle state was exact, audit
 coverage was 100%, and no authoritative record was written. This engineering
 probe is not the required 20-conversation/100-turn real-session trial.
 Timeouts and provider failures are recorded with stable error codes and never
-change the completed JARVIS response. Automatic approval remains disabled.
+change the completed CYRUS response. Automatic approval remains disabled.
 
 `AnamnesisShadowAdapter` is the first concrete lifecycle implementation of
 that boundary. Its writer may choose only `ignore`, `create`, `replace` or
 `cancel`, plus an index into the current active-memory list for the last two.
-JARVIS derives opaque memory keys and exact supersession IDs itself, rebuilds
+CYRUS derives opaque memory keys and exact supersession IDs itself, rebuilds
 active shadow state from hash-checked audit events and canonical source turns,
 and never lets shadow output mutate canonical history or enter the answer
 prompt. This remains an evaluation seam; a separately qualified structured
@@ -327,7 +327,7 @@ The first frozen natural-language shadow diagnostic contains 48 English and
 Greek cases. Gate v1 scored 37/48: all 10 ordinary, quoted or negated messages
 were safely ignored and all 6 ambiguity cases routed to fallback, but 11 clear
 memory commands using unsupported paraphrases were missed as `ignore`. Gate v1
-is therefore rejected for a JARVIS pilot. The dataset must remain frozen; a
+is therefore rejected for a CYRUS pilot. The dataset must remain frozen; a
 future gate revision requires a new evaluation set rather than tuning and
 claiming success on these same cases.
 

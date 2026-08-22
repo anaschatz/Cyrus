@@ -12,7 +12,7 @@ from .online_qualification import _load_json, parse_benchmark
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jarvis-research-benchmark")
+    parser = argparse.ArgumentParser(prog="cyrus-research-benchmark")
     parser.add_argument("--benchmark", required=True, type=Path)
     parser.add_argument("--review-jsonl", type=Path)
     args = parser.parse_args(argv)

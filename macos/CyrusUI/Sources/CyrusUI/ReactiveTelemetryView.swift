@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ProcessingPipelineView: View {
-    let state: JarvisRuntimeState
+    let state: CyrusRuntimeState
     let stateAge: TimeInterval
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 

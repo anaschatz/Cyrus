@@ -68,7 +68,7 @@ class BridgeServer(socketserver.ThreadingTCPServer):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jarvis-searx-proxy-bridge")
+    parser = argparse.ArgumentParser(prog="cyrus-searx-proxy-bridge")
     parser.add_argument("--bind", default="0.0.0.0:8081")
     args = parser.parse_args(argv)
     host, raw_port = args.bind.rsplit(":", 1)

@@ -1,4 +1,4 @@
-"""JARVIS Orchestrator Core v1.0 with dependency-light lazy exports."""
+"""CYRUS Orchestrator Core v1.0 with legacy package namespaces."""
 
 from __future__ import annotations
 

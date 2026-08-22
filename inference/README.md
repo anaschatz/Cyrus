@@ -1,4 +1,4 @@
-# JARVIS Stateless Inference Appliance v1
+# CYRUS Stateless Inference Appliance v1
 
 This directory is a standalone Python 3.11 service. It does not import or modify
 `jarvis_voice`, and it contains no orchestrator, memory, research, conversation
@@ -51,7 +51,7 @@ python -m pip install --no-deps ./inference
 Strictly check a manifest and all artifacts:
 
 ```text
-jarvis-inference verify-manifest --manifest /absolute/path/manifest.json
+cyrus-inference verify-manifest --manifest /absolute/path/manifest.json
 ```
 
 Run native qualification. The runner must be a fully local regular executable
@@ -74,7 +74,7 @@ JARVIS_QUAL_GPU_MEMORY_BYTES='exact-positive-byte-count' \
 JARVIS_QUAL_GPU_DRIVER='exact-driver-version' \
 JARVIS_QUAL_COMPUTE_RUNTIME='exact-CUDA-or-Metal-runtime' \
 JARVIS_QUAL_COMPUTE_CAPABILITY='exact-compute-capability-or-Metal-family' \
-jarvis-inference qualify \
+cyrus-inference qualify \
   --manifest /absolute/path/manifest.json \
   --fixture-runner /absolute/path/manifest-root/native-fixture-runner
 ```
@@ -89,11 +89,11 @@ JARVIS_QUAL_GPU_MEMORY_BYTES='same-qualified-positive-byte-count' \
 JARVIS_QUAL_GPU_DRIVER='same-qualified-driver-version' \
 JARVIS_QUAL_COMPUTE_RUNTIME='same-qualified-runtime' \
 JARVIS_QUAL_COMPUTE_CAPABILITY='same-qualified-capability' \
-  jarvis-inference serve --manifest /absolute/path/manifest.json
+  cyrus-inference serve --manifest /absolute/path/manifest.json
 ```
 
 On Windows, set the same names with `$env:NAME='value'` in the service account
-before invoking the unchanged `jarvis-inference` command. Secrets are never
+before invoking the `cyrus-inference` command. Secrets are never
 accepted as command-line arguments.
 
 Missing/corrupt/in-progress/failed/mismatched qualification keeps the process

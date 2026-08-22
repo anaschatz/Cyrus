@@ -1,6 +1,6 @@
 # macOS technical-beta operator runbook
 
-This runbook operates one bounded, foreground-only JARVIS session on one
+This runbook operates one bounded, foreground-only CYRUS session on one
 Apple-silicon Mac. Voice, Orchestrator and local inference all run on that Mac
 over loopback. It does not install a LaunchAgent, enable autostart, detach a
 process or authorize a Mac/PC split.
@@ -61,7 +61,7 @@ installed runtime before proceeding; do not add source directories to
 
 ## 2. Validate and preflight while stopped
 
-No JARVIS service should be running yet. Validate the private binding:
+No CYRUS service should be running yet. Validate the private binding:
 
 ```zsh
 "$JARVIS_RUNTIME_PYTHON" -m jarvis_orchestrator.stack_cli \
@@ -257,7 +257,7 @@ If the previous supervisor was terminated before it could remove its
 interlock, run the explicit verification-only recovery after the checks above:
 
 ```bash
-jarvis-stack --config "$JARVIS_STACK_CONFIG" beta-recover \
+cyrus-stack --config "$JARVIS_STACK_CONFIG" beta-recover \
   --session-parent "$JARVIS_SESSION_PARENT"
 ```
 

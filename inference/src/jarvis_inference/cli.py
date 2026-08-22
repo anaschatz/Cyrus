@@ -36,7 +36,7 @@ def qualification_engine_factory(manifest: Manifest):
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="jarvis-inference")
+    parser = argparse.ArgumentParser(prog="cyrus-inference")
     commands = parser.add_subparsers(dest="command", required=True)
     serve_parser = commands.add_parser("serve", help="serve the qualified appliance")
     serve_parser.add_argument("--manifest", type=Path, required=True)

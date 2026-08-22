@@ -1,4 +1,4 @@
-"""JARVIS Research sidecar adapters."""
+"""CYRUS Research sidecar adapters (legacy ``jarvis_research`` namespace)."""
 
 from .adapters import (
     DirectHTTPFetcher,

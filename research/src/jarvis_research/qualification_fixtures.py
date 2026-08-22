@@ -295,7 +295,7 @@ def _decode_name(value: bytes, offset: int) -> tuple[str, int]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jarvis-research-fixture")
+    parser = argparse.ArgumentParser(prog="cyrus-research-fixture")
     parser.add_argument("kind", choices=("http", "search", "dns", "tunnel"))
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--port", type=int)

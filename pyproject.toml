@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jarvis-voice"
 version = "0.8.0"
-description = "Local-first JARVIS voice interface"
+description = "Local-first CYRUS voice interface"
 requires-python = ">=3.11"
 dependencies = ["cryptography==49.0.0"]
 license-files = []
@@ -23,6 +23,8 @@ packaging = ["pyinstaller==6.21.0"]
 dev = []
 
 [project.scripts]
+cyrus-voice = "jarvis_voice.cli:main"
+# Compatibility alias retained for existing installations and runbooks.
 jarvis-voice = "jarvis_voice.cli:main"
 
 [tool.setuptools]

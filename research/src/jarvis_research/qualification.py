@@ -437,7 +437,7 @@ class LiveQualificationRunnerV1:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jarvis-research-qualify")
+    parser = argparse.ArgumentParser(prog="cyrus-research-qualify")
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)

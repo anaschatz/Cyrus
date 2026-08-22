@@ -12,7 +12,7 @@ enum HUDTheme {
     static let secondaryText = Color(red: 0.66, green: 0.82, blue: 0.88)
     static let grid = cyan.opacity(0.075)
 
-    static func accent(for state: JarvisRuntimeState) -> Color {
+    static func accent(for state: CyrusRuntimeState) -> Color {
         switch state {
         case .error: danger
         case .offline: Color.white.opacity(0.42)

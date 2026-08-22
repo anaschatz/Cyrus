@@ -2,13 +2,13 @@ import AppKit
 import SwiftUI
 
 @main
-struct JarvisUIApp: App {
-    @StateObject private var store = JarvisStateStore()
+struct CyrusUIApp: App {
+    @StateObject private var store = CyrusStateStore()
     @AppStorage("keepHUDAboveWindows") private var keepHUDAboveWindows = false
 
     var body: some Scene {
-        Window("JARVIS", id: "jarvis-hud") {
-            JarvisHUDView(store: store)
+        Window("CYRUS", id: "cyrus-hud") {
+            CyrusHUDView(store: store)
                 .frame(idealWidth: 980, idealHeight: 640)
                 .background(WindowConfigurator(keepAbove: keepHUDAboveWindows))
         }
@@ -17,17 +17,17 @@ struct JarvisUIApp: App {
         .windowResizability(.contentMinSize)
 
         MenuBarExtra {
-            JarvisMenu(store: store, keepAbove: $keepHUDAboveWindows)
+            CyrusMenu(store: store, keepAbove: $keepHUDAboveWindows)
         } label: {
             Image(systemName: store.state.symbolName)
-                .accessibilityLabel("JARVIS \(store.state.title)")
+                .accessibilityLabel("CYRUS \(store.state.title)")
         }
         .menuBarExtraStyle(.menu)
     }
 }
 
-private struct JarvisMenu: View {
-    @ObservedObject var store: JarvisStateStore
+private struct CyrusMenu: View {
+    @ObservedObject var store: CyrusStateStore
     @Binding var keepAbove: Bool
     @Environment(\.openWindow) private var openWindow
 
@@ -37,16 +37,16 @@ private struct JarvisMenu: View {
             Text(store.state.subtitle)
         }
         Divider()
-        Button("Open JARVIS HUD") {
-            openWindow(id: "jarvis-hud")
+        Button("Open CYRUS HUD") {
+            openWindow(id: "cyrus-hud")
             NSApp.activate(ignoringOtherApps: true)
         }
-        .keyboardShortcut("j")
+        .keyboardShortcut("c")
         Button("Refresh Runtime State") { store.refresh() }
             .keyboardShortcut("r")
         Toggle("Keep HUD Above Windows", isOn: $keepAbove)
         Divider()
-        Button("Quit JARVIS UI") { NSApp.terminate(nil) }
+        Button("Quit CYRUS UI") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }
 }

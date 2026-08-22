@@ -13,7 +13,7 @@ from .errors import BackendError
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="jarvis-voice")
+    parser = argparse.ArgumentParser(prog="cyrus-voice")
     commands = parser.add_subparsers(dest="command", required=True)
     doctor = commands.add_parser("doctor", help="Run offline diagnostics")
     source = doctor.add_mutually_exclusive_group(required=True)

@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jarvis-research"
 version = "1.0.0"
+description = "Evidence-bound research sidecar for CYRUS"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "httpx==0.28.1",
@@ -12,6 +13,14 @@ dependencies = [
 ]
 
 [project.scripts]
+cyrus-research-api = "jarvis_research.api:serve"
+cyrus-research-qualify = "jarvis_research.qualification:main"
+cyrus-research-online-qualify = "jarvis_research.online_qualification:main"
+cyrus-research-benchmark = "jarvis_research.benchmark_tool:main"
+cyrus-egress-guard = "jarvis_research.egress_guard:main"
+cyrus-research-fixture = "jarvis_research.qualification_fixtures:main"
+cyrus-searx-proxy-bridge = "jarvis_research.proxy_bridge:main"
+# Compatibility aliases retained for frozen deployment manifests.
 jarvis-research-api = "jarvis_research.api:serve"
 jarvis-research-qualify = "jarvis_research.qualification:main"
 jarvis-research-online-qualify = "jarvis_research.online_qualification:main"

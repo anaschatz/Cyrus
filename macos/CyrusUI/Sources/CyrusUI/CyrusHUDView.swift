@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct JarvisHUDView: View {
-    @ObservedObject var store: JarvisStateStore
+struct CyrusHUDView: View {
+    @ObservedObject var store: CyrusStateStore
 
     private var accent: Color { HUDTheme.accent(for: store.state) }
 
@@ -34,11 +34,11 @@ struct JarvisHUDView: View {
     private var header: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("J.A.R.V.I.S")
+                Text("C Y R U S")
                     .font(.system(size: 27, weight: .light, design: .monospaced))
                     .tracking(7)
                     .foregroundStyle(HUDTheme.primaryText)
-                Text("JUST A RATHER VERY INTELLIGENT SYSTEM")
+                Text("LOCAL INTELLIGENCE AND OPERATIONS SYSTEM")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .tracking(1.5)
                     .foregroundStyle(HUDTheme.secondaryText)

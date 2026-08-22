@@ -252,7 +252,7 @@ def request_permissions(config: ActionHostDaemonConfig) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jarvis-action-host")
+    parser = argparse.ArgumentParser(prog="cyrus-action-host")
     parser.add_argument("--config", type=Path, required=True)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--initialize", action="store_true")

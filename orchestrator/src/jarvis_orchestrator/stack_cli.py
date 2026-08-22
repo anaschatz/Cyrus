@@ -1,4 +1,4 @@
-"""One content-free operator entry point for the private local JARVIS stack."""
+"""One content-free operator entry point for the private local CYRUS stack."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def _print(value: Any) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="jarvis-stack")
+    parser = argparse.ArgumentParser(prog="cyrus-stack")
     parser.add_argument("--config", type=Path)
     commands = parser.add_subparsers(dest="command", required=True)
     initialize = commands.add_parser("init")
@@ -458,7 +458,7 @@ def main(argv: list[str] | None = None) -> int:
                 turns=parsed.turns,
                 database_path=config.database_path,
                 maximum_database_bytes=512 * 1024 * 1024,
-                request_text="Reply exactly: JARVIS local E2E ready.",
+                request_text="Reply exactly: CYRUS local E2E ready.",
             )
         )
         report = {

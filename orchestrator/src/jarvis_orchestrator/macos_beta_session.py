@@ -1388,7 +1388,7 @@ class _StopRequested(Exception):
 
 
 class MacOSBetaSession:
-    """Own and supervise one complete local macOS JARVIS beta session."""
+    """Own and supervise one complete local macOS CYRUS beta session."""
 
     def __init__(
         self,

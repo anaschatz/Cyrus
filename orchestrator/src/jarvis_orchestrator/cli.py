@@ -1174,7 +1174,7 @@ def _command_qualification(
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="jarvis-orchestrator")
+    result = argparse.ArgumentParser(prog="cyrus-orchestrator")
     result.add_argument("--config", required=True)
     commands = result.add_subparsers(dest="command", required=True)
     commands.add_parser("serve")

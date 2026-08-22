@@ -2,8 +2,8 @@ import Combine
 import Foundation
 
 @MainActor
-final class JarvisStateStore: NSObject, ObservableObject {
-    @Published private(set) var state: JarvisRuntimeState = .offline
+final class CyrusStateStore: NSObject, ObservableObject {
+    @Published private(set) var state: CyrusRuntimeState = .offline
     @Published private(set) var generation = 0
     @Published private(set) var activity = 0.0
     @Published private(set) var stateAge = 0.0
@@ -15,8 +15,8 @@ final class JarvisStateStore: NSObject, ObservableObject {
     private var demoIndex = 0
 
     init(
-        stateURL: URL = JarvisUIArguments.stateFile(),
-        demo: Bool = JarvisUIArguments.demoEnabled(),
+        stateURL: URL = CyrusUIArguments.stateFile(),
+        demo: Bool = CyrusUIArguments.demoEnabled(),
         now: @escaping () -> Date = Date.init,
         startTimer: Bool = true
     ) {
@@ -41,7 +41,7 @@ final class JarvisStateStore: NSObject, ObservableObject {
 
     func refresh() {
         if isDemo {
-            let states: [JarvisRuntimeState] = [.idle, .listening, .processing, .speaking]
+            let states: [CyrusRuntimeState] = [.idle, .listening, .processing, .speaking]
             let timestamp = now().timeIntervalSince1970
             let next = Int(timestamp / 2.5) % states.count
             if next != demoIndex || state == .offline {

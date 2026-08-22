@@ -1,6 +1,16 @@
-# JARVIS — Voice, Local Inference and Orchestrator Core v1.0
+# CYRUS — Voice, Local Inference and Orchestrator Core v1.0
 
-This repository implements three explicit sibling boundaries: the `jarvis.voice/1` capture/ASR/TTS client, the frozen OpenAI-compatible local inference appliance, and the durable Orchestrator that alone owns task lifecycle, conversations, routing, budgets, approvals, cancellation epochs, canonical history and output delivery.
+CYRUS is the public product name. This repository implements three explicit
+sibling boundaries: the legacy-namespaced `jarvis.voice/1` capture/ASR/TTS
+client, the frozen OpenAI-compatible local inference appliance, and the durable
+Orchestrator that alone owns task lifecycle, conversations, routing, budgets,
+approvals, cancellation epochs, canonical history and output delivery.
+
+The rename is intentionally compatibility-preserving. New operator commands use
+the `cyrus-*` prefix, while frozen protocols, Python import/distribution names,
+state paths, environment variables and qualification evidence retain their
+existing `jarvis*` identifiers. See the
+[branding and compatibility boundary](docs/branding-and-compatibility.md).
 
 `function-key PTT → WASAPI capture → Silero VAD → local faster-whisper → loopback WebSocket → SAPI5`
 
@@ -142,15 +152,15 @@ The manifest detects changes but does not authenticate the publisher. Authentico
 
 ## Native macOS HUD
 
-The initial macOS operator UI lives in [`macos/JarvisUI`](macos/JarvisUI). It is
+The native CYRUS operator UI lives in [`macos/CyrusUI`](macos/CyrusUI). It is
 a native SwiftUI menu-bar app with an optional floating cyan HUD inspired by the
-project's JARVIS video references. The Voice runtime publishes only a strict,
+project's original assistant references. The Voice runtime publishes only a strict,
 owner-only state enum (`idle`, `listening`, `processing`, `speaking`, `error`,
 or `offline`) with timestamps, a generation and a bounded input-activity scalar
 while listening. The reactor, waveform and processing rail react to that live
 signal; raw audio is never written to the UI state file. The UI never receives
 transcripts, prompts or responses. Build, test and demo instructions are in the
-[macOS UI README](macos/JarvisUI/README.md).
+[macOS UI README](macos/CyrusUI/README.md).
 
 ## Pocket TTS candidate
 

@@ -36,7 +36,7 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _MEMORY_KEY = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)+$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _EXPLICIT_REMEMBER_PREFIX = re.compile(
-    r"^\s*(?:jarvis[\s,:-]+)?(?:"
+    r"^\s*(?:(?:cyrus|jarvis)[\s,:-]+)?(?:"
     r"να\s+θυμασαι(?:\s+(?:οτι|πωσ))?"
     r"|θυμησου(?:\s+(?:οτι|πωσ))?"
     r"|κρατα\s+στη\s+μνημη(?:\s+(?:οτι|πωσ))?"
@@ -45,7 +45,7 @@ _EXPLICIT_REMEMBER_PREFIX = re.compile(
     r")\s*[:,;-]?\s*",
 )
 _EXPLICIT_FORGET_PREFIX = re.compile(
-    r"^\s*(?:jarvis[\s,:-]+)?(?:"
+    r"^\s*(?:(?:cyrus|jarvis)[\s,:-]+)?(?:"
     r"ξεχασε(?:\s+(?:οτι|πωσ))?"
     r"|διεγραψε\s+απο\s+τη\s+μνημη(?:\s+(?:οτι|πωσ))?"
     r"|please\s+forget(?:\s+that)?"

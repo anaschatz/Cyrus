@@ -63,7 +63,7 @@ class VoiceTrayApplication:
             LifecycleStatus.STOPPING: "Stopping",
             LifecycleStatus.ERROR: f"Error ({snapshot.error_code or 'runtime.failure'})",
         }
-        return f"JARVIS Voice — {labels[snapshot.status]}"
+        return f"CYRUS Voice — {labels[snapshot.status]}"
 
     @staticmethod
     def _background(target: Callable[[], object], name: str) -> None:

@@ -61,7 +61,7 @@ class SingleInstanceGuard:
             try:
                 self.api.close(handle)
             finally:
-                raise BackendError("application.already_running", "JARVIS Voice is already running in this session", subsystem="application")
+                raise BackendError("application.already_running", "CYRUS Voice is already running in this session", subsystem="application")
         self._handle = handle
 
     def release(self) -> None:

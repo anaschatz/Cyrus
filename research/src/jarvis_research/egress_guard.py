@@ -311,7 +311,7 @@ def serve(config: GuardConfigV1 | None = None) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jarvis-egress-guard")
+    parser = argparse.ArgumentParser(prog="cyrus-egress-guard")
     parser.add_argument("--check-config", action="store_true")
     args = parser.parse_args(argv)
     config = GuardConfigV1.from_environment()

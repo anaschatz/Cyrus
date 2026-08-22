@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jarvis-orchestrator"
 version = "1.0.0"
-description = "Durable local-first JARVIS orchestration core"
+description = "Durable local-first CYRUS orchestration core"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "anamnesis-memory-eval==0.1.0",
@@ -20,6 +20,10 @@ dependencies = [
 ]
 
 [project.scripts]
+cyrus-orchestrator = "jarvis_orchestrator.cli:main"
+cyrus-action-host = "jarvis_orchestrator.action_host_daemon:main"
+cyrus-stack = "jarvis_orchestrator.stack_cli:main"
+# Compatibility aliases retained for frozen beta deployments.
 jarvis-orchestrator = "jarvis_orchestrator.cli:main"
 jarvis-action-host = "jarvis_orchestrator.action_host_daemon:main"
 jarvis-stack = "jarvis_orchestrator.stack_cli:main"

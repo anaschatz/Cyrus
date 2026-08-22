@@ -1,4 +1,4 @@
-"""Strict private composition manifest for the real local JARVIS stack."""
+"""Strict private composition manifest for the real local CYRUS stack."""
 
 from __future__ import annotations
 

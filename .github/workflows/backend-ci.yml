@@ -361,14 +361,20 @@ jobs:
         run: |
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/smoke-voice/bin/python" -I -c "import jarvis_voice; assert jarvis_voice.__version__ == '0.8.0'"
+          "$RUNNER_TEMP/smoke-voice/bin/cyrus-voice" --help
           "$RUNNER_TEMP/smoke-voice/bin/jarvis-voice" --help
           "$RUNNER_TEMP/smoke-anamnesis/bin/python" -I -c "import anamnesis; assert anamnesis.__all__"
           "$RUNNER_TEMP/smoke-anamnesis/bin/anamnesis-manifest" --help
           "$RUNNER_TEMP/smoke-inference/bin/python" -I -c "import jarvis_inference; assert jarvis_inference.__version__ == '1.0.0'"
+          "$RUNNER_TEMP/smoke-inference/bin/cyrus-inference" --help
           "$RUNNER_TEMP/smoke-inference/bin/jarvis-inference" --help
           "$RUNNER_TEMP/smoke-orchestrator/bin/python" -I -c "import jarvis_orchestrator; assert jarvis_orchestrator.__version__ == '1.0.0'"
+          "$RUNNER_TEMP/smoke-orchestrator/bin/cyrus-orchestrator" --help
+          "$RUNNER_TEMP/smoke-orchestrator/bin/cyrus-action-host" --help
+          "$RUNNER_TEMP/smoke-orchestrator/bin/cyrus-stack" --help
           "$RUNNER_TEMP/smoke-orchestrator/bin/jarvis-orchestrator" --help
           "$RUNNER_TEMP/smoke-orchestrator/bin/jarvis-action-host" --help
           "$RUNNER_TEMP/smoke-orchestrator/bin/jarvis-stack" --help
           "$RUNNER_TEMP/smoke-research/bin/python" -I -c "import jarvis_research; assert jarvis_research.__version__ == '1.0.0'"
+          "$RUNNER_TEMP/smoke-research/bin/cyrus-research-qualify" --help
           "$RUNNER_TEMP/smoke-research/bin/jarvis-research-qualify" --help

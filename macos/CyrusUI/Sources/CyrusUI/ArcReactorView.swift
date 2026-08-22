@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ArcReactorView: View {
-    let state: JarvisRuntimeState
+    let state: CyrusRuntimeState
     let activity: Double
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -63,7 +63,7 @@ struct ArcReactorView: View {
             .animation(.easeInOut(duration: 0.28), value: state)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("JARVIS status: \(state.title)")
+        .accessibilityLabel("CYRUS status: \(state.title)")
         .accessibilityValue(state.subtitle)
     }
 
@@ -130,7 +130,7 @@ struct ArcReactorView: View {
 }
 
 struct VoiceWaveformView: View {
-    let state: JarvisRuntimeState
+    let state: CyrusRuntimeState
     let activity: Double
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 

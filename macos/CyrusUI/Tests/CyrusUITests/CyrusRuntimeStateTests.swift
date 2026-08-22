@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import SwiftUI
 import Testing
-@testable import JarvisUI
+@testable import CyrusUI
 
 @Test func decodesCurrentStrictVoiceSnapshot() throws {
     let data = Data(#"{"activity_milli":640,"generation":7,"state":"listening","state_started_at_unix_ms":99000,"updated_at_unix_ms":100000,"version":"jarvis-voice-ui-state/2"}"#.utf8)
@@ -68,13 +68,16 @@ import Testing
     defer { try? FileManager.default.removeItem(at: root) }
     let snapshot = root.appendingPathComponent("ui-state.json")
     let now = Date(timeIntervalSince1970: 2_000)
-    let fixtures: [(JarvisRuntimeState, Int)] = [
+    let fixtures: [(CyrusRuntimeState, Int)] = [
         (.listening, 720),
         (.processing, 0),
         (.speaking, 0),
         (.offline, 0),
     ]
-    let renderDirectory = ProcessInfo.processInfo.environment["JARVIS_UI_RENDER_DIRECTORY"]
+    let renderDirectory = (
+        ProcessInfo.processInfo.environment["CYRUS_UI_RENDER_DIRECTORY"]
+            ?? ProcessInfo.processInfo.environment["JARVIS_UI_RENDER_DIRECTORY"]
+    )
         .map { URL(fileURLWithPath: $0, isDirectory: true) }
     if let renderDirectory {
         try FileManager.default.createDirectory(
@@ -87,13 +90,13 @@ import Testing
         let body = #"{"activity_milli":\#(activity),"generation":42,"state":"\#(state.rawValue)","state_started_at_unix_ms":1999000,"updated_at_unix_ms":2000000,"version":"jarvis-voice-ui-state/2"}"#
         try Data(body.utf8).write(to: snapshot, options: .atomic)
         chmod(snapshot.path, 0o600)
-        let store = JarvisStateStore(
+        let store = CyrusStateStore(
             stateURL: snapshot,
             now: { now },
             startTimer: false
         )
         let renderer = ImageRenderer(
-            content: JarvisHUDView(store: store).frame(width: 980, height: 640)
+            content: CyrusHUDView(store: store).frame(width: 980, height: 640)
         )
         renderer.scale = 2
         guard let image = renderer.nsImage,
@@ -108,12 +111,15 @@ import Testing
         #expect(bitmap.pixelsHigh == 1_280)
         #expect(png.count > 100_000)
         if state == .listening,
-           let output = ProcessInfo.processInfo.environment["JARVIS_UI_RENDER_PATH"] {
+           let output = (
+               ProcessInfo.processInfo.environment["CYRUS_UI_RENDER_PATH"]
+                   ?? ProcessInfo.processInfo.environment["JARVIS_UI_RENDER_PATH"]
+           ) {
             try png.write(to: URL(fileURLWithPath: output), options: .atomic)
         }
         if let renderDirectory {
             try png.write(
-                to: renderDirectory.appendingPathComponent("jarvis-ui-\(state.rawValue).png"),
+                to: renderDirectory.appendingPathComponent("cyrus-ui-\(state.rawValue).png"),
                 options: .atomic
             )
         }

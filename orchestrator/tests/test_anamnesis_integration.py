@@ -140,6 +140,14 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
                 "forget",
                 "το ποδήλατό μου λέγεται Ίρις",
             ),
+            "Cyrus, remember that my bicycle is called Iris.": (
+                "remember",
+                "my bicycle is called Iris",
+            ),
+            "Cyrus, ξέχασε ότι το ποδήλατό μου λέγεται Ίρις.": (
+                "forget",
+                "το ποδήλατό μου λέγεται Ίρις",
+            ),
         }
         for text, expected in cases.items():
             with self.subTest(text=text):

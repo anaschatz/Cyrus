@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-enum JarvisRuntimeState: String, Codable, CaseIterable, Sendable {
+enum CyrusRuntimeState: String, Codable, CaseIterable, Sendable {
     case starting
     case idle
     case listening
@@ -52,7 +52,7 @@ enum JarvisRuntimeState: String, Codable, CaseIterable, Sendable {
 struct VoiceStateEnvelope: Codable, Equatable, Sendable {
     let activityMilli: Int
     let generation: Int
-    let state: JarvisRuntimeState
+    let state: CyrusRuntimeState
     let stateStartedAtUnixMs: Int64
     let updatedAtUnixMs: Int64
     let version: String
@@ -79,7 +79,7 @@ struct VoiceStateEnvelope: Codable, Equatable, Sendable {
         return try? JSONDecoder().decode(VoiceStateEnvelope.self, from: data)
     }
 
-    func validated(nowUnixMs: Int64, staleAfterMs: Int64 = 3_500) -> JarvisRuntimeState? {
+    func validated(nowUnixMs: Int64, staleAfterMs: Int64 = 3_500) -> CyrusRuntimeState? {
         guard version == "jarvis-voice-ui-state/2",
               (0...1_000).contains(activityMilli),
               generation > 0,
@@ -130,13 +130,16 @@ enum PrivateSnapshotReader {
     }
 }
 
-enum JarvisUIArguments {
+enum CyrusUIArguments {
     static func stateFile(arguments: [String] = CommandLine.arguments) -> URL {
         if let index = arguments.firstIndex(of: "--state-file"),
            arguments.indices.contains(index + 1) {
             return URL(fileURLWithPath: arguments[index + 1])
         }
         return FileManager.default.homeDirectoryForCurrentUser
+            // Compatibility boundary: Voice 0.8 still publishes to the frozen
+            // legacy state root. The UI name can change without moving private
+            // runtime state or invalidating existing beta installations.
             .appendingPathComponent("Library/Application Support/JARVIS Voice/state/ui-state.json")
     }
 

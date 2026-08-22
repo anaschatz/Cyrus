@@ -1,7 +1,7 @@
 # Private stack config and real local E2E
 
 `jarvis-private-stack/2` is the single operator entry point for a real local
-JARVIS run. It does not copy secrets or model settings into the repository. It
+CYRUS run. It does not copy secrets or model settings into the repository. It
 binds the already-private voice and Orchestrator configs to one exact qualified
 inference manifest, qualification report and sealed runner. Both component
 configs must reference the same external `jarvis.voice-auth-key/1` key file;

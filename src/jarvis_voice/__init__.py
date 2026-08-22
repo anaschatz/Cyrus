@@ -1,4 +1,4 @@
-"""JARVIS Voice protocol and source-run runtime boundaries."""
+"""CYRUS Voice runtime with legacy ``jarvis_voice`` protocol namespaces."""
 
 from .protocol import Envelope, PROTOCOL_VERSION
 
