@@ -25,6 +25,27 @@ def _top_level_imports(path: Path) -> set[str]:
 
 
 class DependencyBoundaryTests(unittest.TestCase):
+    def test_translation_runtime_dependencies_are_exact_and_locked(self) -> None:
+        project = tomllib.loads(
+            (ROOT / "orchestrator" / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        locked = tomllib.loads(
+            (ROOT / "orchestrator" / "uv.lock").read_text(encoding="utf-8")
+        )
+
+        dependencies = project["project"]["dependencies"]
+        self.assertIn("ctranslate2==4.8.1", dependencies)
+        self.assertIn("sentencepiece==0.2.2", dependencies)
+        packages = {package["name"]: package for package in locked["package"]}
+        self.assertEqual(packages["ctranslate2"]["version"], "4.8.1")
+        self.assertEqual(packages["sentencepiece"]["version"], "0.2.2")
+        orchestrator = packages["jarvis-orchestrator"]
+        requirements = {
+            requirement["name"]
+            for requirement in orchestrator["metadata"]["requires-dist"]
+        }
+        self.assertTrue({"ctranslate2", "sentencepiece"}.issubset(requirements))
+
     def test_research_test_dependency_is_exact_locked_and_dev_only(self) -> None:
         orchestrator_project = tomllib.loads(
             (ROOT / "orchestrator" / "pyproject.toml").read_text(encoding="utf-8")

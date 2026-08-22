@@ -23,6 +23,7 @@ from .context_assembler import (
 from .domain import (
     BudgetExhaustedError,
     CanonicalEffectV1,
+    CanonicalTurnV1,
     ModelRequest,
     OrchestratorError,
     ReasonCode,
@@ -115,6 +116,12 @@ from .research_security import reject_sensitive_text
 from .tool_contracts import ToolOutcomeV1
 from .tool_store import ToolStoreV1
 from .tool_state import ToolRunState
+from .translation import (
+    DisabledTranslationPort,
+    TranslationPort,
+    contains_greek,
+    validate_translation_output,
+)
 
 SYSTEM_PROMPT = (
     "You are CYRUS, a concise bilingual Greek/English local voice assistant. "
@@ -173,6 +180,7 @@ class OrchestratorService:
         tool_store: ToolStoreV1 | None = None,
         tool_planner: ToolPlannerPort | None = None,
         tool_executor: ToolExecutorPort | None = None,
+        input_translator: TranslationPort | None = None,
     ) -> None:
         self.config = config
         self.store = store
@@ -189,6 +197,11 @@ class OrchestratorService:
         self.tool_planner = tool_planner
         self.tool_executor = tool_executor
         self.model = model
+        if config.input_translation_mode != "disabled" and input_translator is None:
+            raise RuntimeError(
+                "input_translation_mode requires a qualified TranslationPort"
+            )
+        self.input_translator = input_translator or DisabledTranslationPort()
         self.inference_control = inference_control
         self.memory = memory or DisabledShadowMemoryService()
         if config.memory_enabled and active_memory is None:
@@ -462,7 +475,25 @@ class OrchestratorService:
             absolute_lifetime=timedelta(seconds=self.config.absolute_lifetime_seconds),
         )
 
-    def _final_local_context(
+    @staticmethod
+    def _value_contains_greek(value: Any, *, depth: int = 0) -> bool:
+        if depth > 8:
+            return True
+        if isinstance(value, str):
+            return contains_greek(value)
+        if isinstance(value, Mapping):
+            return any(
+                OrchestratorService._value_contains_greek(item, depth=depth + 1)
+                for item in value.values()
+            )
+        if isinstance(value, (tuple, list)):
+            return any(
+                OrchestratorService._value_contains_greek(item, depth=depth + 1)
+                for item in value
+            )
+        return False
+
+    async def _final_local_context(
         self,
         task: TaskSnapshot,
         current_transcript: str,
@@ -477,15 +508,80 @@ class OrchestratorService:
             # assembled separately and remains available when enabled.
             limit_pairs=FINAL_LOCAL_HISTORY_PAIRS,
         )
-        return self.context_assembler.assemble(
+        recalls = tuple(item.text for item in recall.items[:RECALL_MAX_ITEMS])
+        projected_transcript = current_transcript
+        projected_history = tuple(history)
+        projected_recalls = recalls
+        if self.config.response_language == "en":
+            pending: dict[str, str] = {}
+            # The macOS language stabilizer can deliberately label a short
+            # Latin-only English turn as ``el`` with zero confidence. Script
+            # is therefore the safe routing authority for this el->en model.
+            if contains_greek(current_transcript):
+                pending["current"] = current_transcript
+            for index, turn in enumerate(history):
+                if contains_greek(turn.user_text):
+                    pending[f"history.{index}.user"] = turn.user_text
+                if contains_greek(turn.assistant_text):
+                    pending[f"history.{index}.assistant"] = turn.assistant_text
+            for index, text in enumerate(recalls):
+                if contains_greek(text):
+                    pending[f"recall.{index}"] = text
+            if self._value_contains_greek(tool_projection):
+                raise ContextAssemblyError(
+                    "input_translation_unsupported_context", status=502
+                )
+            if pending:
+                if self.config.input_translation_mode == "disabled":
+                    raise ContextAssemblyError(
+                        "input_translation_unavailable", status=502
+                    )
+                translated = await self.input_translator.translate(
+                    task_id=task.task_id,
+                    epoch=task.epoch,
+                    items=pending,
+                )
+                if not isinstance(translated, Mapping) or set(translated) != set(pending):
+                    raise ContextAssemblyError(
+                        "input_translation_invalid", status=502
+                    )
+                translated = {
+                    key: validate_translation_output(value)
+                    for key, value in translated.items()
+                }
+                projected_transcript = translated.get("current", current_transcript)
+                projected_history = tuple(
+                    CanonicalTurnV1(
+                        turn_id=turn.turn_id,
+                        user_text=translated.get(f"history.{index}.user", turn.user_text),
+                        user_language=(
+                            "en"
+                            if f"history.{index}.user" in translated
+                            else turn.user_language
+                        ),
+                        assistant_text=translated.get(
+                            f"history.{index}.assistant", turn.assistant_text
+                        ),
+                        effects=turn.effects,
+                    )
+                    for index, turn in enumerate(history)
+                )
+                projected_recalls = tuple(
+                    translated.get(f"recall.{index}", text)
+                    for index, text in enumerate(recalls)
+                )
+        context = self.context_assembler.assemble(
             system_prompt=self._system_prompt(memory=bool(recall.items)),
-            current_transcript=current_transcript,
-            history=history,
-            recalls=tuple(
-                item.text for item in recall.items[:RECALL_MAX_ITEMS]
-            ),
+            current_transcript=projected_transcript,
+            history=projected_history,
+            recalls=projected_recalls,
             tool_projection=tool_projection,
         )
+        if self.config.response_language == "en" and any(
+            contains_greek(str(message["content"])) for message in context.messages
+        ):
+            raise ContextAssemblyError("input_translation_invalid", status=502)
+        return context
 
     async def _recall_memory(
         self, task: TaskSnapshot, input_record: Mapping[str, str]
@@ -1729,7 +1825,7 @@ class OrchestratorService:
             if budget["requests"] < 1 or allowance < 1:
                 raise BudgetExhaustedError()
             locale = self._response_locale(input_record["language"])
-            context = self._final_local_context(
+            context = await self._final_local_context(
                 task,
                 input_record["text"],
                 recall,

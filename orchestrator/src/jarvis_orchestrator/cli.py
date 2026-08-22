@@ -42,6 +42,7 @@ from .tool_contracts import ToolRegistryV1
 from .tool_crypto import ToolPayloadCipherV1
 from .tool_executor import ActionHostV2ToolExecutor
 from .tool_store import ToolStoreV1
+from .translation import OpusCTranslate2TranslationPort
 from .action_host_v2_client import ActionHostV2Client
 from .action_host_qualification import current_macos_build, load_native_qualification
 from .operations import (
@@ -914,6 +915,16 @@ async def _run_servers(
                 timeout_seconds=min(config.model_timeout_seconds, 30.0),
             )
         )
+    input_translator = None
+    if config.input_translation_mode == "opus_ct2":
+        assert config.input_translation_model_root is not None
+        assert config.input_translation_manifest_file is not None
+        input_translator = OpusCTranslate2TranslationPort(
+            model_root=config.input_translation_model_root,
+            manifest_path=config.input_translation_manifest_file,
+            manifest_sha256=config.input_translation_manifest_sha256,
+            timeout_seconds=config.input_translation_timeout_seconds,
+        )
     service = OrchestratorService(
         config,
         store,
@@ -936,6 +947,7 @@ async def _run_servers(
         tool_store=tool_store,
         tool_planner=model if config.tools_enabled else None,
         tool_executor=tool_executor,
+        input_translator=input_translator,
     )
     service.startup_recovery()
     if scheduler is not None:

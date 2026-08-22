@@ -41,15 +41,39 @@ class FakeModel:
         yield ModelChunk("ά σου. Δεύτερη πρόταση.", ModelUsage(output_tokens=8, input_tokens=4))
 
 
-def config(path: Path, *, response_language: str = "match_input") -> OrchestratorConfig:
-    return OrchestratorConfig.from_test_mapping(
-        {
-            "database_path": str(path),
-            "control_bearer_token": "control-private",
-            "inference_bearer_token": "inference-private",
-            "response_language": response_language,
+class FakeTranslator:
+    def __init__(self, replacements: dict[str, str] | None = None) -> None:
+        self.replacements = replacements or {"current": "Hello."}
+        self.calls: list[dict[str, str]] = []
+
+    async def translate(self, *, task_id: str, epoch: int, items):
+        del task_id, epoch
+        self.calls.append(dict(items))
+        return {
+            component_id: self.replacements.get(component_id, "Translated context.")
+            for component_id in items
         }
-    )
+
+
+def config(path: Path, *, response_language: str = "match_input") -> OrchestratorConfig:
+    document = {
+        "database_path": str(path),
+        "control_bearer_token": "control-private",
+        "inference_bearer_token": "inference-private",
+        "response_language": response_language,
+    }
+    if response_language == "en":
+        document.update(
+            {
+                "input_translation_mode": "opus_ct2",
+                "input_translation_model_root": str(path.parent / "translation-model"),
+                "input_translation_manifest_file": str(
+                    path.parent / "translation-manifest.json"
+                ),
+                "input_translation_manifest_sha256": "1" * 64,
+            }
+        )
+    return OrchestratorConfig.from_test_mapping(document)
 
 
 class ServiceAndControlTests(StoreCase, unittest.TestCase):
@@ -64,10 +88,12 @@ class ServiceAndControlTests(StoreCase, unittest.TestCase):
 
         store = self.make_store()
         model = EnglishModel()
+        translator = FakeTranslator({"current": "Hello."})
         service = OrchestratorService(
             config(store.path, response_language="en"),
             store,
             BudgetedModelPort(store, model),
+            input_translator=translator,
         )
         task = self.admitted(
             store,
@@ -79,6 +105,13 @@ class ServiceAndControlTests(StoreCase, unittest.TestCase):
         completed = asyncio.run(service.execute_task(task.task_id))
 
         self.assertEqual(completed.state, TaskState.COMPLETED)
+        self.assertEqual(translator.calls, [{"current": "Γεια σου."}])
+        self.assertNotIn("Γεια", str(model.requests[0].messages))
+        self.assertIn("Hello.", str(model.requests[0].messages))
+        self.assertEqual(
+            store.canonical_conversation(task.conversation_id).turns[0].user_text,
+            "Γεια σου.",
+        )
         self.assertIn("always answer in clear natural English", model.requests[0].system_prompt)
         self.assertIn("do not merely repeat or paraphrase", model.requests[0].system_prompt)
         events = store.claim_outbox(task.conversation_id, "english-only")
@@ -95,6 +128,7 @@ class ServiceAndControlTests(StoreCase, unittest.TestCase):
             config(store.path, response_language="en"),
             store,
             BudgetedModelPort(store, FakeModel()),
+            input_translator=FakeTranslator(),
         )
         task = self.admitted(
             store,

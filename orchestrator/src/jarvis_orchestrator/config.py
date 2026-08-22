@@ -265,6 +265,11 @@ class OrchestratorConfig:
     model_timeout_seconds: float = 120.0
     default_speech_locale: str = "el-GR"
     response_language: str = "match_input"
+    input_translation_mode: str = "disabled"
+    input_translation_model_root: Path | None = None
+    input_translation_manifest_file: Path | None = None
+    input_translation_manifest_sha256: str = ""
+    input_translation_timeout_seconds: float = 15.0
     active_budget_seconds: float = 120.0
     absolute_lifetime_seconds: float = 900.0
     approval_ttl_seconds: float = 600.0
@@ -354,6 +359,8 @@ class OrchestratorConfig:
             "readiness_trusted_public_key_file",
             "readiness_build_artifact_file",
             "readiness_model_artifact_file",
+            "input_translation_model_root",
+            "input_translation_manifest_file",
             "cloud_secret_file",
             "cloud_qualification_file",
             "cloud_release_qualification_file",
@@ -512,6 +519,42 @@ class OrchestratorConfig:
             raise ValueError("response_language is invalid")
         if self.response_language == "en" and self.research_enabled:
             raise ValueError("English-only responses do not yet support research mode")
+        if self.input_translation_mode not in {"disabled", "opus_ct2"}:
+            raise ValueError("input_translation_mode is invalid")
+        translation_fields = (
+            self.input_translation_model_root,
+            self.input_translation_manifest_file,
+            self.input_translation_manifest_sha256,
+        )
+        if self.input_translation_mode == "opus_ct2":
+            if self.response_language != "en":
+                raise ValueError("input translation requires English-only responses")
+            if self.tools_enabled or self.cloud_enabled or self.research_enabled:
+                raise ValueError(
+                    "input translation does not yet support tools, cloud, or research"
+                )
+            for path in (
+                self.input_translation_model_root,
+                self.input_translation_manifest_file,
+            ):
+                if not isinstance(path, Path) or not path.is_absolute():
+                    raise ValueError("input translation paths must be absolute")
+            if (
+                len(self.input_translation_manifest_sha256) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in self.input_translation_manifest_sha256
+                )
+            ):
+                raise ValueError("input translation manifest sha256 is invalid")
+            if (
+                isinstance(self.input_translation_timeout_seconds, bool)
+                or not isinstance(self.input_translation_timeout_seconds, (int, float))
+                or not 0.1 <= self.input_translation_timeout_seconds <= 30.0
+            ):
+                raise ValueError("input translation timeout is invalid")
+        elif any(translation_fields):
+            raise ValueError("input translation artifacts require opus_ct2 mode")
         if self.scheduler_default_locale not in {"el-GR", "en-US"}:
             raise ValueError("scheduler_default_locale is invalid")
         try:

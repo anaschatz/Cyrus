@@ -73,6 +73,49 @@ class ConfigSecurityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "do not yet support research"):
             OrchestratorConfig.from_test_mapping(document)
 
+    def test_input_translation_configuration_is_closed_and_fail_safe(self) -> None:
+        for value in ("opus", "qwen", "auto", "OPUS_CT2"):
+            with self.subTest(value=value):
+                document = self.document()
+                document["input_translation_mode"] = value
+                with self.assertRaisesRegex(ValueError, "input_translation_mode"):
+                    OrchestratorConfig.from_test_mapping(document)
+
+        residue = self.document()
+        residue["input_translation_manifest_sha256"] = "1" * 64
+        with self.assertRaisesRegex(ValueError, "require opus_ct2"):
+            OrchestratorConfig.from_test_mapping(residue)
+
+        enabled = self.document()
+        enabled.update(
+            {
+                "response_language": "en",
+                "input_translation_mode": "opus_ct2",
+                "input_translation_model_root": str(self.root / "model"),
+                "input_translation_manifest_file": str(self.root / "manifest.json"),
+                "input_translation_manifest_sha256": "a" * 64,
+                "input_translation_timeout_seconds": 10.0,
+            }
+        )
+        config = OrchestratorConfig.from_test_mapping(enabled)
+        self.assertEqual(config.input_translation_mode, "opus_ct2")
+        self.assertEqual(config.input_translation_timeout_seconds, 10.0)
+
+        for field, value in (
+            ("response_language", "match_input"),
+            ("input_translation_model_root", "relative/model"),
+            ("input_translation_manifest_sha256", "A" * 64),
+            ("input_translation_timeout_seconds", 0.0),
+            ("tools_enabled", True),
+            ("cloud_enabled", True),
+            ("research_enabled", True),
+        ):
+            with self.subTest(field=field):
+                invalid = dict(enabled)
+                invalid[field] = value
+                with self.assertRaises(ValueError):
+                    OrchestratorConfig.from_test_mapping(invalid)
+
     def test_file_size_is_bounded_before_parsing(self) -> None:
         self.write(b" " * (_MAX_CONFIGURATION_BYTES + 1))
 
