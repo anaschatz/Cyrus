@@ -198,6 +198,21 @@ class MacosBetaPreflightTests(unittest.TestCase):
         self.assertTrue(report["checks"]["selected_voice_profile"])
         self.assertFalse(report["production_ready"])
 
+    def test_verified_whisper_cpp_profile_can_enter_technical_preflight(self) -> None:
+        document = json.loads(self.voice.read_text(encoding="utf-8"))
+        document["macos"]["asr_backend"] = "whisper_cpp"
+        self.voice.write_bytes(canonical(document) + b"\n")
+
+        report = evaluate_macos_beta_preflight(
+            PrivateStackConfig.load(self.stack_path),
+            doctor_report={"ready": True},
+            private_state_report=self.private_state(True),
+            voice_private_state_report=self.voice_private_state(True),
+        )
+
+        self.assertTrue(report["technical_beta_preflight_ready"])
+        self.assertTrue(report["checks"]["selected_voice_profile"])
+
     def test_unapproved_tts_backend_cannot_enter_technical_preflight(self) -> None:
         document = json.loads(self.voice.read_text(encoding="utf-8"))
         document["macos"]["tts_backend"] = "kokoro_onnx"
