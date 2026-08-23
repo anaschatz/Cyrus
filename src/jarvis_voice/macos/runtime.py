@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import queue
+import json
 import math
+import os
+import queue
 import sys
 import threading
 import time
@@ -63,6 +65,22 @@ from .kokoro_onnx import KokoroOnnxCpuEngine, KokoroOnnxTtsBackend
 class BackendCallback:
     kind: str
     unit: SpeechUnit
+
+
+TIMING_TRACE_ENV = "CYRUS_VOICE_TRACE_TIMINGS"
+TIMING_TRACE_PREFIX = "[cyrus.voice.timing]"
+
+
+def content_free_timing_trace(event: str, timestamp: float) -> str:
+    """Serialize only a stage name and monotonic timestamp for private logs."""
+
+    return TIMING_TRACE_PREFIX + json.dumps(
+        {"event": event, "timestamp": timestamp},
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 class MacVoiceRuntime:
@@ -246,6 +264,7 @@ class MacVoiceRuntime:
         self._stop_requested = threading.Event()
         self._timings_lock = threading.Lock()
         self.timings: list[dict[str, float | str | int | bool]] = []
+        self._trace_timings = os.environ.get(TIMING_TRACE_ENV) == "1"
         self._ptt_cycle = 0
         self._turn_cycles: dict[str, int] = {}
         self._response_tokens: dict[str, int] = {}
@@ -359,6 +378,14 @@ class MacVoiceRuntime:
                 entry[key] = value
         with self._timings_lock:
             self.timings.append(entry)
+        if self._trace_timings:
+            try:
+                print(
+                    content_free_timing_trace(event, float(entry["timestamp"])),
+                    flush=True,
+                )
+            except (OSError, ValueError):
+                self._trace_timings = False
 
     def timing_snapshot(self) -> tuple[dict[str, float | str | int | bool], ...]:
         """Return content-free native telemetry without exposing mutable state."""

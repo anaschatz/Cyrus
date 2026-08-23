@@ -37,6 +37,7 @@ from jarvis_voice.macos.ptt import (
     mac_ptt_vkey,
 )
 from jarvis_voice.macos.recovery import MacRecoverySupervisor
+from jarvis_voice.macos.runtime import TIMING_TRACE_PREFIX, content_free_timing_trace
 from jarvis_voice.macos.system_tts import MacSystemTtsBackend, _start_say
 from jarvis_voice.macos.whisper_cpp import WhisperCppSidecarBackend, parse_whisper_response
 from jarvis_voice.ptt import PttEventPublisher, PttTransition, function_key_vkey
@@ -45,6 +46,19 @@ from jarvis_voice.ptt import PttEventPublisher, PttTransition, function_key_vkey
 def artifact(path: Path) -> dict[str, object]:
     raw = path.read_bytes()
     return {"path": str(path), "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+class MacTimingTraceTests(unittest.TestCase):
+    def test_trace_is_content_free_and_machine_readable(self) -> None:
+        trace = content_free_timing_trace("asr_result_ready", 12.5)
+
+        self.assertTrue(trace.startswith(TIMING_TRACE_PREFIX))
+        self.assertEqual(
+            json.loads(trace.removeprefix(TIMING_TRACE_PREFIX)),
+            {"event": "asr_result_ready", "timestamp": 12.5},
+        )
+        for forbidden in ("text", "transcript", "turn_id", "response_id", "/Users/"):
+            self.assertNotIn(forbidden, trace)
 
 
 class FakeRawInputStream:

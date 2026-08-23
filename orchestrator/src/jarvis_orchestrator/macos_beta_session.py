@@ -568,6 +568,9 @@ def _spawn_process(
             "PYTHONNOUSERSITE": "1",
         }
     )
+    environment.pop("CYRUS_VOICE_TRACE_TIMINGS", None)
+    if _component == "voice":
+        environment["CYRUS_VOICE_TRACE_TIMINGS"] = "1"
     for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP"):
         environment.pop(name, None)
     process = subprocess.Popen(

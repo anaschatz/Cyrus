@@ -34,6 +34,7 @@ from jarvis_orchestrator.macos_beta_session import (
     _ProcessGroupMember,
     _inference_ready,
     _inspect_process_group,
+    _spawn_process,
     _voice_liveness_ready,
     recover_macos_beta_session,
 )
@@ -211,6 +212,20 @@ class FakePopenHandle:
 
 
 class PopenProcessGroupTests(unittest.TestCase):
+    def test_voice_child_enables_content_free_timing_trace_only_for_voice(self) -> None:
+        fake = SimpleNamespace(pid=12_345, returncode=None)
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "jarvis_orchestrator.macos_beta_session.subprocess.Popen",
+            return_value=fake,
+        ) as spawn:
+            _spawn_process("voice", ("voice",), io.BytesIO(), Path(temp))
+            voice_environment = spawn.call_args.kwargs["env"]
+            _spawn_process("orchestrator", ("orchestrator",), io.BytesIO(), Path(temp))
+            orchestrator_environment = spawn.call_args.kwargs["env"]
+
+        self.assertEqual(voice_environment["CYRUS_VOICE_TRACE_TIMINGS"], "1")
+        self.assertNotIn("CYRUS_VOICE_TRACE_TIMINGS", orchestrator_environment)
+
     def test_exited_leader_keeps_identity_anchor_until_helper_is_stopped(self) -> None:
         popen = FakePopenHandle()
         helper_running = True
