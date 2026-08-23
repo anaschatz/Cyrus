@@ -20,6 +20,7 @@ python3 scripts/benchmark_macos_whisper_audio_ctx.py \
   --metadata /path/to/metadata.csv \
   --audio-root /path/to/audio \
   --sample-count 32 \
+  --threads 4 \
   --audio-contexts 0 1280 \
   --output /tmp/jarvis-whisper-audio-ctx.json
 ```
@@ -28,6 +29,10 @@ The script deterministically spans the eligible corpus by duration, resamples
 each source to the runtime's mono 16-kHz input format, rotates profile order to
 reduce thermal-order bias, and reports latency, WER, CER, transcript changes,
 improvements and degradations.
+
+Use separate runs with `--threads 4`, `6` and `8` to qualify CPU parallelism.
+Thread-count promotion requires identical normalized transcripts on every
+fixture as well as lower latency; run only one benchmark sidecar at a time.
 
 ## 2026-08-23 screening
 

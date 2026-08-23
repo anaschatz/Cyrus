@@ -238,11 +238,14 @@ def main() -> int:
     parser.add_argument("--audio-root", type=Path, required=True)
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--sample-count", type=int, default=24)
+    parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--audio-contexts", type=int, nargs="+", default=[0, 384, 512, 768])
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.sample_count < 1 or args.sample_count > 500:
         parser.error("--sample-count must be between 1 and 500")
+    if args.threads < 1 or args.threads > 16:
+        parser.error("--threads must be between 1 and 16")
     contexts = list(dict.fromkeys(args.audio_contexts))
     if not contexts or contexts[0] != 0 or any(context < 0 or context > 1500 for context in contexts):
         parser.error("--audio-contexts must start with 0 and stay between 0 and 1500")
@@ -261,7 +264,7 @@ def main() -> int:
             "--port", str(port),
             "--request-path", request_path,
             "--model", str(args.model),
-            "--threads", "4",
+            "--threads", str(args.threads),
             "--language", "auto",
             "--max-context", "0",
             "--flash-attn",
@@ -305,6 +308,7 @@ def main() -> int:
     report = {
         "version": "jarvis-whisper-audio-ctx-benchmark/1",
         "model": str(args.model),
+        "threads": args.threads,
         "sample_count": len(fixtures),
         "audio_contexts": contexts,
         "summary": _summarise(records, contexts),
