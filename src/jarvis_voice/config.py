@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -82,6 +83,9 @@ class WhisperCppConfig:
     model: ArtifactConfig = field(default_factory=ArtifactConfig)
     language: str = "auto"
     threads: int = 4
+    qualified_audio_context: int = 0
+    qualified_audio_context_minimum_seconds: float = 4.0
+    qualified_audio_context_maximum_seconds: float = 12.0
     startup_timeout_seconds: float = 30.0
     request_timeout_seconds: float = 120.0
     maximum_response_bytes: int = 1_048_576
@@ -249,7 +253,10 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     }:
         raise BackendError("config.invalid_field", "macOS configuration has unknown fields", subsystem="config", safe_context={"field": "macos"})
     if not isinstance(whisper_cpp_data, Mapping) or set(whisper_cpp_data) - {
-        "revision", "executable", "model", "language", "threads", "startup_timeout_seconds", "request_timeout_seconds", "maximum_response_bytes"
+        "revision", "executable", "model", "language", "threads",
+        "qualified_audio_context", "qualified_audio_context_minimum_seconds",
+        "qualified_audio_context_maximum_seconds", "startup_timeout_seconds",
+        "request_timeout_seconds", "maximum_response_bytes"
     }:
         raise BackendError("config.invalid_field", "whisper.cpp configuration has unknown fields", subsystem="config", safe_context={"field": "macos.whisper_cpp"})
     if not isinstance(executable_data, Mapping) or set(executable_data) - {"path", "size", "sha256"}:
@@ -413,6 +420,16 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 model=ArtifactConfig(mac_model_data.get("path"), mac_model_data.get("size"), mac_model_data.get("sha256")),
                 language=str(whisper_cpp_data.get("language", "auto")).lower(),
                 threads=_positive_int(whisper_cpp_data.get("threads", 4), "macos.whisper_cpp.threads"),
+                qualified_audio_context=_non_negative_int(
+                    whisper_cpp_data.get("qualified_audio_context", 0),
+                    "macos.whisper_cpp.qualified_audio_context",
+                ),
+                qualified_audio_context_minimum_seconds=float(
+                    whisper_cpp_data.get("qualified_audio_context_minimum_seconds", 4.0)
+                ),
+                qualified_audio_context_maximum_seconds=float(
+                    whisper_cpp_data.get("qualified_audio_context_maximum_seconds", 12.0)
+                ),
                 startup_timeout_seconds=float(whisper_cpp_data.get("startup_timeout_seconds", 30.0)),
                 request_timeout_seconds=float(whisper_cpp_data.get("request_timeout_seconds", 120.0)),
                 maximum_response_bytes=_positive_int(whisper_cpp_data.get("maximum_response_bytes", 1_048_576), "macos.whisper_cpp.maximum_response_bytes"),
@@ -691,6 +708,26 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "whisper.cpp language must be auto or an ISO language code", subsystem="config", safe_context={"field": "macos.whisper_cpp.language"})
     if config.macos.whisper_cpp.startup_timeout_seconds <= 0 or config.macos.whisper_cpp.request_timeout_seconds <= 0:
         raise BackendError("config.invalid_field", "whisper.cpp timeouts must be positive", subsystem="config", safe_context={"field": "macos.whisper_cpp.timeout"})
+    if not 0 <= config.macos.whisper_cpp.qualified_audio_context <= 1500:
+        raise BackendError(
+            "config.invalid_field",
+            "whisper.cpp qualified audio context must be between zero and 1500",
+            subsystem="config",
+            safe_context={"field": "macos.whisper_cpp.qualified_audio_context"},
+        )
+    if (
+        not math.isfinite(config.macos.whisper_cpp.qualified_audio_context_minimum_seconds)
+        or not math.isfinite(config.macos.whisper_cpp.qualified_audio_context_maximum_seconds)
+        or config.macos.whisper_cpp.qualified_audio_context_minimum_seconds < 0
+        or config.macos.whisper_cpp.qualified_audio_context_maximum_seconds
+        < config.macos.whisper_cpp.qualified_audio_context_minimum_seconds
+    ):
+        raise BackendError(
+            "config.invalid_field",
+            "whisper.cpp qualified audio-context duration window is invalid",
+            subsystem="config",
+            safe_context={"field": "macos.whisper_cpp.qualified_audio_context_duration"},
+        )
     if not 0.0 <= config.vad.threshold <= 1.0:
         raise BackendError("config.invalid_field", "VAD threshold must be between zero and one", subsystem="config", safe_context={"field": "vad.threshold"})
     return config

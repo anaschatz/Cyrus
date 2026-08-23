@@ -84,6 +84,35 @@ class ConfigDoctorTests(unittest.TestCase):
         with self.assertRaisesRegex(BackendError, "config.invalid_field"):
             voice_config_from_mapping({"application": {"shutdown_timeout_seconds": 0}})
 
+    def test_whisper_qualified_audio_context_is_closed_and_bounded(self) -> None:
+        configured = voice_config_from_mapping(
+            {
+                "macos": {
+                    "whisper_cpp": {
+                        "qualified_audio_context": 1280,
+                        "qualified_audio_context_minimum_seconds": 4.0,
+                        "qualified_audio_context_maximum_seconds": 12.0,
+                    }
+                }
+            }
+        )
+        self.assertEqual(configured.macos.whisper_cpp.qualified_audio_context, 1280)
+        with self.assertRaisesRegex(BackendError, "config.invalid_field"):
+            voice_config_from_mapping(
+                {"macos": {"whisper_cpp": {"qualified_audio_context": 1501}}}
+            )
+        with self.assertRaisesRegex(BackendError, "config.invalid_field"):
+            voice_config_from_mapping(
+                {
+                    "macos": {
+                        "whisper_cpp": {
+                            "qualified_audio_context_minimum_seconds": 5.0,
+                            "qualified_audio_context_maximum_seconds": 4.0,
+                        }
+                    }
+                }
+            )
+
     def test_ptt_function_key_is_configurable(self) -> None:
         self.assertEqual(voice_config_from_mapping({"ptt_key": "f24"}).ptt_key, "F24")
         self.assertEqual(

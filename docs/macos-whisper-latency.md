@@ -45,8 +45,22 @@ A second screening pass found identical normalized transcripts for `1024` and
 `1280` on the initial 8/8 set. The faster `1024` candidate was then rejected
 during the expanded run because it changed the correctly decoded
 `κομπάρσου` into `κομπάρ σου`. `1408` was also rejected after three regressions
-in its 8-sample screen. `1280` remains experimental until it passes the larger
-Greek set, English/code-switch fixtures and a physical user-voice comparison.
+in its 8-sample screen.
 
-No reduced-context profile is enabled in the installed runtime until those
-gates pass. Eager model warm-up remains the only promoted ASR latency change.
+`1280` then passed 24 labelled Greek recordings without a single higher word
+edit distance. Aggregate WER improved from 9.34% to 8.17%, mean latency fell
+from 4.77 s to 4.19 s, and p95 fell from 6.15 s to 4.99 s. A ten-fixture
+English/code-switch screen retained the same aggregate WER and reduced mean
+latency from 3.58 s to 3.15 s. One 2.91-second code-switch fixture did change a
+proper name from `ZARVIS` to `service`, so reduced context is not qualified for
+short input.
+
+The promoted policy therefore requests context `1280` only for trimmed audio
+between 4.0 and 12.0 seconds inclusive. Shorter input, unqualified long input,
+and any profile with `qualified_audio_context: 0` use full context. This keeps
+all observed regressions on the full-quality path while retaining the measured
+gain for the qualified duration window.
+
+The installed runtime still requires a physical user-voice comparison before
+the private profile is promoted. Eager model warm-up remains active regardless
+of the audio-context setting.

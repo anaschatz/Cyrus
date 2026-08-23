@@ -12,6 +12,7 @@ import threading
 import time
 import unittest
 from array import array
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -356,10 +357,47 @@ class WhisperCppTests(unittest.TestCase):
         self.assertIn("--request-path", argv)
         self.assertIn(b'filename="turn.wav"', post.data)
         self.assertIn(b"RIFF", post.data)
+        self.assertIn(b'name="audio_ctx"\r\n\r\n0\r\n', post.data)
         self.assertNotIn(result.text.encode(), b"\x00".join(item.encode() for item in argv))
         self.assertEqual((result.text, result.language.code), ("Καλημέρα", "el"))
         self.assertAlmostEqual(result.asr_score.raw_avg_logprob, -0.2)
         self.assertTrue(process.terminated)
+
+    def test_qualified_audio_context_is_limited_to_duration_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = replace(
+                self.make_config(root),
+                qualified_audio_context=1280,
+                qualified_audio_context_minimum_seconds=4.0,
+                qualified_audio_context_maximum_seconds=12.0,
+            )
+            requests: list[object] = []
+            process = FakeSidecarProcess()
+
+            def opener(request, *, timeout):  # type: ignore[no-untyped-def]
+                requests.append((request, timeout))
+                if request.get_method() == "GET":
+                    return FakeResponse(b"ok")
+                return FakeResponse(b'{"text":"test","language":"en"}')
+
+            backend = WhisperCppSidecarBackend(
+                config,
+                maximum_audio_seconds=13.0,
+                process_factory=lambda argv: process,
+                opener=opener,
+                port_factory=lambda: 43_212,
+                platform_name="darwin",
+            )
+            backend.transcribe(AudioChunk(array("f", [0.0]) * 16_000, 16_000))
+            backend.transcribe(AudioChunk(array("f", [0.0]) * 64_000, 16_000))
+            backend.transcribe(AudioChunk(array("f", [0.0]) * 208_000, 16_000))
+            backend.close()
+
+        posts = [item[0] for item in requests if item[0].get_method() == "POST"]
+        self.assertIn(b'name="audio_ctx"\r\n\r\n0\r\n', posts[0].data)
+        self.assertIn(b'name="audio_ctx"\r\n\r\n1280\r\n', posts[1].data)
+        self.assertIn(b'name="audio_ctx"\r\n\r\n0\r\n', posts[2].data)
 
     def test_manifest_precedes_process_and_response_is_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

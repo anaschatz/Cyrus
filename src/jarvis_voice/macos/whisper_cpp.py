@@ -104,7 +104,7 @@ def audio_chunk_to_wav(audio: AudioChunk) -> bytes:
     return output.getvalue()
 
 
-def _multipart(wav: bytes, *, language: str, boundary: str) -> bytes:
+def _multipart(wav: bytes, *, language: str, audio_context: int, boundary: str) -> bytes:
     marker = boundary.encode("ascii")
     chunks: list[bytes] = []
 
@@ -119,6 +119,7 @@ def _multipart(wav: bytes, *, language: str, boundary: str) -> bytes:
     field("response_format", "verbose_json")
     field("language", language)
     field("temperature", "0.0")
+    field("audio_ctx", str(audio_context))
     chunks.extend([
         b"--" + marker + b"\r\n",
         b'Content-Disposition: form-data; name="file"; filename="turn.wav"\r\n',
@@ -262,7 +263,20 @@ class WhisperCppSidecarBackend:
         self.load()
         wav = audio_chunk_to_wav(audio)
         boundary = "jarvis-" + uuid.uuid4().hex
-        body = _multipart(wav, language=self.config.language, boundary=boundary)
+        duration_seconds = len(audio.samples) / audio.sample_rate
+        audio_context = 0
+        if (
+            self.config.qualified_audio_context
+            and self.config.qualified_audio_context_minimum_seconds <= duration_seconds
+            <= self.config.qualified_audio_context_maximum_seconds
+        ):
+            audio_context = self.config.qualified_audio_context
+        body = _multipart(
+            wav,
+            language=self.config.language,
+            audio_context=audio_context,
+            boundary=boundary,
+        )
         with self._lock:
             port = self._port
             request_path = self._request_path
