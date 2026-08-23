@@ -1938,15 +1938,16 @@ class MacOSBetaSession:
                 stack,
                 orchestrator,
             )
-            try:
-                inference_warm = self.dependencies.inference_warmup(
-                    stack,
-                    orchestrator,
-                )
-            except Exception:
-                inference_warm = False
-            if not inference_warm:
-                raise MacOSBetaSessionError("inference_warmup_failed")
+            for _warmup_index in range(2):
+                try:
+                    inference_warm = self.dependencies.inference_warmup(
+                        stack,
+                        orchestrator,
+                    )
+                except Exception:
+                    inference_warm = False
+                if not inference_warm:
+                    raise MacOSBetaSessionError("inference_warmup_failed")
             orchestrator_process = self._spawn(
                 "orchestrator", commands["orchestrator"]
             )

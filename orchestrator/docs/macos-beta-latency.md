@@ -1,6 +1,6 @@
 # macOS beta first-turn latency
 
-The foreground beta session performs one bounded local streaming inference
+The foreground beta session performs two bounded local streaming inference
 warm-up after the inference identity/readiness probe and before spawning the
 Orchestrator or Voice processes. This moves one-time MLX generation setup out
 of the first user turn without changing the model, prompt used by real turns,
@@ -11,7 +11,7 @@ The warm-up:
 - targets only the configured `127.0.0.1` `/v1/chat/completions` endpoint;
 - requests at most 16 tokens with deterministic sampling;
 - uses the same selected production system prompt as real final responses so
-  the first production prompt shape does not trigger a second cold prefill;
+  the first production prompt shape does not trigger a cold prefill;
 - accepts only a complete SSE stream whose final text is exactly `ready`;
 - bounds each line, the complete response and generated UTF-8 output;
 - has a ten-second deadline and never logs or persists generated content;
@@ -21,9 +21,10 @@ The warm-up:
 On the qualified M3 runtime on 2026-08-23, three identical local requests
 measured 1260 ms first-token latency for the cold request and 376/372 ms for
 the next two requests. The promoted startup warm-up therefore moved roughly
-0.88 seconds of one-time work out of the first real response, at the cost of
-about 1.3 seconds added once to foreground startup. All three requests returned
-the required exact output.
+0.88 seconds of one-time work out of the first real response. Two warm requests
+are required because a single production-shape warm-up left the first
+post-ready request at 757 ms while subsequent requests measured 464/461 ms.
+All warm requests returned the required exact output.
 
 This optimization is independent of the Voice-side eager Whisper/Pocket TTS
 loads and the duration-gated Whisper audio-context profile. A physical PTT turn

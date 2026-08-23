@@ -549,6 +549,7 @@ class MacOSBetaSessionTests(unittest.TestCase):
         spawner = FakeSpawner()
         clock = FakeClock()
         current: MacOSBetaSession | None = None
+        warmups: list[bool] = []
 
         def voice_ready(_context: object) -> bool:
             assert current is not None
@@ -558,6 +559,7 @@ class MacOSBetaSessionTests(unittest.TestCase):
         dependencies = self.dependencies(
             spawner,
             clock,
+            inference_warmup=lambda _stack, _orchestrator: warmups.append(True) or True,
             voice_ready=voice_ready,
         )
         current = self.session(dependencies)
@@ -576,6 +578,7 @@ class MacOSBetaSessionTests(unittest.TestCase):
             ],
         )
         self.assertEqual(report["status"], "stopped")
+        self.assertEqual(warmups, [True, True])
         self.assertTrue(report["startup_completed"])
         self.assertTrue(report["shutdown_complete"])
         self.assertNotIn(str(self.root), json.dumps(report))
