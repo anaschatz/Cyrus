@@ -40,6 +40,8 @@ from .inference import (
 )
 from .service import (
     BETA_SESSION_SCHEMA_VERSION,
+    ENGLISH_ONLY_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
     valid_voice_connection_tracker_id,
 )
 from .stack_config import PrivateStackConfig
@@ -714,6 +716,14 @@ def _inference_warmup(
             {
                 "model": config.model_alias,
                 "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            ENGLISH_ONLY_SYSTEM_PROMPT
+                            if config.response_language == "en"
+                            else SYSTEM_PROMPT
+                        ),
+                    },
                     {"role": "user", "content": "Reply with only this word: ready"}
                 ],
                 "max_completion_tokens": 16,

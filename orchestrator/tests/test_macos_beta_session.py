@@ -806,7 +806,12 @@ class MacOSBetaSessionTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://127.0.0.1:8766/v1/chat/completions")
         self.assertEqual(opened.call_args.kwargs, {"timeout": 10.0})
         document = json.loads(request.data)
-        self.assertEqual(document["messages"], [{"content": "Reply with only this word: ready", "role": "user"}])
+        self.assertEqual(document["messages"][0]["role"], "system")
+        self.assertIn("concise bilingual Greek/English", document["messages"][0]["content"])
+        self.assertEqual(
+            document["messages"][1],
+            {"content": "Reply with only this word: ready", "role": "user"},
+        )
         self.assertEqual(document["max_completion_tokens"], 16)
         self.assertTrue(document["stream"])
 

@@ -10,6 +10,8 @@ The warm-up:
 
 - targets only the configured `127.0.0.1` `/v1/chat/completions` endpoint;
 - requests at most 16 tokens with deterministic sampling;
+- uses the same selected production system prompt as real final responses so
+  the first production prompt shape does not trigger a second cold prefill;
 - accepts only a complete SSE stream whose final text is exactly `ready`;
 - bounds each line, the complete response and generated UTF-8 output;
 - has a ten-second deadline and never logs or persists generated content;
