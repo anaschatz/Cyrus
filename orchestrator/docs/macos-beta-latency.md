@@ -1,10 +1,13 @@
 # macOS beta first-turn latency
 
 The foreground beta session performs two bounded local streaming inference
-warm-up after the inference identity/readiness probe and before spawning the
-Orchestrator or Voice processes. This moves one-time MLX generation setup out
-of the first user turn without changing the model, prompt used by real turns,
-sampling parameters, output limits or sentence/TTS streaming policy.
+warm-ups after Inference, Orchestrator, Pocket TTS, Whisper and the native Voice
+runtime are ready, but before activating the foreground lease and declaring
+the stack ready. Running them last prevents the Voice-side unified-memory and
+Metal initialization from perturbing the warmed generation state. This moves
+one-time MLX generation setup out of the first user turn without changing the
+model, real-turn prompts, sampling parameters, output limits or sentence/TTS
+streaming policy.
 
 The warm-up:
 

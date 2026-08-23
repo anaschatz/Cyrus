@@ -818,7 +818,7 @@ class MacOSBetaSessionTests(unittest.TestCase):
         self.assertEqual(document["max_completion_tokens"], 16)
         self.assertTrue(document["stream"])
 
-    def test_inference_warmup_failure_stops_before_orchestrator_spawn(self) -> None:
+    def test_inference_warmup_failure_rolls_back_fully_warmed_stack(self) -> None:
         spawner = FakeSpawner()
         clock = FakeClock()
         session = self.session(
@@ -835,7 +835,14 @@ class MacOSBetaSessionTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "inference_warmup_failed")
         self.assertEqual(
             [event for event in spawner.events if event.startswith(("spawn:", "terminate:"))],
-            ["spawn:inference", "terminate:inference"],
+            [
+                "spawn:inference",
+                "spawn:orchestrator",
+                "spawn:voice",
+                "terminate:voice",
+                "terminate:orchestrator",
+                "terminate:inference",
+            ],
         )
 
     def test_static_beta_preflight_failure_spawns_nothing(self) -> None:
