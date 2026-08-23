@@ -292,6 +292,7 @@ class MacSmokeLoopbackServer:
         auth_key: VoiceAuthKey,
         *,
         response_locale: str | None = None,
+        single_unit_responses: bool = False,
     ) -> None:
         parsed = urlparse(url)
         if parsed.scheme != "ws" or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
@@ -306,6 +307,7 @@ class MacSmokeLoopbackServer:
                 subsystem="smoke",
             )
         self.response_locale = response_locale
+        self.single_unit_responses = bool(single_unit_responses)
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
@@ -344,6 +346,20 @@ class MacSmokeLoopbackServer:
             locale = "el-GR" if input_language == "el" else "en-US"
         return locale, locale == "el-GR"
 
+    def _selected_response_sentences(
+        self,
+        *,
+        greek: bool,
+        long_response: bool,
+    ) -> tuple[str, ...]:
+        if self.single_unit_responses:
+            return (
+                "Η δοκιμή φωνής ολοκληρώθηκε."
+                if greek
+                else "The voice qualification turn is complete.",
+            )
+        return self._response_sentences(greek=greek, long_response=long_response)
+
     async def _handle(self, websocket: Any) -> None:
         from ..protocol import new_uuid4
 
@@ -369,7 +385,7 @@ class MacSmokeLoopbackServer:
                 language = event.payload.get("language", {})
                 code = language.get("code", "en") if isinstance(language, Mapping) else "en"
                 locale, greek = self._response_profile(code)
-                sentences = self._response_sentences(
+                sentences = self._selected_response_sentences(
                     greek=greek,
                     long_response=self._transcript_count >= 3,
                 )

@@ -560,6 +560,7 @@ def run_macos_native_collection(
             config.orchestrator_url,
             auth_key,
             response_locale=response_locale,
+            single_unit_responses=maximum_real_voice_turns is not None,
         )
     else:
         server = server_factory(config.orchestrator_url, auth_key)
@@ -608,6 +609,7 @@ def run_macos_native_collection(
                         {
                             "elapsed_seconds": partial["soak"]["duration_seconds"],
                             "real_voice_turns": counters["real_voice_turns"],
+                            "completed_playbacks": collector.completed_playback_count,
                             "acoustic_samples": acoustic["samples"],
                         }
                     )

@@ -150,6 +150,19 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         self.assertEqual(server._response_profile("el"), ("en-US", False))
         self.assertEqual(server._response_profile("en"), ("en-US", False))
 
+    def test_server_can_use_one_unambiguous_unit_for_bounded_batches(self) -> None:
+        server = MacSmokeLoopbackServer(
+            "ws://127.0.0.1:8765",
+            VoiceAuthKey(1, b"k" * 32),
+            response_locale="en-US",
+            single_unit_responses=True,
+        )
+
+        self.assertEqual(
+            server._selected_response_sentences(greek=False, long_response=True),
+            ("The voice qualification turn is complete.",),
+        )
+
     def test_server_rejects_unknown_response_locale(self) -> None:
         with self.assertRaisesRegex(BackendError, "smoke.response_locale_invalid"):
             MacSmokeLoopbackServer(
