@@ -140,6 +140,24 @@ class GuidedSmokeControllerTests(unittest.TestCase):
                 VoiceAuthKey(1, b"k" * 32),
             )
 
+    def test_server_can_lock_english_output_for_bilingual_asr(self) -> None:
+        server = MacSmokeLoopbackServer(
+            "ws://127.0.0.1:8765",
+            VoiceAuthKey(1, b"k" * 32),
+            response_locale="en-US",
+        )
+
+        self.assertEqual(server._response_profile("el"), ("en-US", False))
+        self.assertEqual(server._response_profile("en"), ("en-US", False))
+
+    def test_server_rejects_unknown_response_locale(self) -> None:
+        with self.assertRaisesRegex(BackendError, "smoke.response_locale_invalid"):
+            MacSmokeLoopbackServer(
+                "ws://127.0.0.1:8765",
+                VoiceAuthKey(1, b"k" * 32),
+                response_locale="fr-FR",
+            )
+
     def test_server_emits_frozen_response_cancelled_payload(self) -> None:
         response_id = new_uuid4()
         turn_id = new_uuid4()

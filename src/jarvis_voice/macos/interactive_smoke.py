@@ -286,13 +286,26 @@ class GuidedSmokeController:
 class MacSmokeLoopbackServer:
     """Temporary loopback server with a deliberately long barge-in response."""
 
-    def __init__(self, url: str, auth_key: VoiceAuthKey) -> None:
+    def __init__(
+        self,
+        url: str,
+        auth_key: VoiceAuthKey,
+        *,
+        response_locale: str | None = None,
+    ) -> None:
         parsed = urlparse(url)
         if parsed.scheme != "ws" or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
             raise BackendError("smoke.non_loopback_server", "Smoke server must use loopback WebSocket", subsystem="smoke")
         self.host = "127.0.0.1" if parsed.hostname == "localhost" else str(parsed.hostname)
         self.port = parsed.port or 8765
         self.auth_key = auth_key
+        if response_locale not in {None, "el-GR", "en-US"}:
+            raise BackendError(
+                "smoke.response_locale_invalid",
+                "Smoke response locale is invalid",
+                subsystem="smoke",
+            )
+        self.response_locale = response_locale
         self._stop = threading.Event()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
@@ -325,6 +338,12 @@ class MacSmokeLoopbackServer:
             "The second unit must not be heard after cancellation.",
         )
 
+    def _response_profile(self, input_language: str) -> tuple[str, bool]:
+        locale = self.response_locale
+        if locale is None:
+            locale = "el-GR" if input_language == "el" else "en-US"
+        return locale, locale == "el-GR"
+
     async def _handle(self, websocket: Any) -> None:
         from ..protocol import new_uuid4
 
@@ -349,8 +368,7 @@ class MacSmokeLoopbackServer:
                 self._transcript_count += 1
                 language = event.payload.get("language", {})
                 code = language.get("code", "en") if isinstance(language, Mapping) else "en"
-                greek = code == "el"
-                locale = "el-GR" if greek else "en-US"
+                locale, greek = self._response_profile(code)
                 sentences = self._response_sentences(
                     greek=greek,
                     long_response=self._transcript_count >= 3,

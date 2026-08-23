@@ -518,7 +518,7 @@ def run_macos_native_collection(
     maximum_real_voice_turns: int | None = None,
     threshold_calibrated: bool = False,
     runtime_factory: Callable[..., MacVoiceRuntime] = MacVoiceRuntime,
-    server_factory: Callable[[str, VoiceAuthKey], MacSmokeLoopbackServer] = MacSmokeLoopbackServer,
+    server_factory: Callable[[str, VoiceAuthKey], MacSmokeLoopbackServer] | None = None,
     rss_probe: Callable[[], int] = current_process_rss_bytes,
     clock: Callable[[], float] = time.perf_counter,
     sleeper: Callable[[float], None] = time.sleep,
@@ -553,10 +553,16 @@ def run_macos_native_collection(
         clock=clock,
     )
     runtime = runtime_factory(config, audio_frame_observer=monitor.publish_audio)
-    server = server_factory(
-        config.orchestrator_url,
-        configured_voice_auth_key(config),
-    )
+    auth_key = configured_voice_auth_key(config)
+    if server_factory is None:
+        response_locale, _text = _qualification_speech(config, long=False)
+        server = MacSmokeLoopbackServer(
+            config.orchestrator_url,
+            auth_key,
+            response_locale=response_locale,
+        )
+    else:
+        server = server_factory(config.orchestrator_url, auth_key)
     runtime_errors: list[BaseException] = []
 
     def run_runtime() -> None:
