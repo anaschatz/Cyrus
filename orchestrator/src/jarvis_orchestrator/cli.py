@@ -814,6 +814,7 @@ async def _run_components(
             voice_auth_key=voice_auth_key,
             runtime_supervisor=supervisor,
             shutdown_deadline=deadline,
+            operational_log=operational_log,
         )
     finally:
         deadline.begin()
@@ -847,6 +848,7 @@ async def _run_servers(
     voice_auth_key: Any,
     runtime_supervisor: RuntimeSupervisor | None = None,
     shutdown_deadline: RuntimeProcessDeadline | None = None,
+    operational_log: ContentFreeOperationalLog | None = None,
 ) -> None:
     supervisor = runtime_supervisor or RuntimeSupervisor(
         shutdown_timeout_seconds=RUNTIME_SHUTDOWN_TIMEOUT_SECONDS,
