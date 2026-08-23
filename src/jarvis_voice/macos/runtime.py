@@ -9,11 +9,12 @@ import queue
 import sys
 import threading
 import time
+from array import array
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from ..audio import resample_audio
-from ..backends import SpeechUnit
+from ..backends import AudioChunk, SpeechUnit, VadBackend
 from ..config import VoiceConfig, configured_voice_auth_key
 from ..core import VoiceCore
 from ..cloud_approval import (
@@ -81,6 +82,26 @@ def content_free_timing_trace(event: str, timestamp: float) -> str:
         separators=(",", ":"),
         allow_nan=False,
     )
+
+
+def warm_macos_vad_backend(
+    backend: VadBackend,
+    *,
+    clock: Callable[[], float] = time.perf_counter,
+) -> float:
+    """Load and execute the pinned VAD before accepting physical PTT input."""
+
+    started = clock()
+    result = backend.trim(
+        AudioChunk(array("f", [0.0]) * 512, 16_000)
+    )
+    if result.speech_detected or len(result.audio.samples) != 0:
+        raise BackendError(
+            "vad.warmup_failed",
+            "Silero VAD warm-up did not reject deterministic silence",
+            subsystem="vad",
+        )
+    return max(0.0, (clock() - started) * 1000.0)
 
 
 class MacVoiceRuntime:
@@ -564,6 +585,8 @@ class MacVoiceRuntime:
             asr_warm_load_ms = warm_macos_asr_backend(self.asr)
             if asr_warm_load_ms is not None:
                 self._record_timing("asr_warm_ready", load_ms=asr_warm_load_ms)
+            vad_warm_load_ms = warm_macos_vad_backend(self.vad)
+            self._record_timing("vad_warm_ready", load_ms=vad_warm_load_ms)
             self.audio.start()
             self._record_timing("audio_stream_started")
             self.ptt.start()

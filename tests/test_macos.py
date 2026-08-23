@@ -19,7 +19,7 @@ from unittest import mock
 
 import _bootstrap  # noqa: F401
 
-from jarvis_voice.backends import AudioChunk, SpeechUnit
+from jarvis_voice.backends import AudioChunk, SpeechUnit, VadResult
 from jarvis_voice.config import ArtifactConfig, WhisperCppConfig, voice_config_from_mapping
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.audio_capture import CoreAudioCapture
@@ -38,7 +38,11 @@ from jarvis_voice.macos.ptt import (
     mac_ptt_vkey,
 )
 from jarvis_voice.macos.recovery import MacRecoverySupervisor
-from jarvis_voice.macos.runtime import TIMING_TRACE_PREFIX, content_free_timing_trace
+from jarvis_voice.macos.runtime import (
+    TIMING_TRACE_PREFIX,
+    content_free_timing_trace,
+    warm_macos_vad_backend,
+)
 from jarvis_voice.macos.system_tts import MacSystemTtsBackend, _start_say
 from jarvis_voice.macos.whisper_cpp import WhisperCppSidecarBackend, parse_whisper_response
 from jarvis_voice.ptt import PttEventPublisher, PttTransition, function_key_vkey
@@ -60,6 +64,34 @@ class MacTimingTraceTests(unittest.TestCase):
         )
         for forbidden in ("text", "transcript", "turn_id", "response_id", "/Users/"):
             self.assertNotIn(forbidden, trace)
+
+    def test_vad_warmup_executes_one_silent_frame_before_ptt(self) -> None:
+        observed: list[AudioChunk] = []
+
+        class Vad:
+            def trim(self, audio: AudioChunk) -> VadResult:
+                observed.append(audio)
+                return VadResult(False, AudioChunk(array("f"), audio.sample_rate))
+
+        timestamps = iter((2.0, 2.125))
+        elapsed = warm_macos_vad_backend(
+            Vad(),  # type: ignore[arg-type]
+            clock=lambda: next(timestamps),
+        )
+
+        self.assertEqual(elapsed, 125.0)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0].sample_rate, 16_000)
+        self.assertEqual(len(observed[0].samples), 512)
+        self.assertFalse(any(observed[0].samples))
+
+    def test_vad_warmup_fails_closed_on_silence_false_positive(self) -> None:
+        class Vad:
+            def trim(self, audio: AudioChunk) -> VadResult:
+                return VadResult(True, audio, 0, len(audio.samples))
+
+        with self.assertRaisesRegex(BackendError, "vad.warmup_failed"):
+            warm_macos_vad_backend(Vad())  # type: ignore[arg-type]
 
 
 class FakeRawInputStream:
