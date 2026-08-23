@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -58,6 +59,7 @@ _ERROR_CODES = {
     "command_prefix_invalid",
     "executable_invalid",
     "fixed_loopback_endpoints_required",
+    "inference_warmup_failed",
     "live_lease_activation_failed",
     "live_lease_runtime_failed",
     "macos_required",
@@ -147,6 +149,7 @@ SpawnProcess = Callable[[str, tuple[str, ...], BinaryIO, Path], ChildProcess]
 PortAvailable = Callable[[int], bool]
 ListenerPids = Callable[[int], frozenset[int] | None]
 PreflightReady = Callable[[PrivateStackConfig], bool]
+InferenceWarmup = Callable[[PrivateStackConfig, OrchestratorConfig], bool]
 ActivateLiveLease = Callable[
     [PrivateStackConfig, Mapping[str, ChildProcess], Mapping[str, tuple[str, ...]]],
     SessionLease,
@@ -689,6 +692,122 @@ def _inference_ready(context: ProbeContext) -> bool:
         return False
 
 
+def _inference_warmup(
+    _stack: PrivateStackConfig,
+    config: OrchestratorConfig,
+) -> bool:
+    """Pay the one-time local generation cost before Voice becomes ready."""
+
+    try:
+        parsed = urllib.parse.urlparse(config.inference_base_url)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or parsed.port is None
+            or parsed.path.rstrip("/") != "/v1"
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return False
+        body = json.dumps(
+            {
+                "model": config.model_alias,
+                "messages": [
+                    {"role": "user", "content": "Reply with only this word: ready"}
+                ],
+                "max_completion_tokens": 16,
+                "temperature": 0,
+                "top_p": 1,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            },
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{parsed.port}/v1/chat/completions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {config.inference_bearer_token}",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+                "Host": f"127.0.0.1:{parsed.port}",
+                "Accept": "text/event-stream",
+            },
+            method="POST",
+        )
+        parts: list[str] = []
+        finish_reason: str | None = None
+        done = False
+        total_bytes = 0
+        with urllib.request.urlopen(request, timeout=10.0) as response:
+            if (
+                response.status != 200
+                or response.headers.get("Content-Type")
+                != "text/event-stream; charset=utf-8"
+            ):
+                return False
+            while total_bytes <= 256 * 1024:
+                line = response.readline(64 * 1024 + 1)
+                if not line:
+                    break
+                total_bytes += len(line)
+                if len(line) > 64 * 1024 or total_bytes > 256 * 1024:
+                    return False
+                if not line.startswith(b"data: "):
+                    if line.strip():
+                        return False
+                    continue
+                payload = line[6:].strip()
+                if payload == b"[DONE]":
+                    done = True
+                    break
+                event = json.loads(payload.decode("utf-8", errors="strict"))
+                if not isinstance(event, dict):
+                    return False
+                choices = event.get("choices")
+                if choices == []:
+                    continue
+                if (
+                    not isinstance(choices, list)
+                    or len(choices) != 1
+                    or not isinstance(choices[0], dict)
+                ):
+                    return False
+                choice = choices[0]
+                delta = choice.get("delta")
+                if not isinstance(delta, dict):
+                    return False
+                content = delta.get("content")
+                if content is not None:
+                    if not isinstance(content, str):
+                        return False
+                    parts.append(content)
+                    if len("".join(parts).encode("utf-8")) > 64:
+                        return False
+                candidate = choice.get("finish_reason")
+                if candidate is not None:
+                    if not isinstance(candidate, str):
+                        return False
+                    finish_reason = candidate
+        return (
+            done
+            and finish_reason == "stop"
+            and "".join(parts).strip().casefold() == "ready"
+        )
+    except (
+        OSError,
+        TimeoutError,
+        UnicodeError,
+        ValueError,
+        urllib.error.URLError,
+    ):
+        return False
+
+
 def _orchestrator_http_ready(config: OrchestratorConfig) -> bool:
     request = urllib.request.Request(
         f"http://127.0.0.1:{config.control_port}/readyz",
@@ -1224,6 +1343,7 @@ class SessionDependencies:
     listener_pids: ListenerPids = _listener_pids
     preflight_ready: PreflightReady = _beta_preflight_ready
     inference_ready: ReadinessProbe = _inference_ready
+    inference_warmup: InferenceWarmup = _inference_warmup
     orchestrator_ready: ReadinessProbe = _orchestrator_ready
     voice_ready: ReadinessProbe = _voice_liveness_ready
     activate_live_lease: ActivateLiveLease = _activate_live_lease
@@ -1808,6 +1928,15 @@ class MacOSBetaSession:
                 stack,
                 orchestrator,
             )
+            try:
+                inference_warm = self.dependencies.inference_warmup(
+                    stack,
+                    orchestrator,
+                )
+            except Exception:
+                inference_warm = False
+            if not inference_warm:
+                raise MacOSBetaSessionError("inference_warmup_failed")
             orchestrator_process = self._spawn(
                 "orchestrator", commands["orchestrator"]
             )

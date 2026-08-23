@@ -33,6 +33,7 @@ from jarvis_orchestrator.macos_beta_session import (
     _ProcessIdentity,
     _ProcessGroupMember,
     _inference_ready,
+    _inference_warmup,
     _inspect_process_group,
     _spawn_process,
     _voice_liveness_ready,
@@ -70,6 +71,22 @@ class FakeHttpResponse:
 
     def read(self, _maximum: int | None = None) -> bytes:
         return self.body
+
+
+class FakeSseResponse:
+    def __init__(self, lines: list[bytes], *, status: int = 200) -> None:
+        self.stream = io.BytesIO(b"".join(lines))
+        self.status = status
+        self.headers = {"Content-Type": "text/event-stream; charset=utf-8"}
+
+    def __enter__(self) -> "FakeSseResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def readline(self, maximum: int = -1) -> bytes:
+        return self.stream.readline(maximum)
 
 
 class FakeClock:
@@ -439,6 +456,7 @@ class MacOSBetaSessionTests(unittest.TestCase):
         clock: FakeClock,
         *,
         inference_ready=lambda _context: True,
+        inference_warmup=lambda _stack, _orchestrator: True,
         orchestrator_ready=lambda _context: True,
         voice_ready=lambda _context: True,
         port_available=lambda _port: True,
@@ -492,6 +510,7 @@ class MacOSBetaSessionTests(unittest.TestCase):
             listener_pids=listener_pids,
             preflight_ready=preflight_ready,
             inference_ready=inference_ready,
+            inference_warmup=inference_warmup,
             orchestrator_ready=orchestrator_ready,
             voice_ready=voice_ready,
             activate_live_lease=activate_live_lease,
@@ -764,6 +783,52 @@ class MacOSBetaSessionTests(unittest.TestCase):
                     reverse_order,
                 )
                 self.assertEqual(str(caught.exception), caught.exception.code)
+
+    def test_inference_warmup_is_exact_bounded_and_loopback_only(self) -> None:
+        config = OrchestratorConfig.load(self.orchestrator)
+        response = FakeSseResponse(
+            [
+                b'data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+                b'data: {"choices":[{"delta":{"content":"ready"},"finish_reason":null}]}\n\n',
+                b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+                b'data: {"choices":[],"usage":{"completion_tokens":1}}\n\n',
+                b"data: [DONE]\n\n",
+            ]
+        )
+
+        with patch(
+            "jarvis_orchestrator.macos_beta_session.urllib.request.urlopen",
+            return_value=response,
+        ) as opened:
+            self.assertTrue(_inference_warmup(PrivateStackConfig.load(self.stack), config))
+
+        request = opened.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8766/v1/chat/completions")
+        self.assertEqual(opened.call_args.kwargs, {"timeout": 10.0})
+        document = json.loads(request.data)
+        self.assertEqual(document["messages"], [{"content": "Reply with only this word: ready", "role": "user"}])
+        self.assertEqual(document["max_completion_tokens"], 16)
+        self.assertTrue(document["stream"])
+
+    def test_inference_warmup_failure_stops_before_orchestrator_spawn(self) -> None:
+        spawner = FakeSpawner()
+        clock = FakeClock()
+        session = self.session(
+            self.dependencies(
+                spawner,
+                clock,
+                inference_warmup=lambda _stack, _orchestrator: False,
+            )
+        )
+
+        with self.assertRaises(MacOSBetaSessionError) as caught:
+            session.run()
+
+        self.assertEqual(caught.exception.code, "inference_warmup_failed")
+        self.assertEqual(
+            [event for event in spawner.events if event.startswith(("spawn:", "terminate:"))],
+            ["spawn:inference", "terminate:inference"],
+        )
 
     def test_static_beta_preflight_failure_spawns_nothing(self) -> None:
         spawner = FakeSpawner()
