@@ -75,6 +75,10 @@ class ConfigDoctorTests(unittest.TestCase):
         self.assertEqual(config.asr.execution_profile, "cpu")
         self.assertIsNone(config.asr.cuda.device_index)
         self.assertEqual(config.asr.cuda.residency, "turn_scoped")
+        self.assertEqual(
+            config.macos.whisper_cpp.qualified_audio_context_minimum_seconds,
+            3.0,
+        )
         self.assertEqual(config.application.shutdown_timeout_seconds, 5.0)
         self.assertEqual(config.application.log_maximum_bytes, 1_048_576)
 

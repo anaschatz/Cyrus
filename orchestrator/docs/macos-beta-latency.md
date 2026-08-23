@@ -27,7 +27,10 @@ the next two requests. The promoted startup warm-up therefore moved roughly
 0.88 seconds of one-time work out of the first real response. Two warm requests
 are required because a single production-shape warm-up left the first
 post-ready request at 757 ms while subsequent requests measured 464/461 ms.
-All warm requests returned the required exact output.
+With both warm-ups moved after Voice readiness, the first installed post-ready
+request measured 523 ms and the next two measured 463/461 ms. This cuts about
+737 ms from the 1260-ms cold baseline. All measured requests returned the
+required exact output.
 
 This optimization is independent of the Voice-side eager Whisper/Pocket TTS
 loads and the duration-gated Whisper audio-context profile. A physical PTT turn

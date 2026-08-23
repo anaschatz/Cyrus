@@ -84,7 +84,7 @@ class WhisperCppConfig:
     language: str = "auto"
     threads: int = 4
     qualified_audio_context: int = 0
-    qualified_audio_context_minimum_seconds: float = 4.0
+    qualified_audio_context_minimum_seconds: float = 3.0
     qualified_audio_context_maximum_seconds: float = 12.0
     startup_timeout_seconds: float = 30.0
     request_timeout_seconds: float = 120.0
@@ -425,7 +425,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                     "macos.whisper_cpp.qualified_audio_context",
                 ),
                 qualified_audio_context_minimum_seconds=float(
-                    whisper_cpp_data.get("qualified_audio_context_minimum_seconds", 4.0)
+                    whisper_cpp_data.get("qualified_audio_context_minimum_seconds", 3.0)
                 ),
                 qualified_audio_context_maximum_seconds=float(
                     whisper_cpp_data.get("qualified_audio_context_maximum_seconds", 12.0)

@@ -53,10 +53,16 @@ from 4.77 s to 4.19 s, and p95 fell from 6.15 s to 4.99 s. A ten-fixture
 English/code-switch screen retained the same aggregate WER and reduced mean
 latency from 3.58 s to 3.15 s. One 2.91-second code-switch fixture did change a
 proper name from `ZARVIS` to `service`, so reduced context is not qualified for
-short input.
+input below 3.0 seconds.
+
+The 3.0-to-4.0-second boundary was then checked separately across 14 labelled
+Greek, English and code-switch fixtures. All 14 candidate transcripts retained
+the baseline word edit distance, one Greek transcript improved, and individual
+latency fell by roughly 0.4 to 0.6 seconds. The shortest qualified fixture was
+3.118 seconds; the known 2.911-second regression remains on full context.
 
 The promoted policy therefore requests context `1280` only for trimmed audio
-between 4.0 and 12.0 seconds inclusive. Shorter input, unqualified long input,
+between 3.0 and 12.0 seconds inclusive. Shorter input, unqualified long input,
 and any profile with `qualified_audio_context: 0` use full context. This keeps
 all observed regressions on the full-quality path while retaining the measured
 gain for the qualified duration window.
