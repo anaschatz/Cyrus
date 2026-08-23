@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import tempfile
 import time
@@ -339,6 +340,7 @@ async def run_live_sequential_gate(
     maximum_database_bytes: int | None = None,
     database_path: str | Path | None = None,
     request_text: str | None = None,
+    include_latency_profile: bool = False,
 ) -> dict[str, Any]:
     """Run real sequential local-model turns through the voice WebSocket.
 
@@ -367,6 +369,14 @@ async def run_live_sequential_gate(
     response_count = 0
     speech_unit_count = 0
     maximum_turn_ms = 0
+    latency_samples: dict[str, list[int]] = {
+        "transcript_to_ack": [],
+        "transcript_to_response_started": [],
+        "transcript_to_first_text_delta": [],
+        "transcript_to_first_speech_commit": [],
+        "transcript_to_speech_done": [],
+        "ack_to_first_speech_commit": [],
+    }
     uri = f"ws://{host}:{port}"
     async with connect(
         uri,
@@ -405,6 +415,7 @@ async def run_live_sequential_gate(
             text_chunks = 0
             speech_units = 0
             response_id: str | None = None
+            markers: dict[str, float] = {}
             while True:
                 raw = await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
                 event = Envelope.from_json(raw)
@@ -413,6 +424,7 @@ async def run_live_sequential_gate(
                 seen_event_ids.add(event.event_id)
                 if event.type == "server.ack" and event.payload["acked_event_id"] == transcript.event_id:
                     accepted = True
+                    markers.setdefault("ack", time.monotonic())
                     response_id = event.response_id
                     if response_id is None:
                         raise OperationalError("live_ack_binding_missing")
@@ -426,6 +438,7 @@ async def run_live_sequential_gate(
                         if started_response or text_chunks or speech_units:
                             raise OperationalError("live_started_order_violation")
                         started_response = True
+                        markers.setdefault("response_started", time.monotonic())
                     elif event.type == "response.text.delta":
                         if (
                             not started_response
@@ -434,6 +447,7 @@ async def run_live_sequential_gate(
                         ):
                             raise OperationalError("live_text_sequence_violation")
                         text_chunks += 1
+                        markers.setdefault("first_text_delta", time.monotonic())
                     elif event.type == "response.speech.commit":
                         if (
                             not started_response
@@ -441,6 +455,7 @@ async def run_live_sequential_gate(
                         ):
                             raise OperationalError("live_speech_sequence_violation")
                         speech_units += 1
+                        markers.setdefault("first_speech_commit", time.monotonic())
                     elif event.type == "response.text.done":
                         if (
                             not started_response
@@ -459,6 +474,24 @@ async def run_live_sequential_gate(
                             or event.payload["last_unit_index"] != speech_units
                         ):
                             raise OperationalError("live_terminal_violation")
+                        speech_done_at = time.monotonic()
+                        markers["speech_done"] = speech_done_at
+                        required_markers = {
+                            "ack", "response_started", "first_text_delta",
+                            "first_speech_commit", "speech_done",
+                        }
+                        if not required_markers.issubset(markers):
+                            raise OperationalError("live_latency_sequence_incomplete")
+                        for name in (
+                            "ack", "response_started", "first_text_delta",
+                            "first_speech_commit", "speech_done",
+                        ):
+                            latency_samples[f"transcript_to_{name}"].append(
+                                int(round((markers[name] - turn_started) * 1000))
+                            )
+                        latency_samples["ack_to_first_speech_commit"].append(
+                            int(round((markers["first_speech_commit"] - markers["ack"]) * 1000))
+                        )
                         playback = factory.create(
                             "playback.completed",
                             {"epoch": 0},
@@ -479,7 +512,7 @@ async def run_live_sequential_gate(
         or diagnostics.database_bytes + diagnostics.wal_bytes + diagnostics.shm_bytes
         <= maximum_database_bytes
     )
-    return {
+    report = {
         "database_bounded": bounded,
         "duplicate_publication_count": 0,
         "elapsed_ms": int((time.monotonic() - started) * 1000),
@@ -493,6 +526,20 @@ async def run_live_sequential_gate(
         "voice_auth_protocol": "jarvis.voice-auth/1",
         "version": "live-sequential-ready-gate/2",
     }
+    if include_latency_profile:
+        def distribution(values: list[int]) -> dict[str, int]:
+            ordered = sorted(values)
+            return {
+                "count": len(ordered),
+                "p50": ordered[max(0, math.ceil(len(ordered) * 0.50) - 1)],
+                "p95": ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)],
+                "maximum": ordered[-1],
+            }
+
+        report["latency_profile_ms"] = {
+            name: distribution(values) for name, values in latency_samples.items()
+        }
+    return report
 
 
 async def run_live_model_failure_gate(

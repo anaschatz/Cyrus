@@ -279,6 +279,7 @@ class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
                 auth_key=auth_key,
                 turns=3,
                 timeout_seconds=2,
+                include_latency_profile=True,
             )
         finally:
             server.close()
@@ -288,6 +289,14 @@ class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["duplicate_publication_count"], 0)
         self.assertFalse(report["physical_speaker_playback_observed"])
         self.assertEqual(report["playback_completion_mode"], "protocol_probe")
+        self.assertEqual(
+            report["latency_profile_ms"]["transcript_to_first_speech_commit"]["count"],
+            3,
+        )
+        self.assertEqual(
+            set(report["latency_profile_ms"]["ack_to_first_speech_commit"]),
+            {"count", "p50", "p95", "maximum"},
+        )
 
 
 if __name__ == "__main__":

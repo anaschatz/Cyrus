@@ -457,9 +457,10 @@ def main(argv: list[str] | None = None) -> int:
                 auth_key=_voice_auth_key(config),
                 turns=parsed.turns,
                 database_path=config.database_path,
-                maximum_database_bytes=512 * 1024 * 1024,
-                request_text="Reply exactly: CYRUS local E2E ready.",
-            )
+            maximum_database_bytes=512 * 1024 * 1024,
+            request_text="Reply exactly: CYRUS local E2E ready.",
+            include_latency_profile=True,
+        )
         )
         report = {
             **report,
