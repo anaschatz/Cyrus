@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import sqlite3
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from unittest.mock import patch
 import _bootstrap  # noqa: F401
 
 from jarvis_orchestrator.gateway import MAX_PENDING_AUTHENTICATIONS, VoiceGateway
+from jarvis_orchestrator.domain import OrchestratorError
 from jarvis_orchestrator.service import OrchestratorService
 from jarvis_voice.protocol import EventFactory
 from jarvis_voice.voice_auth import VoiceAuthKey, create_client_response
@@ -134,6 +136,32 @@ class AuthWebSocket:
 
 
 class VoiceGatewayAuthenticationTests(unittest.TestCase):
+    def test_service_error_reporter_emits_only_bounded_diagnostics(self) -> None:
+        reports: list[tuple[str, int | None]] = []
+        gateway = VoiceGateway(  # type: ignore[arg-type]
+            GuardedService(),
+            auth_key=AUTH_KEY,
+            service_error_reporter=lambda code, detail: reports.append((code, detail)),
+        )
+
+        gateway._report_service_error(
+            "transcript_admission",
+            sqlite3.IntegrityError("private transcript must not escape"),
+        )
+        gateway._report_service_error(
+            "voice_event",
+            OrchestratorError("private error detail", status=409),
+        )
+
+        self.assertEqual(
+            reports,
+            [
+                ("gateway_service_error_transcript_admission_sqlite_integrity", None),
+                ("gateway_service_error_voice_event_orchestrator", 409),
+            ],
+        )
+        self.assertNotIn("private", repr(reports))
+
     def hello(self, *, extra_capability: str | None = None) -> str:
         capabilities = ["speech_commits", "speech_done", "output_epochs"]
         if extra_capability is not None:

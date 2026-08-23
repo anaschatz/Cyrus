@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
@@ -33,6 +34,7 @@ class VoiceGateway:
         *,
         auth_key: Any,
         business_admission: Callable[[], bool] | None = None,
+        service_error_reporter: Callable[[str, int | None], None] | None = None,
     ) -> None:
         from jarvis_voice.voice_auth import VoiceAuthKey
 
@@ -43,6 +45,7 @@ class VoiceGateway:
         # Admission is fail-closed unless a lifecycle owner explicitly injects
         # the shared readiness predicate.
         self._business_admission = business_admission or (lambda: False)
+        self._service_error_reporter = service_error_reporter
         self._publication_locks: dict[str, asyncio.Lock] = {}
         self._execution_tasks: dict[str, asyncio.Task[Any]] = {}
         self._server: Any = None
@@ -51,6 +54,33 @@ class VoiceGateway:
         self._cloud_connections: dict[str, Any] = {}
         self._action_connections: dict[str, Any] = {}
         self._auth_slots = asyncio.BoundedSemaphore(MAX_PENDING_AUTHENTICATIONS)
+
+    def _report_service_error(self, phase: str, exc: Exception) -> None:
+        """Publish only a bounded error class and optional SQLite code."""
+
+        reporter = self._service_error_reporter
+        if reporter is None:
+            return
+        if isinstance(exc, sqlite3.IntegrityError):
+            category = "sqlite_integrity"
+            detail = getattr(exc, "sqlite_errorcode", None)
+        elif isinstance(exc, sqlite3.OperationalError):
+            category = "sqlite_operational"
+            detail = getattr(exc, "sqlite_errorcode", None)
+        elif isinstance(exc, OrchestratorError):
+            category = "orchestrator"
+            detail = exc.status
+        elif isinstance(exc, RuntimeError):
+            category = "runtime"
+            detail = None
+        elif isinstance(exc, (KeyError, TypeError, ValueError)):
+            category = "validation"
+            detail = None
+        else:
+            category = "unexpected"
+            detail = None
+        with suppress(Exception):
+            reporter(f"gateway_service_error_{phase}_{category}", detail)
 
     def _lock(self, conversation_id: str) -> asyncio.Lock:
         return self._publication_locks.setdefault(conversation_id, asyncio.Lock())
@@ -477,6 +507,7 @@ class VoiceGateway:
         scheduler_actions_negotiated = False
         action_negotiated = False
         capture_idle = True
+        service_phase = "handshake"
         try:
             hello = Envelope.from_json(raw_hello)
             if hello.type != "client.hello" or hello.seq != 1:
@@ -759,6 +790,7 @@ class VoiceGateway:
                                 self.service.store.claim_cloud_presentation_owner(session_id)
                     continue
                 event = Envelope.from_json(raw)
+                service_phase = "voice_event"
                 if event.session_id != session_id:
                     await websocket.close(code=1002, reason="session_changed")
                     break
@@ -766,9 +798,12 @@ class VoiceGateway:
                     continue
                 if event.type == "input.transcript.final":
                     capture_idle = True
+                    service_phase = "transcript_admission"
                     admission = self.service.admit_envelope(event)
                     if admission.task is not None:
+                        service_phase = "transcript_supersede"
                         await self._cancel_superseded_executions(admission.task.task_id)
+                        service_phase = "transcript_schedule"
                         self._track_execution(admission.task.task_id)
                 elif event.type == "response.cancel":
                     conversation = self.service.store.active_conversation()
@@ -808,7 +843,8 @@ class VoiceGateway:
             with suppress(Exception):
                 close_code = 1009 if exc.code == "protocol.frame_too_large" else 1002
                 await websocket.close(code=close_code, reason="protocol_error")
-        except Exception:
+        except Exception as exc:
+            self._report_service_error(service_phase, exc)
             with suppress(Exception):
                 await websocket.close(code=1011, reason="service_error")
         finally:

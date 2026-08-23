@@ -511,6 +511,7 @@ async def _serve_components(
     voice_auth_key: Any,
     runtime_supervisor: RuntimeSupervisor | None = None,
     shutdown_deadline: RuntimeProcessDeadline | None = None,
+    operational_log: ContentFreeOperationalLog | None = None,
 ) -> None:
     supervisor = runtime_supervisor or RuntimeSupervisor(
         shutdown_timeout_seconds=RUNTIME_SHUTDOWN_TIMEOUT_SECONDS,
@@ -566,6 +567,7 @@ async def _serve_components(
             voice_auth_key=voice_auth_key,
             runtime_supervisor=supervisor,
             shutdown_deadline=deadline,
+            operational_log=operational_log,
         )
     finally:
         if store is not None:
@@ -610,6 +612,7 @@ async def _run_components(
     voice_auth_key: Any,
     runtime_supervisor: RuntimeSupervisor | None = None,
     shutdown_deadline: RuntimeProcessDeadline | None = None,
+    operational_log: ContentFreeOperationalLog | None = None,
 ) -> None:
     supervisor = runtime_supervisor or RuntimeSupervisor(
         shutdown_timeout_seconds=RUNTIME_SHUTDOWN_TIMEOUT_SECONDS,
@@ -956,6 +959,11 @@ async def _run_servers(
         service,
         auth_key=voice_auth_key,
         business_admission=supervisor.business_admission_allowed,
+        service_error_reporter=(
+            None
+            if operational_log is None
+            else lambda code, detail: operational_log.emit(code, detail=detail)
+        ),
     )
     scheduler_worker = SchedulerWorker(scheduler) if scheduler is not None else None
     stop_requested = asyncio.Event()
@@ -1128,6 +1136,7 @@ async def _serve(config: OrchestratorConfig) -> None:
             voice_auth_key=voice_auth_key,
             runtime_supervisor=supervisor,
             shutdown_deadline=deadline,
+            operational_log=logger,
         )
         logger.emit("service_stopped", controlled=True)
         lifecycle_succeeded = True
