@@ -75,9 +75,26 @@ and any profile with `qualified_audio_context: 0` use full context. This keeps
 all observed regressions on the full-quality path while retaining the measured
 gain for the qualified duration window.
 
-The installed runtime still requires a physical user-voice comparison before
-the private profile is promoted. Eager model warm-up remains active regardless
-of the audio-context setting.
+The installed runtime passed the authenticated physical-turn transport gate on
+2026-08-23 with the duration-gated profile active. Eager model warm-up remains
+active regardless of the audio-context setting.
+
+## Physical first-turn VAD warm-up
+
+The first physical turn initially spent 421.1 ms between audio normalization
+and VAD completion, even though a warmed 16-fixture Silero run measured a
+10.47-ms mean and 24.27-ms p95. The native runtime now executes one deterministic
+512-sample, 16-kHz silent frame through the pinned VAD before opening CoreAudio
+or accepting PTT. Startup fails closed if that silence is classified as speech.
+
+After installation, the next physical turn measured 25.76 ms from normalization
+to VAD completion; a second turn in the same session measured 10.02 ms. The
+authenticated gate observed exactly one admitted turn, one local final-model
+request, ordered speech/text completion, retired playback, no duplicate or
+stale output, and a continuous Voice connection. The first post-warm turn took
+5.89 seconds from PTT release to TTS start, versus 6.85 seconds in the earlier
+turn; because the spoken inputs differed in duration, only the isolated
+395.3-ms VAD reduction is attributed to this change.
 
 ## CPU thread and timestamp screening
 
