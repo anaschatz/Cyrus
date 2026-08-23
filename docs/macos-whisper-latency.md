@@ -33,6 +33,9 @@ improvements and degradations.
 Use separate runs with `--threads 4`, `6` and `8` to qualify CPU parallelism.
 Thread-count promotion requires identical normalized transcripts on every
 fixture as well as lower latency; run only one benchmark sidecar at a time.
+Use `--no-timestamps` for the matching candidate run; it may be promoted only
+if every normalized transcript and confidence-bearing verbose response remains
+valid while aggregate latency improves.
 
 ## 2026-08-23 screening
 

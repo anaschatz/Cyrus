@@ -239,6 +239,7 @@ def main() -> int:
     parser.add_argument("--ffmpeg", default="ffmpeg")
     parser.add_argument("--sample-count", type=int, default=24)
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--no-timestamps", action="store_true")
     parser.add_argument("--audio-contexts", type=int, nargs="+", default=[0, 384, 512, 768])
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -257,18 +258,21 @@ def main() -> int:
     resampled = {fixture.path.name: _resample(fixture.path, args.ffmpeg) for fixture in fixtures}
     port = _available_port()
     request_path = "/audio-ctx-bench-" + uuid.uuid4().hex
+    server_command = [
+        str(args.server),
+        "--host", "127.0.0.1",
+        "--port", str(port),
+        "--request-path", request_path,
+        "--model", str(args.model),
+        "--threads", str(args.threads),
+        "--language", "auto",
+        "--max-context", "0",
+        "--flash-attn",
+    ]
+    if args.no_timestamps:
+        server_command.append("--no-timestamps")
     process = subprocess.Popen(
-        [
-            str(args.server),
-            "--host", "127.0.0.1",
-            "--port", str(port),
-            "--request-path", request_path,
-            "--model", str(args.model),
-            "--threads", str(args.threads),
-            "--language", "auto",
-            "--max-context", "0",
-            "--flash-attn",
-        ],
+        server_command,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -309,6 +313,7 @@ def main() -> int:
         "version": "jarvis-whisper-audio-ctx-benchmark/1",
         "model": str(args.model),
         "threads": args.threads,
+        "no_timestamps": args.no_timestamps,
         "sample_count": len(fixtures),
         "audio_contexts": contexts,
         "summary": _summarise(records, contexts),
