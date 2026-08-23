@@ -78,3 +78,20 @@ gain for the qualified duration window.
 The installed runtime still requires a physical user-voice comparison before
 the private profile is promoted. Eager model warm-up remains active regardless
 of the audio-context setting.
+
+## CPU thread and timestamp screening
+
+A 16-fixture paired run compared the current four-thread server with six and
+eight threads while holding the model, request order and `audio_ctx` values
+fixed. All normalized transcripts and aggregate WER remained identical. For
+the production `1280` path, mean/p95 latency was 3.209/3.731 seconds with four
+threads, 3.672/4.598 seconds with six, and 4.028/5.288 seconds with eight. A
+four-thread repeat after the higher-thread runs showed thermal drift, but no
+higher-thread profile demonstrated a consistent advantage. Four threads remain
+the qualified M3 setting.
+
+The same corpus was screened with `--no-timestamps`. WER was unchanged, but
+mean `1280` latency was 3.341 seconds versus the 3.209-second clean baseline,
+and raw segment formatting changed on one fixture. Because the candidate did
+not produce a repeatable latency reduction, timestamp decoding remains
+unchanged in the production profile.
