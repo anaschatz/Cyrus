@@ -125,18 +125,44 @@ Voice process group so supervisor shutdown also contains parent crashes, and
 the explicit close path waits again after a forced kill to reap a stubborn
 child. All observed orphan sidecars were terminated before benchmarking.
 
-## Core ML / ANE candidate
+## Core ML / ANE qualification
 
-The pinned Homebrew v1.9.2 server is Metal-enabled but is not linked against
-Core ML. Upstream supports a separate `WHISPER_COREML=1` build and publishes a
-1.17-GB compressed `large-v3-turbo` encoder artifact, but Core ML replaces only
-the encoder path and is not inherently faster than the current Metal path on
-every Apple-silicon device. The candidate therefore requires its own
-transcript-identical corpus benchmark, memory/coexistence measurement and exact
-binary/model manifest before promotion.
+The M3 candidate uses the upstream v1.9.2 `WHISPER_COREML=1` server, the same
+`large-v3-turbo-q5_0` decoder model, and the compiled Core ML encoder derived
+from Hugging Face revision
+`3e251d613ae82c33b1dcca9f0406c697c3f9d083`. The runtime manifest pins the
+server, decoder and every file below `ggml-large-v3-turbo-encoder.mlmodelc` by
+relative path, byte size and SHA-256. It rejects symlinks, extra files, missing
+files and hash or size mismatches before the sidecar starts. The load path is
+fully local and permits no tokenizer or network fallback.
 
-No Core ML artifact or build dependency was downloaded during this pass. The
-machine had only 4.9 GB of free data-volume capacity, which is insufficient
-headroom for the compressed artifact, extracted model, source build and safe
-rollback copy. Metal remains active until that qualification can be performed
-without risking disk exhaustion or LLM coexistence.
+An expanded 34-fixture run (24 Greek and 10 English/code-switch) qualified only
+full context. Core ML full context measured 1.572-second mean latency,
+1.682-second p95 and 8.99% aggregate WER, compared with 9.28% WER for the Metal
+baseline. Five transcripts changed: two fixtures improved and one degraded.
+The previously promoted Metal `audio_ctx=1280` policy is therefore explicitly
+disabled whenever the Core ML encoder is active; `qualified_audio_context` must
+be zero and every request uses full context.
+
+The standalone sidecar stabilized around 708 MB footprint (approximately
+744 MB RSS). Cold startup peaked around 1.96 GB, including roughly 1.2 GB of
+reclaimable ANE neural allocation. A simultaneous local-LLM coexistence smoke
+retained about 65% system memory availability and completed without memory
+failure. Cold startup may require up to 120 seconds; that allowance does not
+change the per-turn deadline.
+
+The installed profile then passed real CoreAudio/PTT qualification. The first
+measured Core ML turn started TTS 3.66 seconds after PTT release, versus the
+earlier 5.7-to-5.9-second Metal observations. In the final warm session, two
+ordinary sequential turns started TTS after 4.59 and 2.87 seconds; their ASR
+stages took 1.92 and 1.55 seconds. A separate acoustic barge-in stopped active
+playback 6.6 ms after PTT down, admitted the new transcript, completed ASR in
+1.51 seconds and started the replacement response 2.89 seconds after PTT
+release. Both turns completed with distinct epochs and no duplicate transcript,
+stale playback, reconnect, stuck PTT or gateway 1011 failure.
+
+The Voice transport now also performs one bounded reconnect for a pending
+transcript while preserving its `event_id` and allocating a new connection
+sequence. The gateway records only a fixed phase, bounded exception category
+and optional numeric SQLite/status code on internal failure; transcript text
+and exception messages never enter the operational log.
