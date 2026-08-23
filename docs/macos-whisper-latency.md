@@ -95,3 +95,19 @@ mean `1280` latency was 3.341 seconds versus the 3.209-second clean baseline,
 and raw segment formatting changed on one fixture. Because the candidate did
 not produce a repeatable latency reduction, timestamp decoding remains
 unchanged in the production profile.
+
+## Core ML / ANE candidate
+
+The pinned Homebrew v1.9.2 server is Metal-enabled but is not linked against
+Core ML. Upstream supports a separate `WHISPER_COREML=1` build and publishes a
+1.17-GB compressed `large-v3-turbo` encoder artifact, but Core ML replaces only
+the encoder path and is not inherently faster than the current Metal path on
+every Apple-silicon device. The candidate therefore requires its own
+transcript-identical corpus benchmark, memory/coexistence measurement and exact
+binary/model manifest before promotion.
+
+No Core ML artifact or build dependency was downloaded during this pass. The
+machine had only 4.9 GB of free data-volume capacity, which is insufficient
+headroom for the compressed artifact, extracted model, source build and safe
+rollback copy. Metal remains active until that qualification can be performed
+without risking disk exhaustion or LLM coexistence.
