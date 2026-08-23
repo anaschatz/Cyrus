@@ -20,7 +20,12 @@ from unittest import mock
 import _bootstrap  # noqa: F401
 
 from jarvis_voice.backends import AudioChunk, SpeechUnit, VadResult
-from jarvis_voice.config import ArtifactConfig, WhisperCppConfig, voice_config_from_mapping
+from jarvis_voice.config import (
+    ArtifactConfig,
+    CoreMlEncoderConfig,
+    WhisperCppConfig,
+    voice_config_from_mapping,
+)
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.audio_capture import CoreAudioCapture
 from jarvis_voice.macos.doctor import macos_doctor_report
@@ -393,6 +398,58 @@ class WhisperCppTests(unittest.TestCase):
         self.assertTrue(process.terminated)
         self.assertTrue(process.killed)
         self.assertEqual(process.wait_calls, 2)
+
+    def test_coreml_encoder_exact_manifest_precedes_process_start(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            base = self.make_config(root)
+            encoder = root / "model-encoder.mlmodelc"
+            (encoder / "weights").mkdir(parents=True)
+            metadata = encoder / "metadata.json"
+            weights = encoder / "weights/weight.bin"
+            metadata.write_bytes(b"metadata")
+            weights.write_bytes(b"weights")
+            coreml = CoreMlEncoderConfig(
+                revision="a" * 40,
+                directory=str(encoder),
+                files=(
+                    ArtifactConfig(**artifact(metadata)),  # type: ignore[arg-type]
+                    ArtifactConfig(**artifact(weights)),  # type: ignore[arg-type]
+                ),
+            )
+            coreml = replace(
+                coreml,
+                files=tuple(
+                    replace(item, path=str(Path(str(item.path)).relative_to(encoder)))
+                    for item in coreml.files
+                ),
+            )
+            config = replace(base, coreml_encoder=coreml)
+            process = FakeSidecarProcess()
+            calls: list[list[str]] = []
+            backend = WhisperCppSidecarBackend(
+                config,
+                maximum_audio_seconds=1.0,
+                process_factory=lambda argv: calls.append(argv) or process,
+                opener=lambda request, timeout: FakeResponse(b"ok"),
+                port_factory=lambda: 43_210,
+                platform_name="darwin",
+            )
+            backend.load()
+            backend.close()
+            self.assertEqual(len(calls), 1)
+
+            (encoder / "unexpected.bin").write_bytes(b"unexpected")
+            blocked_calls: list[list[str]] = []
+            blocked = WhisperCppSidecarBackend(
+                config,
+                maximum_audio_seconds=1.0,
+                process_factory=lambda argv: blocked_calls.append(argv) or FakeSidecarProcess(),
+                platform_name="darwin",
+            )
+            with self.assertRaisesRegex(BackendError, "asr.whisper_cpp_coreml_file_set_mismatch"):
+                blocked.load()
+            self.assertEqual(blocked_calls, [])
 
     def test_owned_loopback_sidecar_and_in_memory_multipart(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

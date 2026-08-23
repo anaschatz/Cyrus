@@ -21,7 +21,7 @@ from ..manifest import (
 )
 from ..vad import validate_artifact
 from .ptt import CoreGraphicsEventTapAdapter, mac_ptt_keycode
-from .whisper_cpp import _validate_artifact
+from .whisper_cpp import _validate_artifact, _validate_coreml_encoder
 from .greektts15_pilot import validate_greektts_model_root
 from .greektts15_runtime import load_digest_bound_greektts_candidate
 from .greektts15_sidecar import validate_worker_python
@@ -160,6 +160,15 @@ def macos_doctor_report(
                 artifacts[name] = _status("blocked", str(code))
             else:
                 artifacts[name] = _status("ready", f"asr.whisper_cpp_{name}_valid")
+        if whisper.coreml_encoder.files:
+            try:
+                model_path = _validate_artifact(whisper.model, "model")
+                _validate_coreml_encoder(whisper.coreml_encoder, model_path)
+            except Exception as exc:
+                code = getattr(exc, "code", "asr.whisper_cpp_coreml_invalid")
+                artifacts["coreml_encoder"] = _status("blocked", str(code))
+            else:
+                artifacts["coreml_encoder"] = _status("ready", "asr.whisper_cpp_coreml_valid")
 
     whisper_cpp_ready = bool(artifacts) and all(item["status"] == "ready" for item in artifacts.values())
     whisper_cpp_check: dict[str, object] = {
@@ -170,6 +179,8 @@ def macos_doctor_report(
         "owned_loopback_sidecar": True,
         "ffmpeg_conversion": False,
         "initial_prompt": False,
+        "coreml_ane": bool(whisper.coreml_encoder.files),
+        "audio_context": whisper.qualified_audio_context,
     }
     if config.macos.asr_backend == "faster_whisper_cpu_smoke":
         manifest = model_manifest_for_profile(config.asr.model_profile)

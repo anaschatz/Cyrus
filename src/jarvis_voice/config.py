@@ -77,10 +77,18 @@ class SchedulerClientConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CoreMlEncoderConfig:
+    revision: str | None = None
+    directory: str | None = None
+    files: tuple[ArtifactConfig, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class WhisperCppConfig:
     revision: str = "v1.9.2"
     executable: ArtifactConfig = field(default_factory=ArtifactConfig)
     model: ArtifactConfig = field(default_factory=ArtifactConfig)
+    coreml_encoder: CoreMlEncoderConfig = field(default_factory=CoreMlEncoderConfig)
     language: str = "auto"
     threads: int = 4
     qualified_audio_context: int = 0
@@ -234,6 +242,8 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     pocket_voice_data = pocket_data.get("voice_state", {}) if isinstance(pocket_data, Mapping) else None
     executable_data = whisper_cpp_data.get("executable", {}) if isinstance(whisper_cpp_data, Mapping) else None
     mac_model_data = whisper_cpp_data.get("model", {}) if isinstance(whisper_cpp_data, Mapping) else None
+    coreml_encoder_data = whisper_cpp_data.get("coreml_encoder", {}) if isinstance(whisper_cpp_data, Mapping) else None
+    coreml_encoder_files_data = coreml_encoder_data.get("files", []) if isinstance(coreml_encoder_data, Mapping) else None
     if not isinstance(vad_data, Mapping) or not isinstance(artifact_data, Mapping):
         raise BackendError("config.invalid_field", "VAD configuration must be an object", subsystem="config", safe_context={"field": "vad"})
     if not isinstance(asr_data, Mapping) or not isinstance(cuda_data, Mapping):
@@ -253,7 +263,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     }:
         raise BackendError("config.invalid_field", "macOS configuration has unknown fields", subsystem="config", safe_context={"field": "macos"})
     if not isinstance(whisper_cpp_data, Mapping) or set(whisper_cpp_data) - {
-        "revision", "executable", "model", "language", "threads",
+        "revision", "executable", "model", "coreml_encoder", "language", "threads",
         "qualified_audio_context", "qualified_audio_context_minimum_seconds",
         "qualified_audio_context_maximum_seconds", "startup_timeout_seconds",
         "request_timeout_seconds", "maximum_response_bytes"
@@ -263,6 +273,16 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "whisper.cpp executable manifest is invalid", subsystem="config", safe_context={"field": "macos.whisper_cpp.executable"})
     if not isinstance(mac_model_data, Mapping) or set(mac_model_data) - {"path", "size", "sha256"}:
         raise BackendError("config.invalid_field", "whisper.cpp model manifest is invalid", subsystem="config", safe_context={"field": "macos.whisper_cpp.model"})
+    if (
+        not isinstance(coreml_encoder_data, Mapping)
+        or set(coreml_encoder_data) - {"revision", "directory", "files"}
+        or not isinstance(coreml_encoder_files_data, list)
+        or any(
+            not isinstance(item, Mapping) or set(item) != {"path", "size", "sha256"}
+            for item in coreml_encoder_files_data
+        )
+    ):
+        raise BackendError("config.invalid_field", "Core ML encoder manifest is invalid", subsystem="config", safe_context={"field": "macos.whisper_cpp.coreml_encoder"})
     if not isinstance(greektts15_data, Mapping) or set(greektts15_data) - {
         "model_root", "approval_manifest_path", "approval_manifest_sha256", "repository_root", "warm_on_start", "worker_python"
     }:
@@ -418,6 +438,14 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 revision=str(whisper_cpp_data.get("revision", "v1.9.2")),
                 executable=ArtifactConfig(executable_data.get("path"), executable_data.get("size"), executable_data.get("sha256")),
                 model=ArtifactConfig(mac_model_data.get("path"), mac_model_data.get("size"), mac_model_data.get("sha256")),
+                coreml_encoder=CoreMlEncoderConfig(
+                    revision=coreml_encoder_data.get("revision"),
+                    directory=coreml_encoder_data.get("directory"),
+                    files=tuple(
+                        ArtifactConfig(item.get("path"), item.get("size"), item.get("sha256"))
+                        for item in coreml_encoder_files_data
+                    ),
+                ),
                 language=str(whisper_cpp_data.get("language", "auto")).lower(),
                 threads=_positive_int(whisper_cpp_data.get("threads", 4), "macos.whisper_cpp.threads"),
                 qualified_audio_context=_non_negative_int(
@@ -708,6 +736,44 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         raise BackendError("config.invalid_field", "whisper.cpp language must be auto or an ISO language code", subsystem="config", safe_context={"field": "macos.whisper_cpp.language"})
     if config.macos.whisper_cpp.startup_timeout_seconds <= 0 or config.macos.whisper_cpp.request_timeout_seconds <= 0:
         raise BackendError("config.invalid_field", "whisper.cpp timeouts must be positive", subsystem="config", safe_context={"field": "macos.whisper_cpp.timeout"})
+    coreml = config.macos.whisper_cpp.coreml_encoder
+    coreml_configured = any(
+        value is not None for value in (coreml.revision, coreml.directory)
+    ) or bool(coreml.files)
+    if coreml_configured:
+        relative_paths = [artifact.path for artifact in coreml.files]
+        if (
+            not isinstance(coreml.revision, str)
+            or re.fullmatch(r"[0-9a-f]{40}", coreml.revision) is None
+            or not isinstance(coreml.directory, str)
+            or not Path(coreml.directory).is_absolute()
+            or not coreml.files
+            or len(set(relative_paths)) != len(relative_paths)
+            or any(
+                not isinstance(artifact.path, str)
+                or not artifact.path
+                or "\\" in artifact.path
+                or Path(artifact.path).is_absolute()
+                or any(part in {"", ".", ".."} for part in Path(artifact.path).parts)
+                or not isinstance(artifact.size, int)
+                or isinstance(artifact.size, bool)
+                or artifact.size < 1
+                or not isinstance(artifact.sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", artifact.sha256) is None
+                for artifact in coreml.files
+            )
+        ):
+            raise BackendError(
+                "config.whisper_cpp_coreml_profile_required",
+                "Core ML requires an absolute directory and a complete digest-bound file manifest",
+                subsystem="config",
+            )
+        if config.macos.whisper_cpp.qualified_audio_context != 0:
+            raise BackendError(
+                "config.whisper_cpp_coreml_full_context_required",
+                "The qualified Core ML profile requires full decoder context",
+                subsystem="config",
+            )
     if not 0 <= config.macos.whisper_cpp.qualified_audio_context <= 1500:
         raise BackendError(
             "config.invalid_field",

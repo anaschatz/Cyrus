@@ -90,6 +90,19 @@ def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
         "asr_backend": config.macos.asr_backend,
         "asr_model_sha256": config.macos.whisper_cpp.model.sha256,
         "asr_executable_sha256": config.macos.whisper_cpp.executable.sha256,
+        "asr_audio_context": config.macos.whisper_cpp.qualified_audio_context,
+        "asr_coreml_revision": config.macos.whisper_cpp.coreml_encoder.revision,
+        "asr_coreml_files": [
+            {
+                "path": artifact.path,
+                "size": artifact.size,
+                "sha256": artifact.sha256,
+            }
+            for artifact in sorted(
+                config.macos.whisper_cpp.coreml_encoder.files,
+                key=lambda item: str(item.path),
+            )
+        ],
         "vad_sha256": config.vad.artifact.sha256,
         "tts_backend": config.macos.tts_backend,
         "tts_profile": (

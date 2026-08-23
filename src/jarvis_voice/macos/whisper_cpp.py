@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Protocol
 
 from ..backends import AsrScore, AudioChunk, LanguageMetadata, TranscriptResult
-from ..config import ArtifactConfig, WhisperCppConfig
+from ..config import ArtifactConfig, CoreMlEncoderConfig, WhisperCppConfig
 from ..errors import BackendError
 
 
@@ -86,6 +86,100 @@ def _validate_artifact(artifact: ArtifactConfig, kind: str, *, executable: bool 
     except OSError as exc:
         raise BackendError(f"asr.whisper_cpp_{kind}_unreadable", "Local whisper.cpp artifact is unreadable", subsystem="asr") from exc
     return path
+
+
+def _derived_coreml_encoder_directory(model: Path) -> Path:
+    stem = model.with_suffix("").name
+    quantisation = stem.rsplit("-", 1)
+    if (
+        len(quantisation) == 2
+        and len(quantisation[1]) == 4
+        and quantisation[1][0] == "q"
+        and quantisation[1][2] == "_"
+    ):
+        stem = quantisation[0]
+    return model.with_name(f"{stem}-encoder.mlmodelc")
+
+
+def _validate_coreml_encoder(config: CoreMlEncoderConfig, model: Path) -> Path | None:
+    configured = any(value is not None for value in (config.revision, config.directory)) or bool(config.files)
+    if not configured:
+        return None
+    if (
+        not isinstance(config.revision, str)
+        or len(config.revision) != 40
+        or config.revision != config.revision.lower()
+        or any(character not in "0123456789abcdef" for character in config.revision)
+        or not isinstance(config.directory, str)
+        or not config.directory
+        or not config.files
+    ):
+        raise BackendError("asr.whisper_cpp_coreml_manifest_required", "Core ML encoder manifest is required", subsystem="asr")
+    directory = Path(config.directory).expanduser()
+    expected_directory = _derived_coreml_encoder_directory(model)
+    if directory != expected_directory:
+        raise BackendError("asr.whisper_cpp_coreml_path_mismatch", "Core ML encoder path does not match whisper.cpp model selection", subsystem="asr")
+
+    expected_files: dict[str, ArtifactConfig] = {}
+    expected_directories = {"."}
+    for artifact in config.files:
+        if (
+            not isinstance(artifact.path, str)
+            or not artifact.path
+            or "\\" in artifact.path
+            or artifact.path in expected_files
+            or not isinstance(artifact.size, int)
+            or isinstance(artifact.size, bool)
+            or artifact.size < 1
+            or not isinstance(artifact.sha256, str)
+            or len(artifact.sha256) != 64
+            or artifact.sha256 != artifact.sha256.lower()
+            or any(character not in "0123456789abcdef" for character in artifact.sha256)
+        ):
+            raise BackendError("asr.whisper_cpp_coreml_manifest_invalid", "Core ML encoder manifest is invalid", subsystem="asr")
+        relative = Path(artifact.path)
+        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+            raise BackendError("asr.whisper_cpp_coreml_manifest_invalid", "Core ML encoder manifest is invalid", subsystem="asr")
+        expected_files[relative.as_posix()] = artifact
+        parent = relative.parent
+        while parent != Path("."):
+            expected_directories.add(parent.as_posix())
+            parent = parent.parent
+
+    try:
+        if directory.is_symlink() or not directory.is_dir():
+            raise BackendError("asr.whisper_cpp_coreml_missing", "Core ML encoder directory is missing", subsystem="asr")
+        actual_files: set[str] = set()
+        actual_directories = {"."}
+        for root, directories, files in os.walk(directory, followlinks=False):
+            root_path = Path(root)
+            relative_root = root_path.relative_to(directory)
+            if relative_root != Path("."):
+                actual_directories.add(relative_root.as_posix())
+            for name in directories:
+                child = root_path / name
+                if child.is_symlink():
+                    raise BackendError("asr.whisper_cpp_coreml_symlink", "Core ML encoder contains a symbolic link", subsystem="asr")
+            for name in files:
+                child = root_path / name
+                if child.is_symlink() or not child.is_file():
+                    raise BackendError("asr.whisper_cpp_coreml_symlink", "Core ML encoder contains an invalid file", subsystem="asr")
+                actual_files.add(child.relative_to(directory).as_posix())
+        if actual_files != set(expected_files) or actual_directories != expected_directories:
+            raise BackendError("asr.whisper_cpp_coreml_file_set_mismatch", "Core ML encoder file set differs", subsystem="asr")
+        for relative_name, artifact in expected_files.items():
+            path = directory / relative_name
+            if path.stat().st_size != artifact.size:
+                raise BackendError("asr.whisper_cpp_coreml_size_mismatch", "Core ML encoder file size differs", subsystem="asr")
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != str(artifact.sha256).lower():
+                raise BackendError("asr.whisper_cpp_coreml_hash_mismatch", "Core ML encoder file hash differs", subsystem="asr")
+    except OSError as exc:
+        raise BackendError("asr.whisper_cpp_coreml_unreadable", "Core ML encoder is unreadable", subsystem="asr") from exc
+    return directory
 
 
 def audio_chunk_to_wav(audio: AudioChunk) -> bytes:
@@ -214,6 +308,7 @@ class WhisperCppSidecarBackend:
                 return
             executable = _validate_artifact(self.config.executable, "executable", executable=True)
             model = _validate_artifact(self.config.model, "model")
+            _validate_coreml_encoder(self.config.coreml_encoder, model)
             port = self.port_factory()
             if not 1024 <= port <= 65535:
                 raise BackendError("asr.whisper_cpp_port_invalid", "Loopback sidecar port is invalid", subsystem="asr")

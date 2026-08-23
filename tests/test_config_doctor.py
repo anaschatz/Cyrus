@@ -105,6 +105,51 @@ class ConfigDoctorTests(unittest.TestCase):
             voice_config_from_mapping(
                 {"macos": {"whisper_cpp": {"qualified_audio_context": 1501}}}
             )
+
+    def test_coreml_encoder_requires_pinned_files_and_full_context(self) -> None:
+        encoder = {
+            "revision": "a" * 40,
+            "directory": "/private/models/ggml-large-v3-turbo-encoder.mlmodelc",
+            "files": [
+                {"path": "weights/weight.bin", "size": 123, "sha256": "b" * 64}
+            ],
+        }
+        configured = voice_config_from_mapping(
+            {"macos": {"whisper_cpp": {"coreml_encoder": encoder}}}
+        )
+        self.assertEqual(configured.macos.whisper_cpp.coreml_encoder.revision, "a" * 40)
+        self.assertEqual(configured.macos.whisper_cpp.qualified_audio_context, 0)
+
+        with self.assertRaisesRegex(
+            BackendError, "config.whisper_cpp_coreml_full_context_required"
+        ):
+            voice_config_from_mapping(
+                {
+                    "macos": {
+                        "whisper_cpp": {
+                            "coreml_encoder": encoder,
+                            "qualified_audio_context": 1280,
+                        }
+                    }
+                }
+            )
+        with self.assertRaisesRegex(
+            BackendError, "config.whisper_cpp_coreml_profile_required"
+        ):
+            voice_config_from_mapping(
+                {
+                    "macos": {
+                        "whisper_cpp": {
+                            "coreml_encoder": {
+                                **encoder,
+                                "files": [
+                                    {"path": "../weight.bin", "size": 123, "sha256": "b" * 64}
+                                ],
+                            }
+                        }
+                    }
+                }
+            )
         with self.assertRaisesRegex(BackendError, "config.invalid_field"):
             voice_config_from_mapping(
                 {
