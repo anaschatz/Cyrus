@@ -119,7 +119,23 @@ class LoopbackWebSocketTransport:
         except BackendError:
             raise
         except Exception as exc:
-            raise BackendError("transport.receive_failed", "WebSocket receive failed", subsystem="transport", retryable=True) from exc
+            received = getattr(exc, "rcvd", None)
+            sent = getattr(exc, "sent", None)
+            close_code = getattr(received, "code", None)
+            if not isinstance(close_code, int):
+                close_code = getattr(sent, "code", None)
+            safe_context = (
+                {"close_code": close_code}
+                if isinstance(close_code, int) and 1000 <= close_code <= 4999
+                else None
+            )
+            raise BackendError(
+                "transport.receive_failed",
+                "WebSocket receive failed",
+                subsystem="transport",
+                retryable=True,
+                safe_context=safe_context,
+            ) from exc
         try:
             preview = json.loads(raw)
         except Exception as exc:

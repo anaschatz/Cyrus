@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import unittest
 from collections import deque
+from types import SimpleNamespace
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
 from jarvis_voice.backends import AsrScore, LanguageMetadata, TranscriptResult
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos.runtime import MacVoiceRuntime
 from jarvis_voice.protocol import EventFactory
 from jarvis_voice.transport import LoopbackFakeServer, LoopbackWebSocketTransport
 from jarvis_voice.voice_auth import (
@@ -118,6 +121,69 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(transport.receive(), server)
         self.assertIsNone(transport.receive())
         transport.close(); self.assertTrue(connection.closed)
+
+    def test_receive_failure_reports_only_bounded_close_code(self) -> None:
+        class ClosedConnection(FakeConnection):
+            def recv(self, timeout: float | None = None) -> str:
+                if self.incoming:
+                    return super().recv(timeout)
+                error = OSError("untrusted detail")
+                error.rcvd = SimpleNamespace(code=1011, reason="untrusted detail")  # type: ignore[attr-defined]
+                raise error
+
+        connection = ClosedConnection()
+        transport = LoopbackWebSocketTransport(
+            "ws://127.0.0.1:8765",
+            auth_key=AUTH_KEY,
+            connection_factory=lambda url: connection,
+        )
+        transport.send(EventFactory().create("client.hello", {}))
+
+        with self.assertRaises(BackendError) as raised:
+            transport.receive()
+
+        self.assertEqual(raised.exception.code, "transport.receive_failed")
+        self.assertEqual(raised.exception.safe_context, {"close_code": 1011})
+        self.assertNotIn("untrusted detail", raised.exception.to_log_record().values())
+
+    def test_macos_pending_transcript_reconnects_once_without_closing_journal(self) -> None:
+        runtime = MacVoiceRuntime.__new__(MacVoiceRuntime)
+        event_id = "pending-event"
+        runtime.transport = SimpleNamespace(
+            receive=mock.Mock(
+                side_effect=BackendError(
+                    "transport.receive_failed",
+                    "closed",
+                    subsystem="transport",
+                    retryable=True,
+                )
+            ),
+            close=mock.Mock(),
+            send=mock.Mock(),
+        )
+        runtime.reliable = SimpleNamespace(
+            can_reconnect=True,
+            original=SimpleNamespace(event_id=event_id),
+            reconnect_event=mock.Mock(return_value="retry"),
+        )
+        runtime.delivery_journal = object()
+        runtime.core = SimpleNamespace(
+            begin_new_connection=mock.Mock(),
+            client_hello=mock.Mock(return_value="hello"),
+        )
+        runtime.cloud_approval = SimpleNamespace(begin_new_connection=mock.Mock())
+        runtime.action_approval = SimpleNamespace(begin_new_connection=mock.Mock())
+        runtime.scheduler_runtime = None
+        runtime._transport_reconnect_event_id = None
+        runtime._record_timing = mock.Mock()
+
+        self.assertIsNone(runtime._receive_or_reconnect())
+        self.assertEqual(runtime.transport.send.call_args_list, [mock.call("hello"), mock.call("retry")])
+        runtime._record_timing.assert_has_calls(
+            [mock.call("transport_reconnect_started"), mock.call("transport_reconnect_completed")]
+        )
+        with self.assertRaisesRegex(BackendError, "transport.receive_failed"):
+            runtime._receive_or_reconnect()
 
     def test_wrong_key_fails_before_hello_is_accepted(self) -> None:
         connection = FakeConnection(server_key=AUTH_KEY)

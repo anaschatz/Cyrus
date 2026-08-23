@@ -291,6 +291,7 @@ class MacVoiceRuntime:
         self._response_tokens: dict[str, int] = {}
         self._next_response_token = 1
         self.reliable = ReliableSubmissionManager(time.monotonic)
+        self._transport_reconnect_event_id: str | None = None
         self.recovery = MacRecoverySupervisor()
         try:
             self.ui_state: VoiceUiStatePublisher | None = VoiceUiStatePublisher()
@@ -452,7 +453,6 @@ class MacVoiceRuntime:
         if not self.reliable.can_reconnect:
             raise BackendError("transport.reconnect_ttl_expired", "Transcript reconnect TTL expired", subsystem="transport")
         self.transport.close()
-        self.delivery_journal.close()
         self.core.begin_new_connection()
         self.cloud_approval.begin_new_connection()
         self.action_approval.begin_new_connection()
@@ -460,6 +460,25 @@ class MacVoiceRuntime:
             self.scheduler_runtime.begin_new_connection()
         self.transport.send(self.core.client_hello())
         self.transport.send(self.reliable.reconnect_event(self.core))
+
+    def _receive_or_reconnect(self) -> object | None:
+        try:
+            return self.transport.receive()
+        except BackendError as exc:
+            pending = self.reliable.original
+            event_id = pending.event_id if pending is not None else None
+            if (
+                exc.code != "transport.receive_failed"
+                or not self.reliable.can_reconnect
+                or event_id is None
+                or event_id == self._transport_reconnect_event_id
+            ):
+                raise
+            self._transport_reconnect_event_id = event_id
+            self._record_timing("transport_reconnect_started")
+            self._reconnect_pending()
+            self._record_timing("transport_reconnect_completed")
+            return None
 
     def _handle_ptt(self, event: PttEvent) -> None:
         if event.transition == PttTransition.DOWN:
@@ -685,7 +704,7 @@ class MacVoiceRuntime:
                 if self.reliable.consume_connected_timeout():
                     self._reconnect_pending()
                 while True:
-                    server_event = self.transport.receive()
+                    server_event = self._receive_or_reconnect()
                     if server_event is None:
                         break
                     if isinstance(server_event, CloudApprovalEnvelope):
