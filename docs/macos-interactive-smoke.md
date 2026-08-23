@@ -40,6 +40,9 @@ case το report διαχωρίζει πλέον `PTT_UP → transcript final`, 
 → πρώτο speech commit`, `speech commit → TTS start` και το συνολικό software
 `PTT_UP → TTS start`. Έτσι η βελτιστοποίηση μπορεί να στοχεύσει ASR,
 orchestrator ή TTS χωρίς αλλαγή μοντέλου ή υποβάθμιση της φωνής.
+Το πρώτο σκέλος αναλύεται επιπλέον σε capture close, resampling, VAD, ASR queue,
+καθαρό ASR inference και publication του final transcript. Όλα τα markers είναι
+content-free monotonic timestamps.
 
 ## Privacy boundary
 

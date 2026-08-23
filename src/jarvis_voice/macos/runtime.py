@@ -448,9 +448,16 @@ class MacVoiceRuntime:
                 reason=event.reason,
             )
             captured = self.audio.end_turn()
+            self._record_timing("capture_turn_closed", ptt_cycle=self._ptt_cycle)
             self._publish_ui_state(VoiceUiState.PROCESSING)
             normalized = resample_audio(captured)
+            self._record_timing("audio_normalized", ptt_cycle=self._ptt_cycle)
             prepared = self.core.prepare_transcription(normalized, self.vad)
+            self._record_timing(
+                "vad_completed",
+                ptt_cycle=self._ptt_cycle,
+                speech_detected=not isinstance(prepared, Envelope),
+            )
             if prepared.turn_id is not None:
                 self._turn_cycles[prepared.turn_id] = self._ptt_cycle
             if isinstance(prepared, Envelope):
@@ -459,6 +466,7 @@ class MacVoiceRuntime:
                     self._publish_ui_state(VoiceUiState.IDLE)
             else:
                 self.transcription.submit(prepared.turn_id, prepared.audio)
+                self._record_timing("asr_submitted", ptt_cycle=self._ptt_cycle)
         except BackendError as exc:
             self.audio.abort_turn()
             self._send_all([self.core.input_failed(exc.code)])
@@ -468,6 +476,8 @@ class MacVoiceRuntime:
         outcome = self.transcription.poll()
         if outcome is None:
             return
+        cycle = self._turn_cycles.get(outcome.turn_id, self._ptt_cycle)
+        self._record_timing("asr_result_ready", ptt_cycle=cycle)
         if outcome.error is None and outcome.result is not None:
             stabilized = self.language_policy.stabilize(outcome.result)
             event = self.core.complete_transcription(outcome.turn_id, stabilized)

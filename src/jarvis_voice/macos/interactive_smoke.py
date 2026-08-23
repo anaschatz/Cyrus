@@ -28,6 +28,11 @@ TRACEABLE_STAGE_EVENTS = frozenset(
         "ptt_source_started",
         "ptt_down_received",
         "ptt_up_received",
+        "capture_turn_closed",
+        "audio_normalized",
+        "vad_completed",
+        "asr_submitted",
+        "asr_result_ready",
         "input_no_speech_created",
         "client_error_created",
         "transcript_final_created",
@@ -107,6 +112,16 @@ class GuidedSmokeController:
     def _voice_event(self, name: str, timestamp: float, entry: Mapping[str, object]) -> None:
         if name == "ptt_up_received":
             self._markers["ptt_up"] = timestamp
+        elif name == "capture_turn_closed":
+            self._markers["capture_closed"] = timestamp
+        elif name == "audio_normalized":
+            self._markers["audio_normalized"] = timestamp
+        elif name == "vad_completed":
+            self._markers["vad_completed"] = timestamp
+        elif name == "asr_submitted":
+            self._markers["asr_submitted"] = timestamp
+        elif name == "asr_result_ready":
+            self._markers["asr_result"] = timestamp
         elif name == "input_no_speech_created":
             self._fail("smoke.expected_speech")
         elif name == "client_error_created":
@@ -136,11 +151,21 @@ class GuidedSmokeController:
         elif name == "speech_done_received":
             self._markers["speech_done"] = timestamp
         elif name == "playback_completed_created":
-            required = {"ptt_up", "transcript_final", "speech_commit", "tts_start", "speech_done"}
+            required = {
+                "ptt_up", "capture_closed", "audio_normalized", "vad_completed",
+                "asr_submitted", "asr_result", "transcript_final", "speech_commit",
+                "tts_start", "speech_done",
+            }
             if not required.issubset(self._markers):
                 self._fail("smoke.voice_sequence_incomplete")
                 return
             metrics = {
+                "ptt_up_to_capture_closed_ms": _milliseconds(self._markers["capture_closed"], self._markers["ptt_up"]),
+                "capture_closed_to_audio_normalized_ms": _milliseconds(self._markers["audio_normalized"], self._markers["capture_closed"]),
+                "audio_normalized_to_vad_completed_ms": _milliseconds(self._markers["vad_completed"], self._markers["audio_normalized"]),
+                "vad_completed_to_asr_submitted_ms": _milliseconds(self._markers["asr_submitted"], self._markers["vad_completed"]),
+                "asr_submitted_to_result_ms": _milliseconds(self._markers["asr_result"], self._markers["asr_submitted"]),
+                "asr_result_to_transcript_final_ms": _milliseconds(self._markers["transcript_final"], self._markers["asr_result"]),
                 "ptt_up_to_transcript_final_ms": _milliseconds(self._markers["transcript_final"], self._markers["ptt_up"]),
                 "transcript_final_to_speech_commit_ms": _milliseconds(self._markers["speech_commit"], self._markers["transcript_final"]),
                 "speech_commit_to_tts_start_ms": _milliseconds(self._markers["tts_start"], self._markers["speech_commit"]),

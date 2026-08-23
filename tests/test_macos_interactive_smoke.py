@@ -21,6 +21,11 @@ def event(name: str, timestamp: float, **details: object) -> dict[str, object]:
 def complete_voice(controller: GuidedSmokeController, *, start: float, language: str) -> None:
     controller.feed(event("ptt_down_received", start, output_active=False))
     controller.feed(event("ptt_up_received", start + 1.0))
+    controller.feed(event("capture_turn_closed", start + 1.01))
+    controller.feed(event("audio_normalized", start + 1.02))
+    controller.feed(event("vad_completed", start + 1.04, speech_detected=True))
+    controller.feed(event("asr_submitted", start + 1.05))
+    controller.feed(event("asr_result_ready", start + 1.95))
     controller.feed(event("transcript_final_created", start + 2.0, language=language))
     controller.feed(event("speech_commit_received", start + 2.1, unit_index=1, locale=f"{language}-test"))
     controller.feed(event("speech_done_received", start + 2.2, last_unit_index=2))
@@ -51,6 +56,11 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         controller.take_prompts()
         controller.feed(event("ptt_down_received", 30.0, output_active=False))
         controller.feed(event("ptt_up_received", 30.5))
+        controller.feed(event("capture_turn_closed", 30.51))
+        controller.feed(event("audio_normalized", 30.52))
+        controller.feed(event("vad_completed", 30.54, speech_detected=True))
+        controller.feed(event("asr_submitted", 30.55))
+        controller.feed(event("asr_result_ready", 30.95))
         controller.feed(event("transcript_final_created", 31.0, language="el"))
         controller.feed(event("speech_commit_received", 31.1, unit_index=1, locale="el-GR"))
         controller.feed(event("tts_unit_started", 31.2, unit_index=1, locale="el-GR"))
@@ -68,6 +78,7 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         self.assertEqual(report["cases"]["greek_turn"]["language"], "el")  # type: ignore[index]
         self.assertEqual(report["cases"]["english_turn"]["language"], "en")  # type: ignore[index]
         self.assertEqual(report["cases"]["greek_turn"]["metrics"]["ptt_up_to_transcript_final_ms"], 1000.0)  # type: ignore[index]
+        self.assertEqual(report["cases"]["greek_turn"]["metrics"]["asr_submitted_to_result_ms"], 900.0)  # type: ignore[index]
         self.assertEqual(report["cases"]["greek_turn"]["metrics"]["transcript_final_to_speech_commit_ms"], 100.0)  # type: ignore[index]
         self.assertEqual(report["cases"]["greek_turn"]["metrics"]["speech_commit_to_tts_start_ms"], 200.0)  # type: ignore[index]
         self.assertEqual(report["cases"]["greek_turn"]["metrics"]["ptt_up_to_tts_start_ms"], 1300.0)  # type: ignore[index]
