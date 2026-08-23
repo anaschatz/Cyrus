@@ -49,7 +49,6 @@ def _start_sidecar(argv: list[str]) -> SidecarProcess:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         shell=False,
-        start_new_session=True,
         close_fds=True,
     )
 
@@ -321,4 +320,8 @@ class WhisperCppSidecarBackend:
             try:
                 process.kill()
             except OSError:
+                return
+            try:
+                process.wait(timeout=0.5)
+            except (OSError, subprocess.TimeoutExpired):
                 pass

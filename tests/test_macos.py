@@ -44,7 +44,11 @@ from jarvis_voice.macos.runtime import (
     warm_macos_vad_backend,
 )
 from jarvis_voice.macos.system_tts import MacSystemTtsBackend, _start_say
-from jarvis_voice.macos.whisper_cpp import WhisperCppSidecarBackend, parse_whisper_response
+from jarvis_voice.macos.whisper_cpp import (
+    WhisperCppSidecarBackend,
+    _start_sidecar,
+    parse_whisper_response,
+)
 from jarvis_voice.ptt import PttEventPublisher, PttTransition, function_key_vkey
 
 
@@ -328,6 +332,21 @@ class FakeSidecarProcess:
         return self.returncode or 0
 
 
+class StubbornSidecarProcess(FakeSidecarProcess):
+    def __init__(self) -> None:
+        super().__init__()
+        self.wait_calls = 0
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_calls += 1
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired("whisper-server", timeout)
+        return self.returncode
+
+
 class WhisperCppTests(unittest.TestCase):
     def make_config(self, root: Path, *, response_cap: int = 4096) -> WhisperCppConfig:
         executable = root / "whisper-server"
@@ -346,6 +365,34 @@ class WhisperCppTests(unittest.TestCase):
             request_timeout_seconds=2.0,
             maximum_response_bytes=response_cap,
         )
+
+    def test_sidecar_inherits_voice_group_for_supervisor_crash_containment(self) -> None:
+        with mock.patch(
+            "jarvis_voice.macos.whisper_cpp.subprocess.Popen"
+        ) as popen:
+            _start_sidecar(["/approved/whisper-server"])
+
+        kwargs = popen.call_args.kwargs
+        self.assertNotIn("start_new_session", kwargs)
+        self.assertFalse(kwargs["shell"])
+
+    def test_stubborn_sidecar_is_killed_and_reaped(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            process = StubbornSidecarProcess()
+            backend = WhisperCppSidecarBackend(
+                self.make_config(Path(temp)),
+                maximum_audio_seconds=1.0,
+                process_factory=lambda argv: process,
+                opener=lambda request, timeout: FakeResponse(b"ok"),
+                port_factory=lambda: 43_210,
+                platform_name="darwin",
+            )
+            backend.load()
+            backend.close()
+
+        self.assertTrue(process.terminated)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait_calls, 2)
 
     def test_owned_loopback_sidecar_and_in_memory_multipart(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
