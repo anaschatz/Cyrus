@@ -142,7 +142,9 @@ class GuidedSmokeController:
                 return
             metrics = {
                 "ptt_up_to_transcript_final_ms": _milliseconds(self._markers["transcript_final"], self._markers["ptt_up"]),
+                "transcript_final_to_speech_commit_ms": _milliseconds(self._markers["speech_commit"], self._markers["transcript_final"]),
                 "speech_commit_to_tts_start_ms": _milliseconds(self._markers["tts_start"], self._markers["speech_commit"]),
+                "ptt_up_to_tts_start_ms": _milliseconds(self._markers["tts_start"], self._markers["ptt_up"]),
                 "speech_done_to_playback_completed_ms": _milliseconds(timestamp, self._markers["speech_done"]),
             }
             self._advance(metrics, language="el" if self.stage == "greek_turn" else "en")

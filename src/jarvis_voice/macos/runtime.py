@@ -42,7 +42,7 @@ from ..scheduler_runtime import SchedulerNativeRuntime
 from ..vad import SileroOnnxVad
 from .audio_capture import CoreAudioCapture
 from .audio_queue_playback import MacAudioQueueStreamingPlayback
-from .asr_selection import create_macos_asr_backend
+from .asr_selection import create_macos_asr_backend, warm_macos_asr_backend
 from .native_collector import mac_runtime_profile_fingerprint
 from .ptt import MacEventTapPttSource, mac_ptt_keycode, mac_ptt_vkey
 from .recovery import MacRecoveryRequest, MacRecoverySupervisor
@@ -524,6 +524,9 @@ class MacVoiceRuntime:
             return
         self._running = True
         try:
+            asr_warm_load_ms = warm_macos_asr_backend(self.asr)
+            if asr_warm_load_ms is not None:
+                self._record_timing("asr_warm_ready", load_ms=asr_warm_load_ms)
             self.audio.start()
             self._record_timing("audio_stream_started")
             self.ptt.start()

@@ -67,6 +67,10 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         self.assertEqual(report["code"], "smoke.macos_interactive_ready")
         self.assertEqual(report["cases"]["greek_turn"]["language"], "el")  # type: ignore[index]
         self.assertEqual(report["cases"]["english_turn"]["language"], "en")  # type: ignore[index]
+        self.assertEqual(report["cases"]["greek_turn"]["metrics"]["ptt_up_to_transcript_final_ms"], 1000.0)  # type: ignore[index]
+        self.assertEqual(report["cases"]["greek_turn"]["metrics"]["transcript_final_to_speech_commit_ms"], 100.0)  # type: ignore[index]
+        self.assertEqual(report["cases"]["greek_turn"]["metrics"]["speech_commit_to_tts_start_ms"], 200.0)  # type: ignore[index]
+        self.assertEqual(report["cases"]["greek_turn"]["metrics"]["ptt_up_to_tts_start_ms"], 1300.0)  # type: ignore[index]
         self.assertEqual(report["cases"]["no_speech"]["metrics"]["ptt_up_to_no_speech_ms"], 150.0)  # type: ignore[index]
         self.assertAlmostEqual(report["cases"]["barge_in"]["metrics"]["ptt_down_to_backend_idle_ms"], 150.0)  # type: ignore[index]
         self.assertEqual(

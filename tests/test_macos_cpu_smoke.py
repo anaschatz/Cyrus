@@ -11,7 +11,11 @@ import _bootstrap  # noqa: F401
 
 from jarvis_voice.config import voice_config_from_mapping
 from jarvis_voice.errors import BackendError
-from jarvis_voice.macos.asr_selection import create_macos_asr_backend, with_faster_whisper_cpu_smoke
+from jarvis_voice.macos.asr_selection import (
+    create_macos_asr_backend,
+    warm_macos_asr_backend,
+    with_faster_whisper_cpu_smoke,
+)
 from jarvis_voice.macos.doctor import macos_doctor_report
 from jarvis_voice.manifest import (
     BASE_MODEL_MANIFEST,
@@ -75,6 +79,25 @@ class MacCpuSmokeSelectionTests(unittest.TestCase):
             cpu_factory.call_args.kwargs["manifest"],
             LARGE_V3_TURBO_MODEL_MANIFEST,
         )
+
+    def test_warm_load_moves_backend_startup_before_first_ptt(self) -> None:
+        class LoadableBackend:
+            def __init__(self) -> None:
+                self.load_calls = 0
+
+            def load(self) -> None:
+                self.load_calls += 1
+
+        timestamps = iter((10.0, 10.125))
+        backend = LoadableBackend()
+
+        elapsed = warm_macos_asr_backend(backend, clock=lambda: next(timestamps))  # type: ignore[arg-type]
+
+        self.assertEqual(backend.load_calls, 1)
+        self.assertEqual(elapsed, 125.0)
+
+    def test_warm_load_is_optional_for_test_backends(self) -> None:
+        self.assertIsNone(warm_macos_asr_backend(object()))  # type: ignore[arg-type]
 
 
 class MacCpuSmokeDoctorTests(unittest.TestCase):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -62,3 +63,23 @@ def create_macos_asr_backend(
             maximum_audio_seconds=config.maximum_utterance_seconds,
         )
     raise BackendError("asr.macos_backend_unsupported", "The configured macOS ASR backend is unsupported", subsystem="asr")
+
+
+def warm_macos_asr_backend(
+    backend: AsrBackend,
+    *,
+    clock: Callable[[], float] = time.perf_counter,
+) -> float | None:
+    """Load an explicitly selected ASR backend before accepting PTT input.
+
+    Both qualified macOS backends expose an idempotent ``load`` method. Keeping
+    the capability check here makes the runtime safe for test doubles while
+    ensuring the first real turn never owns model/sidecar startup latency.
+    """
+
+    load = getattr(backend, "load", None)
+    if not callable(load):
+        return None
+    started = clock()
+    load()
+    return max(0.0, (clock() - started) * 1000.0)

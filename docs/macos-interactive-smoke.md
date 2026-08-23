@@ -34,6 +34,13 @@ smoke. Δεν αποτελεί production-ready gate: δεν μετρά acoustic
 turns, disconnect/sleep recovery ή 8ωρο soak. Το report το δηλώνει ρητά με
 `acoustic_silence_measured: false` και `satisfies_native_ready_gate: false`.
 
+Το production runtime προφορτώνει το επιλεγμένο ASR backend πριν ανοίξει το
+PTT, ώστε το πρώτο turn να μην πληρώνει model/sidecar startup. Για κάθε speech
+case το report διαχωρίζει πλέον `PTT_UP → transcript final`, `transcript final
+→ πρώτο speech commit`, `speech commit → TTS start` και το συνολικό software
+`PTT_UP → TTS start`. Έτσι η βελτιστοποίηση μπορεί να στοχεύσει ASR,
+orchestrator ή TTS χωρίς αλλαγή μοντέλου ή υποβάθμιση της φωνής.
+
 ## Privacy boundary
 
 Το captured audio, το user transcript και τα protocol IDs παραμένουν μόνο στη μνήμη. Το report περιέχει αποκλειστικά language codes, pass/fail flags και monotonic latency deltas. Το fixed fake TTS response στέλνεται στο `/usr/bin/say` μέσω stdin και δεν αποθηκεύεται στο evidence.
