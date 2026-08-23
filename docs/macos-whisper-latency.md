@@ -113,6 +113,18 @@ and raw segment formatting changed on one fixture. Because the candidate did
 not produce a repeatable latency reduction, timestamp decoding remains
 unchanged in the production profile.
 
+A separate 16-fixture Greek run screened the decoder's `best-of` setting.
+Reducing it from two to one retained identical normalized transcripts and the
+same 1.63% aggregate WER, but mean `1280` latency increased from 3.892 to 4.566
+seconds. The sequential runs can include thermal drift, but the candidate did
+not demonstrate the required repeatable speedup and is therefore rejected.
+
+The same physical qualification pass found eleven old `whisper-server`
+children whose Voice parents had already exited. The sidecar now inherits the
+Voice process group so supervisor shutdown also contains parent crashes, and
+the explicit close path waits again after a forced kill to reap a stubborn
+child. All observed orphan sidecars were terminated before benchmarking.
+
 ## Core ML / ANE candidate
 
 The pinned Homebrew v1.9.2 server is Metal-enabled but is not linked against
