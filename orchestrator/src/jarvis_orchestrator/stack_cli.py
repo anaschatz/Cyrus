@@ -20,8 +20,8 @@ from .macos_beta_lease import validate_live_session_lease
 from .readiness import (
     run_live_model_failure_gate,
     run_live_sequential_gate,
-    write_readiness_report,
 )
+from .readiness_report import write_readiness_report
 from .service import (
     BETA_SESSION_SCHEMA_VERSION,
     valid_voice_connection_tracker_id,
@@ -460,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
             maximum_database_bytes=512 * 1024 * 1024,
             request_text="Reply exactly: CYRUS local E2E ready.",
             include_latency_profile=True,
+            send_playback_completion=False,
         )
         )
         report = {

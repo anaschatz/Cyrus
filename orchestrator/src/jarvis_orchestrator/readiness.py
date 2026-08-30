@@ -8,9 +8,7 @@ wire identifiers.
 from __future__ import annotations
 
 import asyncio
-import json
 import math
-import os
 import tempfile
 import time
 import uuid
@@ -51,7 +49,6 @@ from .readiness_evidence import (
     validate_readiness_cohort_receipt,
     validated_readiness_database_diagnostics,
     verify_readiness_evidence,
-    write_readiness_evidence,
 )
 from .store import OrchestratorStore
 
@@ -66,56 +63,7 @@ SYNTHETIC_CANCELLATION_STAGES = (
     "DECISION_WAITING_RECONNECT",
 )
 
-MAXIMUM_EVIDENCE_BYTES = 1024 * 1024
 MAXIMUM_OPERATIONAL_LOG_BYTES = 8 * 1024 * 1024
-
-
-def write_readiness_report(path: str | Path, report: dict[str, Any]) -> Path:
-    """Persist a legacy operational report that is never gate-eligible."""
-
-    destination = Path(path).resolve()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    encoded = json.dumps(
-        report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    if len(encoded) > MAXIMUM_EVIDENCE_BYTES:
-        raise OperationalError("readiness_report_too_large")
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as target:
-            target.write(encoded)
-            target.flush()
-            os.fsync(target.fileno())
-        os.replace(temporary, destination)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return destination
-
-
-def write_signed_readiness_report(
-    path: str | Path,
-    evidence: ReadinessEvidenceV2,
-    *,
-    verifier: ReadinessEvidenceVerifier,
-    cohort_state_directory: str | Path,
-    current_state_provider: (
-        Callable[[], tuple[ReadinessIdentityV2, Any]] | None
-    ) = None,
-    final_time_provider: Callable[[], datetime] | None = None,
-) -> Path:
-    """Persist only a structurally closed envelope trusted by the verifier."""
-
-    return write_readiness_evidence(
-        path,
-        evidence,
-        verifier=verifier,
-        cohort_state_directory=cohort_state_directory,
-        current_state_provider=current_state_provider,
-        final_time_provider=final_time_provider,
-    )
 
 
 def _synthetic_payload(index: int) -> dict[str, Any]:
@@ -341,6 +289,7 @@ async def run_live_sequential_gate(
     database_path: str | Path | None = None,
     request_text: str | None = None,
     include_latency_profile: bool = False,
+    send_playback_completion: bool = True,
 ) -> dict[str, Any]:
     """Run real sequential local-model turns through the voice WebSocket.
 
@@ -356,6 +305,8 @@ async def run_live_sequential_gate(
         or len(request_text) > 256
     ):
         raise ValueError("live gate request text is invalid")
+    if not isinstance(send_playback_completion, bool):
+        raise ValueError("live gate playback mode is invalid")
     try:
         from websockets.asyncio.client import connect
         from jarvis_voice.protocol import Envelope, EventFactory
@@ -492,13 +443,14 @@ async def run_live_sequential_gate(
                         latency_samples["ack_to_first_speech_commit"].append(
                             int(round((markers["first_speech_commit"] - markers["ack"]) * 1000))
                         )
-                        playback = factory.create(
-                            "playback.completed",
-                            {"epoch": 0},
-                            turn_id=transcript.turn_id,
-                            response_id=response_id,
-                        )
-                        await websocket.send(playback.to_json())
+                        if send_playback_completion:
+                            playback = factory.create(
+                                "playback.completed",
+                                {"epoch": 0},
+                                turn_id=transcript.turn_id,
+                                response_id=response_id,
+                            )
+                            await websocket.send(playback.to_json())
                         response_count += 1
                         speech_unit_count += speech_units
                         maximum_turn_ms = max(
@@ -518,7 +470,11 @@ async def run_live_sequential_gate(
         "elapsed_ms": int((time.monotonic() - started) * 1000),
         "maximum_turn_ms": maximum_turn_ms,
         "physical_speaker_playback_observed": False,
-        "playback_completion_mode": "protocol_probe",
+        "playback_completion_mode": (
+            "protocol_probe"
+            if send_playback_completion
+            else "external_voice_runtime"
+        ),
         "ready": response_count == turns and bounded and (diagnostics is None or diagnostics.ready),
         "response_count": response_count,
         "speech_unit_count": speech_unit_count,
@@ -1167,6 +1123,4 @@ __all__ = [
     "run_live_soak_gate",
     "run_sqlite_recovery_gate",
     "run_synthetic_lifecycle_gate",
-    "write_readiness_report",
-    "write_signed_readiness_report",
 ]

@@ -1475,11 +1475,14 @@ class ReadinessEvidenceTests(unittest.TestCase):
             }
         )
         refused_output = self.root / "refused.json"
+        qualification_window_started = datetime.now(UTC).replace(
+            microsecond=0
+        ) - timedelta(minutes=1)
         qualification_args = [
             "--qualification-cohort-id",
             COHORT_ID,
             "--qualification-window-started-at-utc",
-            "2026-08-18T12:00:00Z",
+            qualification_window_started.isoformat().replace("+00:00", "Z"),
         ]
         stdout = io.StringIO()
         with (

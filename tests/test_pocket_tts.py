@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import sys
 import tempfile
 import threading
@@ -20,6 +21,7 @@ from jarvis_voice.macos.native_collector import mac_runtime_profile_fingerprint
 from jarvis_voice.pocket_tts import (
     PocketAudioChunk,
     PocketTtsBackend,
+    POCKET_TTS_WARM_TIMEOUT_SECONDS,
     SoundDeviceStreamingPlayback,
     validate_pocket_tts_artifact,
 )
@@ -273,6 +275,14 @@ class PocketTtsConfigTests(unittest.TestCase):
 
 
 class PocketTtsBackendTests(unittest.TestCase):
+    def test_default_warm_timeout_covers_qualified_cold_load_budget(self) -> None:
+        parameter = inspect.signature(PocketTtsBackend).parameters[
+            "warm_timeout_seconds"
+        ]
+
+        self.assertEqual(POCKET_TTS_WARM_TIMEOUT_SECONDS, 60.0)
+        self.assertEqual(parameter.default, POCKET_TTS_WARM_TIMEOUT_SECONDS)
+
     def test_english_stream_starts_once_and_completion_observes_idle(self) -> None:
         engine = FakeEngine()
         fallback = FakeFallback()

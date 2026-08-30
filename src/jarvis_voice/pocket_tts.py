@@ -23,6 +23,7 @@ POCKET_TTS_DISTRIBUTION_VERSION = "2.1.0"
 POCKET_TTS_TORCH_VERSION = "2.13.0"
 POCKET_TTS_PYYAML_VERSION = "6.0.3"
 POCKET_TTS_SAMPLE_RATE = 24_000
+POCKET_TTS_WARM_TIMEOUT_SECONDS = 60.0
 POCKET_TTS_PREBUFFER_CHUNKS = 3
 PRIMARY_LOCALES = frozenset({"en-US"})
 
@@ -473,7 +474,7 @@ class PocketTtsBackend:
         queue_capacity: int = 16,
         maximum_text_bytes: int = 2_048,
         warm_on_start: bool = True,
-        warm_timeout_seconds: float = 30.0,
+        warm_timeout_seconds: float = POCKET_TTS_WARM_TIMEOUT_SECONDS,
     ) -> None:
         if queue_capacity < 1 or maximum_text_bytes < 1 or warm_timeout_seconds <= 0:
             raise ValueError("Pocket TTS runtime bounds must be positive")
@@ -724,6 +725,7 @@ __all__ = [
     "POCKET_TTS_PYYAML_VERSION",
     "POCKET_TTS_SAMPLE_RATE",
     "POCKET_TTS_TORCH_VERSION",
+    "POCKET_TTS_WARM_TIMEOUT_SECONDS",
     "PocketAudioChunk",
     "PocketTtsBackend",
     "PocketTtsCpuEngine",

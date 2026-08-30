@@ -225,6 +225,7 @@ class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
         from jarvis_voice.voice_auth_transport import authenticate_async_server
 
         auth_key = VoiceAuthKey(1, b"k" * 32)
+        received_client_events: list[str] = []
 
         async def handle(websocket: object) -> None:
             fake: FakeOrchestrator | None = None
@@ -243,6 +244,7 @@ class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
                     except Exception:
                         return
                 event = Envelope.from_json(raw)
+                received_client_events.append(event.type)
                 if fake is None:
                     fake = FakeOrchestrator(session_id=event.session_id)
                 if event.type == "client.hello":
@@ -281,6 +283,15 @@ class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
                 timeout_seconds=2,
                 include_latency_profile=True,
             )
+            received_client_events.clear()
+            external_playback_report = await run_live_sequential_gate(
+                host="127.0.0.1",
+                port=port,
+                auth_key=auth_key,
+                turns=1,
+                timeout_seconds=2,
+                send_playback_completion=False,
+            )
         finally:
             server.close()
             await server.wait_closed()
@@ -297,6 +308,12 @@ class LiveHarnessContractTests(unittest.IsolatedAsyncioTestCase):
             set(report["latency_profile_ms"]["ack_to_first_speech_commit"]),
             {"count", "p50", "p95", "maximum"},
         )
+        self.assertTrue(external_playback_report["ready"])
+        self.assertEqual(
+            external_playback_report["playback_completion_mode"],
+            "external_voice_runtime",
+        )
+        self.assertNotIn("playback.completed", received_client_events)
 
 
 if __name__ == "__main__":

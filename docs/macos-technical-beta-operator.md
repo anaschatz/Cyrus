@@ -146,9 +146,44 @@ Retry this read-only command until it exits `0` and reports
 - `voice_client_connected`: the real authenticated Voice client is connected;
 - `ready`: both `services_ready` and `voice_client_connected` are true.
 
+On the qualified Pocket TTS profile, a genuinely cold model load has measured
+about 34 seconds and the Voice process also warms ASR and VAD before it accepts
+PTT. Seeing inference and Orchestrator ready while `voice_client_connected` is
+temporarily false is therefore expected during startup. The Pocket backend has
+a bounded 60-second warm gate and the foreground supervisor retains the larger
+600-second whole-stack allowance. Do not treat the system as usable until the
+combined status is `ready:true`.
+
 `foreground_session_ready` is specifically the legacy-appliance lease bridge;
 it may be false when identity comes from `runtime_endpoint`. An invalid stack
 does not produce `config_valid:false`; it fails closed with an error envelope.
+
+### Optional authenticated model/transport smoke
+
+After status is green, one content-free model-backed protocol smoke may be run:
+
+```zsh
+"$JARVIS_RUNTIME_PYTHON" -m jarvis_orchestrator.stack_cli \
+  --config "$JARVIS_STACK_CONFIG" e2e \
+  --turns 1 \
+  --output "$JARVIS_EVIDENCE/e2e-001.json"
+```
+
+With the real Voice runtime connected, success reports `ready:true`,
+`real_local_model:true` and
+`playback_completion_mode:"external_voice_runtime"`. The probe observes the
+authenticated response protocol but deliberately does not publish a second
+`playback.completed`; the actual Voice runtime remains the sole playback
+terminal owner. Wait for the audible response to finish, then run `status`
+again. It must remain `ready:true`. A protocol probe must never race the native
+client with a second terminal for the same response.
+
+Clock facts have two separate correctness paths. Closed day/date/time requests
+are answered from the admitted-turn timestamp and configured IANA timezone
+without a model reservation. Ordinary model-backed requests receive the same
+authoritative runtime snapshot in their system context. This avoids relying on
+the model's training cutoff for current date and time while preserving normal
+reasoning for broader questions.
 
 ## 4. Prove exactly one physical turn
 

@@ -80,8 +80,12 @@ class CyrusBrandingContractTests(unittest.TestCase):
         self.assertIn("jarvis.voice/1", compatibility)
 
     def test_runtime_persona_and_operator_labels_are_cyrus(self) -> None:
-        service = (
-            ROOT / "orchestrator" / "src" / "jarvis_orchestrator" / "service.py"
+        llm_context = (
+            ROOT
+            / "orchestrator"
+            / "src"
+            / "jarvis_orchestrator"
+            / "llm_context.py"
         ).read_text()
         scheduler = (
             ROOT
@@ -92,8 +96,8 @@ class CyrusBrandingContractTests(unittest.TestCase):
         ).read_text()
         tray = (ROOT / "src" / "jarvis_voice" / "tray_app.py").read_text()
 
-        self.assertIn("You are CYRUS", service)
-        self.assertNotIn("You are JARVIS", service)
+        self.assertIn("You are CYRUS", llm_context)
+        self.assertNotIn("You are JARVIS", llm_context)
         self.assertIn('"private_title": "CYRUS"', scheduler)
         self.assertIn("CYRUS Voice —", tray)
 
