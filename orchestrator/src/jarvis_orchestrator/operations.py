@@ -409,8 +409,7 @@ def _database_diagnostics(
     try:
         immutable_query = "&immutable=1" if immutable else ""
         connection = sqlite3.connect(
-            f"file:{selected.as_posix()}?mode=ro{immutable_query}",
-            uri=True,
+            f"{selected.as_uri()}?mode=ro{immutable_query}", uri=True
         )
         connection.execute("PRAGMA query_only=ON")
         integrity_rows = connection.execute("PRAGMA integrity_check").fetchall()
@@ -591,8 +590,7 @@ def _inspect_memory_backup_database(
     try:
         immutable_query = "&immutable=1" if immutable else ""
         connection = sqlite3.connect(
-            f"file:{path.as_posix()}?mode=ro{immutable_query}",
-            uri=True,
+            f"{path.as_uri()}?mode=ro{immutable_query}", uri=True
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA query_only=ON")
@@ -940,7 +938,7 @@ def backup_database(
     manifest_temporary: Path | None = None
     try:
         source_connection = sqlite3.connect(
-            f"file:{source_path.as_posix()}?mode=ro", uri=True
+            f"{source_path.as_uri()}?mode=ro", uri=True
         )
         target_connection = sqlite3.connect(temporary)
         try:

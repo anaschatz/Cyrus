@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.11.14"
   UV_VERSION: "0.9.18"
   UV_NO_PROGRESS: "1"
   UV_NO_EDITABLE: "1"
@@ -36,7 +36,7 @@ jobs:
       - name: Set up Python 3.11
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: "3.11.14"
           check-latest: false
 
       - name: Set up locked uv toolchain
@@ -61,7 +61,7 @@ jobs:
           uv lock --check --project research
 
       - name: Sync the locked quality environment
-        run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11
+        run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11.14
 
       - name: Validate the workflow contract offline
         env:
@@ -141,7 +141,7 @@ jobs:
       - name: Set up Python 3.11
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: "3.11.14"
           check-latest: false
 
       - name: Set up locked uv toolchain
@@ -170,19 +170,19 @@ jobs:
 
       - name: Sync Voice from its lockfile
         if: matrix.component == 'voice'
-        run: uv sync --locked --extra dev --no-editable --python 3.11
+        run: uv sync --locked --extra dev --no-editable --python 3.11.14
 
       - name: Sync Anamnesis from its lockfile
         if: matrix.component == 'anamnesis'
-        run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11
+        run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11.14
 
       - name: Sync Inference from its lockfile
         if: matrix.component == 'inference'
-        run: uv sync --project inference --locked --extra qualification --no-editable --python 3.11
+        run: uv sync --project inference --locked --extra qualification --no-editable --python 3.11.14
 
       - name: Sync Orchestrator from its lockfile
         if: matrix.component == 'orchestrator'
-        run: uv sync --project orchestrator --locked --no-editable --python 3.11
+        run: uv sync --project orchestrator --locked --no-editable --python 3.11.14
 
       - name: Test Voice fully offline
         if: matrix.component == 'voice'
@@ -232,7 +232,7 @@ jobs:
       - name: Set up Python 3.11
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: "3.11.14"
           check-latest: false
 
       - name: Set up locked uv toolchain
@@ -253,12 +253,12 @@ jobs:
           uv lock --check --project orchestrator
 
       - name: Sync the Windows security environment
-        run: uv sync --project orchestrator --locked --no-editable --python 3.11
+        run: uv sync --project orchestrator --locked --no-editable --python 3.11.14
 
       - name: Sync the Windows Inference environment
         run: >-
           uv sync --project inference --locked --extra qualification
-          --no-editable --python 3.11
+          --no-editable --python 3.11.14
 
       - name: Test native Windows security paths fully offline
         env:
@@ -319,7 +319,7 @@ jobs:
       - name: Set up Python 3.11
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: "3.11.14"
           check-latest: false
 
       - name: Set up locked uv toolchain
@@ -344,19 +344,19 @@ jobs:
           uv lock --check --project research
 
       - name: Sync Voice build dependencies
-        run: uv sync --locked --extra dev --no-editable --python 3.11
+        run: uv sync --locked --extra dev --no-editable --python 3.11.14
 
       - name: Sync Anamnesis build dependencies
-        run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11
+        run: uv sync --project anamnesis --locked --extra dev --no-editable --python 3.11.14
 
       - name: Sync Inference build dependencies
-        run: uv sync --project inference --locked --extra qualification --no-editable --python 3.11
+        run: uv sync --project inference --locked --extra qualification --no-editable --python 3.11.14
 
       - name: Sync Orchestrator build dependencies
-        run: uv sync --project orchestrator --locked --no-editable --python 3.11
+        run: uv sync --project orchestrator --locked --no-editable --python 3.11.14
 
       - name: Sync Research build dependencies
-        run: uv sync --project research --locked --no-editable --python 3.11
+        run: uv sync --project research --locked --no-editable --python 3.11.14
 
       - name: Build all backend wheels fully offline
         env:
@@ -369,26 +369,24 @@ jobs:
           uv build --offline --no-build-isolation --python .venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" orchestrator
           uv build --offline --no-build-isolation --python .venv/bin/python --wheel --out-dir "$RUNNER_TEMP/jarvis-wheels" research
 
-      - name: Install wheels into fresh environments fully offline
-        env:
-          UV_OFFLINE: "1"
+      - name: Install hash-locked dependencies and local wheels into fresh environments
         run: |
-          uv venv --python 3.11 "$RUNNER_TEMP/smoke-voice"
-          uv venv --python 3.11 "$RUNNER_TEMP/smoke-anamnesis"
-          uv venv --python 3.11 "$RUNNER_TEMP/smoke-inference"
-          uv venv --python 3.11 "$RUNNER_TEMP/smoke-orchestrator"
-          uv venv --python 3.11 "$RUNNER_TEMP/smoke-research"
+          uv venv --python 3.11.14 "$RUNNER_TEMP/smoke-voice"
+          uv venv --python 3.11.14 "$RUNNER_TEMP/smoke-anamnesis"
+          uv venv --python 3.11.14 "$RUNNER_TEMP/smoke-inference"
+          uv venv --python 3.11.14 "$RUNNER_TEMP/smoke-orchestrator"
+          uv venv --python 3.11.14 "$RUNNER_TEMP/smoke-research"
           uv export --project . --locked --offline --no-dev --no-emit-project --output-file "$RUNNER_TEMP/voice-requirements.txt"
           uv export --project anamnesis --locked --offline --no-dev --no-emit-project --output-file "$RUNNER_TEMP/anamnesis-requirements.txt"
           uv export --project inference --locked --extra qualification --offline --no-dev --no-emit-project --output-file "$RUNNER_TEMP/inference-requirements.txt"
           uv export --project orchestrator --locked --offline --no-dev --no-emit-project --no-emit-local --output-file "$RUNNER_TEMP/orchestrator-requirements.txt"
           uv export --project research --locked --offline --no-dev --no-emit-project --output-file "$RUNNER_TEMP/research-requirements.txt"
-          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-voice/bin/python" --requirements "$RUNNER_TEMP/voice-requirements.txt"
-          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-anamnesis/bin/python" --requirements "$RUNNER_TEMP/anamnesis-requirements.txt"
-          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-inference/bin/python" --requirements "$RUNNER_TEMP/inference-requirements.txt"
-          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-orchestrator/bin/python" --requirements "$RUNNER_TEMP/orchestrator-requirements.txt"
-          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-research/bin/python" --requirements "$RUNNER_TEMP/research-requirements.txt"
-          uv pip install --offline --require-hashes --python "$RUNNER_TEMP/smoke-research/bin/python" --requirements "$RUNNER_TEMP/orchestrator-requirements.txt"
+          uv pip install --require-hashes --python "$RUNNER_TEMP/smoke-voice/bin/python" --requirements "$RUNNER_TEMP/voice-requirements.txt"
+          uv pip install --require-hashes --python "$RUNNER_TEMP/smoke-anamnesis/bin/python" --requirements "$RUNNER_TEMP/anamnesis-requirements.txt"
+          uv pip install --require-hashes --python "$RUNNER_TEMP/smoke-inference/bin/python" --requirements "$RUNNER_TEMP/inference-requirements.txt"
+          uv pip install --require-hashes --python "$RUNNER_TEMP/smoke-orchestrator/bin/python" --requirements "$RUNNER_TEMP/orchestrator-requirements.txt"
+          uv pip install --require-hashes --python "$RUNNER_TEMP/smoke-research/bin/python" --requirements "$RUNNER_TEMP/research-requirements.txt"
+          uv pip install --require-hashes --python "$RUNNER_TEMP/smoke-research/bin/python" --requirements "$RUNNER_TEMP/orchestrator-requirements.txt"
           uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-voice/bin/python" "$RUNNER_TEMP"/jarvis-wheels/jarvis_voice-*.whl
           uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-anamnesis/bin/python" "$RUNNER_TEMP"/jarvis-wheels/anamnesis_memory_eval-*.whl
           uv pip install --offline --no-deps --python "$RUNNER_TEMP/smoke-inference/bin/python" "$RUNNER_TEMP"/jarvis-wheels/jarvis_inference-*.whl

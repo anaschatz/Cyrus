@@ -299,6 +299,7 @@ def inspect_or_harden_voice_journal_state(
         raise ValueError("journal paths must be a non-empty unique set")
     if any(not path.is_absolute() for path in selected):
         raise ValueError("journal paths must be absolute")
+    explicit_boundary = trusted_boundary is not None
     boundary = (
         _trusted_boundary_for_paths(selected)
         if trusted_boundary is None
@@ -381,7 +382,14 @@ def inspect_or_harden_voice_journal_state(
             )
             component_ready[directory] = False
             continue
-        if posix and metadata.st_uid != os.getuid():
+        # The boundary is an explicit caller/OS trust anchor.  Linux's
+        # process temp anchor is commonly the root-owned sticky /tmp; only
+        # descendants created for this journal family must be current-UID.
+        if (
+            posix
+            and (explicit_boundary or directory != boundary)
+            and metadata.st_uid != os.getuid()
+        ):
             _record(
                 violations,
                 "directory_owner" if directory in directories else "ancestor_owner",

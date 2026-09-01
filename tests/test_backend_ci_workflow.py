@@ -74,6 +74,19 @@ def _assert_contract(document: dict[str, Any], source: str) -> None:
             if "run" in step and is_execution:
                 environment = step.get("env", {})
                 command = str(step["run"])
+                if name == (
+                    "install hash-locked dependencies and local wheels into "
+                    "fresh environments"
+                ):
+                    assert command.count(
+                        "uv pip install --require-hashes"
+                    ) == 6
+                    assert command.count(
+                        "uv pip install --offline --no-deps"
+                    ) == 5
+                    assert "http://" not in command
+                    assert "https://" not in command
+                    continue
                 assert environment.get("UV_OFFLINE") == "1"
                 if "uv " in command:
                     assert "--offline" in command
@@ -86,7 +99,10 @@ def _assert_contract(document: dict[str, Any], source: str) -> None:
         if str(step.get("uses", "")).startswith("actions/setup-python@")
     ]
     assert setup_python_steps
-    assert all(step["with"]["python-version"] == "3.11" for step in setup_python_steps)
+    assert all(
+        step["with"]["python-version"] == "3.11.14"
+        for step in setup_python_steps
+    )
     assert all(step["with"]["check-latest"] is False for step in setup_python_steps)
 
     setup_uv_steps = [
@@ -137,7 +153,8 @@ class BackendWorkflowTextContractTests(unittest.TestCase):
             "uv lock --check --project inference",
             "uv lock --check --project orchestrator",
             "uv lock --check --project research",
-            "uv sync --locked --extra dev --no-editable --python 3.11",
+            'PYTHON_VERSION: "3.11.14"',
+            "uv sync --locked --extra dev --no-editable --python 3.11.14",
             "uv run --locked --extra dev --no-editable --offline",
             "python -m unittest discover -s tests -v",
             "python -m pytest -q",
@@ -167,7 +184,7 @@ class BackendWorkflowTextContractTests(unittest.TestCase):
             "--python inference/.venv/bin/python --wheel --out-dir \"$RUNNER_TEMP/jarvis-wheels\" inference",
             "uv export --project inference --locked --extra qualification --offline",
             "uv export --project orchestrator --locked --offline",
-            "uv pip install --offline --require-hashes",
+            "uv pip install --require-hashes",
             "uv pip install --offline --no-deps",
             'smoke-research/bin/python" --requirements "$RUNNER_TEMP/orchestrator-requirements.txt"',
             'smoke-research/bin/python" "$RUNNER_TEMP"/jarvis-wheels/anamnesis_memory_eval-*.whl',

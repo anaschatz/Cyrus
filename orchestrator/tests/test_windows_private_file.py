@@ -49,10 +49,6 @@ class _Security:
 class _Win32Security:
     ACCESS_ALLOWED_ACE_TYPE = 0
 
-    @staticmethod
-    def EqualSid(left: str, right: str) -> bool:
-        return left == right
-
 
 class WindowsPrivateFileTests(unittest.TestCase):
     def test_descriptor_policy_accepts_only_user_system_and_administrators(

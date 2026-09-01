@@ -51,10 +51,11 @@ class ConfigDoctorTests(unittest.TestCase):
         self.assertTrue(Path(config.voice_auth_key_file).is_absolute())
 
     def test_doctor_distinguishes_missing_configuration_from_invalid_key(self) -> None:
+        missing_key = Path(tempfile.gettempdir()) / "missing-voice-auth.json"
         missing = doctor_report_config(voice_config_from_mapping({}))
         invalid = doctor_report_config(
             voice_config_from_mapping(
-                {"voice_auth_key_file": "/absolute/missing/voice-auth.json"}
+                {"voice_auth_key_file": str(missing_key)}
             )
         )
 
@@ -109,7 +110,10 @@ class ConfigDoctorTests(unittest.TestCase):
     def test_coreml_encoder_requires_pinned_files_and_full_context(self) -> None:
         encoder = {
             "revision": "a" * 40,
-            "directory": "/private/models/ggml-large-v3-turbo-encoder.mlmodelc",
+            "directory": str(
+                Path(tempfile.gettempdir())
+                / "ggml-large-v3-turbo-encoder.mlmodelc"
+            ),
             "files": [
                 {"path": "weights/weight.bin", "size": 123, "sha256": "b" * 64}
             ],
@@ -230,9 +234,10 @@ class ConfigDoctorTests(unittest.TestCase):
         self.assertNotIn("secret-model", encoded)
 
     def test_doctor_reports_selected_turbo_manifest_without_discovery(self) -> None:
+        missing_model = Path(tempfile.gettempdir()) / "missing-turbo-pack"
         config = voice_config_from_mapping(
             {
-                "whisper_model_directory": "/private/missing-turbo-pack",
+                "whisper_model_directory": str(missing_model),
                 "asr": {"model_profile": "large-v3-turbo"},
             }
         )

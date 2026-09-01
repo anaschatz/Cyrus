@@ -642,7 +642,7 @@ def _validate_windows_key_permissions(path: Path) -> None:
             | win32security.DACL_SECURITY_INFORMATION,
         )
         owner = security.GetSecurityDescriptorOwner()
-        if not win32security.EqualSid(owner, user_sid):
+        if owner != user_sid:
             raise VoiceAuthError("voice_auth.key_permissions_invalid")
         dacl = security.GetSecurityDescriptorDacl()
         if dacl is None:
@@ -657,9 +657,7 @@ def _validate_windows_key_permissions(path: Path) -> None:
             if ace[0][0] not in allowed_types:
                 continue
             sid = ace[-1]
-            if not any(
-                win32security.EqualSid(sid, allowed) for allowed in allowed_sids
-            ):
+            if not any(sid == allowed for allowed in allowed_sids):
                 raise VoiceAuthError("voice_auth.key_permissions_invalid")
     except VoiceAuthError:
         raise
@@ -672,12 +670,19 @@ def _harden_windows_key_file(path: Path) -> None:
         return
     try:
         import ntsecuritycon  # type: ignore[import-not-found]
+        import win32con  # type: ignore[import-not-found]
 
         win32security, user_sid, system_sid, administrators_sid = _windows_key_sids()
         dacl = win32security.ACL()
+        inherit_flags = 0
+        if path.is_dir():
+            inherit_flags = (
+                win32con.CONTAINER_INHERIT_ACE | win32con.OBJECT_INHERIT_ACE
+            )
         for sid in (user_sid, system_sid, administrators_sid):
-            dacl.AddAccessAllowedAce(
+            dacl.AddAccessAllowedAceEx(
                 win32security.ACL_REVISION,
+                inherit_flags,
                 ntsecuritycon.FILE_ALL_ACCESS,
                 sid,
             )

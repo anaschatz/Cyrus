@@ -67,8 +67,8 @@ class WindowsAsrCorpusTests(unittest.TestCase):
         )
 
     def test_builder_creates_exact_content_free_200_pair_inventory(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
             output = _corpus(root)
             document = validate_corpus_manifest(output, corpus_root=root)
             self.assertEqual(len(document["entries"]), 200)
@@ -106,8 +106,8 @@ class WindowsAsrCorpusTests(unittest.TestCase):
             self.assertEqual(raced.read_bytes(), b"racer-won")
 
     def test_identity_change_or_unsafe_audio_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
             output = _corpus(root)
             target = root / "audio" / "el" / "asr-el-001.wav"
             target.write_bytes(target.read_bytes() + b"x")
@@ -115,15 +115,15 @@ class WindowsAsrCorpusTests(unittest.TestCase):
                 validate_corpus_manifest(output, corpus_root=root)
 
     def test_reference_identity_controls_and_intermediate_links_fail_closed(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
             output = _corpus(root)
             reference = root / "references" / "el" / "asr-el-001.txt"
             reference.write_text("unsafe\ncontrol", encoding="utf-8")
             with self.assertRaises(WindowsAsrCorpusError):
                 validate_corpus_manifest(output, corpus_root=root)
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
             outside = root / "outside"
             outside.mkdir()
             audio = root / "audio"
@@ -135,8 +135,8 @@ class WindowsAsrCorpusTests(unittest.TestCase):
                 build_corpus_manifest(root, TEMPLATE)
 
     def test_windows_runner_asset_loader_requires_private_complete_corpus(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
             corpus = _corpus(root)
             fixture = root / "windows-asr-coexistence-v1.json"
             fixture.write_bytes(FIXTURE.read_bytes())
@@ -304,8 +304,8 @@ class WindowsAsrCorpusTests(unittest.TestCase):
                     )
 
     def test_windows_evidence_publication_is_exclusive(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
             output = root / "evidence.json"
             _write_json(output, {"value": 1})
             original = output.read_bytes()

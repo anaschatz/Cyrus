@@ -50,7 +50,7 @@ def _validate_security_descriptor(
 ) -> None:
     try:
         owner = security.GetSecurityDescriptorOwner()
-        if not win32security.EqualSid(owner, user_sid):
+        if owner != user_sid:
             raise WindowsPrivateFileError
         dacl = security.GetSecurityDescriptorDacl()
         if dacl is None:
@@ -82,11 +82,9 @@ def _validate_security_descriptor(
             if ace_type not in allowed_types:
                 continue
             sid = ace[-1]
-            if not any(
-                win32security.EqualSid(sid, allowed) for allowed in allowed_sids
-            ):
+            if not any(sid == allowed for allowed in allowed_sids):
                 raise WindowsPrivateFileError
-            if win32security.EqualSid(sid, user_sid):
+            if sid == user_sid:
                 user_has_access = True
         if not user_has_access:
             raise WindowsPrivateFileError
@@ -175,19 +173,27 @@ def harden_windows_private_path(path: str | Path) -> None:
         raise WindowsPrivateFileError
     try:
         import ntsecuritycon  # type: ignore[import-not-found]
+        import win32con  # type: ignore[import-not-found]
 
         win32security, user_sid, system_sid, administrators_sid = (
             _windows_security_context()
         )
         dacl = win32security.ACL()
+        selected = Path(path)
+        inherit_flags = 0
+        if selected.is_dir():
+            inherit_flags = (
+                win32con.CONTAINER_INHERIT_ACE | win32con.OBJECT_INHERIT_ACE
+            )
         for sid in (user_sid, system_sid, administrators_sid):
-            dacl.AddAccessAllowedAce(
+            dacl.AddAccessAllowedAceEx(
                 win32security.ACL_REVISION,
+                inherit_flags,
                 ntsecuritycon.FILE_ALL_ACCESS,
                 sid,
             )
         win32security.SetNamedSecurityInfo(
-            str(Path(path)),
+            str(selected),
             win32security.SE_FILE_OBJECT,
             win32security.OWNER_SECURITY_INFORMATION
             | win32security.DACL_SECURITY_INFORMATION
@@ -197,7 +203,7 @@ def harden_windows_private_path(path: str | Path) -> None:
             dacl,
             None,
         )
-        _validate_windows_private_path(Path(path))
+        _validate_windows_private_path(selected)
     except WindowsPrivateFileError:
         raise
     except Exception:  # noqa: BLE001 - normalize pywin32 hardening failures

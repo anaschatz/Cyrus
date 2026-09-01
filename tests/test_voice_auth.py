@@ -250,12 +250,16 @@ class VoiceAuthKeyFileTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        if os.name == "nt":  # pragma: no cover - native Windows CI
+            voice_auth._harden_windows_key_file(self.root)
         self.path = self.root / "voice-auth.json"
 
     def write(self, raw: bytes, *, mode: int = 0o600) -> None:
         self.path.write_bytes(raw)
         if os.name == "posix":
             self.path.chmod(mode)
+        elif os.name == "nt":  # pragma: no cover - native Windows CI
+            voice_auth._harden_windows_key_file(self.path)
 
     def test_create_and_load_exact_versioned_key_file(self) -> None:
         expected = bytes(range(32))

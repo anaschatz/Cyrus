@@ -302,8 +302,8 @@ class WindowsAsrCollectorTests(unittest.TestCase):
         coexistence_llm_duration: float = 1.0,
         lead_in_scale: float = 1.0,
     ) -> dict:
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
             clock = _Clock(sleep_scale=lead_in_scale)
             coordinator_factory = lambda backend: _Coordinator(
                 backend,
@@ -481,7 +481,7 @@ class WindowsAsrCollectorTests(unittest.TestCase):
             )
 
     def test_default_collector_inventory_uses_the_validated_absolute_probe(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             inputs = _inputs(Path(directory))
             runner = CollectorRunner(
                 inputs,
@@ -507,8 +507,8 @@ class WindowsAsrCollectorTests(unittest.TestCase):
                 drive_type_reader=lambda _root: 4,
             )
         )
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
-            root = Path(directory)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
             paths = {}
             for name in (
                 "CORPUS",
@@ -541,7 +541,7 @@ class WindowsAsrCollectorTests(unittest.TestCase):
 
     def test_report_is_atomic_no_overwrite_and_source_is_sealed(self) -> None:
         report = self._run()
-        with tempfile.TemporaryDirectory(dir="/private/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "report.json"
             _atomic_write_report(output, report)
             first = output.read_bytes()

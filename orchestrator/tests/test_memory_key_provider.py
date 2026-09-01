@@ -262,7 +262,10 @@ class FakeWindowsPrivateGuard:
         if (
             stat.S_ISLNK(metadata.st_mode)
             or not stat.S_ISDIR(metadata.st_mode)
-            or stat.S_IMODE(metadata.st_mode) != 0o700
+            or (
+                os.name == "posix"
+                and stat.S_IMODE(metadata.st_mode) != 0o700
+            )
         ):
             raise MemoryKeyProviderError("memory_key_private_state_invalid")
 
@@ -274,7 +277,10 @@ class FakeWindowsPrivateGuard:
         if (
             stat.S_ISLNK(metadata.st_mode)
             or not stat.S_ISREG(metadata.st_mode)
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or (
+                os.name == "posix"
+                and stat.S_IMODE(metadata.st_mode) != 0o600
+            )
         ):
             raise MemoryKeyProviderError("memory_key_private_state_invalid")
 
@@ -282,7 +288,10 @@ class FakeWindowsPrivateGuard:
         metadata = os.fstat(descriptor)
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or (
+                os.name == "posix"
+                and stat.S_IMODE(metadata.st_mode) != 0o600
+            )
         ):
             raise MemoryKeyProviderError("memory_key_private_state_invalid")
 
@@ -998,7 +1007,7 @@ print(provider.create_next()[0], flush=True)
 
         root = self.state_root / "keys" / MEMORY_KEY_NAMESPACE
         for path in root.iterdir():
-            if path.is_file():
+            if os.name == "posix" and path.is_file():
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         blob = (root / "epoch-v1.dpapi.json").read_bytes()
         self.assertNotIn(key1, blob)
@@ -1046,6 +1055,7 @@ print(provider.create_next()[0], flush=True)
         os.chmod(path1, 0o600)
         self.assert_code("memory_key_blob_invalid", provider.exists, 1)
 
+    @unittest.skipUnless(os.name == "posix", "fake POSIX mode seam")
     def test_windows_private_metadata_and_symlink_fail_closed(self) -> None:
         provider, _, _ = self.windows()
         provider.bootstrap()

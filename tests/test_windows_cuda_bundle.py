@@ -241,11 +241,11 @@ class WindowsCudaBundleTests(unittest.TestCase):
         self.assertEqual(
             environment,
             {
-                "SystemRoot": "/native/windows",
-                "WINDIR": "/native/windows",
+                "SystemRoot": str(Path("/native/windows")),
+                "WINDIR": str(Path("/native/windows")),
                 "OS": "Windows_NT",
-                "TEMP": "/private/runtime",
-                "TMP": "/private/runtime",
+                "TEMP": str(temporary),
+                "TMP": str(temporary),
             },
         )
         self.assertNotIn("PATH", environment)

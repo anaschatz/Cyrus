@@ -473,60 +473,64 @@ class NativeWindowsJobSmokeTests(unittest.TestCase):
 
     def test_timeout_kills_descendant_before_return(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            pid_file = root / "descendant.pid"
-            source = (
-                "import pathlib,subprocess,sys,time;"
-                "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']);"
-                f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid));"
-                "time.sleep(60)"
-            )
-            process = WindowsJobProcess(
-                [sys.executable, "-c", source],
-                self._environment(root),
-                root,
-            )
-            stop = time.monotonic() + 5
-            while not pid_file.is_file() and time.monotonic() < stop:
-                time.sleep(0.02)
-            self.assertTrue(pid_file.is_file())
-            descendant = int(pid_file.read_text(encoding="ascii"))
-            with self.assertRaises(subprocess.TimeoutExpired):
-                process.wait(timeout=0.01)
-            process.terminate()
-            process.close_tree()
-            self.assertFalse(_native_process_active(descendant))
+            with PrivateRuntimeDirectory(
+                Path(directory), prefix="cyrus-job-"
+            ) as root:
+                pid_file = root / "descendant.pid"
+                source = (
+                    "import pathlib,subprocess,sys,time;"
+                    "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']);"
+                    f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid));"
+                    "time.sleep(60)"
+                )
+                process = WindowsJobProcess(
+                    [sys.executable, "-c", source],
+                    self._environment(root),
+                    root,
+                )
+                stop = time.monotonic() + 5
+                while not pid_file.is_file() and time.monotonic() < stop:
+                    time.sleep(0.02)
+                self.assertTrue(pid_file.is_file())
+                descendant = int(pid_file.read_text(encoding="ascii"))
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    process.wait(timeout=0.01)
+                process.terminate()
+                process.close_tree()
+                self.assertFalse(_native_process_active(descendant))
 
     def test_parent_crash_closes_job_and_kills_child(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            pid_file = root / "managed-child.pid"
-            environment = self._environment(root)
-            environment["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
-            source = (
-                "import os,pathlib,sys;"
-                "from jarvis_inference.windows_process import WindowsJobProcess;"
-                "env={k:os.environ[k] for k in ('SYSTEMROOT','WINDIR','TEMP','TMP','TMPDIR') if k in os.environ};"
-                "p=WindowsJobProcess([sys.executable,'-c','import time;time.sleep(60)'],env,pathlib.Path.cwd());"
-                f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid));"
-                "os._exit(7)"
-            )
-            completed = subprocess.run(
-                [sys.executable, "-c", source],
-                cwd=root,
-                env=environment,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=15,
-                check=False,
-            )
-            self.assertEqual(completed.returncode, 7)
-            child = int(pid_file.read_text(encoding="ascii"))
-            stop = time.monotonic() + 5
-            while _native_process_active(child) and time.monotonic() < stop:
-                time.sleep(0.02)
-            self.assertFalse(_native_process_active(child))
+            with PrivateRuntimeDirectory(
+                Path(directory), prefix="cyrus-job-"
+            ) as root:
+                pid_file = root / "managed-child.pid"
+                environment = self._environment(root)
+                environment["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+                source = (
+                    "import os,pathlib,sys;"
+                    "from jarvis_inference.windows_process import WindowsJobProcess;"
+                    "env={k:os.environ[k] for k in ('SYSTEMROOT','WINDIR','TEMP','TMP','TMPDIR') if k in os.environ};"
+                    "p=WindowsJobProcess([sys.executable,'-c','import time;time.sleep(60)'],env,pathlib.Path.cwd());"
+                    f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid));"
+                    "os._exit(7)"
+                )
+                completed = subprocess.run(
+                    [sys.executable, "-c", source],
+                    cwd=root,
+                    env=environment,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=15,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 7)
+                child = int(pid_file.read_text(encoding="ascii"))
+                stop = time.monotonic() + 5
+                while _native_process_active(child) and time.monotonic() < stop:
+                    time.sleep(0.02)
+                self.assertFalse(_native_process_active(child))
 
 
 @unittest.skipUnless(os.name == "nt", "native Windows ACL smoke")
