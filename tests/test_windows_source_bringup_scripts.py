@@ -346,7 +346,9 @@ class WindowsSourceBringupScriptTests(unittest.TestCase):
             self.job_smoke.index("$Job.Dispose()"),
         )
         self.assertIn("Start-Sleep -Seconds 300", self.job_smoke_parent)
-        self.assertIn("Start-Process", self.job_smoke_parent)
+        self.assertIn("[Diagnostics.Process]::Start($StartInfo)", self.job_smoke_parent)
+        self.assertIn("$StartInfo.UseShellExecute = $false", self.job_smoke_parent)
+        self.assertNotIn("Start-Process", self.job_smoke_parent)
         self.assertIn("[Environment]::Exit(0)", self.job_smoke_parent)
         self.assertIn("CYRUS_UNICODE_PROBE=Κύρος", self.job_smoke)
         self.assertIn("must-not-be-inherited", self.job_smoke)

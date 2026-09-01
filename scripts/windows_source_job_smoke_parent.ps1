@@ -28,16 +28,19 @@ if (-not (Test-Path -LiteralPath $PowerShell -PathType Leaf)) {
 $EncodedSleeper = [Convert]::ToBase64String(
     [Text.Encoding]::Unicode.GetBytes("Start-Sleep -Seconds 300")
 )
-$Child = Start-Process `
-    -FilePath $PowerShell `
-    -ArgumentList @(
-        "-NoProfile",
-        "-NonInteractive",
-        "-EncodedCommand",
-        $EncodedSleeper
-    ) `
-    -PassThru
-$Bytes = [Text.Encoding]::ASCII.GetBytes([string]$Child.Id)
+$StartInfo = New-Object Diagnostics.ProcessStartInfo
+$StartInfo.FileName = $PowerShell
+$StartInfo.Arguments = (
+    "-NoProfile -NonInteractive -EncodedCommand " + $EncodedSleeper
+)
+$StartInfo.UseShellExecute = $false
+$Child = [Diagnostics.Process]::Start($StartInfo)
+if ($null -eq $Child) {
+    throw "windows_source.job_smoke_child_start_failed"
+}
+$ChildId = $Child.Id
+$Child.Dispose()
+$Bytes = [Text.Encoding]::ASCII.GetBytes([string]$ChildId)
 $Stream = [IO.File]::Open(
     $ChildPidPath,
     [IO.FileMode]::CreateNew,
