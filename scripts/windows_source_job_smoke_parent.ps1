@@ -15,24 +15,16 @@ if (
 ) {
     throw "windows_source.job_smoke_pid_path_invalid"
 }
-$PowerShell = Join-Path `
-    ([Environment]::SystemDirectory) `
-    "WindowsPowerShell\v1.0\powershell.exe"
-if (-not (Test-Path -LiteralPath $PowerShell -PathType Leaf)) {
-    throw "windows_source.job_smoke_shell_missing"
+$Sleeper = Join-Path ([Environment]::SystemDirectory) "PING.EXE"
+if (-not (Test-Path -LiteralPath $Sleeper -PathType Leaf)) {
+    throw "windows_source.job_smoke_sleeper_missing"
 }
 
-# The encoded command has no shell quoting boundary and lives long enough for
-# the parent to exit first. As a normal descendant it inherits the parent's
-# Job Object membership automatically.
-$EncodedSleeper = [Convert]::ToBase64String(
-    [Text.Encoding]::Unicode.GetBytes("Start-Sleep -Seconds 300")
-)
+# The native sleeper has no shell boundary. As a normal descendant it inherits
+# the parent's Job Object membership automatically.
 $StartInfo = New-Object Diagnostics.ProcessStartInfo
-$StartInfo.FileName = $PowerShell
-$StartInfo.Arguments = (
-    "-NoProfile -NonInteractive -EncodedCommand " + $EncodedSleeper
-)
+$StartInfo.FileName = $Sleeper
+$StartInfo.Arguments = "-n 300 127.0.0.1"
 $StartInfo.UseShellExecute = $false
 $Child = [Diagnostics.Process]::Start($StartInfo)
 if ($null -eq $Child) {

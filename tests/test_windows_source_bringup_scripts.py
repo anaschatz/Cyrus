@@ -348,7 +348,8 @@ class WindowsSourceBringupScriptTests(unittest.TestCase):
             self.job_smoke.index("$Parent.Terminate()"),
             self.job_smoke.index("$Job.Dispose()"),
         )
-        self.assertIn("Start-Sleep -Seconds 300", self.job_smoke_parent)
+        self.assertIn('"PING.EXE"', self.job_smoke_parent)
+        self.assertIn('"-n 300 127.0.0.1"', self.job_smoke_parent)
         self.assertIn("[Diagnostics.Process]::Start($StartInfo)", self.job_smoke_parent)
         self.assertIn("$StartInfo.UseShellExecute = $false", self.job_smoke_parent)
         self.assertNotIn("Start-Process", self.job_smoke_parent)
