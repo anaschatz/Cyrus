@@ -178,13 +178,6 @@ foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "OPENAI_API_KEY", 
         ) `
         -WorkingDirectory $Temporary `
         -EnvironmentEntries $VoiceEnvironment
-    if (-not $Parent.WaitForExit(15000)) {
-        throw "windows_source.job_smoke_parent_timeout"
-    }
-    if ($Parent.ExitCode -ne 0) {
-        throw "windows_source.job_smoke_parent_failed"
-    }
-
     $Stop = [DateTime]::UtcNow.AddSeconds(5)
     while (-not (Test-Path -LiteralPath $PidPath -PathType Leaf)) {
         if ([DateTime]::UtcNow -ge $Stop) {
@@ -202,8 +195,16 @@ foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "OPENAI_API_KEY", 
         throw "windows_source.job_smoke_child_exited_early"
     }
 
-    # The parent has already exited. Closing the only Job Object handle must
-    # still terminate its otherwise-orphaned sleeper child.
+    $Parent.Terminate()
+    if (-not $Parent.WaitForExit(5000)) {
+        throw "windows_source.job_smoke_parent_timeout"
+    }
+    if ($Parent.ExitCode -ne 1) {
+        throw "windows_source.job_smoke_parent_failed"
+    }
+
+    # The parent has exited through its authoritative handle. Closing the only
+    # Job Object handle must still terminate its orphaned sleeper child.
     $Job.Dispose()
     $Job = $null
     if (-not $Child.WaitForExit(10000)) {

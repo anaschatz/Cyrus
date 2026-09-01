@@ -324,7 +324,8 @@ class WindowsSourceBringupScriptTests(unittest.TestCase):
 
     def test_native_job_smoke_kills_a_child_after_its_parent_exits(self) -> None:
         for fragment in (
-            "$Parent.WaitForExit(15000)",
+            "$Parent.Terminate()",
+            "$Parent.WaitForExit(5000)",
             "windows_source.job_smoke_child_exited_early",
             "$Job.Dispose()",
             "$Child.WaitForExit(10000)",
@@ -342,14 +343,14 @@ class WindowsSourceBringupScriptTests(unittest.TestCase):
         ):
             self.assertIn(fragment, self.job_smoke)
         self.assertLess(
-            self.job_smoke.index("$Parent.WaitForExit(15000)"),
+            self.job_smoke.index("$Parent.Terminate()"),
             self.job_smoke.index("$Job.Dispose()"),
         )
         self.assertIn("Start-Sleep -Seconds 300", self.job_smoke_parent)
         self.assertIn("[Diagnostics.Process]::Start($StartInfo)", self.job_smoke_parent)
         self.assertIn("$StartInfo.UseShellExecute = $false", self.job_smoke_parent)
         self.assertNotIn("Start-Process", self.job_smoke_parent)
-        self.assertIn("[Environment]::Exit(0)", self.job_smoke_parent)
+        self.assertNotIn("[Environment]::Exit", self.job_smoke_parent)
         self.assertIn("CYRUS_UNICODE_PROBE=Κύρος", self.job_smoke)
         self.assertIn("must-not-be-inherited", self.job_smoke)
         self.assertIn(
