@@ -34,8 +34,9 @@ $Temporary = Assert-CyrusNoReparsePath `
     -LiteralPath $Temporary `
     -RequireContainer
 $PidPath = Join-Path $Temporary "child.pid"
-$ParentScript = Assert-CyrusNoReparsePath `
-    -LiteralPath (Join-Path $PSScriptRoot "windows_source_job_smoke_parent.ps1") `
+$ParentExecutable = Join-Path $Temporary "cyrus-job-smoke-parent.exe"
+$Sleeper = Assert-CyrusNoReparsePath `
+    -LiteralPath (Join-Path ([Environment]::SystemDirectory) "PING.EXE") `
     -RequireLeaf
 $PowerShell = Assert-CyrusNoReparsePath `
     -LiteralPath (Join-Path (
@@ -163,19 +164,51 @@ foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "OPENAI_API_KEY", 
         throw "windows_source.job_smoke_inference_environment_failed"
     }
 
+    $ParentSource = @'
+using System;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Threading;
+
+public static class CyrusJobSmokeParent
+{
+    public static int Main(string[] args)
+    {
+        if (args == null || args.Length != 2)
+            return 2;
+        ProcessStartInfo start = new ProcessStartInfo();
+        start.FileName = args[0];
+        start.Arguments = "-n 300 127.0.0.1";
+        start.UseShellExecute = false;
+        start.CreateNoWindow = true;
+        using (Process child = Process.Start(start))
+        {
+            if (child == null)
+                return 3;
+            File.WriteAllText(
+                args[1],
+                child.Id.ToString(CultureInfo.InvariantCulture),
+                Encoding.ASCII);
+        }
+        Thread.Sleep(Timeout.Infinite);
+        return 0;
+    }
+}
+'@
+    Add-Type `
+        -TypeDefinition $ParentSource `
+        -Language CSharp `
+        -OutputAssembly $ParentExecutable `
+        -OutputType ConsoleApplication
+    $ParentExecutable = Assert-CyrusNoReparsePath `
+        -LiteralPath $ParentExecutable `
+        -RequireLeaf
+
     $Parent = Start-CyrusSourceJobProcess `
         -Job $Job `
-        -Executable $PowerShell `
-        -Arguments @(
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            $ParentScript,
-            "-ChildPidPath",
-            $PidPath
-        ) `
+        -Executable $ParentExecutable `
+        -Arguments @($Sleeper, $PidPath) `
         -WorkingDirectory $Temporary `
         -EnvironmentEntries $VoiceEnvironment
     $Stop = [DateTime]::UtcNow.AddSeconds(15)

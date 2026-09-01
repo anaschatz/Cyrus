@@ -12,7 +12,6 @@ PROVISION = ROOT / "scripts" / "provision_windows_source.ps1"
 PREFLIGHT = ROOT / "scripts" / "preflight_windows_source.ps1"
 RUN = ROOT / "scripts" / "run_windows_source_beta.ps1"
 JOB_SMOKE = ROOT / "scripts" / "test_windows_source_job.ps1"
-JOB_SMOKE_PARENT = ROOT / "scripts" / "windows_source_job_smoke_parent.ps1"
 BUILD = ROOT / "scripts" / "build_windows.ps1"
 WORKFLOW = ROOT / ".github" / "workflows" / "backend-ci.yml"
 INFERENCE_LOCK = ROOT / "inference" / "uv.lock"
@@ -27,7 +26,6 @@ class WindowsSourceBringupScriptTests(unittest.TestCase):
         cls.preflight = PREFLIGHT.read_text(encoding="utf-8")
         cls.run_source = RUN.read_text(encoding="utf-8")
         cls.job_smoke = JOB_SMOKE.read_text(encoding="utf-8")
-        cls.job_smoke_parent = JOB_SMOKE_PARENT.read_text(encoding="utf-8")
         cls.build = BUILD.read_text(encoding="utf-8")
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
         cls.handoff = HANDOFF.read_text(encoding="utf-8")
@@ -93,7 +91,7 @@ class WindowsSourceBringupScriptTests(unittest.TestCase):
         self.assertNotIn("Process.GetProcessById(", self.common)
         self.assertNotIn("[IO.Path]::IsPathFullyQualified", self.common)
         self.assertNotIn("[IO.Path]::IsPathFullyQualified", self.preflight)
-        self.assertNotIn("[IO.Path]::IsPathFullyQualified", self.job_smoke_parent)
+        self.assertNotIn("[IO.Path]::IsPathFullyQualified", self.job_smoke)
 
         component_check = self.common.index("foreach ($Component in $Components)")
         canonical_resolve = self.common.index(
@@ -348,12 +346,11 @@ class WindowsSourceBringupScriptTests(unittest.TestCase):
             self.job_smoke.index("$Parent.Terminate()"),
             self.job_smoke.index("$Job.Dispose()"),
         )
-        self.assertIn('"PING.EXE"', self.job_smoke_parent)
-        self.assertIn('"-n 300 127.0.0.1"', self.job_smoke_parent)
-        self.assertIn("[Diagnostics.Process]::Start($StartInfo)", self.job_smoke_parent)
-        self.assertIn("$StartInfo.UseShellExecute = $false", self.job_smoke_parent)
-        self.assertNotIn("Start-Process", self.job_smoke_parent)
-        self.assertNotIn("[Environment]::Exit", self.job_smoke_parent)
+        self.assertIn('"PING.EXE"', self.job_smoke)
+        self.assertIn("Process.Start(start)", self.job_smoke)
+        self.assertIn("start.CreateNoWindow = true", self.job_smoke)
+        self.assertIn("-OutputType ConsoleApplication", self.job_smoke)
+        self.assertNotIn("Start-Process", self.job_smoke)
         self.assertIn("CYRUS_UNICODE_PROBE=Κύρος", self.job_smoke)
         self.assertIn("must-not-be-inherited", self.job_smoke)
         self.assertIn(
