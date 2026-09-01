@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+phase=$1
+repo_root=$(git rev-parse --show-toplevel)
+
+if ! command -v codex >/dev/null 2>&1; then
+  printf '%s\n' "Ponytail $phase blocked: Codex CLI is not available." >&2
+  exit 1
+fi
+
+printf '%s\n' "Running @ponytail-review before $phase..." >&2
+codex exec \
+  --ephemeral \
+  --sandbox read-only \
+  --dangerously-bypass-hook-trust \
+  --color never \
+  --cd "$repo_root" \
+  -
