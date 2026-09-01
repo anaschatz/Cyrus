@@ -178,8 +178,11 @@ foreach ($name in @("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "OPENAI_API_KEY", 
         ) `
         -WorkingDirectory $Temporary `
         -EnvironmentEntries $VoiceEnvironment
-    $Stop = [DateTime]::UtcNow.AddSeconds(5)
+    $Stop = [DateTime]::UtcNow.AddSeconds(15)
     while (-not (Test-Path -LiteralPath $PidPath -PathType Leaf)) {
+        if ($Parent.HasExited) {
+            throw "windows_source.job_smoke_parent_failed"
+        }
         if ([DateTime]::UtcNow -ge $Stop) {
             throw "windows_source.job_smoke_pid_missing"
         }

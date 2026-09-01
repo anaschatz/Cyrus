@@ -326,6 +326,8 @@ class WindowsSourceBringupScriptTests(unittest.TestCase):
         for fragment in (
             "$Parent.Terminate()",
             "$Parent.WaitForExit(5000)",
+            "$Stop = [DateTime]::UtcNow.AddSeconds(15)",
+            "if ($Parent.HasExited)",
             "windows_source.job_smoke_child_exited_early",
             "$Job.Dispose()",
             "$Child.WaitForExit(10000)",
