@@ -1,0 +1,9 @@
+{
+  "windows_power_scheme_guid": "REPLACE_WITH_ACTIVE_POWER_SCHEME_GUID",
+  "ac_state": "ac",
+  "gpu_power_limit_watts": 0,
+  "gpu_clock_policy": "applications_graphics_mhz=REPLACE;applications_memory_mhz=REPLACE",
+  "driver_version": "REPLACE_WITH_NVIDIA_DRIVER_VERSION",
+  "compute_runtime": "CUDA 0.0",
+  "require_zero_thermal_power_throttle_reasons": true
+}

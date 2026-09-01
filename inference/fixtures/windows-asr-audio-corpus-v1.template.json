@@ -1,0 +1,37 @@
+{
+  "template_schema_version": 1,
+  "corpus_id": "cyrus-windows-asr-audio-corpus-v1",
+  "fixture_id": "cyrus-windows-asr-coexistence-v1",
+  "audio_format": {
+    "container": "wav",
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "sample_width_bytes": 2,
+    "minimum_duration_ms": 1500,
+    "maximum_duration_ms": 30000
+  },
+  "reference_format": {
+    "encoding": "utf-8",
+    "normalization": "NFC",
+    "maximum_bytes": 4096,
+    "maximum_words": 128,
+    "controls_allowed": false,
+    "word_normalization": "unicode-lmn-casefold-v1"
+  },
+  "schedule": {
+    "kind": "serial-continuous-from-audio-start",
+    "inference_lead_in_ms": 2000,
+    "order": "fixed-case-id-ascending",
+    "coexistence_selection": "first-50-per-locale"
+  },
+  "layout": {
+    "entries_per_locale": 100,
+    "coexistence_entries_per_locale": 50,
+    "locales": {
+      "el": "el-GR",
+      "en": "en-US"
+    },
+    "path_pattern": "audio/{language}/asr-{language}-{ordinal:03d}.wav",
+    "reference_path_pattern": "references/{language}/asr-{language}-{ordinal:03d}.txt"
+  }
+}

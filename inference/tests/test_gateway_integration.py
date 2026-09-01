@@ -116,6 +116,22 @@ class GatewayIntegrationTests(unittest.TestCase):
         self.assertEqual(json.loads(raw), {"ready": True})
         self.assertEqual(response.getheader("Cache-Control"), "no-store")
 
+    def test_profile_generation_metric_endpoints_are_absent_in_production(self) -> None:
+        headers = {
+            "Authorization": "Bearer " + "s" * 40,
+            "Content-Type": "application/json",
+        }
+        for path, body in (
+            ("/jarvis/qualification/generation/arm", b"{}"),
+            (
+                "/jarvis/qualification/generation/metric",
+                b'{"expected_serial":1}',
+            ),
+        ):
+            response, raw = self.request("POST", path, body, headers)
+            self.assertEqual(response.status, 404)
+            self.assertEqual(json.loads(raw)["error"]["code"], "not_found")
+
     def test_authenticated_live_identity_is_bound_to_loaded_runtime(self) -> None:
         response, raw = self.request(
             "GET",

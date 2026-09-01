@@ -14,6 +14,12 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 
 from .config import OrchestratorConfig
+from .windows_private_file import (
+    WindowsPrivateFileError,
+    harden_windows_private_path,
+    validate_windows_private_descriptor,
+    validate_windows_private_path,
+)
 
 
 STACK_SCHEMA_VERSION = "jarvis-private-stack/2"
@@ -61,9 +67,58 @@ def _private_mode(path: Path) -> None:
         raise StackConfigError("private_file_permissions") from exc
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         raise StackConfigError("private_file_permissions")
-    if os.name != "nt":
+    platform_name = _platform_name()
+    if platform_name == "posix":
         if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
             raise StackConfigError("private_file_permissions")
+        return
+    if platform_name == "nt":
+        try:
+            validate_windows_private_path(path)
+        except WindowsPrivateFileError:
+            raise StackConfigError("private_file_permissions") from None
+        return
+    raise StackConfigError("private_file_permissions")
+
+
+def _platform_name() -> str:
+    """Return the filesystem security family; isolated for cross-OS tests."""
+
+    return os.name
+
+
+def _validate_windows_stack_parent(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise WindowsPrivateFileError
+        validate_windows_private_path(path)
+    except (OSError, WindowsPrivateFileError):
+        raise StackConfigError("stack_output_permissions") from None
+
+
+def _secure_new_stack_descriptor(descriptor: int, temporary: Path) -> None:
+    platform_name = _platform_name()
+    if platform_name == "posix":
+        os.fchmod(descriptor, 0o600)
+        return
+    if platform_name == "nt":
+        try:
+            harden_windows_private_path(temporary)
+            validate_windows_private_descriptor(descriptor)
+        except WindowsPrivateFileError:
+            raise StackConfigError("stack_output_permissions") from None
+        return
+    raise StackConfigError("stack_output_permissions")
+
+
+def _revalidate_stack_descriptor(descriptor: int) -> None:
+    if _platform_name() != "nt":
+        return
+    try:
+        validate_windows_private_descriptor(descriptor)
+    except WindowsPrivateFileError:
+        raise StackConfigError("stack_output_permissions") from None
 
 
 def _sha256_file(path: Path) -> str:
@@ -343,30 +398,74 @@ class PrivateStackConfig:
 
 
 def write_private_stack_config(path: str | Path, value: Mapping[str, Any]) -> None:
-    """Atomically create a mode-0600 private manifest after strict validation."""
+    """Atomically create an owner-private manifest after strict validation."""
 
     selected = Path(path).expanduser()
     if not selected.is_absolute():
         raise StackConfigError("stack_output_invalid")
-    selected.parent.mkdir(parents=True, exist_ok=True)
     encoded = _canonical_document(value) + b"\n"
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{selected.name}.", dir=selected.parent
-    )
-    temporary = Path(temporary_name)
+    descriptor: int | None = None
+    temporary: Path | None = None
+    published = False
+    complete = False
     try:
-        os.fchmod(descriptor, 0o600)
+        selected.parent.mkdir(parents=True, exist_ok=True)
+        if _platform_name() == "nt":
+            _validate_windows_stack_parent(selected.parent)
+        try:
+            selected.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise StackConfigError("stack_output_invalid") from exc
+        else:
+            raise StackConfigError("stack_output_invalid")
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{selected.name}.", dir=selected.parent
+        )
+        temporary = Path(temporary_name)
+        _secure_new_stack_descriptor(descriptor, temporary)
         with os.fdopen(descriptor, "wb") as destination:
+            descriptor = None
             destination.write(encoded)
             destination.flush()
             os.fsync(destination.fileno())
-        os.replace(temporary, selected)
-        if os.name != "nt":
-            selected.chmod(0o600)
+            _revalidate_stack_descriptor(destination.fileno())
+        PrivateStackConfig.load(temporary)
+        try:
+            os.link(temporary, selected, follow_symlinks=False)
+        except FileExistsError as exc:
+            raise StackConfigError("stack_output_invalid") from exc
+        published = True
+        temporary.unlink()
+        temporary = None
+        if _platform_name() == "nt":
+            try:
+                validate_windows_private_path(selected)
+            except WindowsPrivateFileError:
+                raise StackConfigError("stack_output_permissions") from None
         PrivateStackConfig.load(selected)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
+        complete = True
+    except StackConfigError:
         raise
+    except OSError as exc:
+        raise StackConfigError("stack_output_write_failed") from exc
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if published and not complete:
+            try:
+                selected.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 __all__ = [

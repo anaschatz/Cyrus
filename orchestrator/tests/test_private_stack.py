@@ -21,6 +21,12 @@ from jarvis_orchestrator.stack_config import (
     StackConfigError,
     write_private_stack_config,
 )
+from jarvis_orchestrator.windows_private_file import (
+    WindowsPrivateFileError,
+    harden_windows_private_path,
+    validate_windows_private_descriptor,
+    validate_windows_private_path,
+)
 from jarvis_voice.voice_auth import create_voice_auth_key_file
 from jarvis_voice.voice_auth_transport import AUTH_PROBE_SUCCESS_FRAME
 
@@ -55,6 +61,8 @@ class PrivateStackConfigTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        if os.name == "nt":  # pragma: no cover - native Windows CI
+            harden_windows_private_path(self.root)
         self.voice_auth_key = self.root / "voice-auth.json"
         create_voice_auth_key_file(self.voice_auth_key, key=b"k" * 32)
         self.voice = self.private_file(
@@ -76,6 +84,8 @@ class PrivateStackConfigTests(unittest.TestCase):
         self.runner = self.root / "runner.py"
         self.runner.write_text("pass\n", encoding="utf-8")
         self.runner.chmod(0o700)
+        if os.name == "nt":  # pragma: no cover - native Windows CI
+            harden_windows_private_path(self.runner)
         self.manifest_document = {
             "alias": "jarvis-local",
             "manifest_schema_version": 1,
@@ -98,6 +108,8 @@ class PrivateStackConfigTests(unittest.TestCase):
         path = self.root / name
         path.write_bytes(canonical(value) + b"\n")
         path.chmod(0o600)
+        if os.name == "nt":  # pragma: no cover - native Windows CI
+            harden_windows_private_path(path)
         return path
 
     def document(self) -> dict[str, object]:
@@ -142,6 +154,121 @@ class PrivateStackConfigTests(unittest.TestCase):
         self.assertEqual(first.inference.manifest_path, self.manifest.resolve())
         if os.name != "nt":
             self.assertEqual(self.stack_path.stat().st_mode & 0o777, 0o600)
+
+    def test_simulated_windows_write_hardens_and_validates_without_fchmod(self) -> None:
+        with (
+            patch(
+                "jarvis_orchestrator.stack_config._platform_name",
+                return_value="nt",
+            ),
+            patch(
+                "jarvis_orchestrator.stack_config.validate_windows_private_path"
+            ) as validate_path,
+            patch(
+                "jarvis_orchestrator.stack_config.harden_windows_private_path"
+            ) as harden_path,
+            patch(
+                "jarvis_orchestrator.stack_config.validate_windows_private_descriptor"
+            ) as validate_descriptor,
+            patch(
+                "jarvis_orchestrator.stack_config.os.fchmod",
+                side_effect=AssertionError("POSIX fchmod used on Windows"),
+            ) as fchmod,
+        ):
+            write_private_stack_config(self.stack_path, self.document())
+
+        fchmod.assert_not_called()
+        harden_path.assert_called_once()
+        hardened = Path(harden_path.call_args.args[0])
+        self.assertEqual(hardened.parent, self.root)
+        self.assertTrue(hardened.name.startswith(f".{self.stack_path.name}."))
+        self.assertEqual(validate_descriptor.call_count, 2)
+        validated_paths = {Path(item.args[0]) for item in validate_path.call_args_list}
+        self.assertIn(self.root, validated_paths)
+        self.assertIn(self.stack_path, validated_paths)
+        self.assertTrue(self.stack_path.is_file())
+
+    def test_simulated_windows_parent_or_temporary_dacl_failure_is_fail_closed(self) -> None:
+        with (
+            patch(
+                "jarvis_orchestrator.stack_config._platform_name",
+                return_value="nt",
+            ),
+            patch(
+                "jarvis_orchestrator.stack_config.validate_windows_private_path",
+                side_effect=WindowsPrivateFileError(),
+            ),
+            self.assertRaisesRegex(StackConfigError, "stack_output_permissions"),
+        ):
+            write_private_stack_config(self.stack_path, self.document())
+        self.assertFalse(self.stack_path.exists())
+        self.assertEqual(list(self.root.glob(f".{self.stack_path.name}.*")), [])
+
+        with (
+            patch(
+                "jarvis_orchestrator.stack_config._platform_name",
+                return_value="nt",
+            ),
+            patch(
+                "jarvis_orchestrator.stack_config.validate_windows_private_path"
+            ),
+            patch(
+                "jarvis_orchestrator.stack_config.harden_windows_private_path",
+                side_effect=WindowsPrivateFileError(),
+            ),
+            self.assertRaisesRegex(StackConfigError, "stack_output_permissions"),
+        ):
+            write_private_stack_config(self.stack_path, self.document())
+        self.assertFalse(self.stack_path.exists())
+        self.assertEqual(list(self.root.glob(f".{self.stack_path.name}.*")), [])
+
+    def test_simulated_windows_published_dacl_failure_removes_new_output(self) -> None:
+        def validate(path: str | Path) -> None:
+            if Path(path) == self.stack_path:
+                raise WindowsPrivateFileError
+
+        with (
+            patch(
+                "jarvis_orchestrator.stack_config._platform_name",
+                return_value="nt",
+            ),
+            patch(
+                "jarvis_orchestrator.stack_config.validate_windows_private_path",
+                side_effect=validate,
+            ),
+            patch(
+                "jarvis_orchestrator.stack_config.harden_windows_private_path"
+            ),
+            patch(
+                "jarvis_orchestrator.stack_config.validate_windows_private_descriptor"
+            ),
+            self.assertRaisesRegex(StackConfigError, "stack_output_permissions"),
+        ):
+            write_private_stack_config(self.stack_path, self.document())
+
+        self.assertFalse(self.stack_path.exists())
+        self.assertEqual(list(self.root.glob(f".{self.stack_path.name}.*")), [])
+
+    def test_init_refuses_to_replace_an_existing_stack_manifest(self) -> None:
+        original = b"do-not-overwrite\n"
+        self.stack_path.write_bytes(original)
+        self.stack_path.chmod(0o600)
+
+        with self.assertRaisesRegex(StackConfigError, "stack_output_invalid"):
+            write_private_stack_config(self.stack_path, self.document())
+
+        self.assertEqual(self.stack_path.read_bytes(), original)
+
+    @unittest.skipUnless(os.name == "nt", "native Windows private-stack DACL")
+    def test_native_windows_written_stack_has_private_path_and_descriptor_dacl(self) -> None:
+        write_private_stack_config(self.stack_path, self.document())
+        validate_windows_private_path(self.stack_path)
+        descriptor = os.open(self.stack_path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+        try:
+            validate_windows_private_descriptor(descriptor)
+        finally:
+            os.close(descriptor)
+        self.assertEqual(PrivateStackConfig.load(self.stack_path).source_path, self.stack_path)
 
     def test_deployment_identity_changes_when_component_content_changes(self) -> None:
         write_private_stack_config(self.stack_path, self.document())

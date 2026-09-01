@@ -1,29 +1,63 @@
 from __future__ import annotations
 
-import hashlib
 import asyncio
+import hashlib
 import math
 import os
 import re
 import secrets
 import subprocess
-import tempfile
-from decimal import Decimal
 import threading
 import time
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .durable import ExclusiveFileLock, durable_replace
+from .engine import EngineFailure
 from .errors import ApplianceError, invalid
-from .gateway import effective_configuration, package_digest
-from .gateway import GatewayServer, Production
-from .manifest import Manifest, assert_runtime_platform, resolve_local, runtime_identity, verify_artifacts
-from .strict_json import parse_body
-from .strict_json import canonical_bytes
+from .gateway import GatewayServer, Production, effective_configuration, package_digest
 from .limits import BODY_BYTES
+from .manifest import (
+    Manifest,
+    assert_runtime_platform,
+    resolve_local,
+    runtime_identity,
+    verify_artifacts,
+)
+from .private_temp import (
+    PrivateLaunchDirectory,
+    private_temp_environment,
+    trusted_windows_directory,
+)
+from .strict_json import canonical_bytes, parse_body
+from .windows_process import WindowsProcessFailure, run_windows_job
 
 SUITE_VERSION = "jarvis-inference-qualification-v1"
+
+_WINDOWS_QUALIFICATION_ASSETS = {
+    "fixture": ("qualification/windows-asr-coexistence-v1.json", 65_536),
+    "collector": ("qualification/cyrus-windows-asr-collector.exe", 1_073_741_824),
+    "audio_corpus": ("qualification/audio-corpus-v1.json", 262_144),
+    "power_profile": ("qualification/power-profile-v1.json", 65_536),
+    "asr_config": ("qualification/asr-config-v1.json", 65_536),
+}
+
+
+def _qualification_child_environment(
+    environ: Mapping[str, str], private_temp: Path | None = None
+) -> dict[str, str]:
+    """Keep only OS/runtime essentials; sealed children execute absolute paths."""
+
+    result = {
+        key: environ[key] for key in ("LANG", "LC_ALL") if key in environ
+    }
+    if os.name == "nt":
+        windows = str(trusted_windows_directory())
+        result.update({"SYSTEMROOT": windows, "WINDIR": windows})
+    if private_temp is not None:
+        result.update(private_temp_environment(private_temp))
+    return result
 
 
 def _finite_number(value: Any) -> bool:
@@ -101,7 +135,12 @@ def evaluate_evidence(
     protocol = item["protocol_conformance"]
     if not _finite_number(protocol) or protocol != 1 or any(type(item[key]) is not int or item[key] != 0 for key in ("privacy_leaks", "unexpected_oom", "unexpected_crashes", "unexpected_hangs")):
         raise invalid("qualification_gate_failed", "Protocol, privacy, or stability qualification failed.")
-    _platform_gate(manifest, item["platform_gate"], identity)
+    _platform_gate(
+        manifest,
+        item["platform_gate"],
+        identity,
+        expected_provenance.get("windows_assets"),
+    )
     return {
         "suite_version": item["suite_version"],
         "fixture_digest": item["fixture_digest"],
@@ -111,29 +150,93 @@ def evaluate_evidence(
     }
 
 
-def _platform_gate(manifest: Manifest, value: Any, identity: dict[str, Any]) -> None:
+def _platform_gate(
+    manifest: Manifest,
+    value: Any,
+    identity: dict[str, Any],
+    expected_windows_assets: Any = None,
+) -> None:
     if manifest.platform == "windows-x86_64":
-        gate = _exact(value, {"kind", "fixture", "audio_corpus_digest", "greek_utterances", "english_utterances", "baseline_power_identity_digest", "coexistence_power_identity_digest", "overlapping_utterances", "baseline_p95", "coexistence_p95", "lost_final_transcripts", "oom", "crashes", "throttle_reasons"}, "platform_gate")
+        gate = _exact(value, {
+            "kind", "fixture", "assets", "asr_runtime_identity_digest",
+            "audio_corpus_digest", "greek_utterances", "english_utterances",
+            "greek_language_correct", "english_language_correct",
+            "greek_reference_words", "greek_word_errors",
+            "english_reference_words", "english_word_errors",
+            "forced_cpu_fallbacks", "baseline_power_identity_digest",
+            "coexistence_power_identity_digest", "overlapping_utterances",
+            "baseline_p95", "coexistence_p95", "baseline_llm_p95",
+            "coexistence_llm_p95", "minimum_free_vram_mib",
+            "lost_final_transcripts", "duplicate_final_transcripts",
+            "stale_results", "oom", "crashes", "throttle_reasons",
+        }, "platform_gate")
         if gate["kind"] != "windows_asr_coexistence":
             raise invalid("qualification_gate_failed", "The Windows ASR coexistence gate is missing.")
-        fixture = _exact(gate["fixture"], {"rendered_prompt_token_lengths", "max_completion_tokens", "request_count", "concurrency", "schedule", "minimum_overlapping_utterances", "sampling", "power_profile"}, "platform_gate.fixture")
+        if not isinstance(expected_windows_assets, dict) or gate["assets"] != expected_windows_assets:
+            raise invalid("qualification_provenance_mismatch", "The Windows qualification assets do not match this boot-scoped run.")
+        if not isinstance(gate["asr_runtime_identity_digest"], str) or not re.fullmatch(r"[0-9a-f]{64}", gate["asr_runtime_identity_digest"]):
+            raise invalid("qualification_gate_failed", "The Windows ASR runtime identity is invalid.")
+        fixture = _exact(gate["fixture"], {
+            "fixture_schema_version", "fixture_id", "platform",
+            "prompt_workload_units", "max_completion_tokens",
+            "request_count", "concurrency", "schedule",
+            "minimum_overlapping_utterances", "sampling", "audio_corpus",
+            "power_profile",
+        }, "platform_gate.fixture")
+        corpus = _exact(fixture["audio_corpus"], {
+            "schema", "utterance_count", "language_counts",
+            "sample_rate_hz", "channels", "sample_width_bytes",
+            "minimum_duration_ms", "maximum_duration_ms",
+            "clean_language_accuracy_minimum_correct_per_language",
+            "clean_aggregate_wer_max_percent_per_language",
+            "coexistence_selection", "reference_sidecars",
+        }, "platform_gate.fixture.audio_corpus")
         power = _exact(fixture["power_profile"], {"windows_power_scheme_guid", "ac_state", "gpu_power_limit_watts", "gpu_clock_policy", "driver_version", "compute_runtime", "require_zero_thermal_power_throttle_reasons"}, "platform_gate.fixture.power_profile")
         guid = power["windows_power_scheme_guid"]
-        if not isinstance(guid, str) or not re.fullmatch(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}", guid) or power["ac_state"] != "ac" or not _finite_number(power["gpu_power_limit_watts"]) or power["gpu_power_limit_watts"] <= 0 or any(not isinstance(power[key], str) or not power[key] for key in ("gpu_clock_policy", "driver_version", "compute_runtime")) or power["require_zero_thermal_power_throttle_reasons"] is not True:
+        if not isinstance(guid, str) or not re.fullmatch(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}", guid) or power["ac_state"] != "ac" or not _finite_number(power["gpu_power_limit_watts"]) or power["gpu_power_limit_watts"] <= 0 or any(not isinstance(power[key], str) or not power[key] for key in ("gpu_clock_policy", "driver_version", "compute_runtime")) or re.fullmatch(r"CUDA [0-9]+\.[0-9]+", power["compute_runtime"]) is None or re.fullmatch(r"applications_graphics_mhz=[^;\r\n]{1,32};applications_memory_mhz=[^;\r\n]{1,32}", power["gpu_clock_policy"]) is None or power["require_zero_thermal_power_throttle_reasons"] is not True:
             raise invalid("qualification_gate_failed", "The Windows power identity is invalid.")
         hardware = identity.get("hardware_runtime", {})
         if power["driver_version"] != hardware.get("driver") or power["compute_runtime"] != hardware.get("compute_runtime"):
             raise invalid("qualification_gate_failed", "The Windows power fixture runtime identity does not match qualification.")
-        if fixture["rendered_prompt_token_lengths"] != [512, 2048, 4096] or fixture["max_completion_tokens"] != 512 or fixture["request_count"] != 100 or fixture["concurrency"] != 1 or fixture["schedule"] != "serial-continuous-from-audio-start" or fixture["minimum_overlapping_utterances"] != 80 or fixture["sampling"] != {"temperature": 0, "top_p": 1}:
+        expected_corpus = {
+            "schema": "cyrus.windows-asr-audio-corpus/1",
+            "utterance_count": 200,
+            "language_counts": {"el": 100, "en": 100},
+            "sample_rate_hz": 16000,
+            "channels": 1,
+            "sample_width_bytes": 2,
+            "minimum_duration_ms": 1500,
+            "maximum_duration_ms": 30000,
+            "clean_language_accuracy_minimum_correct_per_language": 95,
+            "clean_aggregate_wer_max_percent_per_language": 20,
+            "coexistence_selection": "first-50-per-locale",
+            "reference_sidecars": {
+                "encoding": "utf-8", "normalization": "NFC",
+                "controls_allowed": False,
+                "word_normalization": "unicode-lmn-casefold-v1",
+            },
+        }
+        if fixture["fixture_schema_version"] != 1 or fixture["fixture_id"] != "cyrus-windows-asr-coexistence-v1" or fixture["platform"] != "windows-x86_64" or fixture["prompt_workload_units"] != [512, 2048, 4096] or fixture["max_completion_tokens"] != 512 or fixture["request_count"] != 100 or fixture["concurrency"] != 1 or fixture["schedule"] != "serial-continuous-from-audio-start" or fixture["minimum_overlapping_utterances"] != 80 or fixture["sampling"] != {"temperature": 0, "top_p": 1} or corpus != expected_corpus:
             raise invalid("qualification_gate_failed", "The hashed Windows ASR fixture is invalid.")
         power_digest = hashlib.sha256(canonical_bytes(power)).hexdigest()
-        if not isinstance(gate["audio_corpus_digest"], str) or not re.fullmatch(r"[0-9a-f]{64}", gate["audio_corpus_digest"]) or gate["greek_utterances"] != 50 or gate["english_utterances"] != 50 or gate["baseline_power_identity_digest"] != power_digest or gate["coexistence_power_identity_digest"] != power_digest:
+        if not isinstance(gate["audio_corpus_digest"], str) or not re.fullmatch(r"[0-9a-f]{64}", gate["audio_corpus_digest"]) or gate["audio_corpus_digest"] != expected_windows_assets["audio_corpus"]["sha256"] or gate["greek_utterances"] != 100 or gate["english_utterances"] != 100 or gate["baseline_power_identity_digest"] != power_digest or gate["coexistence_power_identity_digest"] != power_digest:
             raise invalid("qualification_gate_failed", "The Windows corpus or baseline/coexistence power identity is invalid.")
         baseline = gate["baseline_p95"]
         coexistence = gate["coexistence_p95"]
-        if not _finite_number(baseline) or baseline <= 0 or not _finite_number(coexistence) or coexistence <= 0 or coexistence / baseline - 1 > Decimal("0.15"):
+        baseline_llm = gate["baseline_llm_p95"]
+        coexistence_llm = gate["coexistence_llm_p95"]
+        if not _finite_number(baseline) or baseline <= 0 or not _finite_number(coexistence) or coexistence <= 0 or Decimal(str(coexistence)) > Decimal(str(baseline)) * Decimal("1.15") or not _finite_number(baseline_llm) or baseline_llm <= 0 or not _finite_number(coexistence_llm) or coexistence_llm <= 0 or Decimal(str(coexistence_llm)) > Decimal(str(baseline_llm)) * Decimal("1.15"):
             raise invalid("qualification_gate_failed", "ASR coexistence degradation exceeds 15 percent.")
-        if any(type(gate[key]) is not int for key in ("overlapping_utterances", "lost_final_transcripts", "oom", "crashes", "throttle_reasons")) or gate["overlapping_utterances"] < 80 or gate["lost_final_transcripts"] != 0 or gate["oom"] != 0 or gate["crashes"] != 0 or gate["throttle_reasons"] != 0:
+        integer_fields = (
+            "greek_language_correct", "english_language_correct",
+            "greek_reference_words", "greek_word_errors",
+            "english_reference_words", "english_word_errors",
+            "forced_cpu_fallbacks", "overlapping_utterances",
+            "minimum_free_vram_mib", "lost_final_transcripts",
+            "duplicate_final_transcripts", "stale_results", "oom", "crashes",
+            "throttle_reasons",
+        )
+        if any(type(gate[key]) is not int or gate[key] < 0 for key in integer_fields) or gate["greek_language_correct"] < 95 or gate["english_language_correct"] < 95 or gate["greek_reference_words"] <= 0 or gate["english_reference_words"] <= 0 or gate["greek_word_errors"] * 100 > gate["greek_reference_words"] * 20 or gate["english_word_errors"] * 100 > gate["english_reference_words"] * 20 or gate["forced_cpu_fallbacks"] != 5 or gate["overlapping_utterances"] < 80 or gate["minimum_free_vram_mib"] < 2048 or any(gate[key] != 0 for key in ("lost_final_transcripts", "duplicate_final_transcripts", "stale_results", "oom", "crashes", "throttle_reasons")):
             raise invalid("qualification_gate_failed", "The Windows ASR stability gate failed.")
     else:
         gate = _exact(value, {"kind", "warmup_requests", "normal_requests", "final_drift", "theil_sen_projected_growth", "oom", "crashes", "stale_state_references"}, "platform_gate")
@@ -191,10 +294,13 @@ def qualify(manifest: Manifest, engine_factory: Any, fixture_runner: Path) -> di
                     fixture_runner, manifest, challenge, identity_digest, base_url, secret
                 )
             finally:
-                server.shutdown()
-                server.server_close()
-                thread.join(timeout=10)
-                production.close()
+                try:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=10)
+                finally:
+                    production.close()
+                    production.require_teardown_proof()
             summary = evaluate_evidence(manifest, evidence, identity, expected_provenance)
             report = {
                 "report_schema_version": 1, "status": "pass", "started": started, "completed": int(time.time()),
@@ -239,16 +345,34 @@ def _run_fixture_runner(
         raise ApplianceError(503, "fixture_runner_untrusted", "The native fixture runner path is unsafe.") from exc
     runner_size = runner.stat().st_size
     runner_digest = hashlib.sha256(runner.read_bytes()).hexdigest()
-    with tempfile.TemporaryDirectory(prefix="jarvis-qualification-", dir=manifest.root) as temporary:
-        output = Path(temporary) / "evidence.json"
-        diagnostic = Path(temporary) / "diagnostic.json"
+    runner_identity = {
+        "path": relative,
+        "size_bytes": runner_size,
+        "sha256": runner_digest,
+    }
+    windows_assets = (
+        _load_windows_qualification_assets(manifest)
+        if manifest.platform == "windows-x86_64"
+        else None
+    )
+    expected_fixture_digest = (
+        hashlib.sha256(
+            canonical_bytes({"runner": runner_identity, "assets": windows_assets})
+        ).hexdigest()
+        if windows_assets is not None
+        else None
+    )
+    with PrivateLaunchDirectory(
+        manifest.root, prefix="jarvis-qualification-"
+    ) as launch:
+        if launch.path is None:
+            raise ApplianceError(503, "fixture_runner_failed", "The private fixture directory is unavailable.")
+        temporary = launch.path
+        output = temporary / "evidence.json"
+        diagnostic = temporary / "diagnostic.json"
         not_before_wall = time.time_ns()
         started_mono = time.monotonic_ns()
-        environment = {
-            key: os.environ[key]
-            for key in ("PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL")
-            if key in os.environ
-        }
+        environment = _qualification_child_environment(os.environ, temporary)
         environment.update({
             "JARVIS_QUAL_CHALLENGE": challenge,
             "JARVIS_QUAL_IDENTITY_DIGEST": identity_digest,
@@ -258,6 +382,14 @@ def _run_fixture_runner(
             "JARVIS_QUAL_BASE_URL": base_url,
             "JARVIS_QUAL_API_KEY": api_key,
         })
+        if windows_assets is not None and expected_fixture_digest is not None:
+            environment["JARVIS_QUAL_FIXTURE_DIGEST"] = expected_fixture_digest
+            for name, artifact in windows_assets.items():
+                prefix = "JARVIS_QUAL_WINDOWS_" + name.upper()
+                environment[prefix] = str(
+                    resolve_local(manifest.root, artifact["path"], f"qualification.{name}")
+                )
+                environment[prefix + "_SHA256"] = artifact["sha256"]
         if manifest.platform == "macos-arm64":
             executable = resolve_local(
                 manifest.root,
@@ -268,12 +400,22 @@ def _run_fixture_runner(
         else:
             command = [str(runner)]
         try:
-            result = subprocess.run(
-                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, env=environment, cwd=manifest.root,
-                timeout=24 * 60 * 60, check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            launch.mark_launch_started()
+            if os.name == "nt":
+                result = run_windows_job(
+                    command,
+                    environment=environment,
+                    cwd=manifest.root,
+                    timeout=24 * 60 * 60,
+                )
+            else:
+                result = subprocess.run(
+                    command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, env=environment, cwd=manifest.root,
+                    timeout=24 * 60 * 60, check=False,
+                )
+            launch.mark_tree_drained()
+        except (OSError, subprocess.TimeoutExpired, WindowsProcessFailure) as exc:
             raise ApplianceError(503, "fixture_runner_failed", "The native fixture runner did not complete successfully.") from exc
         not_after_wall = time.time_ns()
         elapsed = time.monotonic_ns() - started_mono
@@ -287,7 +429,7 @@ def _run_fixture_runner(
                 stages = {
                     "bootstrap", "streaming", "tools", "json_schema", "cancellation",
                     "crash_restart", "isolation", "memory_warmup", "memory_samples",
-                    "memory_evaluation", "evidence_write",
+                    "memory_evaluation", "asr_coexistence", "evidence_write",
                 }
                 if (
                     isinstance(detail, dict)
@@ -298,6 +440,11 @@ def _run_fixture_runner(
                     code = "fixture_runner_" + detail["stage"] + "_" + detail["kind"]
             raise ApplianceError(503, code, "The native fixture runner did not produce fresh evidence.")
         evidence, evidence_digest = load_evidence(output)
+        if (
+            expected_fixture_digest is not None
+            and evidence.get("fixture_digest") != expected_fixture_digest
+        ):
+            raise ApplianceError(503, "qualification_provenance_mismatch", "The native fixture evidence did not bind every boot-scoped asset.")
         if runner.stat().st_size != runner_size or hashlib.sha256(runner.read_bytes()).hexdigest() != runner_digest:
             raise ApplianceError(503, "fixture_runner_identity_changed", "The native fixture runner changed during qualification.")
     expected = {
@@ -307,8 +454,36 @@ def _run_fixture_runner(
         "not_after_unix_ns": not_after_wall,
         "max_elapsed_ns": elapsed,
     }
-    runner_identity = {"path": relative, "size_bytes": runner_size, "sha256": runner_digest}
+    if windows_assets is not None:
+        expected["windows_assets"] = windows_assets
     return evidence, evidence_digest, runner_identity, expected
+
+
+def _load_windows_qualification_assets(manifest: Manifest) -> dict[str, Any]:
+    """Hash the fixed private/native Windows qualification inputs at boot.
+
+    Paths are fixed beneath the sealed runtime root.  The runner receives only
+    these verified paths and digests, so inherited user environment variables
+    cannot silently select a different corpus, collector, power identity, or
+    ASR profile.
+    """
+
+    result: dict[str, Any] = {}
+    for name, (relative, maximum_size) in _WINDOWS_QUALIFICATION_ASSETS.items():
+        path = resolve_local(manifest.root, relative, f"qualification.{name}")
+        size = path.stat().st_size
+        if size <= 0 or size > maximum_size:
+            raise ApplianceError(
+                503,
+                "windows_qualification_asset_invalid",
+                "A Windows qualification asset has an invalid size.",
+            )
+        result[name] = {
+            "path": relative,
+            "size_bytes": size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    return result
 
 
 class _QualificationProduction(Production):
@@ -321,6 +496,11 @@ class _QualificationProduction(Production):
         with self.state_lock:
             if self.loader is not None:
                 return
+            if self.stop.is_set():
+                raise EngineFailure("service is shutting down")
+            self.teardown_proven = False
+            self.loader_failure = None
+            self.loader_exited.clear()
             process = getattr(self.engine, "process", None)
             if process is not None:
                 setattr(self.engine, "_qualification_original_pid", process.pid)
@@ -349,6 +529,14 @@ class _QualificationProduction(Production):
         self._qualification_history[:] = self._qualification_history[-64:]
 
     def _qualification_supervise(self) -> None:
+        try:
+            self._qualification_supervise_loop()
+        except BaseException as exc:  # noqa: BLE001 - surfaced by close proof
+            self.loader_failure = exc
+        finally:
+            self.loader_exited.set()
+
+    def _qualification_supervise_loop(self) -> None:
         while not self.stop.is_set():
             with self.state_lock:
                 active = self.engine
@@ -358,21 +546,40 @@ class _QualificationProduction(Production):
                     active.close()
                 candidate = None
                 try:
+                    if self.stop.is_set():
+                        break
                     candidate = self.engine_factory(self.manifest)
                     with self.state_lock:
-                        self.engine = None
-                        self.loading_engine = candidate
-                        self.ready_state = False
+                        shutting_down = self.stop.is_set()
+                        if not shutting_down:
+                            self.engine = None
+                            self.loading_engine = candidate
+                            self.ready_state = False
+                    if shutting_down:
+                        candidate.close()
+                        break
                     start = getattr(candidate, "start", None)
                     if callable(start):
                         start(time.monotonic() + 600.0)
+                    if self.stop.is_set():
+                        candidate.close()
+                        with self.state_lock:
+                            if self.loading_engine is candidate:
+                                self.loading_engine = None
+                            self.ready_state = False
+                        break
                     process = getattr(candidate, "process", None)
                     if process is not None:
                         setattr(candidate, "_qualification_original_pid", process.pid)
                     with self.state_lock:
-                        self.engine = candidate
+                        publish = not self.stop.is_set()
+                        if publish:
+                            self.engine = candidate
                         self.loading_engine = None
-                        self.ready_state = candidate.ready()
+                        self.ready_state = bool(publish and candidate.ready())
+                    if not publish:
+                        candidate.close()
+                        break
                 except Exception:
                     if candidate is not None:
                         candidate.close()
@@ -422,7 +629,14 @@ class _QualificationProduction(Production):
         pid = process.pid if process is not None else None
         if process is not None:
             setattr(engine, "_qualification_original_pid", process.pid)
-        engine.cancel()
+        inject = getattr(engine, "inject_cancel", None)
+        if not callable(inject):
+            raise ApplianceError(
+                503,
+                "qualification_cancel_unavailable",
+                "The qualification backend does not expose forced cancellation.",
+            )
+        inject()
         self._record_termination(engine)
         result = getattr(engine, "runtime_snapshot", lambda: {})()
         return {

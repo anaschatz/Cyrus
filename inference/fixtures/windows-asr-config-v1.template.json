@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "backend": "faster-whisper",
+  "model_pack": {
+    "id": "dropbox-dash/faster-whisper-large-v3-turbo",
+    "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "artifacts_sha256": "c4cd79451ca5f1fb41221ee186d1579b1d7f2196f9d573dde5eecf2a6e5dbafe"
+  },
+  "model_directory": "REPLACE_WITH_ABSOLUTE_NON_REPARSE_MODEL_DIRECTORY",
+  "model_profile": "large-v3-turbo",
+  "execution_profile": "cuda_turn_scoped",
+  "cpu_compute_type": "int8",
+  "cuda": {
+    "device_index": 0,
+    "compute_type": "int8_float16",
+    "minimum_free_vram_mb": 2048,
+    "reserve_for_other_workloads_mb": 2048,
+    "fallback_to_cpu": true,
+    "worker_start_timeout_seconds": 120,
+    "transcription_timeout_seconds": 180,
+    "warm_restart_limit": 0,
+    "vram_poll_interval_ms": 100
+  },
+  "sample_rate_hz": 16000,
+  "channels": 1,
+  "sample_width_bytes": 2,
+  "language_mode": "multilingual-auto",
+  "maximum_utterance_seconds": 30
+}

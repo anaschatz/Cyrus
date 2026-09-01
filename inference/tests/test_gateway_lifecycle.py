@@ -12,7 +12,19 @@ from pathlib import Path
 
 from jarvis_inference.durable import durable_replace
 from jarvis_inference.engine import EngineFailure, GenerationEvent, PreparedPrompt
-from jarvis_inference.gateway import EventQueue, GatewayServer, Production, effective_configuration, package_digest
+from jarvis_inference.gateway import (
+    EventQueue,
+    GatewayServer,
+    Production,
+    effective_configuration,
+    package_digest,
+)
+from jarvis_inference.gemma4 import (
+    GEMMA4_PROMPT_PROFILE,
+    MODEL_FILENAME,
+    MODEL_SHA256,
+    MODEL_SIZE_BYTES,
+)
 from jarvis_inference.manifest import load_manifest, runtime_identity
 
 
@@ -23,15 +35,24 @@ def artifact(path: Path, root: Path) -> dict:
 
 def make_manifest(root: Path, capabilities: dict | None = None):
     executable = root / "llama-server.exe"; executable.write_bytes(b"exe")
-    model = root / "model.gguf"; model.write_bytes(b"model")
+    selected_capabilities = capabilities or {"text": True, "stream": True, "tools": False, "json_object": False, "json_schema": False}
+    structured = any(selected_capabilities[name] for name in ("tools", "json_object", "json_schema"))
+    model = root / (MODEL_FILENAME if structured else "model.gguf"); model.write_bytes(b"model")
+    model_artifact = (
+        {"path": MODEL_FILENAME, "size_bytes": MODEL_SIZE_BYTES, "sha256": MODEL_SHA256}
+        if structured else artifact(model, root)
+    )
     value = {
         "manifest_schema_version": 1, "alias": "jarvis-local", "platform": "windows-x86_64",
         "backend": {"type": "llama-server", "llama_cpp_commit": "a" * 40, "build_id": "fake", "executable": artifact(executable, root), "dlls": [], "parameters": {}},
-        "model": {"format": "gguf", "context_window": 16, "artifacts": [artifact(model, root)]},
+        "model": {"format": "gguf", "context_window": 16, "artifacts": [model_artifact]},
         "python": {},
-        "capabilities": capabilities or {"text": True, "stream": True, "tools": False, "json_object": False, "json_schema": False},
+        "capabilities": selected_capabilities,
         "qualification_report": "qualification-report.json",
     }
+    if structured:
+        value["prompt_profile"] = GEMMA4_PROMPT_PROFILE
+        value["profile_qualification_report"] = "qualification-profile-local-primary.json"
     path = root / "manifest.json"; path.write_text(json.dumps(value), encoding="utf-8")
     manifest = load_manifest(path)
     runner = root / "fixture-runner"; runner.write_bytes(b"runner")
@@ -97,7 +118,14 @@ class Harness:
             self.state["factory_calls"] += 1
             return ConfigurableEngine(self.state)
 
-        self.production = Production(self.manifest, "k" * 40, factory)
+        # Lifecycle tests isolate transport/engine behavior. Exact primary
+        # profile-report admission has its own strict test module.
+        self.production = Production(
+            self.manifest,
+            "k" * 40,
+            factory,
+            profile_validator=lambda _manifest, _identity, _report: True,
+        )
         self.server = GatewayServer(self.production, ("127.0.0.1", 0))
         self.port = int(self.server.server_address[1])
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
@@ -334,6 +362,72 @@ class GatewayLifecycleTests(unittest.TestCase):
             self.assertTrue(stopped.is_set())
         finally:
             server.server_close(); production.close(); temporary.cleanup()
+
+    def test_supervisor_and_request_restart_never_load_engines_concurrently(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        root = Path(temporary.name)
+        manifest = make_manifest(root)
+        entered = threading.Event()
+        release = threading.Event()
+        counts_lock = threading.Lock()
+        counts = {"active": 0, "maximum": 0, "factory": 0}
+
+        class SerializedStart(ConfigurableEngine):
+            def start(self, deadline=None):
+                with counts_lock:
+                    counts["active"] += 1
+                    counts["maximum"] = max(counts["maximum"], counts["active"])
+                entered.set()
+                release.wait(2)
+                with counts_lock:
+                    counts["active"] -= 1
+                self.open = True
+
+        def factory(_manifest):
+            with counts_lock:
+                counts["factory"] += 1
+            return SerializedStart({})
+
+        production = Production(
+            manifest,
+            "k" * 40,
+            factory,
+            profile_validator=lambda _manifest, _identity, _report: True,
+        )
+        failures: list[BaseException] = []
+        restart = threading.Thread(
+            target=lambda: self._capture_restart(production, failures),
+            daemon=True,
+        )
+        try:
+            production.start_background()
+            self.assertTrue(entered.wait(2))
+            restart.start()
+            time.sleep(0.1)
+            with counts_lock:
+                self.assertEqual(counts["factory"], 1)
+                self.assertEqual(counts["maximum"], 1)
+            release.set()
+            restart.join(timeout=3)
+            self.assertFalse(restart.is_alive())
+            self.assertEqual(failures, [])
+            with counts_lock:
+                self.assertEqual(counts["maximum"], 1)
+        finally:
+            release.set()
+            restart.join(timeout=3)
+            production.close()
+            temporary.cleanup()
+
+    @staticmethod
+    def _capture_restart(
+        production: Production,
+        failures: list[BaseException],
+    ) -> None:
+        try:
+            production.restart_engine(time.monotonic() + 2)
+        except BaseException as exc:  # noqa: BLE001 - asserted by the owner thread
+            failures.append(exc)
 
 
 if __name__ == "__main__":

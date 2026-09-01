@@ -3,14 +3,24 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+import threading
+import time
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from jarvis_inference.errors import ApplianceError
 from jarvis_inference.durable import read_report
+from jarvis_inference.errors import ApplianceError
 from jarvis_inference.manifest import load_manifest
-from jarvis_inference.qualification import SUITE_VERSION, evaluate_evidence, qualify
+from jarvis_inference.primary_qualification import _PrimaryQualificationProduction
+from jarvis_inference.qualification import (
+    SUITE_VERSION,
+    _qualification_child_environment,
+    _QualificationProduction,
+    evaluate_evidence,
+    qualify,
+)
 from jarvis_inference.strict_json import canonical_bytes
 
 
@@ -20,9 +30,137 @@ def artifact(path: Path, root: Path) -> dict:
 
 
 class QualificationTests(unittest.TestCase):
+    def test_generic_and_profile_supervisors_cannot_publish_after_close(self) -> None:
+        for production_type in (
+            _QualificationProduction,
+            _PrimaryQualificationProduction,
+        ):
+            with self.subTest(production=production_type.__name__):
+                factory_entered = threading.Event()
+                release_factory = threading.Event()
+                candidate_closed = threading.Event()
+
+                class RaceEngine:
+                    process = None
+
+                    def __init__(self, ready: bool) -> None:
+                        self.open = ready
+
+                    def ready(self) -> bool:
+                        return self.open
+
+                    def start(self, deadline=None) -> None:
+                        self.open = True
+
+                    def close(self) -> None:
+                        self.open = False
+                        if self is candidate:
+                            candidate_closed.set()
+
+                candidate = RaceEngine(False)
+
+                def factory(_manifest):
+                    factory_entered.set()
+                    release_factory.wait(5)
+                    return candidate
+
+                production = production_type(
+                    SimpleNamespace(),
+                    "k" * 40,
+                    factory,
+                    engine=RaceEngine(False),
+                )
+                production.start_background()
+                self.assertTrue(factory_entered.wait(2))
+                failures = []
+
+                def close_production() -> None:
+                    try:
+                        production.close()
+                    except BaseException as exc:  # noqa: BLE001 - test capture
+                        failures.append(exc)
+
+                closer = threading.Thread(target=close_production)
+                closer.start()
+                stop = time.monotonic() + 2
+                while not production.stop.is_set() and time.monotonic() < stop:
+                    time.sleep(0.01)
+                release_factory.set()
+                closer.join(timeout=3)
+                self.assertFalse(closer.is_alive())
+                self.assertEqual(failures, [])
+                self.assertTrue(candidate_closed.is_set())
+                self.assertIsNone(production.engine)
+                self.assertIsNone(production.loading_engine)
+                production.require_teardown_proof()
+
+    def test_close_redrains_late_engine_before_teardown_proof(self) -> None:
+        closed = []
+
+        class Engine:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def ready(self) -> bool:
+                return True
+
+            def close(self) -> None:
+                closed.append(self.name)
+
+        production = _QualificationProduction(
+            SimpleNamespace(), "k" * 40, lambda _: None, engine=Engine("initial")
+        )
+        late_active = Engine("late-active")
+        late_loading = Engine("late-loading")
+
+        class Loader:
+            def join(self, timeout=None) -> None:
+                with production.state_lock:
+                    production.engine = late_active
+                    production.loading_engine = late_loading
+                production.loader_exited.set()
+
+            def is_alive(self) -> bool:
+                return False
+
+        production.loader = Loader()
+        production.close()
+        production.require_teardown_proof()
+        self.assertEqual(
+            closed, ["initial", "late-active", "late-loading"]
+        )
+
+    def test_sealed_fixture_runner_does_not_inherit_path(self) -> None:
+        child = _qualification_child_environment(
+            {
+                "PATH": "attacker-controlled",
+                "SYSTEMROOT": r"C:\Windows",
+                "TEMP": r"C:\Windows\Temp",
+                "TMP": r"C:\ambient-tmp",
+                "TMPDIR": r"C:\ambient-tmpdir",
+            }
+        )
+        self.assertNotIn("PATH", child)
+        self.assertNotIn("SYSTEMROOT", child)
+        self.assertNotIn("WINDIR", child)
+        self.assertNotIn("TEMP", child)
+        self.assertNotIn("TMP", child)
+        self.assertNotIn("TMPDIR", child)
+        with tempfile.TemporaryDirectory(
+            dir=Path(tempfile.gettempdir()).resolve()
+        ) as directory:
+            trusted = Path(directory)
+            private = _qualification_child_environment(
+                {"TEMP": "ambient", "SYSTEMROOT": r"C:\Windows"},
+                trusted,
+            )
+            self.assertEqual(private["TEMP"], str(trusted))
+            self.assertEqual(private["TMP"], str(trusted))
+            self.assertEqual(private["TMPDIR"], str(trusted))
+
     @staticmethod
     def identity() -> dict:
-        return {"id": "exact", "hardware_runtime": {"driver": "test", "compute_runtime": "test"}}
+        return {"id": "exact", "hardware_runtime": {"driver": "test", "compute_runtime": "CUDA 12.8"}}
 
     def manifest(self, root: Path):
         exe = root / "server.exe"; exe.write_bytes(b"x")
@@ -42,14 +180,29 @@ class QualificationTests(unittest.TestCase):
             "challenge": "c" * 64, "identity_digest": "d" * 64,
             "not_before_unix_ns": 100, "not_after_unix_ns": 300,
             "max_elapsed_ns": 500,
+            "windows_assets": self.windows_assets(),
+        }
+
+    @staticmethod
+    def windows_assets() -> dict:
+        return {
+            name: {"path": f"qualification/{name}.bin", "size_bytes": 1, "sha256": character * 64}
+            for name, character in (
+                ("fixture", "a"),
+                ("collector", "b"),
+                ("audio_corpus", "c"),
+                ("power_profile", "d"),
+                ("asr_config", "e"),
+            )
         }
 
     def evidence(self, identity: dict) -> dict:
         power = {
             "windows_power_scheme_guid": "12345678-1234-1234-1234-123456789abc",
             "ac_state": "ac", "gpu_power_limit_watts": 360,
-            "gpu_clock_policy": "fixed", "driver_version": "test",
-            "compute_runtime": "test", "require_zero_thermal_power_throttle_reasons": True,
+            "gpu_clock_policy": "applications_graphics_mhz=2500;applications_memory_mhz=14000",
+            "driver_version": "test", "compute_runtime": "CUDA 12.8",
+            "require_zero_thermal_power_throttle_reasons": True,
         }
         power_digest = hashlib.sha256(canonical_bytes(power)).hexdigest()
         return {
@@ -70,16 +223,53 @@ class QualificationTests(unittest.TestCase):
             "unexpected_crashes": 0, "unexpected_hangs": 0,
             "platform_gate": {
                 "kind": "windows_asr_coexistence",
+                "assets": self.windows_assets(),
+                "asr_runtime_identity_digest": "f" * 64,
                 "fixture": {
-                    "rendered_prompt_token_lengths": [512, 2048, 4096],
+                    "fixture_schema_version": 1,
+                    "fixture_id": "cyrus-windows-asr-coexistence-v1",
+                    "platform": "windows-x86_64",
+                    "prompt_workload_units": [512, 2048, 4096],
                     "max_completion_tokens": 512, "request_count": 100, "concurrency": 1,
                     "schedule": "serial-continuous-from-audio-start", "minimum_overlapping_utterances": 80,
-                    "sampling": {"temperature": 0, "top_p": 1}, "power_profile": power,
+                    "sampling": {"temperature": 0, "top_p": 1},
+                    "audio_corpus": {
+                        "schema": "cyrus.windows-asr-audio-corpus/1",
+                        "utterance_count": 200,
+                        "language_counts": {"el": 100, "en": 100},
+                        "sample_rate_hz": 16000,
+                        "channels": 1,
+                        "sample_width_bytes": 2,
+                        "minimum_duration_ms": 1500,
+                        "maximum_duration_ms": 30000,
+                        "clean_language_accuracy_minimum_correct_per_language": 95,
+                        "clean_aggregate_wer_max_percent_per_language": 20,
+                        "coexistence_selection": "first-50-per-locale",
+                        "reference_sidecars": {
+                            "encoding": "utf-8",
+                            "normalization": "NFC",
+                            "controls_allowed": False,
+                            "word_normalization": "unicode-lmn-casefold-v1",
+                        },
+                    },
+                    "power_profile": power,
                 },
-                "audio_corpus_digest": "e" * 64, "greek_utterances": 50, "english_utterances": 50,
+                "audio_corpus_digest": "c" * 64,
+                "greek_utterances": 100,
+                "english_utterances": 100,
+                "greek_language_correct": 95,
+                "english_language_correct": 95,
+                "greek_reference_words": 500,
+                "greek_word_errors": 100,
+                "english_reference_words": 500,
+                "english_word_errors": 100,
+                "forced_cpu_fallbacks": 5,
                 "baseline_power_identity_digest": power_digest, "coexistence_power_identity_digest": power_digest,
                 "overlapping_utterances": 80, "baseline_p95": 1.0, "coexistence_p95": 1.15,
-                "lost_final_transcripts": 0, "oom": 0, "crashes": 0, "throttle_reasons": 0,
+                "baseline_llm_p95": 10.0, "coexistence_llm_p95": 11.5,
+                "lost_final_transcripts": 0, "duplicate_final_transcripts": 0,
+                "stale_results": 0, "oom": 0, "crashes": 0, "throttle_reasons": 0,
+                "minimum_free_vram_mib": 2048,
             },
         }
 
@@ -93,6 +283,24 @@ class QualificationTests(unittest.TestCase):
             evidence["platform_gate"]["coexistence_p95"] = 1.151
             with self.assertRaises(ApplianceError):
                 evaluate_evidence(manifest, evidence, identity, self.provenance())
+
+    def test_language_wer_llm_fallback_and_result_integrity_gates_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = self.manifest(Path(temporary))
+            identity = self.identity()
+            mutations = (
+                ("english_language_correct", 94),
+                ("greek_word_errors", 101),
+                ("coexistence_llm_p95", 11.501),
+                ("forced_cpu_fallbacks", 4),
+                ("duplicate_final_transcripts", 1),
+                ("stale_results", 1),
+            )
+            for field, value in mutations:
+                evidence = self.evidence(identity)
+                evidence["platform_gate"][field] = value
+                with self.subTest(field=field), self.assertRaises(ApplianceError):
+                    evaluate_evidence(manifest, evidence, identity, self.provenance())
 
     def test_static_or_mismatched_evidence_cannot_pass(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -124,3 +332,46 @@ class QualificationTests(unittest.TestCase):
                 evidence = self.evidence(identity); evidence[field] = value
                 with self.subTest(value=value), self.assertRaises(ApplianceError):
                     evaluate_evidence(manifest, evidence, identity, self.provenance())
+
+    def test_qualification_cancel_uses_forced_injection_not_cooperative_cancel(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = self.manifest(Path(temporary))
+
+            class Engine:
+                def __init__(self) -> None:
+                    self.process = SimpleNamespace(pid=123)
+                    self.injected = 0
+                    self.phase = "prefill"
+
+                def ready(self) -> bool:
+                    return True
+
+                def inject_cancel(self) -> None:
+                    self.injected += 1
+                    self.phase = "idle"
+
+                def cancel(self) -> None:
+                    raise AssertionError("cooperative cancel must not be used")
+
+                def runtime_snapshot(self) -> dict:
+                    return {
+                        "phase": self.phase,
+                        "pid": 123,
+                        "termination_serial": self.injected,
+                        "last_termination_kind": "cancel",
+                        "last_termination_phase": "prefill",
+                        "last_termination_elapsed": 0.01,
+                        "last_termination_exit_ok": True,
+                    }
+
+            engine = Engine()
+            production = _QualificationProduction(
+                manifest,
+                "secret",
+                lambda _manifest: engine,
+                engine=engine,
+            )
+            result = production.inject_qualification_cancel("prefill")
+            self.assertEqual(engine.injected, 1)
+            self.assertEqual(result["phase"], "prefill")
+            self.assertTrue(result["exit_ok"])

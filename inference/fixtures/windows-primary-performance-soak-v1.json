@@ -1,0 +1,1267 @@
+{
+  "fixture_schema_version": 1,
+  "suite_id": "cyrus-windows-primary-performance-soak-v1",
+  "profile_id": "local-primary",
+  "platform": "windows-x86_64",
+  "public_model_alias": "jarvis-local",
+  "prompt_profile": {
+    "id": "google-gemma4-12b-it-qat-q4_0-v1",
+    "renderer_id": "cyrus.gemma4-appliance-renderer/1",
+    "renderer_sha256": "3ce59b2dadfeeff369b337da785deb096ca50d8a2182570cc9db36f7f63a1951"
+  },
+  "execution": {
+    "request_count": 100,
+    "language_counts": {
+      "el": 50,
+      "en": 50
+    },
+    "target_rendered_bins": [
+      512,
+      2048,
+      4096
+    ],
+    "target_bin_counts": {
+      "512": 34,
+      "2048": 34,
+      "4096": 32
+    },
+    "native_token_count_ranges": {
+      "512": {
+        "minimum": 256,
+        "maximum": 1023
+      },
+      "2048": {
+        "minimum": 1024,
+        "maximum": 3071
+      },
+      "4096": {
+        "minimum": 3072,
+        "maximum": 6144
+      }
+    },
+    "max_completion_tokens": 128,
+    "concurrency": 1,
+    "sampling": {
+      "temperature": 0,
+      "top_p": 1
+    },
+    "performance_measurement": {
+      "ttft_source": "gateway_request_start_to_first_accepted_sse_event",
+      "decode_source": "validated_final_llama_timings",
+      "end_to_end_source": "client_monotonic_request_to_complete",
+      "projected_128_token_formula": "ttft_seconds + 127 / decode_tokens_per_second"
+    },
+    "native_tokenization": {
+      "status": "pending_native",
+      "exact_counts_claimed": false,
+      "tokenizer_identity_source": "qualified_manifest",
+      "required_observations": [
+        "generation_serial",
+        "rendered_token_count",
+        "rendered_token_ids_sha256",
+        "accepted_decode_tokens",
+        "accepted_token_ids_sha256",
+        "tokenizer_identity_sha256"
+      ]
+    }
+  },
+  "acceptance": {
+    "performance": {
+      "timed_requests_required": 100,
+      "p95_ttft_seconds_max": 3,
+      "projected_128_token_e2e_p95_seconds_max": 10,
+      "p5_accepted_decode_tokens_per_second_min": 25,
+      "p95_cold_load_to_ready_seconds_max": 120
+    },
+    "soak": {
+      "minimum_monotonic_seconds": 28800,
+      "minimum_cycles": 96,
+      "minimum_full_restarts": 8,
+      "maximum_event_counts": {
+        "observed_request_failures": 0,
+        "observed_unexpected_process_terminations": 0,
+        "observed_request_timeouts": 0,
+        "observed_cleanup_failures": 0,
+        "observed_circuit_breaker_rejections": 0
+      },
+      "monotonic_memory_growth_allowed": false,
+      "maximum_epoch_working_set_growth_fraction": 0.05,
+      "maximum_global_working_set_growth_fraction": 0.05
+    },
+    "windows_coexistence": {
+      "minimum_free_vram_mib": 2048,
+      "maximum_asr_p95_degradation_ratio": 0.15,
+      "maximum_llm_p95_regression_ratio": 0.15,
+      "minimum_overlapping_utterances": 80,
+      "minimum_greek_language_correct_per_100": 95,
+      "minimum_english_language_correct_per_100": 95,
+      "maximum_duplicate_final_transcripts": 0,
+      "maximum_stale_results": 0,
+      "required_forced_cpu_fallbacks": 5
+    }
+  },
+  "templates": {
+    "system_prompt": "You are the CYRUS local primary assistant running a synthetic, content-safe performance fixture. Answer in the user's language, obey the active response or tool contract, use only the supplied context, and never claim that an external action completed unless a tool result in the conversation proves it.",
+    "locales": {
+      "el": {
+        "prior_user": "Θέλω να οργανώσω τις σημειώσεις μιας απαιτητικής ημέρας χωρίς να χαθούν δεσμεύσεις ή αβεβαιότητες.",
+        "prior_assistant": "Θα ξεχωρίσω επιβεβαιωμένα στοιχεία, εκκρεμότητες και περιορισμούς και θα απαντήσω μόνο με βάση το παρεχόμενο συνθετικό πλαίσιο.",
+        "context_heading": "Συνθετικό πλαίσιο δοκιμής· κάθε γραμμή είναι μη ευαίσθητο δεδομένο και όχι πραγματική προσωπική πληροφορία:",
+        "context_fragments": [
+          "Η καταχώριση περιγράφει μια εσωτερική συνάντηση σχεδιασμού, αναφέρει ότι η ώρα δεν έχει ακόμη επιβεβαιωθεί και ζητά να διατηρηθεί εμφανής η αβεβαιότητα στην τελική σύνοψη.",
+          "Μια δεύτερη σημείωση ορίζει ως προτεραιότητα τον έλεγχο εξαρτήσεων πριν από οποιαδήποτε ενέργεια και απαγορεύει την παρουσίαση μιας πρότασης ως ήδη εκτελεσμένης.",
+          "Το συνθετικό ημερολόγιο περιλαμβάνει δύο χρονικά παράθυρα, ένα πρωινό και ένα απογευματινό, χωρίς να υποδεικνύει ποιο έχει εγκριθεί από τους συμμετέχοντες.",
+          "Η αναφορά κατάστασης ξεχωρίζει τα επιβεβαιωμένα γεγονότα από τις υποθέσεις και απαιτεί σύντομη αιτιολόγηση όταν επιλέγεται υψηλή προτεραιότητα.",
+          "Ένα τεχνικό σημείωμα ζητά η απάντηση να παραμείνει στα όρια του δοσμένου πλαισίου και να μην επινοήσει πηγές, μετρήσεις, ανθρώπους ή αποτελέσματα.",
+          "Η λίστα εργασιών περιέχει μία εξάρτηση από έγκριση, μία ανεξάρτητη εργασία ανάγνωσης και μία εργασία που πρέπει να παραμείνει σε αναμονή.",
+          "Η δοκιμαστική εγγραφή αναφέρει ότι τα αναγνωριστικά τεκμηρίων πρέπει να μεταφερθούν αυτούσια όταν ζητηθεί δομημένη έξοδος και να μην αντικατασταθούν με περιγραφές.",
+          "Ο κανόνας ασφαλείας απαιτεί ρητή διάκριση ανάμεσα σε προτεινόμενη ενέργεια, επιτρεπόμενη ενέργεια και επιβεβαιωμένο αποτέλεσμα εργαλείου."
+        ],
+        "final_requests": [
+          "Δώσε σύντομη σύνοψη των βασικών περιορισμών και επισήμανε τι παραμένει αβέβαιο.",
+          "Κατάταξε τις εκκρεμότητες κατά προτεραιότητα χωρίς να ισχυριστείς ότι εκτελέστηκαν.",
+          "Εντόπισε τα επιβεβαιωμένα στοιχεία και ξεχώρισέ τα από τις υποθέσεις.",
+          "Πρότεινε το ασφαλέστερο επόμενο βήμα με βάση μόνο τις παραπάνω εγγραφές.",
+          "Σύνοψισε τις χρονικές δεσμεύσεις και δήλωσε ποια ώρα δεν έχει εγκριθεί.",
+          "Κατέγραψε τις εξαρτήσεις που εμποδίζουν άμεση εκτέλεση.",
+          "Παρήγαγε την απάντηση στο ενεργό δομημένο σχήμα χωρίς επιπλέον κείμενο.",
+          "Χρησιμοποίησε το ενεργό εργαλείο μόνο αν το συμβόλαιο της περίπτωσης το απαιτεί.",
+          "Εξήγησε σε δύο σύντομες προτάσεις ποια δεδομένα λείπουν για ασφαλή απόφαση.",
+          "Δώσε μια συμπαγή αναφορά κατάστασης και διατήρησε αυτούσια τα αναγνωριστικά τεκμηρίων."
+        ],
+        "tool_history_user": "Έλεγξε το συνθετικό στιγμιότυπο προγράμματος για τις 15 Ιανουαρίου 2030.",
+        "tool_history_result": "{\"date\":\"2030-01-15\",\"entries\":2,\"confirmed\":1,\"source\":\"synthetic-fixture\"}"
+      },
+      "en": {
+        "prior_user": "I want to organize the notes from a demanding day without losing commitments or uncertainty.",
+        "prior_assistant": "I will separate confirmed facts, pending items, and constraints, and answer only from the supplied synthetic context.",
+        "context_heading": "Synthetic test context; every line is non-sensitive fixture data and not real personal information:",
+        "context_fragments": [
+          "The record describes an internal planning meeting, says that its time is not confirmed yet, and requires the final summary to preserve that uncertainty explicitly.",
+          "A second note prioritizes dependency checks before any action and forbids presenting a proposed operation as though it had already been completed.",
+          "The synthetic calendar contains two time windows, one in the morning and one in the afternoon, without identifying which window participants approved.",
+          "The status record separates confirmed facts from assumptions and asks for a short justification whenever an item receives high priority.",
+          "A technical note constrains the answer to the supplied context and forbids inventing sources, measurements, people, or outcomes that are not present.",
+          "The task list contains one approval dependency, one independent reading task, and one task that must remain pending until a prerequisite is resolved.",
+          "The fixture entry says evidence identifiers must be copied exactly in structured output and must not be replaced by descriptive aliases.",
+          "The safety rule requires an explicit distinction between a proposed action, an authorized action, and a result confirmed by a tool response."
+        ],
+        "final_requests": [
+          "Give a concise summary of the main constraints and identify what remains uncertain.",
+          "Rank the pending items by priority without claiming that any action was executed.",
+          "Identify the confirmed facts and separate them from assumptions.",
+          "Recommend the safest next step using only the records above.",
+          "Summarize the time commitments and state which time has not been approved.",
+          "List the dependencies that prevent immediate execution.",
+          "Produce the answer in the active structured schema with no extra prose.",
+          "Use the active tool only when the case contract requires it.",
+          "Explain in two short sentences which data is missing for a safe decision.",
+          "Give a compact status report and preserve every evidence identifier exactly."
+        ],
+        "tool_history_user": "Inspect the synthetic schedule snapshot for 15 January 2030.",
+        "tool_history_result": "{\"date\":\"2030-01-15\",\"entries\":2,\"confirmed\":1,\"source\":\"synthetic-fixture\"}"
+      }
+    },
+    "structured_schema": {
+      "name": "performance_summary",
+      "description": "A bounded content-free performance fixture result.",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "minItems": 0,
+            "maxItems": 8
+          }
+        },
+        "required": [
+          "summary",
+          "priority",
+          "evidence_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "tool": {
+      "type": "function",
+      "function": {
+        "name": "inspect_schedule_snapshot",
+        "description": "Read one already-authorized local synthetic schedule snapshot; this fixture never executes a real action.",
+        "strict": true,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "date": {
+              "type": "string",
+              "minLength": 10,
+              "maxLength": 10
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "day",
+                "week"
+              ]
+            }
+          },
+          "required": [
+            "date",
+            "scope"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "performance_cases": [
+    {
+      "case_id": "wp-el-001",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 8,
+      "deterministic_seed": 730000
+    },
+    {
+      "case_id": "wp-el-002",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 32,
+      "deterministic_seed": 730001
+    },
+    {
+      "case_id": "wp-el-003",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 64,
+      "deterministic_seed": 730002
+    },
+    {
+      "case_id": "wp-el-004",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 8,
+      "deterministic_seed": 730003
+    },
+    {
+      "case_id": "wp-el-005",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 32,
+      "deterministic_seed": 730004
+    },
+    {
+      "case_id": "wp-el-006",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 64,
+      "deterministic_seed": 730005
+    },
+    {
+      "case_id": "wp-el-007",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 8,
+      "deterministic_seed": 730006
+    },
+    {
+      "case_id": "wp-el-008",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 32,
+      "deterministic_seed": 730007
+    },
+    {
+      "case_id": "wp-el-009",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 64,
+      "deterministic_seed": 730008
+    },
+    {
+      "case_id": "wp-el-010",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 8,
+      "deterministic_seed": 730009
+    },
+    {
+      "case_id": "wp-el-011",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 32,
+      "deterministic_seed": 730010
+    },
+    {
+      "case_id": "wp-el-012",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 64,
+      "deterministic_seed": 730011
+    },
+    {
+      "case_id": "wp-el-013",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 8,
+      "deterministic_seed": 730012
+    },
+    {
+      "case_id": "wp-el-014",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 32,
+      "deterministic_seed": 730013
+    },
+    {
+      "case_id": "wp-el-015",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 64,
+      "deterministic_seed": 730014
+    },
+    {
+      "case_id": "wp-el-016",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 8,
+      "deterministic_seed": 730015
+    },
+    {
+      "case_id": "wp-el-017",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 32,
+      "deterministic_seed": 730016
+    },
+    {
+      "case_id": "wp-el-018",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 64,
+      "deterministic_seed": 730017
+    },
+    {
+      "case_id": "wp-el-019",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 8,
+      "deterministic_seed": 730018
+    },
+    {
+      "case_id": "wp-el-020",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 32,
+      "deterministic_seed": 730019
+    },
+    {
+      "case_id": "wp-el-021",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 64,
+      "deterministic_seed": 730020
+    },
+    {
+      "case_id": "wp-el-022",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 8,
+      "deterministic_seed": 730021
+    },
+    {
+      "case_id": "wp-el-023",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 32,
+      "deterministic_seed": 730022
+    },
+    {
+      "case_id": "wp-el-024",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 64,
+      "deterministic_seed": 730023
+    },
+    {
+      "case_id": "wp-el-025",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 8,
+      "deterministic_seed": 730024
+    },
+    {
+      "case_id": "wp-el-026",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 32,
+      "deterministic_seed": 730025
+    },
+    {
+      "case_id": "wp-el-027",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 64,
+      "deterministic_seed": 730026
+    },
+    {
+      "case_id": "wp-el-028",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 8,
+      "deterministic_seed": 730027
+    },
+    {
+      "case_id": "wp-el-029",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 32,
+      "deterministic_seed": 730028
+    },
+    {
+      "case_id": "wp-el-030",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 64,
+      "deterministic_seed": 730029
+    },
+    {
+      "case_id": "wp-el-031",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 8,
+      "deterministic_seed": 730030
+    },
+    {
+      "case_id": "wp-el-032",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 32,
+      "deterministic_seed": 730031
+    },
+    {
+      "case_id": "wp-el-033",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 64,
+      "deterministic_seed": 730032
+    },
+    {
+      "case_id": "wp-el-034",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 8,
+      "deterministic_seed": 730033
+    },
+    {
+      "case_id": "wp-el-035",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 32,
+      "deterministic_seed": 730034
+    },
+    {
+      "case_id": "wp-el-036",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 64,
+      "deterministic_seed": 730035
+    },
+    {
+      "case_id": "wp-el-037",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 8,
+      "deterministic_seed": 730036
+    },
+    {
+      "case_id": "wp-el-038",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 32,
+      "deterministic_seed": 730037
+    },
+    {
+      "case_id": "wp-el-039",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 64,
+      "deterministic_seed": 730038
+    },
+    {
+      "case_id": "wp-el-040",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 8,
+      "deterministic_seed": 730039
+    },
+    {
+      "case_id": "wp-el-041",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 32,
+      "deterministic_seed": 730040
+    },
+    {
+      "case_id": "wp-el-042",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 64,
+      "deterministic_seed": 730041
+    },
+    {
+      "case_id": "wp-el-043",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 8,
+      "deterministic_seed": 730042
+    },
+    {
+      "case_id": "wp-el-044",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 32,
+      "deterministic_seed": 730043
+    },
+    {
+      "case_id": "wp-el-045",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 64,
+      "deterministic_seed": 730044
+    },
+    {
+      "case_id": "wp-el-046",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 8,
+      "deterministic_seed": 730045
+    },
+    {
+      "case_id": "wp-el-047",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 32,
+      "deterministic_seed": 730046
+    },
+    {
+      "case_id": "wp-el-048",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 4096,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 64,
+      "deterministic_seed": 730047
+    },
+    {
+      "case_id": "wp-el-049",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 512,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 8,
+      "deterministic_seed": 730048
+    },
+    {
+      "case_id": "wp-el-050",
+      "language": "el",
+      "locale": "el-GR",
+      "target_rendered_bin": 2048,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 32,
+      "deterministic_seed": 730049
+    },
+    {
+      "case_id": "wp-en-001",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 8,
+      "deterministic_seed": 730050
+    },
+    {
+      "case_id": "wp-en-002",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 32,
+      "deterministic_seed": 730051
+    },
+    {
+      "case_id": "wp-en-003",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 64,
+      "deterministic_seed": 730052
+    },
+    {
+      "case_id": "wp-en-004",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 8,
+      "deterministic_seed": 730053
+    },
+    {
+      "case_id": "wp-en-005",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 32,
+      "deterministic_seed": 730054
+    },
+    {
+      "case_id": "wp-en-006",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 64,
+      "deterministic_seed": 730055
+    },
+    {
+      "case_id": "wp-en-007",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 8,
+      "deterministic_seed": 730056
+    },
+    {
+      "case_id": "wp-en-008",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 32,
+      "deterministic_seed": 730057
+    },
+    {
+      "case_id": "wp-en-009",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 64,
+      "deterministic_seed": 730058
+    },
+    {
+      "case_id": "wp-en-010",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 8,
+      "deterministic_seed": 730059
+    },
+    {
+      "case_id": "wp-en-011",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 32,
+      "deterministic_seed": 730060
+    },
+    {
+      "case_id": "wp-en-012",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 64,
+      "deterministic_seed": 730061
+    },
+    {
+      "case_id": "wp-en-013",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 8,
+      "deterministic_seed": 730062
+    },
+    {
+      "case_id": "wp-en-014",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 32,
+      "deterministic_seed": 730063
+    },
+    {
+      "case_id": "wp-en-015",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 64,
+      "deterministic_seed": 730064
+    },
+    {
+      "case_id": "wp-en-016",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 8,
+      "deterministic_seed": 730065
+    },
+    {
+      "case_id": "wp-en-017",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 32,
+      "deterministic_seed": 730066
+    },
+    {
+      "case_id": "wp-en-018",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 64,
+      "deterministic_seed": 730067
+    },
+    {
+      "case_id": "wp-en-019",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 8,
+      "deterministic_seed": 730068
+    },
+    {
+      "case_id": "wp-en-020",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 32,
+      "deterministic_seed": 730069
+    },
+    {
+      "case_id": "wp-en-021",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 64,
+      "deterministic_seed": 730070
+    },
+    {
+      "case_id": "wp-en-022",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 8,
+      "deterministic_seed": 730071
+    },
+    {
+      "case_id": "wp-en-023",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 32,
+      "deterministic_seed": 730072
+    },
+    {
+      "case_id": "wp-en-024",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 64,
+      "deterministic_seed": 730073
+    },
+    {
+      "case_id": "wp-en-025",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 8,
+      "deterministic_seed": 730074
+    },
+    {
+      "case_id": "wp-en-026",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 32,
+      "deterministic_seed": 730075
+    },
+    {
+      "case_id": "wp-en-027",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 64,
+      "deterministic_seed": 730076
+    },
+    {
+      "case_id": "wp-en-028",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 8,
+      "deterministic_seed": 730077
+    },
+    {
+      "case_id": "wp-en-029",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 32,
+      "deterministic_seed": 730078
+    },
+    {
+      "case_id": "wp-en-030",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 64,
+      "deterministic_seed": 730079
+    },
+    {
+      "case_id": "wp-en-031",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 8,
+      "deterministic_seed": 730080
+    },
+    {
+      "case_id": "wp-en-032",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 32,
+      "deterministic_seed": 730081
+    },
+    {
+      "case_id": "wp-en-033",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 64,
+      "deterministic_seed": 730082
+    },
+    {
+      "case_id": "wp-en-034",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 8,
+      "deterministic_seed": 730083
+    },
+    {
+      "case_id": "wp-en-035",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 32,
+      "deterministic_seed": 730084
+    },
+    {
+      "case_id": "wp-en-036",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 64,
+      "deterministic_seed": 730085
+    },
+    {
+      "case_id": "wp-en-037",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 8,
+      "deterministic_seed": 730086
+    },
+    {
+      "case_id": "wp-en-038",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 32,
+      "deterministic_seed": 730087
+    },
+    {
+      "case_id": "wp-en-039",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 64,
+      "deterministic_seed": 730088
+    },
+    {
+      "case_id": "wp-en-040",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 8,
+      "deterministic_seed": 730089
+    },
+    {
+      "case_id": "wp-en-041",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "chat_history",
+      "scenario_index": 0,
+      "context_repetitions": 32,
+      "deterministic_seed": 730090
+    },
+    {
+      "case_id": "wp-en-042",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "json_schema",
+      "scenario_index": 1,
+      "context_repetitions": 64,
+      "deterministic_seed": 730091
+    },
+    {
+      "case_id": "wp-en-043",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_named",
+      "scenario_index": 2,
+      "context_repetitions": 8,
+      "deterministic_seed": 730092
+    },
+    {
+      "case_id": "wp-en-044",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_required",
+      "scenario_index": 3,
+      "context_repetitions": 32,
+      "deterministic_seed": 730093
+    },
+    {
+      "case_id": "wp-en-045",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_history",
+      "scenario_index": 4,
+      "context_repetitions": 64,
+      "deterministic_seed": 730094
+    },
+    {
+      "case_id": "wp-en-046",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "chat_history",
+      "scenario_index": 5,
+      "context_repetitions": 8,
+      "deterministic_seed": 730095
+    },
+    {
+      "case_id": "wp-en-047",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "json_schema",
+      "scenario_index": 6,
+      "context_repetitions": 32,
+      "deterministic_seed": 730096
+    },
+    {
+      "case_id": "wp-en-048",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 4096,
+      "variant": "tool_named",
+      "scenario_index": 7,
+      "context_repetitions": 64,
+      "deterministic_seed": 730097
+    },
+    {
+      "case_id": "wp-en-049",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 512,
+      "variant": "tool_required",
+      "scenario_index": 8,
+      "context_repetitions": 8,
+      "deterministic_seed": 730098
+    },
+    {
+      "case_id": "wp-en-050",
+      "language": "en",
+      "locale": "en-US",
+      "target_rendered_bin": 2048,
+      "variant": "tool_history",
+      "scenario_index": 9,
+      "context_repetitions": 32,
+      "deterministic_seed": 730099
+    }
+  ],
+  "soak": {
+    "status": "pending_native",
+    "minimum_monotonic_seconds": 28800,
+    "minimum_cycles": 96,
+    "cycle_operations": [
+      "request_set",
+      "per_request_slot_cleanup",
+      "combined_gateway_engine_working_set_sample"
+    ],
+    "request_set": "all_cases_in_frozen_order",
+    "full_restart_every_cycles": 12,
+    "minimum_full_restarts": 8,
+    "memory_sampling": {
+      "scope": "combined_gateway_and_engine_working_set",
+      "minimum_samples_per_completed_epoch": 12,
+      "maximum_epoch_growth_fraction": 0.05,
+      "maximum_global_growth_fraction": 0.05,
+      "growth_estimator": "robust_windows_plus_theil_sen"
+    },
+    "required_zero_events": [
+      "observed_request_failures",
+      "observed_unexpected_process_terminations",
+      "observed_request_timeouts",
+      "observed_cleanup_failures",
+      "observed_circuit_breaker_rejections"
+    ],
+    "content_persistence": "forbidden"
+  },
+  "expanded_requests_sha256": "ec0c8bc3cb49776142fc38a078448b416cf5fb32399cf438d3c9e6db02f4c3c0",
+  "rendered_prompt_texts_sha256": "e3520839aa869ecf826160cebbdcbaf8023008ca1d24b9881382d5a936d4de50"
+}

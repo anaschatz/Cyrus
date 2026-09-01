@@ -17,7 +17,6 @@ from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
 from setuptools.command.build_py import build_py as _build_py
 from setuptools.errors import SetupError
 
-
 PACKAGE = "jarvis_inference"
 PROJECT_ROOT = Path(__file__).resolve().parent
 PROJECT_BUILD_ROOT = PROJECT_ROOT / "build"
@@ -37,6 +36,7 @@ MODULES = frozenset(
         "engine.py",
         "errors.py",
         "gateway.py",
+        "gemma4.py",
         "http_backend.py",
         "limits.py",
         "llama_engine.py",
@@ -44,13 +44,27 @@ MODULES = frozenset(
         "manifest.py",
         "mlx_engine.py",
         "mlx_worker_runtime.py",
+        "private_temp.py",
+        "primary_profile.py",
+        "primary_quality_client.py",
+        "primary_qualification.py",
         "profile_preflight.py",
+        "profile_performance.py",
         "profile_quality.py",
+        "profile_report.py",
         "qualification.py",
         "qwen35_sampling_candidate.py",
         "rendering.py",
         "schema_subset.py",
         "strict_json.py",
+        "windows_primary_fixture.py",
+        "windows_primary_metrics.py",
+        "windows_primary_report.py",
+        "windows_primary_runner.py",
+        "windows_asr_corpus.py",
+        "windows_acl.py",
+        "windows_fixture.py",
+        "windows_process.py",
     }
 )
 EGG_INFO_MEMBERS = frozenset(

@@ -579,7 +579,9 @@ def test_oracle_provenance_binds_repo_relative_inputs_outputs_and_pins(
     scenario_path.write_bytes(SCENARIOS_PATH.read_bytes())
     oracle_path.write_bytes(ORACLE_PATH.read_bytes())
     pricing_path.write_bytes(Path(manifest.model.pricing.path).read_bytes())
-    preflight_path.write_bytes(Path(manifest.model.preflight.path).read_bytes())
+    # Provenance binding is the subject of this test; it must not depend on a
+    # developer's ignored, machine-generated preflight artifact.
+    preflight_path.write_bytes(b"synthetic-model-preflight")
 
     raw = json.loads(manifest.model_dump_json())
     raw["dataset"]["sha256"] = _sha256_file(scenario_path)

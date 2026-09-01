@@ -120,6 +120,24 @@ class InferenceWheelPackagingTests(unittest.TestCase):
             )
         return set(names)
 
+    def test_primary_profile_contracts_are_in_the_closed_package_set(self) -> None:
+        self.assertTrue(
+            {
+                "jarvis_inference/primary_profile.py",
+                "jarvis_inference/primary_quality_client.py",
+                "jarvis_inference/primary_qualification.py",
+                "jarvis_inference/private_temp.py",
+                "jarvis_inference/profile_performance.py",
+                "jarvis_inference/profile_report.py",
+                "jarvis_inference/windows_primary_fixture.py",
+                "jarvis_inference/windows_primary_metrics.py",
+                "jarvis_inference/windows_primary_report.py",
+                "jarvis_inference/windows_primary_runner.py",
+                "jarvis_inference/windows_acl.py",
+                "jarvis_inference/windows_process.py",
+            }.issubset(self.expected_modules)
+        )
+
     def test_closed_payload_survives_dirty_source_build_and_pep517_paths(
         self,
     ) -> None:

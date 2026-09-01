@@ -37,12 +37,38 @@ class ApplicationPathTests(unittest.TestCase):
             macos,
         )
         self.assertIn("orchestrator/src orchestrator/tests", macos)
-        self.assertIn("py -3.11 -m unittest discover -s tests -v", windows)
+        self.assertIn("& $VoicePython -m unittest discover -s tests -v", windows)
         self.assertIn(
-            "py -3.11 -m unittest discover -s orchestrator/tests -v",
+            "& $OrchestratorPython -m unittest discover -s orchestrator/tests -v",
+            windows,
+        )
+        self.assertIn(
+            "& $InferencePython -m unittest discover -s inference/tests -v",
+            windows,
+        )
+        self.assertIn(
+            "& $InferencePython .\\inference\\tests\\sdk_conformance.py -v",
             windows,
         )
         self.assertIn("orchestrator/src orchestrator/tests", windows)
+        self.assertIn("windows_asr_collector.spec", windows)
+        self.assertIn("cyrus-windows-asr-collector.exe", windows)
+        self.assertIn("1.2.1:4.8.1:6.21.0", windows)
+        self.assertIn('[ValidateSet("QualificationRunners", "VoicePackage")]', windows)
+        self.assertIn("-CudaRuntimeManifest is required", windows)
+        self.assertIn("verify-runners --manifest", windows)
+        self.assertIn("changed during Voice packaging", windows)
+        self.assertIn('"boot-smoke"', windows)
+        self.assertIn("Assert-CyrusTrackedTreeClean", windows)
+        self.assertIn("-IncludeUntracked", windows)
+        self.assertIn("Assert-CyrusPathOutsideRepository", windows)
+        self.assertIn("existing Voice package output directory was rejected", windows)
+        self.assertIn('inference\\.venv\\Scripts\\python.exe', windows)
+        self.assertNotIn("py -3.11 -m", windows)
+        self.assertNotIn("$env:PYTHONPATH", windows)
+        self.assertNotIn("$env:CUDA_PATH", windows)
+        self.assertIn('"OPENROUTER_API_KEY"', windows)
+        self.assertIn('"JARVIS_INFERENCE_API_KEY"', windows)
 
     def test_per_user_tree_contains_no_machine_or_user_derived_name(self) -> None:
         paths = ApplicationPaths.from_environment({"LOCALAPPDATA": str(Path.cwd() / ".test-local-appdata")})

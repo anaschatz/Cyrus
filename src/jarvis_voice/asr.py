@@ -142,3 +142,8 @@ class FasterWhisperCpuBackend:
             language=LanguageMetadata(detected_language, detected_score),
             asr_score=AsrScore(score, raw),
         )
+
+    def close(self) -> None:
+        """Release the persistent local model reference on runtime shutdown."""
+
+        self._model = None

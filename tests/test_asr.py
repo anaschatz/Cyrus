@@ -141,6 +141,19 @@ class AsrTests(unittest.TestCase):
         with self.assertRaisesRegex(BackendError, "asr.invalid_audio"):
             backend.transcribe(AudioChunk(array("f"), 48_000))
 
+    def test_close_releases_the_persistent_cpu_model(self) -> None:
+        backend = FasterWhisperCpuBackend(
+            str(self.directory),
+            model_factory=lambda *args, **kwargs: FakeModel(),
+            manifest=self.manifest,
+        )
+        backend.load()
+        self.assertIsNotNone(backend._model)
+
+        backend.close()
+
+        self.assertIsNone(backend._model)
+
     def test_compute_type_fallback_stays_on_cpu_types(self) -> None:
         self.assertEqual(choose_cpu_compute_type("float16", {"int8", "float32"}), "int8")
         with self.assertRaisesRegex(BackendError, "asr.cpu_compute_type_unsupported"):

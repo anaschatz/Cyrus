@@ -21,12 +21,13 @@ RESULT = TranscriptResult("Open it.", LanguageMetadata("en", 0.9), AsrScore(0.8,
 
 class Backend:
     def __init__(self, result=RESULT, error: BackendError | None = None) -> None:
-        self.result = result; self.error = error; self.calls = 0; self.cancelled = False
+        self.result = result; self.error = error; self.calls = 0; self.cancelled = False; self.closed = False
     def transcribe(self, audio):
         del audio; self.calls += 1
         if self.error: raise self.error
         return self.result
     def cancel_current(self): self.cancelled = True
+    def close(self): self.closed = True
 
 
 class BlockingBackend(Backend):
@@ -131,6 +132,24 @@ class AsrFactoryTests(unittest.TestCase):
         self.assertEqual(enabled.transcribe(audio), RESULT)
         with self.assertRaisesRegex(BackendError, "cuda.insufficient_free_vram"):
             FallbackAsrBackend(Backend(error=denial), Backend(), enabled=False, fallbackable_codes=frozenset({denial.code})).transcribe(audio)
+
+    def test_fallback_cancels_and_closes_both_persistent_backends(self) -> None:
+        cuda = Backend()
+        cpu = Backend()
+        backend = FallbackAsrBackend(
+            cuda,
+            cpu,
+            enabled=True,
+            fallbackable_codes=frozenset({"cuda.oom"}),
+        )
+
+        backend.cancel_current()
+        backend.close()
+
+        self.assertTrue(cuda.cancelled)
+        self.assertTrue(cpu.cancelled)
+        self.assertTrue(cuda.closed)
+        self.assertTrue(cpu.closed)
 
     def test_cancelled_async_result_is_retired_and_never_published(self) -> None:
         backend = BlockingBackend(); coordinator = AsyncTranscriptionCoordinator(backend)

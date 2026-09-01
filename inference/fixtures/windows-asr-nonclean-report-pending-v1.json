@@ -1,0 +1,24 @@
+{
+  "report_schema_version": 1,
+  "suite_id": "cyrus-windows-asr-nonclean-v1",
+  "status": "pending_native",
+  "authoritative_qualification": false,
+  "production_ready": false,
+  "categories": {
+    "short_under_1500ms": {
+      "status": "pending_native",
+      "sample_count": null,
+      "language_accuracy": null
+    },
+    "ambiguous": {
+      "status": "pending_native",
+      "sample_count": null,
+      "language_accuracy": null
+    },
+    "mixed_language": {
+      "status": "pending_native",
+      "sample_count": null,
+      "language_accuracy": null
+    }
+  }
+}

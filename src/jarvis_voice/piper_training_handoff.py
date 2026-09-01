@@ -7,8 +7,9 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from typing import Any
 
 from .errors import BackendError
 from .macos.compact_greek_tts_pilot import (
@@ -23,7 +24,6 @@ from .macos.compact_greek_tts_pilot import (
     STOMA_SPEAKER,
     STOMA_SPEAKER_CLIPS,
 )
-
 
 HANDOFF_SCHEMA = "jarvis.voice.piper-f1-wsl-handoff/1"
 BUNDLE_SCHEMA = "jarvis.voice.stoma-f1-training-bundle/1"
@@ -210,14 +210,18 @@ def write_piper_f1_handoff(path: str | Path, manifest: Mapping[str, object]) -> 
     descriptor, temporary_name = tempfile.mkstemp(prefix=".piper-f1-handoff-", dir=destination.parent)
     temporary = Path(temporary_name)
     try:
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, destination)
+        # Publish the complete inode without replacing a destination created
+        # after the initial validation.  The same-volume hard link is atomic
+        # and fails closed on a racing writer.
+        os.link(temporary, destination)
     finally:
-        if temporary.exists():
-            temporary.unlink()
+        temporary.unlink(missing_ok=True)
 
 
 def verify_piper_f1_handoff(transfer_root: str | Path, manifest_path: str | Path) -> dict[str, object]:

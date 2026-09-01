@@ -15,6 +15,12 @@ from typing import Any
 
 from .contracts import ALIAS_RE, Capabilities
 from .errors import ApplianceError, invalid, unsupported
+from .gemma4 import (
+    GEMMA4_PROMPT_PROFILE,
+    MODEL_FILENAME as GEMMA4_MODEL_FILENAME,
+    MODEL_SHA256 as GEMMA4_MODEL_SHA256,
+    MODEL_SIZE_BYTES as GEMMA4_MODEL_SIZE_BYTES,
+)
 from .limits import MANIFEST_BYTES
 from .strict_json import canonical_bytes, parse_body
 
@@ -50,7 +56,9 @@ class Manifest:
     model: dict[str, Any]
     python: dict[str, Any]
     capabilities: Capabilities
+    prompt_profile: dict[str, Any] | None
     qualification_report: Path
+    profile_qualification_report: Path | None
     artifacts: tuple[Artifact, ...]
     context_window: int
 
@@ -185,16 +193,180 @@ def _python(value: Any, target: str) -> tuple[dict[str, Any], list[Artifact]]:
     return obj, artifacts
 
 
-def load_manifest(path: Path) -> Manifest:
-    path = path.absolute()
-    raw_bytes = path.read_bytes()
-    if len(raw_bytes) > MANIFEST_BYTES:
+def _prompt_profile(value: Any, target: str, model: dict[str, Any]) -> dict[str, Any]:
+    if target != "windows-x86_64":
+        raise invalid("invalid_manifest", "A prompt profile is not valid for this platform.", "prompt_profile")
+    if not isinstance(value, dict) or canonical_bytes(value) != canonical_bytes(GEMMA4_PROMPT_PROFILE):
+        raise invalid("invalid_manifest", "The prompt profile identity is unsupported or incomplete.", "prompt_profile")
+    artifacts = model["artifacts"]
+    if len(artifacts) != 1:
+        raise invalid("invalid_manifest", "The Gemma prompt profile requires one text-only model artifact.", "model.artifacts")
+    artifact = artifacts[0]
+    if (
+        PurePosixPath(artifact["path"]).name != GEMMA4_MODEL_FILENAME
+        or artifact["size_bytes"] != GEMMA4_MODEL_SIZE_BYTES
+        or artifact["sha256"] != GEMMA4_MODEL_SHA256
+    ):
+        raise invalid("invalid_manifest", "The Gemma prompt profile does not match the declared model artifact.", "model.artifacts.0")
+    return value
+
+
+def _read_manifest_file(path: Path) -> bytes:
+    """Read one stable regular manifest without following a leaf link."""
+
+    try:
+        initial = path.lstat()
+    except OSError as exc:
+        raise invalid(
+            "invalid_manifest_path", "The manifest path cannot be inspected."
+        ) from exc
+    initial_reparse = bool(
+        os.name == "nt"
+        and getattr(initial, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+    if initial.st_size > MANIFEST_BYTES:
         raise invalid("manifest_too_large", "The manifest exceeds its size limit.")
+    if not stat.S_ISREG(initial.st_mode) or path.is_symlink() or initial_reparse:
+        raise invalid(
+            "invalid_manifest_path", "The manifest path is not a safe regular file."
+        )
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise invalid(
+            "invalid_manifest_path", "The manifest path cannot be opened safely."
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        opened_reparse = bool(
+            os.name == "nt"
+            and getattr(opened, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        )
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened_reparse
+            or (initial.st_dev, initial.st_ino) != (opened.st_dev, opened.st_ino)
+            or opened.st_size != initial.st_size
+            or opened.st_size > MANIFEST_BYTES
+        ):
+            raise invalid(
+                "invalid_manifest_path", "The manifest changed before it was read."
+            )
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read(MANIFEST_BYTES + 1)
+        completed = os.fstat(descriptor)
+        if (
+            len(raw) != opened.st_size
+            or len(raw) > MANIFEST_BYTES
+            or (completed.st_dev, completed.st_ino, completed.st_size)
+            != (opened.st_dev, opened.st_ino, opened.st_size)
+            or completed.st_mtime_ns != opened.st_mtime_ns
+        ):
+            raise invalid(
+                "invalid_manifest_path", "The manifest changed while it was read."
+            )
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+def _native_windows() -> bool:
+    return os.name == "nt"
+
+
+def _windows_local_drive_path(path: Path | PureWindowsPath) -> bool:
+    """Accept only an absolute drive-letter path, never UNC/device syntax."""
+
+    candidate = PureWindowsPath(str(path))
+    return bool(
+        re.fullmatch(r"[A-Za-z]:", candidate.drive)
+        and candidate.root == "\\"
+    )
+
+
+def _native_windows_drive_type(root: str) -> int:  # pragma: no cover - native Windows only
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        function = ctypes.windll.kernel32.GetDriveTypeW
+        function.argtypes = [wintypes.LPCWSTR]
+        function.restype = wintypes.UINT
+        return int(function(root))
+    except (AttributeError, OSError, TypeError, ValueError):
+        return 0
+
+
+def _windows_drive_is_local(path: Path | PureWindowsPath, drive_type_reader: Any = None) -> bool:
+    candidate = PureWindowsPath(str(path))
+    if not _windows_local_drive_path(candidate):
+        return False
+    reader = drive_type_reader or _native_windows_drive_type
+    try:
+        return reader(candidate.anchor) in {2, 3, 5, 6}
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _require_windows_local_drive_path(path: Path) -> None:
+    if _native_windows() and not _windows_drive_is_local(path):
+        raise invalid(
+            "invalid_manifest_path",
+            "The Windows manifest must be on an absolute local-drive path.",
+        )
+
+
+def _reject_reparse_ancestor_chain(path: Path) -> None:
+    """Reject an existing link/reparse component without resolving ``path``.
+
+    This is intentionally separate from the platform guard so the chain walk
+    can be regression-tested on hosts that do not have Windows reparse points.
+    Production invokes it only on Windows; POSIX deployments may legitimately
+    live below a symlinked system temporary directory.
+    """
+
+    for candidate in (path, *path.parents):
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise invalid(
+                "invalid_manifest_path",
+                "The manifest path ancestry cannot be inspected.",
+            ) from exc
+        attributes = getattr(info, "st_file_attributes", 0)
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        if stat.S_ISLNK(info.st_mode) or bool(attributes & reparse_flag):
+            raise invalid(
+                "invalid_manifest_path",
+                "The manifest path ancestry contains a Windows reparse point.",
+            )
+
+
+def _reject_windows_reparse_ancestors(path: Path) -> None:
+    if _native_windows():
+        _reject_reparse_ancestor_chain(path)
+
+
+def load_manifest(path: Path) -> Manifest:
+    # Inspect the caller-supplied syntax first.  On Windows, ``absolute()`` can
+    # turn a drive-relative path (``C:manifest.json``) into an apparently safe
+    # drive-rooted path and would erase the evidence we need to reject it.
+    _require_windows_local_drive_path(path)
+    path = path.absolute()
+    # Do this before either opening or resolving the manifest.  Resolving first
+    # would erase evidence that a Windows parent was a junction/reparse point.
+    _reject_windows_reparse_ancestors(path)
+    raw_bytes = _read_manifest_file(path)
     raw = parse_body(raw_bytes)
     top = _exact(
         raw,
         {"manifest_schema_version", "alias", "platform", "backend", "model", "python", "capabilities", "qualification_report"},
-        set(),
+        {"prompt_profile", "profile_qualification_report"},
         "manifest",
     )
     if top["manifest_schema_version"] != 1:
@@ -212,11 +384,45 @@ def load_manifest(path: Path) -> Manifest:
     python, python_artifacts = _python(top["python"], target)
     if (target == "windows-x86_64") != (model["format"] == "gguf"):
         raise invalid("invalid_manifest", "The model format does not match the platform.", "model.format")
+    prompt_profile = _prompt_profile(top["prompt_profile"], target, model) if "prompt_profile" in top else None
+    if target == "windows-x86_64" and prompt_profile is None and any(
+        capabilities_raw[name] for name in ("tools", "json_object", "json_schema")
+    ):
+        raise invalid(
+            "invalid_manifest",
+            "Windows structured or tool capabilities require an exact prompt profile.",
+            "prompt_profile",
+        )
     root = path.parent.resolve(strict=True)
-    report_relative = _relative_path(top["qualification_report"], "qualification_report")
     report = resolve_local(root, top["qualification_report"], "qualification_report", must_exist=False)
     if report.exists() and not report.is_file():
         raise invalid("invalid_manifest_path", "The qualification report path is not a regular file.", "qualification_report")
+    profile_report: Path | None = None
+    if prompt_profile is not None:
+        if top.get("profile_qualification_report") != "qualification-profile-local-primary.json":
+            raise invalid(
+                "invalid_manifest",
+                "The Windows primary profile qualification report is required.",
+                "profile_qualification_report",
+            )
+        profile_report = resolve_local(
+            root,
+            top["profile_qualification_report"],
+            "profile_qualification_report",
+            must_exist=False,
+        )
+        if profile_report.exists() and not profile_report.is_file():
+            raise invalid(
+                "invalid_manifest_path",
+                "The profile qualification report path is not a regular file.",
+                "profile_qualification_report",
+            )
+    elif "profile_qualification_report" in top:
+        raise invalid(
+            "invalid_manifest",
+            "A profile qualification report is valid only for the exact Windows primary profile.",
+            "profile_qualification_report",
+        )
     artifacts = tuple(backend_artifacts + model_artifacts + python_artifacts)
     paths = [artifact.path for artifact in artifacts]
     if len(paths) != len(set(paths)):
@@ -225,7 +431,8 @@ def load_manifest(path: Path) -> Manifest:
         resolve_local(root, artifact.path, "artifact")
     return Manifest(
         path, root, top, hashlib.sha256(canonical_bytes(top)).hexdigest(), top["alias"], target,
-        backend, model, python, Capabilities(**capabilities_raw), report, artifacts, window,
+        backend, model, python, Capabilities(**capabilities_raw), prompt_profile,
+        report, profile_report, artifacts, window,
     )
 
 
@@ -390,10 +597,52 @@ def _gateway_wheel_identity(manifest: Manifest) -> dict[str, Any] | None:
         return None
 
 
-def _ram_bytes() -> int | None:
+def _native_windows_ram_bytes() -> int | None:  # pragma: no cover - native Windows only
     try:
-        if os.name == "posix":
-            return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        import ctypes
+        from ctypes import wintypes
+
+        class MemoryStatusEx(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", wintypes.DWORD),
+                ("dwMemoryLoad", wintypes.DWORD),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = MemoryStatusEx()
+        status.dwLength = ctypes.sizeof(status)
+        function = ctypes.windll.kernel32.GlobalMemoryStatusEx
+        function.argtypes = [ctypes.POINTER(MemoryStatusEx)]
+        function.restype = wintypes.BOOL
+        if not function(ctypes.byref(status)):
+            return None
+        total = int(status.ullTotalPhys)
+        return total if 0 < total <= 2**64 - 1 else None
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _ram_bytes(
+    *,
+    platform_name: str | None = None,
+    windows_reader: Any = None,
+) -> int | None:
+    selected_platform = os.name if platform_name is None else platform_name
+    try:
+        if selected_platform == "nt":
+            value = (windows_reader or _native_windows_ram_bytes)()
+            return value if type(value) is int and 0 < value <= 2**64 - 1 else None
+        if selected_platform == "posix":
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            value = pages * page_size
+            return value if type(value) is int and value > 0 else None
     except (ValueError, OSError, AttributeError):
         pass
     return None

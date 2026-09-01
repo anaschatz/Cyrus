@@ -45,13 +45,18 @@ Run separately:
 5. The same LLM workload with CUDA ASR.
 6. Barge-in while a previous LLM turn still occupies GPU resources.
 
-For each approved profile collect at least:
+The authoritative clean qualification population is:
 
-- 20 Greek utterances;
-- 20 English utterances;
+- 100 Greek utterances with matching private reference sidecars;
+- 100 English utterances with matching private reference sidecars;
+- at least 95 correct language IDs and at most 20% aggregate WER independently
+  for each locale;
+- exact cases `001..050` per locale for the 100-case coexistence subset, with
+  at least 80 measured real LLM/ASR overlaps;
 - 5 no-speech turns;
 - 10 interruptions;
-- 5 forced CPU fallbacks;
+- exactly 5 bilingual CPU routes through production `FallbackAsrBackend`,
+  selected by an explicit collector-local injected CUDA admission failure;
 - 5 worker crash/restart simulations.
 
 Record failures and p50/p95 for PTT_UP → transcript, CUDA inference, worker spawn/load/shutdown, and CPU fallback. Record VRAM before worker, after model load, minimum free VRAM observed during polling, and after worker exit. The polling interval must accompany the data; the observation is not an absolute hardware peak.
@@ -67,5 +72,14 @@ Approval requires:
 - turn-scoped worker exit before transcript submission;
 - observed VRAM return after turn-scoped exit;
 - LLM p95 latency/throughput regression no greater than 15%, unless another threshold is explicitly accepted.
+- ASR p95 regression no greater than 15% on the same coexistence population;
+- at least 2,048 MiB minimum observed free VRAM during bounded 100 ms polling;
+- zero measured NVIDIA thermal/power throttle reasons.
+
+The injected five-case CPU route proves the pinned CPU `int8` model loads and
+the production fallback wrapper routes correctly. It does not simulate or
+claim a real VRAM-exhaustion event. Short, ambiguous and mixed-language clips
+remain in a separate non-authoritative report and cannot count toward clean
+language-ID or WER acceptance.
 
 The resource check is not a reservation guarantee. Normal ASR precedes the new LLM generation, but barge-in can overlap with a previous LLM turn; that race must be measured explicitly.

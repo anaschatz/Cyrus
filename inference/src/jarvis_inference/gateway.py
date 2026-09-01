@@ -21,23 +21,36 @@ from .contracts import (
     validate_generated_tool,
     validate_structured_content,
 )
-from .engine import Engine, EngineFailure, EngineProtocolFailure, GenerationEvent, PreparedPrompt
+from .durable import read_report
+from .engine import (
+    Engine,
+    EngineFailure,
+    EngineProtocolFailure,
+    GenerationEvent,
+    PreparedPrompt,
+)
 from .errors import ApplianceError, backend_error
 from .limits import (
     BLOCKED_WRITE_SECONDS,
     BODY_BYTES,
     BODY_SECONDS,
     CANCEL_SECONDS,
-    OUTBOUND_EVENTS,
     OUTBOUND_BYTES,
+    OUTBOUND_EVENTS,
     PREFILL_SECONDS,
     SSE_PAYLOAD_BYTES,
     STREAM_IDLE_SECONDS,
     TOTAL_SECONDS,
 )
-from .manifest import Manifest, hash_file, resolve_local, runtime_identity, verify_artifacts
+from .manifest import (
+    Manifest,
+    hash_file,
+    resolve_local,
+    runtime_identity,
+    verify_artifacts,
+)
+from .profile_report import profile_report_matches
 from .strict_json import canonical_bytes, parse_body
-from .durable import read_report
 
 HOST = "127.0.0.1"
 PORT = 8766
@@ -125,19 +138,26 @@ class Production:
     manifest: Manifest
     secret: str
     engine_factory: Any
+    profile_validator: Any = profile_report_matches
     engine: Engine | None = None
     identity: dict[str, Any] | None = None
     admission: threading.Lock = field(init=False)
+    engine_transition: threading.Lock = field(init=False)
     state_lock: threading.Lock = field(init=False)
     stop: threading.Event = field(init=False)
     loader: threading.Thread | None = field(init=False, default=None)
     ready_state: bool = field(init=False, default=False)
     loading_engine: Engine | None = field(init=False, default=None)
+    teardown_proven: bool = field(init=False, default=False)
+    loader_exited: threading.Event = field(init=False)
+    loader_failure: BaseException | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.admission = threading.Lock()
+        self.engine_transition = threading.Lock()
         self.state_lock = threading.Lock()
         self.stop = threading.Event()
+        self.loader_exited = threading.Event()
 
     def refresh(self) -> bool:
         """Return the cached state; readiness handlers never load an engine."""
@@ -151,10 +171,23 @@ class Production:
         with self.state_lock:
             if self.loader is not None:
                 return
+            if self.stop.is_set():
+                raise EngineFailure("service is shutting down")
+            self.teardown_proven = False
+            self.loader_failure = None
+            self.loader_exited.clear()
             self.loader = threading.Thread(target=self._supervise, name="jarvis-inference-loader", daemon=True)
             self.loader.start()
 
     def _supervise(self) -> None:
+        try:
+            self._supervise_loop()
+        except BaseException as exc:  # noqa: BLE001 - surfaced by close proof
+            self.loader_failure = exc
+        finally:
+            self.loader_exited.set()
+
+    def _supervise_loop(self) -> None:
         while not self.stop.is_set():
             current = runtime_identity(self.manifest, package_digest(), effective_configuration())
             report = read_report(self.manifest.qualification_report)
@@ -164,6 +197,7 @@ class Production:
                 and report.get("status") == "pass"
                 and report.get("identity") == current
                 and self._report_artifacts_match(report)
+                and self.profile_validator(self.manifest, current, report)
             )
             with self.state_lock:
                 active = self.engine
@@ -184,46 +218,79 @@ class Production:
             elif loading is not None:
                 pass
             elif active is None or not identity_matches or not active.ready():
-                candidate = None
-                try:
-                    if active is not None:
-                        breaker = getattr(active, "breaker", None)
-                        already_recorded = getattr(active, "restart_recorded", False)
-                        active.close()
-                        if breaker is not None and not already_recorded:
-                            breaker.record_restart()
-                        with self.state_lock:
-                            if self.engine is active:
-                                self.engine = None
-                                self.ready_state = False
-                    candidate = self.engine_factory(self.manifest)
-                    with self.state_lock:
-                        self.loading_engine = candidate
-                    start = getattr(candidate, "start", None)
-                    if callable(start):
-                        start(time.monotonic() + 600.0)
-                    if not candidate.ready():
-                        raise EngineFailure("engine did not become ready")
-                    with self.state_lock:
-                        if self.stop.is_set():
-                            candidate.close()
-                        else:
-                            self.engine = candidate
-                            self.identity = current
-                            self.ready_state = True
-                        if self.loading_engine is candidate:
-                            self.loading_engine = None
-                except (ApplianceError, EngineFailure, OSError):
-                    with self.state_lock:
-                        if candidate is not None and self.loading_engine is candidate:
-                            self.loading_engine = None
-                        self.ready_state = False
-                    if candidate is not None:
-                        candidate.close()
+                with self.engine_transition:
+                    self._load_engine(current)
             else:
                 with self.state_lock:
                     self.ready_state = True
             self.stop.wait(1.0)
+
+    def _load_engine(self, current: dict[str, Any]) -> None:
+        """Load at most one engine after rechecking transition-owned state."""
+
+        with self.state_lock:
+            active = self.engine
+            loading = self.loading_engine
+            identity_matches = self.identity == current
+        if self.stop.is_set() or loading is not None:
+            return
+        if active is not None and identity_matches and active.ready():
+            with self.state_lock:
+                if self.engine is active:
+                    self.ready_state = True
+            return
+        candidate = None
+        try:
+            if active is not None:
+                breaker = getattr(active, "breaker", None)
+                already_recorded = getattr(active, "restart_recorded", False)
+                active.close()
+                if breaker is not None and not already_recorded:
+                    breaker.record_restart()
+                with self.state_lock:
+                    if self.engine is active:
+                        self.engine = None
+                        self.ready_state = False
+            if self.stop.is_set():
+                return
+            candidate = self.engine_factory(self.manifest)
+            with self.state_lock:
+                shutting_down = self.stop.is_set()
+                if not shutting_down:
+                    self.loading_engine = candidate
+            if shutting_down:
+                candidate.close()
+                return
+            start = getattr(candidate, "start", None)
+            if callable(start):
+                start(time.monotonic() + 600.0)
+            if self.stop.is_set():
+                candidate.close()
+                with self.state_lock:
+                    if self.loading_engine is candidate:
+                        self.loading_engine = None
+                return
+            if not candidate.ready():
+                raise EngineFailure("engine did not become ready")
+            with self.state_lock:
+                if self.stop.is_set():
+                    publish = False
+                else:
+                    self.engine = candidate
+                    self.identity = current
+                    self.ready_state = True
+                    publish = True
+                if self.loading_engine is candidate:
+                    self.loading_engine = None
+            if not publish:
+                candidate.close()
+        except (ApplianceError, EngineFailure, OSError):
+            with self.state_lock:
+                if candidate is not None and self.loading_engine is candidate:
+                    self.loading_engine = None
+                self.ready_state = False
+            if candidate is not None:
+                candidate.close()
 
     def _report_artifacts_match(self, report: dict[str, Any]) -> bool:
         runner = report.get("fixture_runner")
@@ -240,21 +307,78 @@ class Production:
 
     def close(self) -> None:
         self.stop.set()
+        self.teardown_proven = False
+        failures: list[BaseException] = []
+        active, loading = self._detach_engines()
+        self._close_detached(active, loading, failures)
+        loader = self.loader
+        if loader is threading.current_thread():
+            failures.append(EngineFailure("loader cannot prove its own shutdown"))
+        elif loader is not None:
+            loader.join(timeout=10.0)
+            if loader.is_alive() or not self.loader_exited.is_set():
+                failures.append(EngineFailure("loader shutdown was not proven"))
+        if self.loader_failure is not None:
+            failures.append(self.loader_failure)
+        # A candidate can be created or published after the first detach but
+        # before the loader observes stop.  Re-drain only after the join proof.
+        late_active, late_loading = self._detach_engines()
+        self._close_detached(late_active, late_loading, failures)
+        loader_stopped = loader is None or (
+            loader is not threading.current_thread()
+            and not loader.is_alive()
+            and self.loader_exited.is_set()
+        )
+        with self.state_lock:
+            empty = self.engine is None and self.loading_engine is None
+            self.teardown_proven = bool(loader_stopped and empty and not failures)
+        if failures:
+            raise EngineFailure("inference teardown could not be proven") from failures[0]
+
+    def _detach_engines(self) -> tuple[Engine | None, Engine | None]:
         with self.state_lock:
             self.ready_state = False
+            self.identity = None
             active = self.engine
             loading = self.loading_engine
             self.engine = None
             self.loading_engine = None
-        if active is not None:
-            active.close()
-        if loading is not None and loading is not active:
-            loading.close()
+        return active, loading
+
+    @staticmethod
+    def _close_detached(
+        active: Engine | None,
+        loading: Engine | None,
+        failures: list[BaseException],
+    ) -> None:
+        for engine in (active, loading if loading is not active else None):
+            if engine is None:
+                continue
+            try:
+                engine.close()
+            except BaseException as exc:  # noqa: BLE001 - drain all owned engines
+                failures.append(exc)
+
+    def require_teardown_proof(self) -> None:
         loader = self.loader
-        if loader is not None and loader is not threading.current_thread():
-            loader.join(timeout=10.0)
+        with self.state_lock:
+            proven = bool(
+                self.teardown_proven
+                and self.engine is None
+                and self.loading_engine is None
+                and (
+                    loader is None
+                    or (not loader.is_alive() and self.loader_exited.is_set())
+                )
+            )
+        if not proven:
+            raise EngineFailure("inference teardown was not proven")
 
     def restart_engine(self, deadline: float) -> Engine:
+        with self.engine_transition:
+            return self._restart_engine(deadline)
+
+    def _restart_engine(self, deadline: float) -> Engine:
         with self.state_lock:
             active = self.engine
             self.engine = None
@@ -374,6 +498,59 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     raise ApplianceError(400, "invalid_qualification_control", "The qualification control payload is invalid.")
                 self._json(200, inject_crash())
                 return
+            arm_generation = getattr(
+                self.production, "qualification_arm_generation", None
+            )
+            if (
+                self.path == "/jarvis/qualification/generation/arm"
+                and callable(arm_generation)
+            ):
+                self._media_headers()
+                document = parse_body(self._read_body(started))
+                if document != {}:
+                    raise ApplianceError(
+                        400,
+                        "invalid_qualification_control",
+                        "The qualification control payload is invalid.",
+                    )
+                self._json(200, arm_generation())
+                return
+            generation_metric = getattr(
+                self.production, "qualification_generation_metric", None
+            )
+            if (
+                self.path == "/jarvis/qualification/generation/metric"
+                and callable(generation_metric)
+            ):
+                self._media_headers()
+                document = parse_body(self._read_body(started))
+                if (
+                    not isinstance(document, dict)
+                    or set(document) != {"expected_serial"}
+                    or type(document["expected_serial"]) is not int
+                    or document["expected_serial"] <= 0
+                ):
+                    raise ApplianceError(
+                        400,
+                        "invalid_qualification_control",
+                        "The qualification control payload is invalid.",
+                    )
+                self._json(
+                    200, generation_metric(document["expected_serial"])
+                )
+                return
+            tokenize = getattr(self.production, "qualification_tokenize", None)
+            if self.path == "/jarvis/qualification/tokenize" and callable(tokenize):
+                self._media_headers()
+                document = parse_body(self._read_body(started))
+                request = normalize_request(
+                    document,
+                    alias=self.production.manifest.alias,
+                    capabilities=self.production.manifest.capabilities,
+                    context_window=self.production.manifest.context_window,
+                )
+                self._json(200, tokenize(request))
+                return
             if self.path != "/v1/chat/completions":
                 raise ApplianceError(404, "not_found", "The endpoint does not exist.")
             self._media_headers()
@@ -389,6 +566,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if not self.production.admission.acquire(blocking=False):
                 raise ApplianceError(429, "server_busy", "The inference appliance is busy.")
             try:
+                bind_request_start = getattr(
+                    self.production, "qualification_bind_request_start", None
+                )
+                if callable(bind_request_start):
+                    bind_request_start(started)
                 self._complete(request, started)
             finally:
                 self.production.admission.release()

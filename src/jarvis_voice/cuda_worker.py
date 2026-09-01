@@ -5,6 +5,7 @@ from __future__ import annotations
 import multiprocessing
 import threading
 import time
+import unicodedata
 import uuid
 from array import array
 from collections.abc import Callable

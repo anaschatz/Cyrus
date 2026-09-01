@@ -173,6 +173,7 @@ def doctor_report_config(
     manifest = validate_model_directory(
         config.whisper_model_directory,
         selected_manifest,
+        reject_links=is_windows,
     )
     model: dict[str, Any] = {
         "profile": config.asr.model_profile,

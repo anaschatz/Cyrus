@@ -1,0 +1,71 @@
+{
+  "report_schema_version": 1,
+  "suite_id": "cyrus-windows-primary-performance-soak-v1",
+  "status": "pending_native",
+  "authoritative_qualification": false,
+  "production_ready": false,
+  "fixture_sha256": "75572ca3e34874aa93dc210bc9efd34e11fb28c19776ff7d3b489c15c86a8c0f",
+  "expanded_requests_sha256": "ec0c8bc3cb49776142fc38a078448b416cf5fb32399cf438d3c9e6db02f4c3c0",
+  "rendered_prompt_texts_sha256": "e3520839aa869ecf826160cebbdcbaf8023008ca1d24b9881382d5a936d4de50",
+  "profile_id": "local-primary",
+  "platform": "windows-x86_64",
+  "native_identity": {
+    "manifest_sha256": null,
+    "runtime_identity_sha256": null,
+    "tokenizer_identity_sha256": null,
+    "driver_version": null,
+    "compute_runtime": null,
+    "windows_power_scheme_guid": null
+  },
+  "performance": {
+    "status": "pending_native",
+    "timed_requests_completed": null,
+    "cold_load_to_ready_samples_seconds": [],
+    "native_rendered_token_validation": "pending_native",
+    "per_case_observations": [],
+    "metrics": {
+      "ttft_p50_seconds": null,
+      "ttft_p95_seconds": null,
+      "end_to_end_p50_seconds": null,
+      "end_to_end_p95_seconds": null,
+      "projected_128_token_e2e_p95_seconds": null,
+      "decode_p5_tokens_per_second": null,
+      "decode_p50_tokens_per_second": null,
+      "decode_p95_tokens_per_second": null,
+      "cold_load_to_ready_p95_seconds": null
+    },
+    "thresholds_evaluated": false
+  },
+  "soak": {
+    "status": "pending_native",
+    "monotonic_seconds_observed": null,
+    "cycles_completed": null,
+    "full_restarts_completed": null,
+    "event_counts": null,
+    "memory_growth_evaluated": false,
+    "epoch_sample_counts": [],
+    "max_epoch_growth_fraction": null,
+    "global_growth_fraction": null
+  },
+  "windows_coexistence": {
+    "status": "pending_native",
+    "minimum_free_vram_mib_observed": null,
+    "overlapping_utterances": null,
+    "greek_language_correct": null,
+    "english_language_correct": null,
+    "greek_reference_words": null,
+    "greek_word_errors": null,
+    "english_reference_words": null,
+    "english_word_errors": null,
+    "forced_cpu_fallbacks": null,
+    "asr_p95_degradation_ratio": null,
+    "llm_p95_regression_ratio": null,
+    "duplicate_final_transcripts": null,
+    "stale_results": null,
+    "thresholds_evaluated": false
+  },
+  "privacy": {
+    "content_payloads_in_report": false,
+    "content_logging_gate": "pending_native"
+  }
+}

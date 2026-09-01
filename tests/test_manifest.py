@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import _bootstrap  # noqa: F401
 
@@ -13,6 +15,9 @@ from jarvis_voice.manifest import (
     ModelFileSpec,
     ModelManifest,
     model_manifest_for_profile,
+    _is_local_windows_absolute,
+    _is_reparse,
+    _windows_drive_is_local,
     validate_model_directory,
 )
 
@@ -45,6 +50,102 @@ class ManifestTests(unittest.TestCase):
         result = validate_model_directory(self.directory, self.manifest)
         self.assertTrue(result.ok)
         self.assertEqual(result.files_checked, 2)
+
+    def test_strict_windows_pack_rejects_symlinked_members(self) -> None:
+        pack = self.directory / "pack"
+        pack.mkdir()
+        blob = self.directory / "model-blob"
+        blob.write_bytes(self.contents["model.bin"])
+        (pack / "config.json").write_bytes(self.contents["config.json"])
+        (pack / "model.bin").symlink_to(blob)
+
+        result = validate_model_directory(
+            pack,
+            self.manifest,
+            reject_links=True,
+        )
+
+        self.assertEqual(result.code, "model.unsafe_artifact")
+        self.assertEqual(result.artifact_name, "model.bin")
+
+    def test_strict_windows_pack_rejects_symlinked_directory(self) -> None:
+        actual = self.directory / "actual"
+        actual.mkdir()
+        for name, content in self.contents.items():
+            (actual / name).write_bytes(content)
+        linked = self.directory / "linked"
+        linked.symlink_to(actual, target_is_directory=True)
+
+        result = validate_model_directory(
+            linked,
+            self.manifest,
+            reject_links=True,
+        )
+
+        self.assertEqual(result.code, "model.unsafe_directory")
+
+    def test_strict_windows_pack_rejects_symlinked_parent_component(self) -> None:
+        actual_parent = self.directory / "actual-parent"
+        actual_parent.mkdir()
+        pack = actual_parent / "pack"
+        pack.mkdir()
+        for name, content in self.contents.items():
+            (pack / name).write_bytes(content)
+        linked_parent = self.directory / "linked-parent"
+        linked_parent.symlink_to(actual_parent, target_is_directory=True)
+
+        result = validate_model_directory(
+            linked_parent / "pack",
+            self.manifest,
+            reject_links=True,
+        )
+
+        self.assertEqual(result.code, "model.unsafe_directory")
+
+    def test_windows_reparse_attribute_is_detected_portably(self) -> None:
+        metadata = SimpleNamespace(
+            st_file_attributes=getattr(
+                stat,
+                "FILE_ATTRIBUTE_REPARSE_POINT",
+                0x400,
+            )
+        )
+        self.assertTrue(_is_reparse(metadata))
+
+    def test_windows_model_paths_reject_unc_device_and_network_drives(self) -> None:
+        self.assertTrue(_is_local_windows_absolute(r"C:\models\whisper"))
+        self.assertFalse(_is_local_windows_absolute(r"\\server\share\whisper"))
+        self.assertFalse(_is_local_windows_absolute(r"\\?\C:\models\whisper"))
+        self.assertTrue(
+            _windows_drive_is_local(
+                r"C:\models\whisper",
+                drive_type_reader=lambda _root: 3,
+            )
+        )
+        self.assertFalse(
+            _windows_drive_is_local(
+                r"Z:\models\whisper",
+                drive_type_reader=lambda _root: 4,
+            )
+        )
+        self.assertFalse(
+            _windows_drive_is_local(
+                r"C:\models\whisper",
+                drive_type_reader=lambda _root: 0,
+            )
+        )
+
+    def test_strict_windows_pack_rejects_hidden_or_directory_members(self) -> None:
+        self.write_valid_pack()
+        (self.directory / ".cache").mkdir()
+
+        result = validate_model_directory(
+            self.directory,
+            self.manifest,
+            reject_links=True,
+        )
+
+        self.assertEqual(result.code, "model.unexpected_artifact")
 
     def test_missing_file(self) -> None:
         (self.directory / "config.json").write_bytes(self.contents["config.json"])

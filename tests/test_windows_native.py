@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import sys
+import os
 import shutil
+import sys
 import unittest
 
 import _bootstrap  # noqa: F401
@@ -20,7 +21,11 @@ class NativeWindowsSmokeTests(unittest.TestCase):
         self.assertIsNotNone(ctypes.windll.kernel32.SetDefaultDllDirectories)
 
 
-@unittest.skipUnless(sys.platform == "win32", "native Windows 11 release host required")
+@unittest.skipUnless(
+    sys.platform == "win32"
+    and os.environ.get("CYRUS_NATIVE_RELEASE_HOST_TEST") == "1",
+    "explicit native Windows 11 release-host qualification required",
+)
 class NativeQualificationHostTests(unittest.TestCase):
     def test_release_host_is_windows_11_x64_python_311(self) -> None:
         from jarvis_voice.qualification import host_qualification

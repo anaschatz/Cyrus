@@ -20,7 +20,7 @@ macos = ["sounddevice==0.5.3", "soxr==1.1.0", "onnxruntime==1.27.0", "kokoro-onn
 macos-cpu-smoke = ["faster-whisper==1.2.1", "sounddevice==0.5.3", "soxr==1.1.0", "onnxruntime==1.27.0", "kokoro-onnx==0.6.1", "websockets>=15,<16"]
 pocket-tts = ["pocket-tts==2.1.0", "torch==2.13.0", "PyYAML==6.0.3"]
 packaging = ["pyinstaller==6.21.0"]
-dev = []
+dev = ["setuptools==84.0.0", "wheel==0.46.3"]
 
 [project.scripts]
 cyrus-voice = "jarvis_voice.cli:main"

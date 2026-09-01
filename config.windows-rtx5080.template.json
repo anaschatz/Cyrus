@@ -1,0 +1,149 @@
+{
+  "ptt_key": "F9",
+  "ptt_queue_capacity": 64,
+  "audio_queue_capacity": 256,
+  "maximum_hold_seconds": 30.0,
+  "maximum_utterance_seconds": 30.0,
+  "audio_input_device": null,
+  "whisper_model_directory": null,
+  "application": {
+    "shutdown_timeout_seconds": 5.0,
+    "log_maximum_bytes": 1048576,
+    "log_backup_count": 3
+  },
+  "asr": {
+    "model_profile": "large-v3-turbo",
+    "execution_profile": "cuda",
+    "cpu_compute_type": "int8",
+    "cuda": {
+      "device_index": 0,
+      "compute_type": "int8_float16",
+      "residency": "turn_scoped",
+      "minimum_free_vram_mb": 2048,
+      "reserve_for_other_workloads_mb": 2048,
+      "fallback_to_cpu": true,
+      "worker_start_timeout_seconds": 30.0,
+      "transcription_timeout_seconds": 120.0,
+      "warm_restart_limit": 1,
+      "vram_poll_interval_ms": 100
+    }
+  },
+  "scheduler": {
+    "enabled": false,
+    "compatibility_manifest_path": null,
+    "compatibility_manifest_sha256": null,
+    "native_qualification_path": null,
+    "native_qualification_sha256": null,
+    "tts_qualification_path": null,
+    "tts_qualification_sha256": null,
+    "full_body_when_locked": false,
+    "native_helper_path": null,
+    "native_helper_sha256": null,
+    "native_helper_code_identity_sha256": null,
+    "callback_qualification_path": null,
+    "callback_qualification_sha256": null
+  },
+  "vad": {
+    "artifact": {
+      "path": null,
+      "size": null,
+      "sha256": null
+    },
+    "threshold": 0.5,
+    "minimum_speech_ms": 80,
+    "padding_ms": 80
+  },
+  "orchestrator_url": "ws://127.0.0.1:8765",
+  "voice_auth_key_file": null,
+  "windows_tts_backend": "sapi5",
+  "sapi_voices": {
+    "el-GR": "",
+    "en-US": ""
+  },
+  "pocket_tts": {
+    "model": {
+      "path": null,
+      "size": null,
+      "sha256": null
+    },
+    "tokenizer": {
+      "path": null,
+      "size": null,
+      "sha256": null
+    },
+    "voice_state": {
+      "path": null,
+      "size": null,
+      "sha256": null
+    },
+    "temperature": 0.7,
+    "max_tokens": 50,
+    "warm_on_start": true
+  },
+  "macos": {
+    "asr_backend": "whisper_cpp",
+    "tts_backend": "system_say",
+    "whisper_cpp": {
+      "revision": "v1.9.2",
+      "executable": {
+        "path": null,
+        "size": null,
+        "sha256": null
+      },
+      "model": {
+        "path": null,
+        "size": null,
+        "sha256": null
+      },
+      "coreml_encoder": {
+        "revision": null,
+        "directory": null,
+        "files": []
+      },
+      "language": "auto",
+      "threads": 4,
+      "qualified_audio_context": 0,
+      "qualified_audio_context_minimum_seconds": 3.0,
+      "qualified_audio_context_maximum_seconds": 12.0,
+      "startup_timeout_seconds": 30.0,
+      "request_timeout_seconds": 120.0,
+      "maximum_response_bytes": 1048576
+    },
+    "greektts15": {
+      "model_root": null,
+      "approval_manifest_path": null,
+      "approval_manifest_sha256": null,
+      "repository_root": null,
+      "warm_on_start": true,
+      "worker_python": {
+        "path": null,
+        "size": null,
+        "sha256": null
+      }
+    },
+    "kokoro_onnx": {
+      "model": {
+        "path": null,
+        "size": null,
+        "sha256": null
+      },
+      "voices": {
+        "path": null,
+        "size": null,
+        "sha256": null
+      },
+      "language": "en-gb",
+      "speed": 0.96,
+      "voice_mix": {
+        "bm_george": 0.7,
+        "bm_fable": 0.3
+      },
+      "warm_on_start": true
+    },
+    "system_voices": {
+      "el-GR": "",
+      "en-US": ""
+    }
+  },
+  "logging_level": "INFO"
+}

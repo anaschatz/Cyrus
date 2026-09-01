@@ -5,23 +5,47 @@ Milestone 3 is source-complete and fake-verified on the development host. A rele
 ## Approved shape
 
 - CPython 3.11 x64 and `PyInstaller==6.21.0` in a pre-approved offline build environment.
-- Windowed `onedir`, `asInvoker`, no UPX and no `onefile` extraction.
+- The final Voice app is windowed `onedir`, `asInvoker`, with no UPX. The three
+  earlier qualification runners are deliberately separate console `onefile`
+  artifacts and are never rebuilt by the Voice-package stage.
 - Native `Shell_NotifyIconW` tray with `NIM_SETVERSION` and `TaskbarCreated` recovery.
 - Config, model, Silero artifact, logs and state remain outside the application directory. The default root is `%LOCALAPPDATA%\JARVIS Voice`.
 - The runtime hook narrows the DLL search to Windows' default safe directories plus the frozen `_internal` directory. It does not mutate machine or process `PATH`.
 - The distribution manifest is a deterministic hash inventory. It detects accidental or malicious file changes but is not an authenticity root.
 
-CUDA is not a release-packaging assumption. Do not add CUDA/cuDNN DLLs until the Milestone 2 native matrix, licenses and representative LLM coexistence have been approved.
+CUDA is an explicit private qualification input, not a machine-`PATH`
+assumption. Approve the exact CUDA/cuDNN versions, licenses and rollback first;
+then create the canonical bundle manifest described in
+[the native runner contract](../inference/docs/windows-native-fixture-runner.md).
+No proprietary DLL or host-specific hash is committed to this repository.
 
 ## Offline development build
 
-Do not let the script install anything. First provision and approve the exact environment, then run:
+Do not let the script install anything. Qualification runners are built and
+sealed before model qualification. The later Voice package verifies their
+existing hashes and cannot rebuild them:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1 `
+  -Stage QualificationRunners `
+  -CudaRuntimeManifest C:\CYRUS\private\cuda-runtime-manifest.json `
+  -RunnerOutputDirectory C:\CYRUS\staging\qualification-runners
+
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1 `
+  -Stage VoicePackage `
+  -RunnerBuildManifest C:\CYRUS\staging\qualification-runners\qualification-runners-manifest.json
 ```
 
-The spec deliberately includes no config, model, ONNX VAD file, SAPI voice, certificate, installer, updater or telemetry endpoint. Inspect `dist\JARVIS Voice`, the PyInstaller warning file and `distribution-manifest.json` before proceeding.
+Every real PyInstaller process runs with Python isolated mode. Source/spec,
+runtime-hook, interpreter, CUDA and output inputs must be regular paths on a
+fixed local drive with no reparse component. The script also refuses any
+tracked or untracked source-tree change before it executes a build. The ASR
+collector embeds only the exact manifest-bound CUDA/cuDNN DLLs and boot-smokes
+without ambient `PATH`.
+The Voice spec deliberately includes no config, model, ONNX VAD file, SAPI
+voice, certificate, installer, updater or telemetry endpoint. Inspect
+`dist\JARVIS Voice`, the PyInstaller warning file and
+`distribution-manifest.json` before proceeding.
 
 Before distribution, archive the exact dependency lock, licenses and required notices/SBOM. PyInstaller's documented bootloader exception permits shipping generated bundles under another license, but it does not override the licenses of Python, faster-whisper/CTranslate2, PortAudio, SoXR, ONNX Runtime, WebSockets, pywin32 or any other collected dependency.
 
@@ -42,7 +66,7 @@ Signing is deliberately not automated by the repository and requires explicit ce
 
 ```powershell
 signtool verify /pa /v /tw ".\dist\JARVIS Voice\JARVIS Voice.exe"
-py -3.11 -m jarvis_voice verify-dist --directory ".\dist\JARVIS Voice"
+.\.venv\Scripts\python.exe -I -m jarvis_voice verify-dist --directory ".\dist\JARVIS Voice"
 ```
 
 Record SignTool's exit code, certificate subject/thumbprint, timestamp, Windows version, Python/PyInstaller lock and final manifest hash in the release evidence. Do not put a PFX, password or certificate material in this repository or command history.
@@ -51,4 +75,8 @@ After signing and post-sign manifest regeneration, execute the separate [native 
 
 ## Deferred
 
-MSIX/installer, autostart, Windows service, auto-update, crash upload, telemetry, enterprise deployment policy, bundled CUDA, Piper/Kokoro, wake word, satellites, AEC and hands-free interruption remain separate milestones.
+MSIX/installer, autostart, Windows service, auto-update, crash upload, telemetry,
+enterprise deployment policy, CUDA DLLs in the final Voice `onedir`,
+Piper/Kokoro, wake word, satellites, AEC and hands-free interruption remain
+separate milestones. The sealed CUDA bundle here belongs only to the ASR
+qualification collector.

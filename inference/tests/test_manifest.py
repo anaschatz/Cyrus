@@ -4,9 +4,18 @@ import hashlib
 import json
 import tempfile
 import unittest
-from pathlib import Path
+from copy import deepcopy
+from pathlib import Path, PureWindowsPath
+from unittest import mock
 
+from jarvis_inference import manifest as manifest_module
 from jarvis_inference.errors import ApplianceError
+from jarvis_inference.gemma4 import (
+    GEMMA4_PROMPT_PROFILE,
+    MODEL_FILENAME,
+    MODEL_SHA256,
+    MODEL_SIZE_BYTES,
+)
 from jarvis_inference.manifest import load_manifest, verify_artifacts
 
 
@@ -102,6 +111,129 @@ class ManifestTests(unittest.TestCase):
             with self.assertRaises(ApplianceError):
                 load_manifest(path)
 
+    def test_manifest_leaf_symlink_and_oversize_input_are_rejected_before_parse(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            real = root / "real-manifest.json"
+            real.write_text(json.dumps(self.document(root)), encoding="utf-8")
+            link = root / "manifest.json"
+            try:
+                link.symlink_to(real)
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks are unavailable")
+            with self.assertRaises(ApplianceError) as caught:
+                load_manifest(link)
+            self.assertEqual(caught.exception.code, "invalid_manifest_path")
+
+            link.unlink()
+            link.write_bytes(b" " * (262_144 + 1))
+            with self.assertRaises(ApplianceError) as caught:
+                load_manifest(link)
+            self.assertEqual(caught.exception.code, "manifest_too_large")
+
+    def test_windows_reparse_ancestor_is_rejected_before_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            real_root = parent / "real"
+            real_root.mkdir()
+            manifest = real_root / "manifest.json"
+            manifest.write_text(json.dumps(self.document(real_root)), encoding="utf-8")
+            linked_root = parent / "linked"
+            try:
+                linked_root.symlink_to(real_root, target_is_directory=True)
+            except (NotImplementedError, OSError):
+                self.skipTest("directory links are unavailable")
+
+            with mock.patch.object(
+                manifest_module, "_native_windows", return_value=True
+            ), mock.patch.object(
+                manifest_module, "_require_windows_local_drive_path"
+            ), self.assertRaises(ApplianceError) as caught:
+                load_manifest(linked_root / "manifest.json")
+            self.assertEqual(caught.exception.code, "invalid_manifest_path")
+
+    def test_windows_manifest_path_requires_absolute_drive_letter_syntax(self) -> None:
+        self.assertTrue(
+            manifest_module._windows_local_drive_path(
+                PureWindowsPath(r"C:\CYRUS\inference\manifest.json")
+            )
+        )
+        for value in (
+            PureWindowsPath(r"\\server\share\manifest.json"),
+            PureWindowsPath(r"\\?\C:\CYRUS\manifest.json"),
+            PureWindowsPath(r"\\.\C:\CYRUS\manifest.json"),
+            PureWindowsPath(r"C:relative\manifest.json"),
+            PureWindowsPath(r"\rooted\manifest.json"),
+        ):
+            with self.subTest(value=str(value)):
+                self.assertFalse(
+                    manifest_module._windows_local_drive_path(value)
+                )
+
+        with mock.patch.object(
+            manifest_module, "_native_windows", return_value=True
+        ), self.assertRaises(ApplianceError) as caught:
+            manifest_module._require_windows_local_drive_path(
+                Path("//server/share/manifest.json")
+            )
+        self.assertEqual(caught.exception.code, "invalid_manifest_path")
+
+        self.assertTrue(
+            manifest_module._windows_drive_is_local(
+                PureWindowsPath(r"Z:\CYRUS\inference\manifest.json"),
+                drive_type_reader=lambda _root: 3,
+            )
+        )
+        self.assertFalse(
+            manifest_module._windows_drive_is_local(
+                PureWindowsPath(r"Z:\CYRUS\inference\manifest.json"),
+                drive_type_reader=lambda _root: 4,
+            )
+        )
+        with mock.patch.object(
+            manifest_module, "_native_windows", return_value=True
+        ), mock.patch.object(
+            manifest_module, "_native_windows_drive_type", return_value=4
+        ), self.assertRaises(ApplianceError) as mapped:
+            manifest_module._require_windows_local_drive_path(
+                Path(r"Z:\CYRUS\inference\manifest.json")
+            )
+        self.assertEqual(mapped.exception.code, "invalid_manifest_path")
+
+    def test_windows_runtime_ram_uses_global_memory_status_contract(self) -> None:
+        expected = 32 * 1024**3
+        self.assertEqual(
+            manifest_module._ram_bytes(
+                platform_name="nt",
+                windows_reader=lambda: expected,
+            ),
+            expected,
+        )
+        for invalid in (None, 0, -1, True, 2**64):
+            with self.subTest(invalid=invalid):
+                self.assertIsNone(
+                    manifest_module._ram_bytes(
+                        platform_name="nt",
+                        windows_reader=lambda value=invalid: value,
+                    )
+                )
+
+        source = Path(manifest_module.__file__).read_text(encoding="utf-8")
+        self.assertIn("GlobalMemoryStatusEx", source)
+        self.assertIn("ullTotalPhys", source)
+
+    def test_windows_manifest_guard_receives_original_unnormalized_path(self) -> None:
+        supplied = Path(r"C:relative\manifest.json")
+        with mock.patch.object(
+            manifest_module, "_require_windows_local_drive_path"
+        ) as guard:
+            guard.side_effect = ApplianceError(
+                400, "invalid_manifest_path", "unsafe"
+            )
+            with self.assertRaises(ApplianceError):
+                load_manifest(supplied)
+        guard.assert_called_once_with(supplied)
+
     def test_undeclared_bundled_dll_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -111,3 +243,52 @@ class ManifestTests(unittest.TestCase):
             with self.assertRaises(ApplianceError) as caught:
                 verify_artifacts(manifest)
             self.assertEqual(caught.exception.code, "artifact_identity_mismatch")
+
+    def test_exact_gemma_prompt_profile_is_explicit_and_model_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            document = self.document(root)
+            model = root / MODEL_FILENAME
+            model.write_bytes(b"identity is verified before spawn")
+            document["model"]["artifacts"] = [{
+                "path": MODEL_FILENAME,
+                "size_bytes": MODEL_SIZE_BYTES,
+                "sha256": MODEL_SHA256,
+            }]
+            document["prompt_profile"] = deepcopy(GEMMA4_PROMPT_PROFILE)
+            document["profile_qualification_report"] = "qualification-profile-local-primary.json"
+            path = root / "manifest.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            manifest = load_manifest(path)
+            self.assertEqual(manifest.prompt_profile, GEMMA4_PROMPT_PROFILE)
+
+            document["prompt_profile"]["renderer"]["sha256"] = "0" * 64
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaises(ApplianceError) as caught:
+                load_manifest(path)
+            self.assertEqual(caught.exception.code, "invalid_manifest")
+
+    def test_gemma_prompt_profile_rejects_a_different_model_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            document = self.document(root)
+            document["prompt_profile"] = deepcopy(GEMMA4_PROMPT_PROFILE)
+            document["profile_qualification_report"] = "qualification-profile-local-primary.json"
+            path = root / "manifest.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaises(ApplianceError) as caught:
+                load_manifest(path)
+            self.assertEqual(caught.exception.code, "invalid_manifest")
+
+    def test_windows_structured_capabilities_require_exact_prompt_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for capability in ("tools", "json_object", "json_schema"):
+                document = self.document(root)
+                document["capabilities"][capability] = True
+                path = root / "manifest.json"
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.subTest(capability=capability), self.assertRaises(ApplianceError) as caught:
+                    load_manifest(path)
+                self.assertEqual(caught.exception.code, "invalid_manifest")
+                self.assertEqual(caught.exception.parameter, "prompt_profile")

@@ -35,6 +35,7 @@ def _walk(value: object):
 
 
 def _assert_contract(document: dict[str, Any], source: str) -> None:
+    assert document["env"]["UV_NO_EDITABLE"] == "1"
     assert document["permissions"] == {"contents": "read"}
     concurrency = document["concurrency"]
     assert concurrency["cancel-in-progress"] is True
@@ -107,6 +108,7 @@ def _assert_contract(document: dict[str, Any], source: str) -> None:
     assert {entry["lockfile"] for entry in component_matrix} == {
         "uv.lock",
         "anamnesis/uv.lock",
+        "inference/uv.lock",
         "orchestrator/uv.lock",
     }
 
@@ -132,25 +134,44 @@ class BackendWorkflowTextContractTests(unittest.TestCase):
         for fragment in (
             "uv lock --check --project .",
             "uv lock --check --project anamnesis",
+            "uv lock --check --project inference",
             "uv lock --check --project orchestrator",
             "uv lock --check --project research",
+            "uv sync --locked --extra dev --no-editable --python 3.11",
+            "uv run --locked --extra dev --no-editable --offline",
             "python -m unittest discover -s tests -v",
             "python -m pytest -q",
             "python -m unittest discover -s inference/tests -v",
             "python -m unittest discover -s orchestrator/tests -v",
             "test_config_security.py",
             "test_windows_private_file.py",
+            "test_windows_handoff_verifier.py",
+            "test_windows_handoff_voice_template.py",
+            "test_windows_source_bringup_scripts.py",
+            "test_windows_cuda_bundle.py",
+            "scripts\\test_windows_source_job.ps1",
+            "shell: powershell",
+            "Expected Windows PowerShell 5.1.",
             "test_stack_migration.py",
+            "test_private_stack.py",
             "test_memory_crypto.py",
             "test_memory_key_provider.py",
             "test_memory_storage_v10.py",
             "test_memory_backup_operations.py",
             "test_memory_backup_cli.py",
+            "uv sync --project inference --locked --extra qualification",
+            "uv run --project inference --locked --extra qualification --offline python -m unittest discover -s inference/tests -v",
+            "uv run --project inference --locked --extra qualification --offline python inference/tests/sdk_conformance.py -v",
             "uv build --offline --no-build-isolation",
             "--python .venv/bin/python --wheel --out-dir \"$RUNNER_TEMP/jarvis-wheels\" research",
+            "--python inference/.venv/bin/python --wheel --out-dir \"$RUNNER_TEMP/jarvis-wheels\" inference",
+            "uv export --project inference --locked --extra qualification --offline",
             "uv export --project orchestrator --locked --offline",
             "uv pip install --offline --require-hashes",
             "uv pip install --offline --no-deps",
+            'smoke-research/bin/python" --requirements "$RUNNER_TEMP/orchestrator-requirements.txt"',
+            'smoke-research/bin/python" "$RUNNER_TEMP"/jarvis-wheels/anamnesis_memory_eval-*.whl',
+            '"$RUNNER_TEMP/smoke-inference/bin/cyrus-primary-profile-quality" --help',
             "smoke-voice",
             "smoke-anamnesis",
             "smoke-inference",
@@ -173,6 +194,7 @@ class BackendWorkflowTextContractTests(unittest.TestCase):
             "research/src",
         ):
             self.assertIn(fragment, source)
+        self.assertNotIn("CYRUS_NATIVE_RELEASE_HOST_TEST", source)
         self.assertNotIn(
             "--python research/.venv/bin/python --wheel", source
         )

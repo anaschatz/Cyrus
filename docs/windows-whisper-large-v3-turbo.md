@@ -77,4 +77,9 @@ Windows 11 host:
    worker; retain CPU fallback evidence.
 
 No model, CUDA runtime, driver, or package is installed by this integration
-commit. Packaging and machine activation remain separate native-Windows steps.
+commit. The approved CUDA/cuDNN DLL closure is supplied privately, recorded in
+`cyrus.windows-cuda-runtime-bundle/1`, and embedded into the independently
+sealed ASR qualification collector without `PATH` or download fallback.
+Packaging and machine activation remain separate native-Windows steps.
+The configured pack must remain on a local drive-letter path; UNC, device-path
+and Win32 `DRIVE_REMOTE` roots fail before any model artifact is read.

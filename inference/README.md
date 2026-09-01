@@ -39,6 +39,9 @@ and its [streaming event reference](https://developers.openai.com/api/reference/
 - `qualification.py`: fail-closed report state, runtime identity, official
   OpenAI Python SDK bootstrap through an ephemeral gateway, and numerical gate
   evaluation.
+- `primary_qualification.py` and `profile_report.py`: the separate
+  challenge-bound Windows Gemma quality/performance/soak run, preserved
+  content-free evidence, and strict production profile-report admission.
 
 ## Commands
 
@@ -79,6 +82,41 @@ cyrus-inference qualify \
   --fixture-runner /absolute/path/manifest-root/native-fixture-runner
 ```
 
+The exact Windows Gemma primary then requires its separate profile run. The
+fixed runner must live at
+`qualification/cyrus-windows-primary-profile-runner.exe` below the manifest
+root and writes only temporary `CYRUS_PROFILE_QUAL_*` evidence. This run cannot
+use ordinary production readiness; it receives an authenticated ephemeral
+qualification gateway after the generic same-identity pass has been verified.
+
+```text
+cyrus-inference qualify-profile \
+  --manifest /absolute/path/manifest.json \
+  --fixture-runner /absolute/path/manifest-root/qualification/cyrus-windows-primary-profile-runner.exe
+
+cyrus-inference verify-readiness \
+  --manifest /absolute/path/manifest.json
+```
+
+`verify-readiness` is a content-free pre-start check. It verifies artifacts,
+the current generic report/runner, and—only for exact Gemma—the authoritative
+profile report, its preserved evidence, runner, fixtures and every bound
+identity. Its result explicitly reports
+`attestation_level:"identity-bound-local-operator"` and
+`operator_trust_required:true`. Those hashes and cross-bindings reject stale,
+mismatched, corrupt, or casually edited evidence; they are not hardware-backed
+signatures and cannot resist deliberate coordinated fabrication by the same
+local account. `verify-manifest` remains available before qualification and
+does not claim readiness.
+
+The profile runner uses authenticated qualification-only controls to arm one
+generation and consume its matching content-free serial/token-digest/backend-
+timing record. TTFT starts at the gateway request timestamp, so authentication,
+body parsing and prompt preparation are included. This makes TTFT and decode rate valid even for buffered JSON or
+tool responses. Those controls have no callable on ordinary production and
+therefore return 404 there. The frozen 128-token projection is
+`TTFT + 127 / accepted_decode_rate`, not a mislabeled client end-to-end sample.
+
 Start production only after a matching pass report exists:
 
 ```text
@@ -97,7 +135,10 @@ before invoking the `cyrus-inference` command. Secrets are never
 accepted as command-line arguments.
 
 Missing/corrupt/in-progress/failed/mismatched qualification keeps the process
-alive but `/readyz` false. A pass is never bundled or fabricated by this repo.
+alive but `/readyz` false. No pass is bundled by this repo, and the supported
+operator workflow never fabricates one. Because the current evidence is
+local-operator asserted rather than TPM- or hardware-key-attested, the service
+account and qualification operator remain part of the trusted computing base.
 Engine loading and identity monitoring run in a background supervisor;
 `/readyz` only reads cached state and never waits for model load.
 

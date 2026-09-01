@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.compact_greek_tts_pilot import ArtifactSpec
 from jarvis_voice.piper_training_handoff import (
     BUNDLE_SCHEMA,
+    HANDOFF_SCHEMA,
     build_piper_f1_handoff,
     verify_piper_f1_handoff,
     write_piper_f1_handoff,
@@ -107,6 +109,23 @@ class PiperTrainingHandoffTests(unittest.TestCase):
             (data / "audio" / "Greek-F1-extra.wav").write_bytes(b"extra")
             with self.patches(specs), self.assertRaisesRegex(BackendError, "audio_set_mismatch"):
                 build_piper_f1_handoff(data, artifacts)
+
+    def test_write_never_overwrites_a_racing_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "handoff.json"
+            original_link = os.link
+
+            def racing_link(source: Path, destination: Path) -> None:
+                Path(destination).write_bytes(b"racing-writer")
+                original_link(source, destination)
+
+            with mock.patch(
+                "jarvis_voice.piper_training_handoff.os.link",
+                side_effect=racing_link,
+            ), self.assertRaises(OSError):
+                write_piper_f1_handoff(output, {"schema": HANDOFF_SCHEMA})
+            self.assertEqual(output.read_bytes(), b"racing-writer")
+            self.assertEqual(list(output.parent.glob(".piper-f1-handoff-*")), [])
 
 
 if __name__ == "__main__":

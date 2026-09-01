@@ -110,11 +110,22 @@ text renderer and function-call parser MUST be explicit, hashed appliance code
 and MUST pass the exact rendered-token and tool-history fixtures. No mutable
 Jinja template is fetched or interpreted at runtime.
 
+The selected artifact's authoritative Hub metadata at the same full revision
+reports `tokenizer.chat_template` as `18683` UTF-8 bytes with SHA-256
+`ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4`.
+The explicit `google-gemma4-12b-it-qat-q4_0-v1` manifest profile binds that
+metadata identity to `cyrus.gemma4-appliance-renderer/1` and
+`cyrus.gemma4-single-tool-parser/1`. The renderer is an appliance-owned
+deterministic transcription; the embedded Jinja remains intake evidence and is
+never evaluated during serving. Omitting or changing any profile field keeps
+the Gemma adapter unreachable and fails manifest admission.
+
 No placeholder, short revision, `main`, `latest`, Ollama tag, model hub alias,
 or remote URL is a valid production identity. Intake is a separate explicit
 operator action. Qualification and serving run offline from a content-addressed
-local directory, fail closed on any hash mismatch, and record zero model
-resolution or network-download attempts.
+local directory, fail closed on any hash mismatch, and expose no model resolver,
+download target, or inherited network configuration. This sealed boundary is
+the evidence; the report does not assert an uninstrumented zero-attempt counter.
 
 ## Functional scope
 
@@ -163,17 +174,27 @@ a hidden semantic regeneration loop.
 
 Performance uses 100 hashed, production-shaped prompts: 50 Greek and 50
 English, including real chat history, system instructions, and representative
-structured/tool schemas for the primary. Rendered prompt bins are `512`,
-`2048`, and `4096` tokens; the requested output is `128` tokens, concurrency is
-one, and the same tokenizer/rendered token sequence used for generation is
-recorded. Results report p50/p95 time to first token, p50/p95 end-to-end latency,
-and p5/p50/p95 accepted decode tokens per second. Load time is reported
-separately and is never included in warm request latency.
+structured/tool schemas for the primary. The `512`, `2048`, and `4096` labels
+are accepted only when native rendered counts fall respectively in
+`256..1023`, `1024..3071`, and `3072..6144`. The requested output is at most
+`128` tokens, concurrency is one, and SHA-256 digests bind both the exact
+rendered token IDs and accepted token IDs used by generation. Request TTFT is
+measured from the gateway's first monotonic request timestamp—before
+authentication, body parsing and `engine.prepare`—to the first accepted SSE
+generation event;
+decode time/rate comes from validated final llama.cpp timings. Actual client
+end-to-end remains telemetry. Because shorter structured/tool responses are
+valid, the 128-token gate is the explicit projection `TTFT + 127 / decode_rate`
+(TTFT already includes token one), recomputed per case and then at p95. Load
+time is reported separately and is never included in warm request latency.
+All eight deliberate restart-to-ready durations are retained as sanitized
+numeric samples; the validator independently recomputes their p95 rather than
+accepting a runner-supplied aggregate alone.
 
 | Metric | `local-primary` on the qualified RTX 5080 | `local-fallback` on the qualified M3 / 16 GB Mac |
 |---|---:|---:|
 | p95 time to first token | `<= 3.0 s` | `<= 2.0 s` |
-| p95 end-to-end for 128 accepted tokens | `<= 10.0 s` | `<= 8.0 s` |
+| p95 projected elapsed for 128 accepted tokens | `<= 10.0 s` | `<= 8.0 s` |
 | p5 accepted decode rate | `>= 25 tokens/s` | `>= 20 tokens/s` |
 | p95 cold load-to-ready | `<= 120 s` | `<= 30 s` |
 | Timed request success | `100/100` | `100/100` |
@@ -185,22 +206,35 @@ fixture above.
 ## Eight-hour soak and memory headroom
 
 Each profile runs for at least `28800` monotonic seconds and completes at least
-`96` load -> request set -> cleanup -> unload cycles. At least every twelfth
-cycle includes a deliberate full worker/process restart, for at least eight
-restart cycles. The run requires:
+`96` persistent-engine workload cycles. A cycle runs the complete request set,
+requires per-request slot cleanup, then samples the combined gateway-plus-engine
+working set. It does not claim a model unload. Every twelfth cycle performs a
+deliberate full worker/process restart, for eight restarts in the frozen
+96-cycle run. The run requires:
 
 - all 96 cycles and all admitted requests complete;
-- zero unexpected OOM, crash, hang, cleanup failure, stale request state,
-  circuit-breaker opening, download attempt, or identity drift;
-- zero prompt/output/schema/tool bytes in logs or durable files;
-- memory after cleanup returns to the profile's pre-registered steady-state
-  envelope without monotonic growth.
+- zero observed request failures, unexpected process terminations, bounded
+  request timeouts, cleanup failures, or circuit-breaker rejections;
+- the console runner persists/logs no prompt, output, schema, or tool payload;
+- at least 12 combined gateway-plus-engine working-set samples are collected
+  in each completed restart epoch. Growth uses robust first/last windows plus
+  Theil–Sen projection, not descriptive peak memory; both maximum within-epoch
+  and global projected growth must be no greater than 5%. Eight completed
+  12-cycle workload epochs therefore produce eight memory sample counts; the
+  eighth/final restart adds a ninth privacy-safe ordinal runner epoch to prove
+  recovery, but deliberately has no post-final workload sample window. Native
+  Windows PIDs are checked transiently for process replacement and are never
+  persisted in profile evidence.
 
 The Windows primary additionally repeats the frozen ASR coexistence fixture. It
 requires at least `2048 MiB` minimum observed free VRAM throughout active
-ASR/prefill/decode overlap, all model layers assigned as declared with no
-unplanned CPU offload or WDDM eviction, zero throttle/OOM/crash, no lost final
-transcript, and ASR p95 degradation no greater than `15%`.
+ASR/prefill/decode overlap, zero measured throttle/OOM/crash, no lost or
+duplicate final transcript and no stale result. The 200-clip clean corpus must
+reach at least 95/100 language-ID accuracy per language and at most 20% WER;
+both ASR and LLM p95 degradation on the matched 100-clip coexistence population
+must be no greater than `15%`. Exactly five deliberate, measured ASR CPU
+fallback recovery cases must pass. Uninstrumented model-layer CPU-offload or WDDM-eviction
+zeroes are deliberately not claimed by this report.
 
 The Mac fallback retains the existing 20-warmup/200-request unified-memory
 drift gates. During the eight-hour soak it additionally requires at least the
@@ -210,6 +244,46 @@ minimum sampled headroom, and no monotonic swap growth after warm-up.
 The RTX 5080's nominal capacity or a model-card memory estimate is not evidence
 for these gates. Native measurements include model weights, KV state, CUDA or
 Metal runtime, kernels, buffers, the gateway, and concurrently active ASR.
+
+## Authoritative local-primary report
+
+The exact Windows Gemma manifest declares
+`qualification-profile-local-primary.json`. The generic appliance
+`qualification-report.json` MUST first be a current same-runtime pass. The
+operator then runs the separate `qualify-profile` command with the fixed,
+sealed `qualification/cyrus-windows-primary-profile-runner.exe`. The qualifier
+starts an ephemeral authenticated qualification-mode gateway; ordinary
+production readiness is deliberately bypassed only inside that process, so
+there is no circular dependency and no production endpoint can use the bypass.
+
+The runner writes only fresh temporary evidence with schema
+`cyrus.inference-primary-profile-evidence/1`. It receives a random 256-bit
+challenge, has a 12-hour process boundary, and must actually complete the 120
+quality cases, 100 native-tokenized performance cases, eight-hour/96-cycle
+soak, at least eight restarts, and Windows coexistence gates. The
+qualification-only authenticated controls return only token counts/digests and
+one-shot serial-bound engine timings. They arm exactly one public generation,
+then consume only the matching serial; buffered JSON/tool responses cannot
+substitute client completion time for TTFT or fabricate decode rate. They never
+return rendered prompts, outputs, or token IDs. No such callable exists on the
+production gateway, where these paths return 404.
+
+Only the appliance qualifier validates and durably preserves the sanitized
+evidence, then writes schema
+`cyrus.inference-primary-profile-qualification/1` with `status:pass`,
+`authoritative:true`, `production_ready:true`,
+`attestation_level:"identity-bound-local-operator"`, and
+`operator_trust_required:true`. The report contains fixed case IDs, booleans,
+counters, timings and hashes only—never prompts, messages, outputs, schemas or
+tool arguments. It binds the raw generic report digest,
+generic evidence and runner digests, its own runner/evidence, current manifest
+and runtime, exact Gemma/renderer/parser/tokenizer, both frozen profile
+fixtures, and the boot-hashed ASR/corpus/power assets. Editing either report,
+either runner, preserved evidence, any fixture, or any bound identity makes
+readiness fail closed unless a trusted same-user actor deliberately coordinates
+all replacements and matching hashes. This v1 evidence is identity-bound and
+local-operator asserted, not TPM- or hardware-key-attested; deliberate
+same-account fabrication is outside its threat model.
 
 ## Ready decision
 
@@ -221,7 +295,8 @@ A profile is ready only when all of the following are true at the same time:
    driver/runtime, OS, and hardware identity exactly match a durable report;
 3. all appliance v1 protocol, privacy, cancellation, isolation, crash, platform,
    quality, structured, performance, soak, and headroom gates pass;
-4. qualification observed zero unexpected download/model-resolution attempts;
+4. qualification and serving used the sealed offline boundary with no resolver,
+   download target, or inherited network configuration;
 5. the report status is `pass`, not a legacy, copied, candidate, failed,
    in-progress, stale, or identity-mismatched result.
 
@@ -229,7 +304,9 @@ The current Mac Qwen3 4B report was produced on this Apple M3 / 16 GB hardware
 and is useful protocol/isolation evidence, but it predates this profile suite.
 It therefore does not yet make `local-fallback` production ready on this Mac.
 There is currently no Windows bundle or native report for `local-primary`. No
-pass report may be fabricated to bridge either gap.
+operator may fabricate a pass report to bridge either gap. The current local
+attestation contract makes this an explicit trust requirement, not a technical
+claim that same-user fabrication is cryptographically impossible.
 
 On 2026-08-11 the exact Qwen3 4B candidate ran the frozen deterministic corpus
 `cc3814b05807908f1235db815f078f5ac2a4034ad3844e9dcc03a85c5d1fdd71` on
@@ -260,8 +337,10 @@ Qwen3 4B to the production conversational fallback or primary planner.
 
 1. Materialize the selected Gemma GGUF and pinned `llama-server` bundle on the
    Windows machine, verify every byte/hash, and create the exact profile lock.
-2. Implement and hash the Gemma 4 text/tool renderer/parser adapter, keeping the
-   public appliance wire contract unchanged.
+2. Verify the locked appliance-owned Gemma 4 renderer/parser identities from
+   the Inference wheel, then run the rendered-token and tool-history fixtures
+   against that exact native runtime. No separate adapter file or runtime Jinja
+   intake is part of serving.
 3. Run the primary functional, bilingual, structured, performance, ASR
    coexistence, and eight-hour soak gates.
 4. Keep the failed Qwen3 4B result as a baseline and qualify a separately pinned

@@ -7,7 +7,7 @@ payloads.
 
 ## Gate layout
 
-- `quality` checks the four maintained lockfiles, validates the workflow's
+- `quality` checks the five maintained lockfiles, validates the workflow's
   closed security contract, runs fatal Ruff checks over every backend, applies
   Anamnesis's declared full Ruff/format policy, enforces a closed one-way size
   ratchet over production modules, and rejects committed whitespace errors.
@@ -25,8 +25,11 @@ payloads.
   Orchestrator tests; the Orchestrator dev lock now installs the exact local
   Research wheel contract and its pinned `publicsuffixlist` dependency.
 - `windows-security` executes the native Windows configuration, private-state,
-  DACL, and stack-migration cases. It uses the Windows branch of the locked
-  Orchestrator dependency graph, including its conditional `pywin32` pin.
+  DACL, stack-migration and handoff portability cases. It also validates the
+  canonical CUDA-bundle/runner-seal contract with dummy bytes; CI never owns or
+  downloads NVIDIA DLLs and never claims a native CUDA pass. The job uses the
+  Windows branch of the locked Orchestrator dependency graph, including its
+  conditional `pywin32` pin.
 - `packaging` builds all five wheels without network access, installs each into
   a newly created virtual environment from hash-bearing lock exports and the
   warmed uv cache, imports it with Python isolated mode, and runs its installed
@@ -36,11 +39,12 @@ payloads.
   wheel construction; their runtime dependencies still come from their own
   checked lockfiles.
 
-Inference deliberately has no independent lockfile because its runtime has no
-dependencies. Its tests and setuptools build use the root Voice lock as the
-reviewed CPython/build-toolchain boundary. Adding an Inference dependency must
-therefore include a dedicated `inference/uv.lock` and a workflow update in the
-same change.
+Inference has its own `inference/uv.lock`. Its default runtime remains
+dependency-free, while the `qualification` extra resolves the exact
+`openai==2.46.0` native-qualification client independently of the
+Orchestrator's dependency graph. Inference tests, source-run provisioning and
+wheel construction all consume that checked lock and its dedicated virtual
+environment; they do not borrow the Voice or Orchestrator interpreter.
 
 No artifact action is present. GitHub's ordinary step logs contain test status;
 the workflow does not retain wheels, reports, database files, paths, prompts,

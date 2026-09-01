@@ -1,0 +1,41 @@
+{
+  "fixture_schema_version": 1,
+  "fixture_id": "cyrus-windows-asr-coexistence-v1",
+  "platform": "windows-x86_64",
+  "prompt_workload_units": [
+    512,
+    2048,
+    4096
+  ],
+  "max_completion_tokens": 512,
+  "request_count": 100,
+  "concurrency": 1,
+  "schedule": "serial-continuous-from-audio-start",
+  "minimum_overlapping_utterances": 80,
+  "sampling": {
+    "temperature": 0,
+    "top_p": 1
+  },
+  "audio_corpus": {
+    "schema": "cyrus.windows-asr-audio-corpus/1",
+    "utterance_count": 200,
+    "language_counts": {
+      "el": 100,
+      "en": 100
+    },
+    "clean_language_accuracy_minimum_correct_per_language": 95,
+    "clean_aggregate_wer_max_percent_per_language": 20,
+    "coexistence_selection": "first-50-per-locale",
+    "reference_sidecars": {
+      "encoding": "utf-8",
+      "normalization": "NFC",
+      "controls_allowed": false,
+      "word_normalization": "unicode-lmn-casefold-v1"
+    },
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "sample_width_bytes": 2,
+    "minimum_duration_ms": 1500,
+    "maximum_duration_ms": 30000
+  }
+}

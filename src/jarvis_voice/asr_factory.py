@@ -41,14 +41,31 @@ class FallbackAsrBackend:
                 self.metrics.append({"event": "cpu_fallback", "duration_seconds": self.clock() - started})
 
     def cancel_current(self) -> None:
-        cancel = getattr(self.cuda_backend, "cancel_current", None)
-        if cancel is not None:
-            cancel()
+        self._call_both("cancel_current")
 
     def close(self) -> None:
-        close = getattr(self.cuda_backend, "close", None)
-        if close is not None:
-            close()
+        self._call_both("close")
+
+    def _call_both(self, method: str) -> None:
+        """Always release/cancel both persistent backends.
+
+        A turn may already have crossed from CUDA into the CPU fallback when
+        the lifecycle call arrives. Cancellation-capable CPU implementations
+        receive it, and shutdown always releases both model references.
+        """
+
+        first_failure: BaseException | None = None
+        for backend in (self.cuda_backend, self.cpu_backend):
+            callback = getattr(backend, method, None)
+            if not callable(callback):
+                continue
+            try:
+                callback()
+            except BaseException as exc:
+                if first_failure is None:
+                    first_failure = exc
+        if first_failure is not None:
+            raise first_failure
 
 
 class AsrBackendFactory:

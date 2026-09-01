@@ -62,8 +62,11 @@ sync/async OpenAI SDK bootstrap, and then applies these exact gates:
 - 5 isolated crash/restart cases and 50 isolation pairs.
 - 100% protocol conformance, zero privacy leaks, unexpected OOMs, crashes, and
   hangs.
-- Windows: the exact 100-utterance ASR fixture, at least 80 overlaps, no lost
-  final transcript/throttle/OOM/crash, and p95 degradation no greater than 15%.
+- Windows: 200 exact clean ASR/reference pairs (100 per locale), at least 95
+  correct language IDs and at most 20% aggregate WER independently per locale;
+  five qualified production CPU-fallback routes; at least 80 real overlaps in
+  the exact first-50/locale subset; no lost/duplicate/stale result, throttle,
+  OOM or crash; and both ASR and LLM p95 degradation no greater than 15%.
 - Mac: 20 warmups and 200 normal requests. After each cleanup the runner waits
   500 ms and samples native `phys_footprint`; the median of the last 20 versus
   the first 20 and the Theil-Sen projected growth must each be no greater than
@@ -106,42 +109,105 @@ Windows `platform_gate` is exactly:
 {
   "kind": "windows_asr_coexistence",
   "fixture": {
-    "rendered_prompt_token_lengths": [512, 2048, 4096],
+    "fixture_schema_version": 1,
+    "fixture_id": "cyrus-windows-asr-coexistence-v1",
+    "platform": "windows-x86_64",
+    "prompt_workload_units": [512, 2048, 4096],
     "max_completion_tokens": 512,
     "request_count": 100,
     "concurrency": 1,
     "schedule": "serial-continuous-from-audio-start",
     "minimum_overlapping_utterances": 80,
     "sampling": {"temperature": 0, "top_p": 1},
+    "audio_corpus": {
+      "schema": "cyrus.windows-asr-audio-corpus/1",
+      "utterance_count": 200,
+      "language_counts": {"el": 100, "en": 100},
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "minimum_duration_ms": 1500,
+      "maximum_duration_ms": 30000,
+      "clean_language_accuracy_minimum_correct_per_language": 95,
+      "clean_aggregate_wer_max_percent_per_language": 20,
+      "coexistence_selection": "first-50-per-locale",
+      "reference_sidecars": {
+        "encoding": "utf-8",
+        "normalization": "NFC",
+        "controls_allowed": false,
+        "word_normalization": "unicode-lmn-casefold-v1"
+      }
+    },
     "power_profile": {
       "windows_power_scheme_guid": "12345678-1234-1234-1234-123456789abc",
       "ac_state": "ac",
       "gpu_power_limit_watts": 360,
-      "gpu_clock_policy": "exact-policy",
+      "gpu_clock_policy": "applications_graphics_mhz=2500;applications_memory_mhz=14000",
       "driver_version": "exact-version",
-      "compute_runtime": "exact-version",
+      "compute_runtime": "CUDA 12.8",
       "require_zero_thermal_power_throttle_reasons": true
     }
   },
+  "assets": {
+    "fixture": {"path": "qualification/windows-asr-coexistence-v1.json", "size_bytes": 1, "sha256": "<64 lowercase hex>"},
+    "collector": {"path": "qualification/cyrus-windows-asr-collector.exe", "size_bytes": 1, "sha256": "<64 lowercase hex>"},
+    "audio_corpus": {"path": "qualification/audio-corpus-v1.json", "size_bytes": 1, "sha256": "<64 lowercase hex>"},
+    "power_profile": {"path": "qualification/power-profile-v1.json", "size_bytes": 1, "sha256": "<64 lowercase hex>"},
+    "asr_config": {"path": "qualification/asr-config-v1.json", "size_bytes": 1, "sha256": "<64 lowercase hex>"}
+  },
+  "asr_runtime_identity_digest": "<64 lowercase hex>",
   "audio_corpus_digest": "<64 lowercase hex>",
-  "greek_utterances": 50,
-  "english_utterances": 50,
+  "greek_utterances": 100,
+  "english_utterances": 100,
+  "greek_language_correct": 95,
+  "english_language_correct": 95,
+  "greek_reference_words": 1000,
+  "greek_word_errors": 200,
+  "english_reference_words": 1000,
+  "english_word_errors": 200,
+  "forced_cpu_fallbacks": 5,
   "baseline_power_identity_digest": "<SHA-256 of RFC8785 power_profile>",
   "coexistence_power_identity_digest": "<same SHA-256>",
   "overlapping_utterances": 80,
   "baseline_p95": 1,
   "coexistence_p95": 1,
+  "baseline_llm_p95": 1,
+  "coexistence_llm_p95": 1,
+  "minimum_free_vram_mib": 2048,
   "lost_final_transcripts": 0,
+  "duplicate_final_transcripts": 0,
+  "stale_results": 0,
   "oom": 0,
   "crashes": 0,
   "throttle_reasons": 0
 }
 ```
 
-The hashed fixture corpus contains exactly 100 utterances (50 Greek and 50
-English), the two-second inference lead-in and the overlap schedule. The exact
-power object is checked and its RFC 8785 digest must be identical for baseline
-and coexistence.
+The private hashed corpus contains exactly 200 clean utterances (100 Greek and
+100 English), including hash-bound text reference sidecars. At least 95 clips
+per language must be identified correctly and each language must have WER no
+greater than 20%. The deterministic first 50 clips per language form the
+100-clip coexistence population; at least 80 must overlap active LLM work.
+Both ASR and LLM p95 regressions are limited to 15%. The exact power object is
+checked and its RFC 8785 digest must be identical for baseline and coexistence.
+Exactly five qualification cases must deliberately force and observe the
+collector's CPU fallback recovery path; this is distinct from an unmeasured
+claim about incidental model-layer offload.
+The five CPU cases use the real pinned CPU `int8` model through the production
+`FallbackAsrBackend`; a collector-local fallbackable CUDA failure is injected
+only to select that route and is not evidence of real VRAM exhaustion.
+
+On Windows the executable is built from the reviewed
+`jarvis_inference.windows_fixture` source. It owns the generic gateway checks
+and launches the separately sealed ASR collector with no command-line
+arguments. The collector writes only the fixed numeric/identity subset of this
+platform object to a fresh private file; the runner adds the already-hashed
+asset identities and rejects content fields. The private 200-WAV manifest is
+built offline from the source-controlled template and contains only case ID,
+locale, relative audio/reference paths, byte sizes, hashes, duration and
+reference word count; neither evidence nor reports contain transcript text. See
+[Windows native fixture runner](windows-native-fixture-runner.md) for the
+exact build and collector boundary.
 
 Mac `platform_gate` is exactly:
 
@@ -168,3 +234,30 @@ structured correctness, performance, eight-hour soak, and memory-headroom gates
 are frozen in [`model-profiles-v1.md`](model-profiles-v1.md). A legacy v1 pass
 that predates those gates remains technical evidence but MUST NOT activate a
 production model profile.
+
+For the exact Windows Gemma primary, the generic pass is consumed as an input
+to a second exclusive run rather than copied into a readiness claim. Run
+`cyrus-inference qualify-profile --manifest <manifest> --fixture-runner
+<sealed-primary-runner>` only after this generic report passes. The resulting
+`qualification-profile-local-primary.json` and preserved content-free evidence
+are validated by the production gateway on every readiness supervision cycle.
+`cyrus-inference verify-readiness --manifest <manifest>` performs the same
+content-free report/identity check before service start; `verify-manifest`
+remains artifact-only so qualification can still be bootstrapped.
+
+Both the primary evidence and final profile report contain these exact closed
+trust fields:
+
+```json
+{
+  "attestation_level": "identity-bound-local-operator",
+  "operator_trust_required": true
+}
+```
+
+They deliberately state the limit of v1. Fresh challenges, exclusive runner
+outputs, exact identities and re-hashing catch stale, mismatched, corrupt, or
+uncoordinated modifications. They do not provide TPM/hardware-key attestation
+and do not resist a deliberate same-user process or operator that fabricates a
+coordinated set of evidence, reports and hashes. That local operator remains in
+the trusted computing base.

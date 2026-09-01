@@ -213,9 +213,9 @@ It uses only the validated local model, exposes no transcript, performs no netwo
 - `app_paths.py`, `safe_log.py`, `lifecycle.py`: external mutable-data boundary, content-free local diagnostics, and bounded/idempotent runtime control.
 - `distribution.py`: deterministic onedir integrity manifest generation and strict verification.
 - `windows/tray.py`, `windows/single_instance.py`, `windows/hardening.py`: native tray recovery, per-session guard, and frozen DLL policy.
-- `packaging/`, `scripts/build_windows.ps1`: windowed onedir definition and offline native-Windows build recipe.
+- `packaging/`, `scripts/build_windows.ps1`: split offline native-Windows recipe for sealed qualification runners and the later windowed onedir.
 - `qualification.py`, `scripts/qualify_windows.ps1`: strict smoke schema, percentile aggregation, frozen-doctor/distribution/Authenticode gates and the native evidence runner.
 
 ## Explicitly deferred
 
-Native Windows M4 execution and human latency approval, native tray/build/signing approval, native CUDA compatibility, real LLM coexistence results, installer/MSIX, autostart, updater, service, bundled CUDA, newer Whisper model adoption, Piper/Kokoro, wake word, satellites, AEC, ambient interruption, telemetry server, prospective/automatic memory, research, cloud and side-effect tool integrations remain outside the verified result. Explicit Anamnesis retrospective recall is qualified but remains off by default; all model work still uses local inference.
+Native Windows M4 execution and human latency approval, native tray/build/signing approval, native CUDA compatibility, the private manifest-bound CUDA/cuDNN runner build, real LLM coexistence results, installer/MSIX, autostart, updater, service, CUDA DLLs in the final Voice package, newer Whisper model adoption, Piper/Kokoro, wake word, satellites, AEC, ambient interruption, telemetry server, prospective/automatic memory, research, cloud and side-effect tool integrations remain outside the verified result. Explicit Anamnesis retrospective recall is qualified but remains off by default; all model work still uses local inference.

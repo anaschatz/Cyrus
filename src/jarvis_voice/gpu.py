@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import csv
+import os
 import subprocess
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from .errors import BackendError
@@ -28,13 +30,29 @@ class GpuInventory(Protocol):
 class NvidiaSmiInventory:
     """Query only non-sensitive device fields; never enumerate GPU processes."""
 
-    QUERY = (
-        "nvidia-smi",
+    QUERY_ARGUMENTS = (
         "--query-gpu=index,name,memory.total,memory.free,driver_version",
         "--format=csv,noheader,nounits",
     )
 
-    def __init__(self, runner: Callable[[Sequence[str]], str] | None = None) -> None:
+    def __init__(
+        self,
+        runner: Callable[[Sequence[str]], str] | None = None,
+        *,
+        executable: Path | None = None,
+    ) -> None:
+        selected = "nvidia-smi" if executable is None else os.fspath(executable)
+        if (
+            not selected
+            or "\x00" in selected
+            or (executable is not None and not executable.is_absolute())
+        ):
+            raise BackendError(
+                "cuda.inventory_path_invalid",
+                "NVIDIA inventory path is invalid",
+                subsystem="cuda",
+            )
+        self._query = (selected, *self.QUERY_ARGUMENTS)
         self._runner = runner or self._run
 
     @staticmethod
@@ -44,17 +62,32 @@ class NvidiaSmiInventory:
                 list(command),
                 check=True,
                 capture_output=True,
-                text=True,
                 timeout=5,
                 shell=False,
             )
         except (FileNotFoundError, subprocess.SubprocessError, OSError) as exc:
             raise BackendError("cuda.inventory_unavailable", "NVIDIA inventory is unavailable", subsystem="cuda") from exc
-        return completed.stdout
+        if not isinstance(completed.stdout, bytes) or len(completed.stdout) > 65_536:
+            raise BackendError(
+                "cuda.inventory_malformed",
+                "NVIDIA inventory response is malformed",
+                subsystem="cuda",
+            )
+        try:
+            return completed.stdout.decode("utf-8", errors="strict")
+        except UnicodeError as exc:
+            raise BackendError(
+                "cuda.inventory_malformed",
+                "NVIDIA inventory response is malformed",
+                subsystem="cuda",
+            ) from exc
 
     def devices(self) -> tuple[GpuDevice, ...]:
         try:
-            rows = csv.reader(self._runner(self.QUERY).splitlines(), skipinitialspace=True)
+            rows = csv.reader(
+                self._runner(self._query).splitlines(),
+                skipinitialspace=True,
+            )
             devices = tuple(
                 GpuDevice(
                     index=int(row[0].strip()),

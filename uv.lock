@@ -731,6 +731,10 @@ audio = [
     { name = "sounddevice" },
     { name = "soxr" },
 ]
+dev = [
+    { name = "setuptools" },
+    { name = "wheel" },
+]
 macos = [
     { name = "kokoro-onnx" },
     { name = "onnxruntime" },
@@ -778,6 +782,7 @@ requires-dist = [
     { name = "pyinstaller", marker = "extra == 'packaging'", specifier = "==6.21.0" },
     { name = "pywin32", marker = "extra == 'windows'", specifier = ">=311" },
     { name = "pyyaml", marker = "extra == 'pocket-tts'", specifier = "==6.0.3" },
+    { name = "setuptools", marker = "extra == 'dev'", specifier = "==84.0.0" },
     { name = "sounddevice", marker = "extra == 'audio'", specifier = "==0.5.3" },
     { name = "sounddevice", marker = "extra == 'macos'", specifier = "==0.5.3" },
     { name = "sounddevice", marker = "extra == 'macos-cpu-smoke'", specifier = "==0.5.3" },
@@ -788,6 +793,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'macos'", specifier = ">=15,<16" },
     { name = "websockets", marker = "extra == 'macos-cpu-smoke'", specifier = ">=15,<16" },
     { name = "websockets", marker = "extra == 'transport'", specifier = ">=15,<16" },
+    { name = "wheel", marker = "extra == 'dev'", specifier = "==0.46.3" },
 ]
 provides-extras = ["asr", "audio", "vad", "transport", "windows", "macos", "macos-cpu-smoke", "pocket-tts", "packaging", "dev"]
 
@@ -2159,4 +2165,16 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/86/eb/20b6cdf273913d0ad05a6a14aed4b9a85591c18a987a3d47f20fa13dcc47/websockets-15.0.1-cp313-cp313-win32.whl", hash = "sha256:ba9e56e8ceeeedb2e080147ba85ffcd5cd0711b89576b83784d8605a7df455fa", size = 176393, upload-time = "2025-03-05T20:02:53.814Z" },
     { url = "https://files.pythonhosted.org/packages/1b/6c/c65773d6cab416a64d191d6ee8a8b1c68a09970ea6909d16965d26bfed1e/websockets-15.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:e09473f095a819042ecb2ab9465aee615bd9c2028e4ef7d933600a8401c79561", size = 176837, upload-time = "2025-03-05T20:02:55.237Z" },
     { url = "https://files.pythonhosted.org/packages/fa/a8/5b41e0da817d64113292ab1f8247140aac61cbf6cfd085d6a0fa77f4984f/websockets-15.0.1-py3-none-any.whl", hash = "sha256:f7a866fbc1e97b5c617ee4116daaa09b722101d4a3c170c787450ba409f9736f", size = 169743, upload-time = "2025-03-05T20:03:39.41Z" },
+]
+
+[[package]]
+name = "wheel"
+version = "0.46.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/24/a2eb353a6edac9a0303977c4cb048134959dd2a51b48a269dfc9dde00c8a/wheel-0.46.3.tar.gz", hash = "sha256:e3e79874b07d776c40bd6033f8ddf76a7dad46a7b8aa1b2787a83083519a1803", size = 60605, upload-time = "2026-01-22T12:39:49.136Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/87/22/b76d483683216dde3d67cba61fb2444be8d5be289bf628c13fc0fd90e5f9/wheel-0.46.3-py3-none-any.whl", hash = "sha256:4b399d56c9d9338230118d705d9737a2a468ccca63d5e813e2a4fc7815d8bc4d", size = 30557, upload-time = "2026-01-22T12:39:48.099Z" },
 ]

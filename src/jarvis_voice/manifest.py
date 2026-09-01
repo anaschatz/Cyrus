@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
+from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import MappingProxyType
 
 
@@ -133,11 +136,123 @@ def _sha256(model_file: Path) -> str:
     return digest.hexdigest()
 
 
+_FILE_ATTRIBUTE_REPARSE_POINT = getattr(
+    stat,
+    "FILE_ATTRIBUTE_REPARSE_POINT",
+    0x400,
+)
+
+
+def _is_reparse(metadata: os.stat_result) -> bool:
+    return bool(
+        getattr(metadata, "st_file_attributes", 0)
+        & _FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
+def _is_local_windows_absolute(value: str) -> bool:
+    path = PureWindowsPath(value)
+    return bool(
+        path.is_absolute()
+        and len(path.drive) == 2
+        and path.drive[0].isalpha()
+        and path.drive[1] == ":"
+    )
+
+
+def _native_drive_type(root: str) -> int:  # pragma: no cover - native Windows only
+    try:
+        import ctypes
+
+        return int(ctypes.windll.kernel32.GetDriveTypeW(root))
+    except BaseException:
+        return 0
+
+
+def _windows_drive_is_local(
+    value: str,
+    *,
+    drive_type_reader: Callable[[str], int] | None = None,
+) -> bool:
+    """Accept a drive-letter root only when Win32 does not classify it remote."""
+
+    path = PureWindowsPath(value)
+    if not _is_local_windows_absolute(value):
+        return False
+    reader = drive_type_reader or _native_drive_type
+    try:
+        drive_type = reader(path.anchor)
+    except BaseException:
+        return False
+    # DRIVE_REMOVABLE/FIXED/CDROM/RAMDISK are local namespaces. Unknown,
+    # missing roots and DRIVE_REMOTE fail closed before any model-path stat.
+    return drive_type in {2, 3, 5, 6}
+
+
+def _is_real_directory_chain(path: Path) -> bool:
+    """Reject a link/reparse point in every existing path component."""
+
+    if not path.is_absolute():
+        return False
+    if os.name != "nt":
+        # ``reject_links=True`` is exercised by portable unit tests. macOS
+        # temporary roots commonly traverse the system `/private` compatibility
+        # symlink, which says nothing about the Windows path policy. Inspect the
+        # selected directory and its caller-controlled parent here; native
+        # Windows performs the complete drive-root walk below.
+        for current in (path.parent, path):
+            try:
+                metadata = current.lstat()
+            except OSError:
+                return False
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or current.is_symlink()
+                or _is_reparse(metadata)
+            ):
+                return False
+        return True
+    if not _windows_drive_is_local(str(path)):
+        return False
+    current = Path(path.anchor)
+    try:
+        root_metadata = current.lstat()
+    except OSError:
+        return False
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or current.is_symlink()
+        or _is_reparse(root_metadata)
+    ):
+        return False
+    for component in path.parts[1:]:
+        current = current / component
+        try:
+            metadata = current.lstat()
+        except OSError:
+            return False
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or current.is_symlink()
+            or _is_reparse(metadata)
+        ):
+            return False
+    return True
+
+
 def validate_model_directory(
     model_directory: str | Path | None,
     manifest: ModelManifest = BASE_MODEL_MANIFEST,
+    *,
+    reject_links: bool | None = None,
 ) -> ManifestValidationResult:
-    """Validate an explicit directory without resolving or downloading anything."""
+    """Validate an explicit directory without resolving or downloading anything.
+
+    Native Windows defaults to an exact regular-file pack: neither the model
+    directory nor any member may be a symlink or reparse point.  The explicit
+    option lets Windows preflight tests exercise that policy on another host,
+    while preserving the legacy cache-symlink behavior on macOS.
+    """
 
     if model_directory is None or not str(model_directory).strip():
         return ManifestValidationResult(
@@ -145,7 +260,31 @@ def validate_model_directory(
             "model.directory_required",
             "An explicit local model directory is required",
         )
+    strict_files = os.name == "nt" if reject_links is None else reject_links
     directory = Path(model_directory).expanduser()
+    if os.name == "nt" and not _windows_drive_is_local(str(directory)):
+        return ManifestValidationResult(
+            False,
+            "model.unsafe_directory",
+            "The model directory must be on a local non-network drive",
+        )
+    try:
+        directory_metadata = directory.lstat()
+    except OSError:
+        return ManifestValidationResult(
+            False,
+            "model.directory_missing",
+            "The configured local model directory does not exist",
+        )
+    if strict_files and (
+        not stat.S_ISDIR(directory_metadata.st_mode)
+        or not _is_real_directory_chain(directory)
+    ):
+        return ManifestValidationResult(
+            False,
+            "model.unsafe_directory",
+            "The model directory must be a real non-reparse directory",
+        )
     if not directory.is_dir():
         return ManifestValidationResult(
             False,
@@ -154,11 +293,23 @@ def validate_model_directory(
         )
 
     expected_names = {spec.name for spec in manifest.files}
-    actual_names = {
-        entry.name
-        for entry in directory.iterdir()
-        if not entry.name.startswith(".") and (entry.is_file() or entry.is_symlink())
-    }
+    try:
+        entries = tuple(directory.iterdir())
+    except OSError:
+        return ManifestValidationResult(
+            False,
+            "model.directory_unreadable",
+            "The configured local model directory cannot be enumerated",
+        )
+    if strict_files:
+        actual_names = {entry.name for entry in entries}
+    else:
+        actual_names = {
+            entry.name
+            for entry in entries
+            if not entry.name.startswith(".")
+            and (entry.is_file() or entry.is_symlink())
+        }
     missing = sorted(expected_names - actual_names)
     if missing:
         return ManifestValidationResult(
@@ -180,12 +331,24 @@ def validate_model_directory(
     for spec in manifest.files:
         model_file = directory / spec.name
         try:
-            file_stat = model_file.stat()  # Follows symlinks to the cached blob.
+            file_stat = model_file.lstat() if strict_files else model_file.stat()
         except OSError:
             return ManifestValidationResult(
                 False,
                 "model.unreadable_artifact",
                 "A model artifact cannot be read",
+                files_checked=checked,
+                artifact_name=spec.name,
+            )
+        if strict_files and (
+            not stat.S_ISREG(file_stat.st_mode)
+            or model_file.is_symlink()
+            or _is_reparse(file_stat)
+        ):
+            return ManifestValidationResult(
+                False,
+                "model.unsafe_artifact",
+                "A model artifact must be a real non-reparse regular file",
                 files_checked=checked,
                 artifact_name=spec.name,
             )
