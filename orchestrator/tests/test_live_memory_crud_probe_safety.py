@@ -23,9 +23,12 @@ SPEC.loader.exec_module(MODULE)
 
 class LiveMemoryCrudProbeSafetyTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(dir="/private/tmp")
+        self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        disposable_root = patch.object(MODULE, "_DISPOSABLE_ROOT", self.root)
+        disposable_root.start()
+        self.addCleanup(disposable_root.stop)
         self.database = self.root / "orchestrator.sqlite3"
         self.database.touch()
         self.config = self.root / "orchestrator.test.json"

@@ -396,10 +396,13 @@ def _canonical_effect_summary(
     return result
 
 
+_DISPOSABLE_ROOT = Path("/private/tmp")
+
+
 def _validate_disposable_target(args: argparse.Namespace) -> None:
     database = args.database.resolve(strict=True)
     config = args.config.resolve(strict=True)
-    disposable_root = Path("/private/tmp").resolve(strict=True)
+    disposable_root = _DISPOSABLE_ROOT.resolve(strict=True)
     try:
         database.relative_to(disposable_root)
         config.relative_to(disposable_root)

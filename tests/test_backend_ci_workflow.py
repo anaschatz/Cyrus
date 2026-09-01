@@ -92,18 +92,29 @@ def _assert_contract(document: dict[str, Any], source: str) -> None:
                     assert "--offline" in command
     assert actions == EXPECTED_ACTIONS
 
-    setup_python_steps = [
-        step
-        for job in jobs.values()
-        for step in job["steps"]
-        if str(step.get("uses", "")).startswith("actions/setup-python@")
-    ]
+    setup_python_steps = {
+        job_name: next(
+            step
+            for step in job["steps"]
+            if str(step.get("uses", "")).startswith("actions/setup-python@")
+        )
+        for job_name, job in jobs.items()
+    }
     assert setup_python_steps
-    assert all(
-        step["with"]["python-version"] == "3.11.14"
-        for step in setup_python_steps
+    for job_name, step in setup_python_steps.items():
+        expected = "3.11.9" if job_name == "windows-security" else "3.11.14"
+        assert step["with"]["python-version"] == expected
+        assert step["with"]["check-latest"] is False
+
+    managed_runtime_step = next(
+        step
+        for step in jobs["windows-security"]["steps"]
+        if step.get("name") == "Set up exact managed Python runtime"
     )
-    assert all(step["with"]["check-latest"] is False for step in setup_python_steps)
+    assert managed_runtime_step["env"] == {"UV_PYTHON_DOWNLOADS": "automatic"}
+    assert managed_runtime_step["run"] == (
+        "uv python install 3.11.14 --managed-python"
+    )
 
     setup_uv_steps = [
         step
@@ -154,6 +165,8 @@ class BackendWorkflowTextContractTests(unittest.TestCase):
             "uv lock --check --project orchestrator",
             "uv lock --check --project research",
             'PYTHON_VERSION: "3.11.14"',
+            'python-version: "3.11.9"',
+            "uv python install 3.11.14 --managed-python",
             "uv sync --locked --extra dev --no-editable --python 3.11.14",
             "uv run --locked --extra dev --no-editable --offline",
             "python -m unittest discover -s tests -v",
