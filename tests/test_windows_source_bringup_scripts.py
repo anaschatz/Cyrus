@@ -347,6 +347,7 @@ class WindowsSourceBringupScriptTests(unittest.TestCase):
         )
         self.assertIn("Start-Sleep -Seconds 300", self.job_smoke_parent)
         self.assertIn("Start-Process", self.job_smoke_parent)
+        self.assertIn("[Environment]::Exit(0)", self.job_smoke_parent)
         self.assertIn("CYRUS_UNICODE_PROBE=Κύρος", self.job_smoke)
         self.assertIn("must-not-be-inherited", self.job_smoke)
         self.assertIn(

@@ -51,3 +51,6 @@ try {
 finally {
     $Stream.Dispose()
 }
+
+# Force the smoke parent boundary after the durable PID handoff.
+[Environment]::Exit(0)
