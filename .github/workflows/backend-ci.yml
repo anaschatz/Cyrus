@@ -206,7 +206,7 @@ jobs:
         env:
           UV_OFFLINE: "1"
         run: >-
-          uv run --project inference --locked --extra qualification --offline
+          uv run --project inference --locked --extra qualification --no-editable --offline
           python -m unittest discover -s inference/tests -v
 
       - name: Test Orchestrator fully offline
@@ -297,8 +297,8 @@ jobs:
           uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_memory_storage_v10.py" -v
           uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_memory_backup_operations.py" -v
           uv run --project orchestrator --locked --offline python -m unittest discover -s orchestrator/tests -p "test_memory_backup_cli.py" -v
-          uv run --project inference --locked --extra qualification --offline python -m unittest discover -s inference/tests -v
-          uv run --project inference --locked --extra qualification --offline python inference/tests/sdk_conformance.py -v
+          uv run --project inference --locked --extra qualification --no-editable --offline python -m unittest discover -s inference/tests -v
+          uv run --project inference --locked --extra qualification --no-editable --offline python inference/tests/sdk_conformance.py -v
 
       - name: Test the production Windows PowerShell 5.1 supervisor contract
         env:
