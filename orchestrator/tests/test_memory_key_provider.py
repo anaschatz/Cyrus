@@ -262,10 +262,8 @@ class FakeWindowsPrivateGuard:
         if (
             stat.S_ISLNK(metadata.st_mode)
             or not stat.S_ISDIR(metadata.st_mode)
-            or (
-                os.name == "posix"
-                and stat.S_IMODE(metadata.st_mode) != 0o700
-            )
+            or os.name == "posix"
+            and stat.S_IMODE(metadata.st_mode) != 0o700
         ):
             raise MemoryKeyProviderError("memory_key_private_state_invalid")
 
@@ -277,10 +275,8 @@ class FakeWindowsPrivateGuard:
         if (
             stat.S_ISLNK(metadata.st_mode)
             or not stat.S_ISREG(metadata.st_mode)
-            or (
-                os.name == "posix"
-                and stat.S_IMODE(metadata.st_mode) != 0o600
-            )
+            or os.name == "posix"
+            and stat.S_IMODE(metadata.st_mode) != 0o600
         ):
             raise MemoryKeyProviderError("memory_key_private_state_invalid")
 
@@ -288,10 +284,8 @@ class FakeWindowsPrivateGuard:
         metadata = os.fstat(descriptor)
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or (
-                os.name == "posix"
-                and stat.S_IMODE(metadata.st_mode) != 0o600
-            )
+            or os.name == "posix"
+            and stat.S_IMODE(metadata.st_mode) != 0o600
         ):
             raise MemoryKeyProviderError("memory_key_private_state_invalid")
 

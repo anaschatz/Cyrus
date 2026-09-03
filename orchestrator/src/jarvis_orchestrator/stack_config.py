@@ -407,19 +407,10 @@ def write_private_stack_config(path: str | Path, value: Mapping[str, Any]) -> No
     descriptor: int | None = None
     temporary: Path | None = None
     published = False
-    complete = False
     try:
         selected.parent.mkdir(parents=True, exist_ok=True)
         if _platform_name() == "nt":
             _validate_windows_stack_parent(selected.parent)
-        try:
-            selected.lstat()
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            raise StackConfigError("stack_output_invalid") from exc
-        else:
-            raise StackConfigError("stack_output_invalid")
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{selected.name}.", dir=selected.parent
         )
@@ -438,14 +429,13 @@ def write_private_stack_config(path: str | Path, value: Mapping[str, Any]) -> No
             raise StackConfigError("stack_output_invalid") from exc
         published = True
         temporary.unlink()
-        temporary = None
         if _platform_name() == "nt":
             try:
                 validate_windows_private_path(selected)
             except WindowsPrivateFileError:
                 raise StackConfigError("stack_output_permissions") from None
         PrivateStackConfig.load(selected)
-        complete = True
+        published = False
     except StackConfigError:
         raise
     except OSError as exc:
@@ -461,7 +451,7 @@ def write_private_stack_config(path: str | Path, value: Mapping[str, Any]) -> No
                 temporary.unlink(missing_ok=True)
             except OSError:
                 pass
-        if published and not complete:
+        if published:
             try:
                 selected.unlink(missing_ok=True)
             except OSError:

@@ -173,11 +173,10 @@ class PrivateStackConfigTests(unittest.TestCase):
             patch(
                 "jarvis_orchestrator.stack_config.os.fchmod",
                 side_effect=AssertionError("POSIX fchmod used on Windows"),
-            ) as fchmod,
+            ),
         ):
             write_private_stack_config(self.stack_path, self.document())
 
-        fchmod.assert_not_called()
         harden_path.assert_called_once()
         hardened = Path(harden_path.call_args.args[0])
         self.assertEqual(hardened.parent, self.root)
