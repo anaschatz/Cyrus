@@ -26,11 +26,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     continue
   fi
   oldest=$(printf '%s\n' "$outgoing" | sed -n '1p')
-  if base=$(git rev-parse "$oldest^" 2>/dev/null); then
-    :
-  else
-    base=$(git hash-object -t tree /dev/null)
-  fi
+  base=$(git rev-parse "$oldest^" 2>/dev/null) || base=$(git hash-object -t tree /dev/null)
   git diff --no-ext-diff --unified=80 "$base" "$local_oid" -- >>"$review_input"
   has_changes=true
 done
