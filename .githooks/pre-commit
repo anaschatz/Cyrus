@@ -2,13 +2,17 @@
 set -eu
 
 repo_root=$(git rev-parse --show-toplevel)
+review_input=$(mktemp "${TMPDIR:-/tmp}/ponytail-commit.XXXXXX")
+trap 'rm -f "$review_input"' EXIT HUP INT TERM
 
-if git diff --cached --quiet --; then
+printf '%s\n\n' '@ponytail-review Review only this staged diff for unnecessary complexity. Do not edit files or run Git commands.' >"$review_input"
+if git diff --cached --no-ext-diff --unified=80 --exit-code -- >>"$review_input"; then
   exit 0
+else
+  result=$?
+  if [ "$result" -ne 1 ]; then
+    exit "$result"
+  fi
 fi
 
-{
-  printf '%s\n\n' '@ponytail-review Review only this staged diff for unnecessary complexity. Do not edit files or run Git commands.'
-  git diff --cached --no-ext-diff --unified=80 --
-} | "$repo_root/.githooks/run-ponytail-review" "pre-commit"
-
+"$repo_root/.githooks/run-ponytail-review" "pre-commit" <"$review_input"
