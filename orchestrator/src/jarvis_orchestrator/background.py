@@ -10,7 +10,13 @@ import time
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from .operations import OperationalError, ProcessLock, operational_paths
+from .operations import (
+    OperationalError,
+    ProcessLock,
+    _fsync_directory,
+    _write_private_temporary,
+    operational_paths,
+)
 from .private_state import (
     PrivateStateError,
     assert_private_regular_file,
@@ -75,14 +81,17 @@ class BackgroundServiceManager:
 
     @staticmethod
     def _run(command: list[str], *, allowed_fail: bool = False) -> bool:
-        completed = subprocess.run(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=15,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise OperationalError("background_manager_command_failed") from exc
         if completed.returncode != 0 and not allowed_fail:
             raise OperationalError("background_manager_command_failed")
         return completed.returncode == 0
@@ -101,9 +110,17 @@ class BackgroundServiceManager:
             "StandardOutPath": "/dev/null",
             "StandardErrorPath": "/dev/null",
         }
-        with self.macos_plist.open("wb") as destination:
-            plistlib.dump(document, destination, sort_keys=True)
-        self.macos_plist.chmod(0o600)
+        temporary = _write_private_temporary(
+            self.macos_plist.parent,
+            prefix=f".{MACOS_LABEL}.",
+            suffix=".plist",
+            payload=plistlib.dumps(document, sort_keys=True),
+        )
+        try:
+            os.replace(temporary, self.macos_plist)
+            _fsync_directory(self.macos_plist.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _write_windows_xml(self) -> None:
         command = escape(str(sys.executable))
