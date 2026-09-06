@@ -16,6 +16,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from functools import wraps
 from types import FrameType
 from typing import Any
 
@@ -151,6 +152,26 @@ def _require_identifier(value: str, *, field: str) -> str:
     return value
 
 
+def _finish_cleanup_before_cancellation(operation):
+    """Keep bounded cleanup owned even when its caller is cancelled repeatedly."""
+
+    @wraps(operation)
+    async def finish(*args, **kwargs):
+        task = asyncio.create_task(operation(*args, **kwargs))
+        cancelled = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                cancelled = exc
+        result = task.result()
+        if cancelled is not None:
+            raise cancelled
+        return result
+
+    return finish
+
+
 class RuntimeSupervisor:
     """Own critical tasks, surface their failures, and bound their shutdown."""
 
@@ -225,6 +246,13 @@ class RuntimeSupervisor:
             name=f"jarvis-runtime-{component}",
         )
         self._tasks[component] = task
+
+        def completed(task: asyncio.Task[None]) -> None:
+            # A task cancelled before its first tick never enters the runner.
+            if task.cancelled() and not self._stopping:
+                self._record_failure(component, failure_code)
+
+        task.add_done_callback(completed)
         return task
 
     def acknowledge_ready(self, component: str) -> None:
@@ -318,8 +346,11 @@ class RuntimeSupervisor:
             raise
         except BaseException as exc:  # noqa: BLE001 - critical task boundary
             cause = exc
-            if not self._stopping:
-                self._record_failure(component, failure_code, cause=exc)
+            self._record_failure(component, failure_code, cause=exc)
+            if self._stopping:
+                raise RuntimeFailure(
+                    failure_code, component=component, cause=exc
+                ) from exc
         else:
             if not self._stopping:
                 self._record_failure(component, failure_code)
@@ -383,6 +414,11 @@ class RuntimeSupervisor:
         """Let newly started components run once before readiness is exposed."""
 
         await asyncio.sleep(0)
+        # Drain completion callbacks for tasks cancelled before entering their runner.
+        await asyncio.gather(
+            *(task for task in self._tasks.values() if task.done()),
+            return_exceptions=True,
+        )
         if self._failure is not None:
             raise self._failure
 
@@ -398,6 +434,7 @@ class RuntimeSupervisor:
                     failure_code=None,
                 )
 
+    @_finish_cleanup_before_cancellation
     async def shutdown(self, *, timeout_seconds: float | None = None) -> None:
         """Cancel every owned task and wait no longer than the configured bound."""
 
@@ -444,8 +481,7 @@ class RuntimeSupervisor:
                     raise AssertionError("os._exit returned")  # pragma: no cover
                 raise timeout_failure
         completed = tuple(task for task in self._tasks.values() if task.done())
-        if completed:
-            await asyncio.gather(*completed, return_exceptions=True)
+        results = await asyncio.gather(*completed, return_exceptions=True)
         for component, current in tuple(self._component_health.items()):
             if current.state != "FAILED":
                 self._component_health[component] = RuntimeComponentHealth(
@@ -454,7 +490,11 @@ class RuntimeSupervisor:
                     failure_code=None,
                 )
         self._stopped = True
+        for result in results:
+            if isinstance(result, RuntimeFailure):
+                raise result
 
+    @_finish_cleanup_before_cancellation
     async def run_bounded_cleanup(
         self,
         component: str,
@@ -470,8 +510,20 @@ class RuntimeSupervisor:
         failure_code = _require_identifier(failure_code, field="failure code")
         timeout_code = _require_identifier(timeout_code, field="failure code")
         timeout = self._selected_timeout(timeout_seconds)
+
+        async def cleanup() -> None:
+            try:
+                await runner()
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # Normalize before asyncio handles SystemExit.
+                self._record_failure(component, failure_code, cause=exc)
+                raise RuntimeFailure(
+                    failure_code, component=component, cause=exc
+                ) from exc
+
         task = asyncio.create_task(
-            runner(),
+            cleanup(),
             name=f"jarvis-runtime-{component}-cleanup",
         )
         done, unfinished = await asyncio.wait(
@@ -498,20 +550,10 @@ class RuntimeSupervisor:
         try:
             task.result()
         except asyncio.CancelledError as exc:
-            failure = RuntimeFailure(failure_code, component=component, cause=exc)
-        except BaseException as exc:  # noqa: BLE001 - cleanup task boundary
-            failure = RuntimeFailure(failure_code, component=component, cause=exc)
-        else:
-            return
-        self._component_health[component] = RuntimeComponentHealth(
-            component=component,
-            state="FAILED",
-            failure_code=failure_code,
-        )
-        if self._failure is None:
-            self._failure = failure
-            self._failure_event.set()
-        raise failure
+            self._record_failure(component, failure_code, cause=exc)
+            raise RuntimeFailure(
+                failure_code, component=component, cause=exc
+            ) from exc
 
     def _selected_timeout(self, timeout_seconds: float | None) -> float:
         if timeout_seconds is None:
@@ -638,6 +680,7 @@ class SupervisedControlRuntime:
             await asyncio.sleep(0.02)
         return not thread.is_alive()
 
+    @_finish_cleanup_before_cancellation
     async def stop(self, *, timeout_seconds: float | None = None) -> None:
         if self._thread is None:
             return
