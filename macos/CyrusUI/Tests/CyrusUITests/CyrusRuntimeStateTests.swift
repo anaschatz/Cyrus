@@ -54,6 +54,10 @@ import Testing
 
     #expect(PrivateSnapshotReader.read(from: snapshot) == nil)
 
+    let fifo = root.appendingPathComponent("not-a-snapshot")
+    #expect(mkfifo(fifo.path, 0o600) == 0)
+    #expect(PrivateSnapshotReader.read(from: fifo) == nil)
+
     try FileManager.default.removeItem(at: snapshot)
     try Data("{}".utf8).write(to: snapshot)
     chmod(snapshot.path, 0o644)

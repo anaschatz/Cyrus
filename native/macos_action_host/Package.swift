@@ -5,5 +5,8 @@ let package = Package(
     name: "JarvisActionNative",
     platforms: [.macOS(.v14)],
     products: [.executable(name: "jarvis-action-native", targets: ["JarvisActionNative"])],
-    targets: [.executableTarget(name: "JarvisActionNative")]
+    targets: [
+        .executableTarget(name: "JarvisActionNative"),
+        .testTarget(name: "JarvisActionNativeTests", dependencies: ["JarvisActionNative"]),
+    ]
 )

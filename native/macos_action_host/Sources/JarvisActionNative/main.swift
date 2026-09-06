@@ -45,15 +45,18 @@ func string(_ row: [String: Any], _ name: String) throws -> String {
 }
 
 func bool(_ row: [String: Any], _ name: String) throws -> Bool {
-    guard let value = row[name] as? Bool else { throw NativeError.safe("host.adapter_rejected") }
-    return value
+    guard let value = row[name] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else {
+        throw NativeError.safe("host.adapter_rejected")
+    }
+    return value.boolValue
 }
 
 func integer(_ row: [String: Any], _ name: String) throws -> Int {
-    guard let value = row[name] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() else {
+    guard let value = row[name] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
+          let integer = value as? Int else {
         throw NativeError.safe("host.adapter_rejected")
     }
-    return value.intValue
+    return integer
 }
 
 func localDate(_ value: String, timezone: String) throws -> Date {
@@ -290,13 +293,20 @@ func fetchReminders(_ predicate: NSPredicate) throws -> [EKReminder] {
     return result
 }
 
+func reminderDate(_ components: DateComponents, fallbackTimezone: String) -> Date? {
+    var calendar = components.calendar ?? Calendar(identifier: .gregorian)
+    calendar.timeZone = components.timeZone ?? components.calendar?.timeZone
+        ?? TimeZone(identifier: fallbackTimezone) ?? TimeZone(secondsFromGMT: 0)!
+    return calendar.date(from: components)
+}
+
 func reminderItem(_ reminder: EKReminder, fallbackTimezone: String) throws -> ([String: Any], [String: Any]) {
     guard let identifier = reminder.calendarItemIdentifier as String? else { throw NativeError.safe("reminder.not_found") }
     let reference = stableReference("reminder", identifier)
     var dueLocal = ""
     var dueUTC = ""
     var timezone = ""
-    if let components = reminder.dueDateComponents, let date = components.date {
+    if let components = reminder.dueDateComponents, let date = reminderDate(components, fallbackTimezone: fallbackTimezone) {
         timezone = components.timeZone?.identifier ?? fallbackTimezone
         dueLocal = try localText(date, timezone: timezone)
         dueUTC = utcText(date)
@@ -328,6 +338,7 @@ func reminderList(arguments: [String: Any]) throws -> ([String: Any], [[String: 
     let predicate = store.predicateForReminders(in: nil)
     var windowStart: Date?
     var windowEnd: Date?
+    let timezone = (arguments["timezone"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "UTC"
     if try string(arguments, "due_filter") == "WINDOW" {
         let timezone = try string(arguments, "timezone")
         windowStart = try localDate(string(arguments, "due_from_local"), timezone: timezone)
@@ -336,10 +347,10 @@ func reminderList(arguments: [String: Any]) throws -> ([String: Any], [[String: 
     let all = try fetchReminders(predicate).filter {
         guard $0.isCompleted == completed else { return false }
         guard let start = windowStart, let end = windowEnd else { return true }
-        guard let due = $0.dueDateComponents?.date else { return false }
+        guard let components = $0.dueDateComponents,
+              let due = reminderDate(components, fallbackTimezone: timezone) else { return false }
         return due >= start && due < end
     }
-    let timezone = (arguments["timezone"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "UTC"
     var mapped = try all.map { try reminderItem($0, fallbackTimezone: timezone) }
     mapped.sort {
         let left = ($0.0["due_utc"] as? String) ?? ""
@@ -380,7 +391,7 @@ func reminderCreate(arguments: [String: Any]) throws -> ([String: Any], [[String
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: timezone)!
         reminder.dueDateComponents = calendar.dateComponents(
-            [.year, .month, .day, .hour, .minute, .second, .timeZone], from: date
+            [.calendar, .year, .month, .day, .hour, .minute, .second, .nanosecond, .timeZone], from: date
         )
     }
     switch try string(arguments, "priority") {
@@ -395,7 +406,7 @@ func reminderCreate(arguments: [String: Any]) throws -> ([String: Any], [[String
           readback.title == reminder.title,
           (readback.notes ?? "") == (reminder.notes ?? ""),
           readback.priority == reminder.priority,
-          readback.dueDateComponents?.date == reminder.dueDateComponents?.date else {
+          (readback.dueDateComponents.flatMap { reminderDate($0, fallbackTimezone: timezone) }.map { utcText($0) } ?? "") == dueUTC else {
         throw NativeError.safe("reminder.not_found")
     }
     let reference = stableReference("reminder", identifier)
@@ -531,15 +542,16 @@ func fileSearch(arguments: [String: Any], context: [String: Any]) throws -> ([St
     }
     let page = Array(matches.dropFirst(offset).prefix(limit))
     var bindings: [[String: Any]] = []
-    let expires = Date().addingTimeInterval(600)
+    let expires = utcText(Date().addingTimeInterval(600))
     let items: [[String: Any]] = page.map { item in
         let identity = item.values.fileResourceIdentifier.map { String(describing: $0) } ?? ""
         let volume = item.values.volumeIdentifier.map { String(describing: $0) } ?? ""
-        let reference = stableReference("file", item.root + "\u{0}" + item.path + "\u{0}" + identity)
+        // A fresh expiry needs a fresh reference; stored bindings are immutable.
+        let reference = stableReference("file", item.root + "\u{0}" + item.path + "\u{0}" + identity + "\u{0}" + expires)
         bindings.append([
             "ref": reference, "kind": "file", "root_id": item.root,
             "relative_path": item.path, "identity": identity, "volume": volume,
-            "expires_at_utc": utcText(expires),
+            "expires_at_utc": expires,
         ])
         let name = (item.path as NSString).lastPathComponent
         let parent = (item.path as NSString).deletingLastPathComponent
@@ -549,7 +561,7 @@ func fileSearch(arguments: [String: Any], context: [String: Any]) throws -> ([St
             "uti": item.values.contentType?.identifier ?? "public.data",
             "size_bytes": item.values.fileSize ?? 0,
             "modified_at_utc": utcText(item.values.contentModificationDate ?? Date(timeIntervalSince1970: 0)),
-            "ref_expires_at_utc": utcText(expires),
+            "ref_expires_at_utc": expires,
         ]
     }
     return ([

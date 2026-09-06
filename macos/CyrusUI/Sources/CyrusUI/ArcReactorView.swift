@@ -135,7 +135,7 @@ struct VoiceWaveformView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: reduceMotion || state != .speaking)) { timeline in
             let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
             HStack(alignment: .center, spacing: 5) {
                 ForEach(0..<13, id: \.self) { index in

@@ -99,7 +99,7 @@ enum PrivateSnapshotReader {
     static let maximumBytes = 512
 
     static func read(from url: URL) -> Data? {
-        let descriptor = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        let descriptor = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else { return nil }
         defer { close(descriptor) }
 
