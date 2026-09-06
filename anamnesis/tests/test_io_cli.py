@@ -288,6 +288,17 @@ def test_final_dataset_release_guard_fails_closed(tmp_path: Path) -> None:
     require_preregistered_final_dataset(dataset_path, scenarios)
 
 
+@pytest.mark.parametrize("body", ["[]", "null", "[" * 1100 + "]" * 1100])
+def test_final_dataset_release_rejects_invalid_manifest_shapes(
+    tmp_path: Path,
+    body: str,
+) -> None:
+    dataset_path = tmp_path / "all.jsonl"
+    dataset_path.with_suffix(".manifest.json").write_text(body, encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid final dataset release manifest"):
+        require_preregistered_final_dataset(dataset_path, [])
+
+
 def test_git_verification_rejects_a_dirty_worktree() -> None:
     def fake_runner(command, **kwargs):
         output = "a" * 40 if "rev-parse" in command else " M src/example.py"

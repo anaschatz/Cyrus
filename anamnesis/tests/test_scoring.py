@@ -421,3 +421,34 @@ def test_success_gate_uses_best_simple_f1_and_all_fixed_thresholds() -> None:
     assert gate.input_token_reduction == pytest.approx(0.4)
     assert gate.false_alarm_pass
     assert gate.supported
+
+
+@pytest.mark.parametrize("extra_fn,expected_pass", [(0, True), (1, False)])
+def test_success_gate_compares_exact_count_ratios_at_the_boundary(
+    extra_fn: int,
+    expected_pass: bool,
+) -> None:
+    scenario = _standard_scenario("threshold")
+    run = _run(scenario, [], input_tokens=100)
+    base = aggregate_results([(score_scenario(scenario, run), run)])[0]
+    results = []
+    for system in ("no_memory", "full_context", "vector_rag", "anamnesis"):
+        tp, fp, fn = (34, 6, 6 + extra_fn) if system == "anamnesis" else (32, 8, 8)
+        results.append(
+            base.model_copy(
+                update={
+                    "system": system,
+                    "tp": tp,
+                    "fp": fp,
+                    "fn": fn,
+                    "precision": tp / (tp + fp),
+                    "recall": tp / (tp + fn),
+                    "f1": 2 * tp / (2 * tp + fp + fn),
+                    "input_tokens": 70 if system == "anamnesis" else 100,
+                }
+            )
+        )
+    gate = evaluate_success_gate(results)[0]
+    assert gate.f1_pass is expected_pass
+    assert gate.token_pass
+    assert gate.supported is expected_pass

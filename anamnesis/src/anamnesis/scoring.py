@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
+from fractions import Fraction
 from math import inf
 from statistics import median
 
@@ -530,9 +531,13 @@ def evaluate_success_gate(results: list[AggregateResult]) -> list[SuccessGateRes
         if full_context.input_tokens <= 0:
             raise ValueError("full_context must report positive input tokens")
         reduction = 1 - anamnesis.input_tokens / full_context.input_tokens
-        f1_gain = anamnesis.f1 - comparator.f1
-        f1_pass = f1_gain >= 0.05
-        token_pass = reduction >= 0.30
+        f1_gain = Fraction(
+            2 * anamnesis.tp, 2 * anamnesis.tp + anamnesis.fp + anamnesis.fn or 1
+        ) - Fraction(
+            2 * comparator.tp, 2 * comparator.tp + comparator.fp + comparator.fn or 1
+        )
+        f1_pass = f1_gain >= Fraction(1, 20)
+        token_pass = 10 * anamnesis.input_tokens <= 7 * full_context.input_tokens
         false_alarm_pass = (
             anamnesis.false_alarm_checkpoints <= comparator.false_alarm_checkpoints
         )
@@ -541,7 +546,7 @@ def evaluate_success_gate(results: list[AggregateResult]) -> list[SuccessGateRes
                 repetition=repetition,
                 model=model,
                 comparator=comparator.system,
-                f1_gain=f1_gain,
+                f1_gain=float(f1_gain),
                 input_token_reduction=reduction,
                 anamnesis_false_alarm_checkpoints=(anamnesis.false_alarm_checkpoints),
                 comparator_false_alarm_checkpoints=(comparator.false_alarm_checkpoints),

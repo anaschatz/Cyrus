@@ -44,10 +44,12 @@ def require_preregistered_final_dataset(
         raise ValueError(f"final dataset release manifest is missing: {release_path}")
     try:
         release = json.loads(release_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
+    except (json.JSONDecodeError, RecursionError) as error:
         raise ValueError(
             f"invalid final dataset release manifest: {release_path}"
         ) from error
+    if not isinstance(release, dict):
+        raise ValueError(f"invalid final dataset release manifest: {release_path}")
     review = release.get("review_status")
     human_review = (
         review.get("independent_human_review") if isinstance(review, dict) else None
