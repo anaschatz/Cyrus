@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **376 of 401 code files**, plus **296 of 343 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **379 of 401 code files**, plus **297 of 344 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **879 tests (864 passed, 15 skipped)**; Orchestrator **1108 tests (1103 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **879 tests (864 passed, 15 skipped)**; Orchestrator **1111 tests (1106 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2643,3 +2643,16 @@ All **18 focused checks pass**, `/tmp/cyrus-shadow-probe-focused.log`. The first
 The newly inspected historical lifecycle scripts retain their fixed run dates and frozen corpora; their declarations do not certify a fresh runtime. Translation qualification retains the exact historically hashed script and 82/25-row corpus/evidence contract; limitations for other supplied corpora include hardcoded batch positions despite a 25-row parser minimum, phrase whitespace matching, lack of holdout-disjointness validation and input rereads. The live CRUD/local Ollama probes still need transport proxy/redirect review; other remaining probe concerns include handshake deadlines, bounded frame accumulation, consistent DB snapshots and proof of configured capability scope. Coverage is **376/401 code, 296/343 tests and 48/308 support**, with **720 reviewed hashes verified across 1052 entries**. Remaining code/support inspection, broader privacy/compiler qualification, earlier uncommitted fixes and the final quality assessment are unfinished.
 
 The mandatory V399 Ponytail review identified a redundant post-loop response-ID check: the loop can only break after proving a matching non-null response. Removed that condition and simplified the error message; the two focused probe tests pass again. No broader rerun is needed for this equivalent condition removal.
+
+
+### Live CRUD control routing and Windows collector boundary inspection
+
+The shadow-probe checkpoint is committed as **3ec3801**, including the mandatory Ponytail simplification.
+
+**V400 resolved:** the live CRUD probe used urllib's global opener for authenticated cancellation POST and conversation DELETE. Environment proxies could receive both control requests; a 302 could forward POST authorization off loopback. Default urllib already rejects DELETE redirects. The two control calls now build a direct opener with the standard ProxyHandler({}) and the existing committed _NoRedirect handler. Request methods, bodies, bearer/idempotency/epoch headers and three-second timeout are preserved. This adds **6 net production lines**, with no new abstraction or dependency.
+
+The new three-test regression has eight subcases: direct POST/DELETE controls, environment proxy routing for both methods, and 302/307 redirects for both methods. It drives real urllib request/redirect/proxy logic with in-memory HTTP handlers and synthetic credentials; no network socket is opened. Three subcases fail before the change, `/tmp/cyrus-crud-transport-before.log`. All **28 focused checks pass**, `/tmp/cyrus-crud-transport-focused.log`. Full Orchestrator: **1111 tests, 1106 passed and 5 skipped**, `/tmp/cyrus-full-review-crud-transport-orchestrator.log`, 31.510 seconds. The full suite used authorized temporary local test sockets; no live CRUD gateway or provider was called. Fatal Ruff, whitespace and module-size ratchet pass.
+
+Completed full source reads of the Windows collector metrics, native probes and 902-line input contract. The collector itself and its tests remain pending. Follow-ups include strict treatment of unknown GPU throttle strings, subprocess output bounds before capture, JSON exception normalization, filesystem races and corpus-validator input rereads; final input revalidation must be assessed in the collector flow. No native GPU/power command, model, audio capture or Windows API was executed during these reads.
+
+Coverage is **379/401 code, 297/344 tests and 48/308 support**, with **724 reviewed hashes verified across 1053 entries**. V400 closes the CRUD control proxy/redirect issue; local Ollama transport, bounded responses/deadlines, config/evidence rereads, broader privacy/compiler qualification, remaining file inspection, earlier uncommitted fixes and the final quality assessment remain open.

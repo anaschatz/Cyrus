@@ -16,13 +16,13 @@ import json
 import sqlite3
 import time
 import unicodedata
-import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
 
+from jarvis_orchestrator.research_adapter import _NoRedirect
 from jarvis_voice.protocol import Envelope, EventFactory
 from jarvis_voice.voice_auth import load_voice_auth_key
 from jarvis_voice.voice_auth_transport import authenticate_async_client
@@ -273,7 +273,10 @@ def _delete_conversation(
             "If-Match-Epoch": str(epoch),
         },
     )
-    with urllib.request.urlopen(request, timeout=3) as response:
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoRedirect()
+    )
+    with opener.open(request, timeout=3) as response:
         response.read()
         return response.status
 
@@ -292,7 +295,10 @@ def _cancel_task(control_url: str, config: Path, task_id: str, epoch: int) -> in
             "If-Match-Epoch": str(epoch),
         },
     )
-    with urllib.request.urlopen(request, timeout=3) as response:
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoRedirect()
+    )
+    with opener.open(request, timeout=3) as response:
         response.read()
         return response.status
 
