@@ -23,15 +23,8 @@ class StoreTransactionBoundaryTests(unittest.TestCase):
             with self.subTest(boundary=boundary):
                 connections = []
 
-                class Connection(sqlite3.Connection):
-                    closed = False
-
-                    def close(self):
-                        self.closed = True
-                        return super().close()
-
                 def connect(*args, **kwargs):
-                    connection = original(*args, factory=Connection, **kwargs)
+                    connection = original(*args, **kwargs)
                     connections.append(connection)
                     self.addCleanup(connection.close)
 
@@ -70,7 +63,8 @@ class StoreTransactionBoundaryTests(unittest.TestCase):
                     with self.assertRaises((sqlite3.DatabaseError, RuntimeError)):
                         OrchestratorStore(self.root / (boundary + ".sqlite3"))
                 self.assertEqual(len(connections), 1)
-                self.assertTrue(connections[0].closed)
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    connections[0].execute("SELECT 1")
 
     def test_invalid_memory_runtime_fails_before_creating_database(self):
         path = self.root / "invalid.sqlite3"
