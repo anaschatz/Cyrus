@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import runpy
@@ -94,8 +95,29 @@ class TranslationBuildTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "digest"):
                 BUILD["verify_closed_artifacts"](root, expected)
 
+    def test_build_lock_reader_bounds_consumption_and_rejects_deep_json(self) -> None:
+        class Reader(io.BytesIO):
+            consumed = 0
+            def read(self, size=-1):
+                raw = super().read(size)
+                self.consumed += len(raw)
+                return raw
+
+        with self.subTest(kind="oversized"):
+            stream = Reader(b" " * (1024 * 1024))
+            with patch.object(Path, "open", return_value=stream), self.assertRaises(ValueError):
+                BUILD["_read_json"](BUILD_LOCK, maximum=64)
+            self.assertLessEqual(stream.consumed, 65)
+            self.assertTrue(stream.closed)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "deep.json"
+            path.write_bytes(b"[" * 1500 + b"0" + b"]" * 1500)
+            with self.assertRaises(ValueError):
+                BUILD["_read_json"](path)
+
     def test_builder_calls_exact_offline_conversion_api(self) -> None:
         captured: dict[str, object] = {}
+        write = os.write
 
         class Converter:
             def __init__(self, model: str, **kwargs: object) -> None:
@@ -136,13 +158,15 @@ class TranslationBuildTests(unittest.TestCase):
                         "verify_closed_artifacts": lambda selected, artifacts: None,
                         "load_translation_manifest": lambda *args: None,
                     },
-                ):
+                ), patch.object(os, "write", side_effect=lambda descriptor, raw: write(descriptor, raw[:7])):
                     result = BUILD["build_pack"](
                         source_root=source,
                         output_root=output,
                         build_lock_path=BUILD_LOCK,
                         manifest_output=manifest,
                     )
+            self.assertEqual(hashlib.sha256(manifest.read_bytes()).hexdigest(), result["manifest_sha256"])
+            self.assertEqual(manifest.stat().st_mode & 0o777, 0o600)
 
         self.assertEqual(captured["model"], str(source))
         self.assertEqual(

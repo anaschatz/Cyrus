@@ -1284,3 +1284,18 @@ Three regression methods produce **one failure and five errors** against origina
 Ponytail: replace the duplicate JSON-key decoder and repeated parser plumbing with the existing shared decoder, **16 fewer production lines**. The qualified worker imports the old private hook name, so a direct function alias preserves that interface. Its source, model pack, corpus, conversion policy and historical evidence remain unchanged. A speculative worker cleanup was withdrawn when its exact-hash qualification check correctly failed; the actual bugs are fixed in the parent. The worker's redundant selected.sort() is intentionally retained until a new qualified worker version is produced. No qualification result was rewritten to conceal a mismatch, and no live model/provider or physical-audio run was made. The finite domain rewrite rules and their tests support the documented corpus, not a general claim about Greek translation quality.
 
 Coverage: **220/400 code, 185/315 tests and 40/308 support files**, with **445 reviewed hashes verified across 1023 entries**. Translation parent/worker source inspection and identified protocol follow-ups are complete. Whole-codebase review and final quality assessment remain incomplete: **180 code, 130 test and 268 support files** remain, with compiler qualification identity binding and U05 still open.
+
+
+### Translation pack builder I/O checkpoint
+
+Translation protocol checkpoint committed as **6f9aea5**, with a clean Ponytail hook. Completed the full builder source review and inspected the pinned build-lock contents.
+
+**V234:** The build-lock reader consumed the entire file before enforcing its size limit; deep JSON also escaped as RecursionError. The regression observes a one-MiB read despite a 64-byte limit. Reuse the existing bounded reader and strict decoder, preserving absolute-path/regular-file checks and rejecting oversized or invalid documents before conversion.
+
+**V235:** A single os.write could short-write the generated manifest. Fault injection wrote only seven bytes, producing a file whose digest disagreed with the reported manifest digest; the real post-write verifier would reject this after conversion. Use Python's buffered exclusive binary writer, retaining 0600 permissions and adding flush/fsync before post-write validation. No custom write loop or descriptor handoff is needed.
+
+The original implementation produces **two failures and one error**, `/tmp/cyrus-translation-build-before.log`; all **39 focused tests pass**, `/tmp/cyrus-translation-build-after.log`. Tests measure bounded consumption and stream closure, check the deep-JSON error, and verify exact written manifest bytes/hash and private permissions under injected short low-level writes. Fatal Ruff/unused-import checks and unchanged module-size checks pass. The preceding full suite ran 1063 tests; it was not repeated for this isolated builder change. All conversion APIs are synthetic in this run; no model conversion, package installation, external service or new native qualification occurred.
+
+Ponytail: share the existing reader/parser and let the standard library own buffered writing and descriptor closure, **16 fewer production lines**. Frozen model/runtime artifacts, build lock and qualification evidence are unchanged. The script still rejects an existing output path; this change does not add recovery of failed conversion output directories.
+
+Coverage: **221/400 code, 185/315 tests and 41/308 support files**, with **447 reviewed hashes verified across 1023 entries**. Whole-codebase review and final quality assessment remain incomplete: **179 code, 130 test and 267 support files** remain.

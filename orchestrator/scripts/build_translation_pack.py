@@ -6,13 +6,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
-import json
 import os
 import platform
 import sys
 from pathlib import Path
 from typing import Any
 
+from jarvis_orchestrator.config import _parse_strict_json
 from jarvis_orchestrator.domain import canonical_json
 from jarvis_orchestrator.translation import (
     TRANSLATION_BACKEND,
@@ -24,6 +24,7 @@ from jarvis_orchestrator.translation import (
     TRANSLATION_MODEL_ID,
     TRANSLATION_MODEL_REVISION,
     TRANSLATION_SENTENCEPIECE_VERSION,
+    _read_bounded,
     load_translation_manifest,
 )
 
@@ -32,22 +33,10 @@ BUILD_LOCK_VERSION = "jarvis.translation-build-lock/1"
 _SHA256 = frozenset("0123456789abcdef")
 
 
-def _closed_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate build-lock key")
-        result[key] = value
-    return result
-
-
 def _read_json(path: Path, maximum: int = 256 * 1024) -> Any:
-    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+    if not path.is_absolute():
         raise ValueError("build-lock path is invalid")
-    raw = path.read_bytes()
-    if not raw or len(raw) > maximum:
-        raise ValueError("build-lock size is invalid")
-    return json.loads(raw.decode("utf-8"), object_pairs_hook=_closed_object)
+    return _parse_strict_json(_read_bounded(path, maximum))
 
 
 def canonical_build_lock_sha256(document: Any) -> str:
@@ -284,15 +273,10 @@ def build_pack(
         "total_size": sum(item["size"] for item in runtime_artifacts),
     }
     raw = canonical_json(manifest).encode("utf-8")
-    descriptor = os.open(
-        manifest_output,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-        0o600,
-    )
-    try:
-        os.write(descriptor, raw)
-    finally:
-        os.close(descriptor)
+    with open(manifest_output, "xb", opener=lambda path, flags: os.open(path, flags, 0o600)) as target:
+        target.write(raw)
+        target.flush()
+        os.fsync(target.fileno())
     manifest_sha256 = hashlib.sha256(raw).hexdigest()
     load_translation_manifest(output_root, manifest_output, manifest_sha256)
     return {
