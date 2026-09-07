@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **306 of 347 test files** and **49 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **320 of 348 test files** and **49 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-08**. Latest complete runs: Voice **890 tests (875 passed, 15 skipped)**; Orchestrator **1111 tests (1106 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-08**. Latest complete runs: Voice **890 tests (875 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **899 tests (897 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2750,3 +2750,22 @@ The writer reporters validate measured events before opening the gold reference,
 Remaining writer follow-ups include exact metadata scalar types (Python equality accepts bool/integer aliases), bounded stable input snapshots, repeated hash/parse reads, resource limits for recursive leak scans, and atomic publication of the CSV/Markdown/provenance set. W3 rechecks source hashes before first output and again for provenance, but those checks do not create an immutable read snapshot or a multi-file transaction. Existing tests cover meaningful deterministic behavior, alongside some broad stubs and source-string assertions. Historical pins, reports and scoring rules are unchanged.
 
 The overall goal remains unfinished: pending tests/support inspection, confirmed bugs and integration questions, earlier uncommitted fixes, consolidated validation and the final code-quality assessment still require work.
+
+
+### W1/W2/W3 report output aliases and complete Orchestrator test discovery — 2026-09-08
+
+Source-inspection milestone **0048344** committed the complete 401-file code inventory review with a clean mandatory Ponytail review. The overall review remains in progress.
+
+**A25 resolved:** the shared writer output guard compared resolved path names, allowing distinct paths that were hard links to measured inputs or to each other. It also admitted directories/FIFOs and mismatched output extensions, allowing late failures or blocking publication after validation. All three writer CLIs now reuse the existing io.report_output_paths validator; repository confinement and explicit source/output collision checks remain. This removes **12 net production lines** without a new helper or dependency. Frozen scoring, prompts, schemas, reference pins and historical reports are unchanged.
+
+A new regression runs all three actual CLI entrypoints against nine unsafe destination cases each. The baseline produced **27 failures and one valid-output pass**, /tmp/cyrus-writer-outputs-before.log. Final **104 focused tests pass**, /tmp/cyrus-writer-outputs-focused.log, 16.31 seconds; fatal Ruff, whitespace and the unchanged module-size ratchet pass. Existing source-collision tests now place JSON/Markdown sources in the matching output slot, so they continue to exercise the source guard rather than fail only on extensions. The new tests use temporary hard links, directories and one FIFO, never live model/provider calls.
+
+The existing test environment was heavily evicted by iCloud. Its original process was kept running while three bounded read-only passes retrieved existing bytecode caches, checking every byte count. The final pass verified 3,871 files / 38,674,806 bytes with no errors. No dependency version was installed or changed, and no test timeout was relaxed. This recovered execution availability, not code correctness.
+
+The prior Orchestrator unittest command omitted two function-style packaging tests. A complete pytest discovery now covers **1113 tests: 1108 passed and five skipped**, /tmp/cyrus-orchestrator-complete-pytest.log, 24.58 seconds. The earlier 1111-test runs remain valid historical unittest results but are not the complete current test count.
+
+Fully inspected W2 report tests, CLI startup tests and eleven smaller test/helper modules. Remaining test-quality concerns include broad validator mocks, source-string assertions, source-layout imports that do not prove installed-package isolation, and a historical OpenMemory test helper whose git-show path is incorrectly relative to the nested Anamnesis directory. That historical-path issue remains open. Coverage is **401/401 code, 320/348 tests and 49/308 support**, **770 reviewed entries across 1057 files**. Hashes were refreshed for this checkpoint's inspected files; no new all-file hash scan is claimed.
+
+A25 does not resolve concurrent filesystem replacement, immutable input snapshotting or atomic CSV/Markdown/provenance publication. Those, remaining tests/support, earlier uncommitted fixes, compiler/runtime qualification binding and the final code-quality assessment remain pending.
+
+The first full Anamnesis run completed with 891 passed, two expected failures and six SSL initialization errors, /tmp/cyrus-writer-outputs-anamnesis.log (205.18 seconds). The certifi CA bundle was an iCloud dataless placeholder; reading its complete 240,216 bytes restored it. No certificate, trust setting or client code changed. All six affected transport cases and all 28 output cases then passed together (34 tests, 2.59 seconds), /tmp/cyrus-writer-outputs-recheck.log. FIFO cases now skip only where the platform has no os.mkfifo. The complete unchanged production suite rerun passed: **897 passed and two expected failures (899 total)** in 32.87 seconds, /tmp/cyrus-writer-outputs-anamnesis-recheck.log.

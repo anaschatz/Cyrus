@@ -23,7 +23,7 @@ from inspect_ai.log import EvalLog, read_eval_log
 from inspect_ai.model import ChatMessageUser
 from pydantic import ValidationError
 
-from anamnesis.io import canonical_sha256, dataset_sha256, load_scenarios
+from anamnesis.io import canonical_sha256, dataset_sha256, load_scenarios, report_output_paths
 from anamnesis.local_experiment import (
     LocalExperimentManifest,
     validate_zero_api_pricing,
@@ -759,28 +759,16 @@ def _validate_output_locations(
 ) -> None:
     for index, source in enumerate(sources, start=1):
         _repo_relative_path(source, label=f"writer provenance source {index}")
-    targets = [csv_path, markdown_path, provenance_path]
-    results_root = (REPO_ROOT / "results").resolve()
-    raw_runs_root = (results_root / "runs").resolve()
+    targets = report_output_paths(
+        REPO_ROOT / "results", csv_path, markdown_path, provenance_path
+    )
     for index, target in enumerate(targets, start=1):
         _repo_relative_path(
             target,
             label=f"writer result artifact {index}",
             must_exist=False,
         )
-        resolved_target = target.resolve()
-        if resolved_target == results_root or not resolved_target.is_relative_to(
-            results_root
-        ):
-            raise ValueError("writer outputs must be files under results/")
-        if resolved_target == raw_runs_root or resolved_target.is_relative_to(
-            raw_runs_root
-        ):
-            raise ValueError("writer outputs cannot be written under results/runs/")
-    resolved = [target.resolve() for target in targets]
-    if len(set(resolved)) != len(resolved):
-        raise ValueError("writer result artifact paths must be distinct")
-    if {source.resolve() for source in sources}.intersection(resolved):
+    if {source.resolve() for source in sources}.intersection(targets):
         raise ValueError("writer outputs cannot overwrite source artifacts")
 
 

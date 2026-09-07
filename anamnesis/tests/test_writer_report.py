@@ -602,8 +602,13 @@ def test_source_collision_is_rejected_before_any_output_write(
     )
     monkeypatch.setattr(writer_report, "_load_writer_run", lambda *_, **__: [object()])
 
+    csv_path = tmp_path / "results/writer.csv"
     markdown_path = tmp_path / "results/writer.md"
     provenance_path = tmp_path / "results/writer.provenance.json"
+    if collision_path.suffix == ".md":
+        markdown_path = collision_path
+    else:
+        provenance_path = collision_path
     with pytest.raises(ValueError, match="cannot overwrite source"):
         writer_report_main(
             [
@@ -614,7 +619,7 @@ def test_source_collision_is_rejected_before_any_output_write(
                 "--run",
                 str(run_path),
                 "--csv",
-                str(collision_path),
+                str(csv_path),
                 "--markdown",
                 str(markdown_path),
                 "--provenance",
@@ -623,15 +628,16 @@ def test_source_collision_is_rejected_before_any_output_write(
         )
 
     assert collision_path.read_bytes() == original_source
-    assert not markdown_path.exists()
-    assert not provenance_path.exists()
+    for path in (csv_path, markdown_path, provenance_path):
+        if path != collision_path:
+            assert not path.exists()
 
 
 @pytest.mark.parametrize(
     ("csv_relative", "message"),
     [
         ("outside.csv", "under results"),
-        ("results/runs/writer.csv", "results/runs"),
+        ("results/runs/writer.csv", "outside runs"),
     ],
 )
 def test_writer_outputs_are_confined_away_from_sources_and_raw_runs(
