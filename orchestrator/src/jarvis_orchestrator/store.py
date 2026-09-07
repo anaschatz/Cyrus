@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -213,161 +213,158 @@ class OrchestratorStore:
             raise TypeError("tool_authority_enabled must be boolean")
         if not isinstance(memory_storage_enabled, bool):
             raise TypeError("memory_storage_enabled must be boolean")
+        self._memory_crypto = self._validated_memory_runtime(memory_crypto)
         selected_path = absolute_path_no_resolve(path)
         database_preexisting = selected_path.exists()
         self.path = prepare_private_database(path)
-        self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
-        self._lock = threading.RLock()
-        self.model_request_limit = model_request_limit
-        self.output_token_limit = output_token_limit
-        self.active_budget_seconds = active_budget_seconds
-        self.approval_ttl = approval_ttl
-        self.disconnect_ttl = disconnect_ttl
-        self.delivery_ttl = delivery_ttl
-        self.tool_authority_enabled = tool_authority_enabled
-        self._memory_storage_enabled = memory_storage_enabled
-        self._memory_crypto = self._validated_memory_runtime(memory_crypto)
-        self._memory_epoch_session: MemoryEpochSessionV1 | None = None
-        with self._lock:
-            self._connection.execute("PRAGMA journal_mode=WAL")
-            assert_private_database(self.path)
-            self._connection.execute("PRAGMA foreign_keys=ON")
-            self._connection.execute("PRAGMA synchronous=FULL")
-            self._connection.execute("PRAGMA busy_timeout=2000")
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                if not self._memory_storage_enabled and database_preexisting:
-                    schema_table = self._connection.execute(
-                        "SELECT 1 FROM sqlite_master "
-                        "WHERE type='table' AND name='schema_meta'"
+        with ExitStack() as cleanup:
+            self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
+            cleanup.callback(self._connection.close)
+            self._connection.row_factory = sqlite3.Row
+            self._lock = threading.RLock()
+            self.model_request_limit = model_request_limit
+            self.output_token_limit = output_token_limit
+            self.active_budget_seconds = active_budget_seconds
+            self.approval_ttl = approval_ttl
+            self.disconnect_ttl = disconnect_ttl
+            self.delivery_ttl = delivery_ttl
+            self.tool_authority_enabled = tool_authority_enabled
+            self._memory_storage_enabled = memory_storage_enabled
+            self._memory_epoch_session: MemoryEpochSessionV1 | None = None
+            with self._lock:
+                self._connection.execute("PRAGMA journal_mode=WAL")
+                assert_private_database(self.path)
+                self._connection.execute("PRAGMA foreign_keys=ON")
+                self._connection.execute("PRAGMA synchronous=FULL")
+                self._connection.execute("PRAGMA busy_timeout=2000")
+                self._connection.execute("BEGIN IMMEDIATE")
+                with self._connection:
+                    if not self._memory_storage_enabled and database_preexisting:
+                        schema_table = self._connection.execute(
+                            "SELECT 1 FROM sqlite_master "
+                            "WHERE type='table' AND name='schema_meta'"
+                        ).fetchone()
+                        if schema_table is None:
+                            raise MemoryStorageUnavailable(
+                                "memory_disabled_legacy_schema"
+                            )
+                    self._connection.execute(
+                        "CREATE TABLE IF NOT EXISTS schema_meta "
+                        "(key TEXT PRIMARY KEY,value TEXT NOT NULL)"
+                    )
+                    existing_version = self._connection.execute(
+                        "SELECT value FROM schema_meta WHERE key='schema_version'"
                     ).fetchone()
-                    if schema_table is None:
+                    supported = {str(value) for value in range(1, SCHEMA_VERSION + 1)}
+                    if (
+                        existing_version is not None
+                        and existing_version["value"] not in supported
+                    ):
+                        raise RuntimeError(
+                            "unsupported orchestrator database schema version"
+                        )
+                    source_schema_version = (
+                        1 if existing_version is None else int(existing_version["value"])
+                    )
+                    if (
+                        not self._memory_storage_enabled
+                        and database_preexisting
+                        and (
+                            existing_version is None
+                            or source_schema_version < SCHEMA_VERSION
+                        )
+                    ):
+                        # A memory-disabled runtime may inspect schema_meta, but it
+                        # must never read, rename, migrate, sweep, or delete legacy
+                        # plaintext memory.  An operator must explicitly enable
+                        # and complete the encrypted migration first.
                         raise MemoryStorageUnavailable(
                             "memory_disabled_legacy_schema"
                         )
-                self._connection.execute(
-                    "CREATE TABLE IF NOT EXISTS schema_meta "
-                    "(key TEXT PRIMARY KEY,value TEXT NOT NULL)"
-                )
-                existing_version = self._connection.execute(
-                    "SELECT value FROM schema_meta WHERE key='schema_version'"
-                ).fetchone()
-                supported = {str(value) for value in range(1, SCHEMA_VERSION + 1)}
-                if (
-                    existing_version is not None
-                    and existing_version["value"] not in supported
-                ):
-                    raise RuntimeError(
-                        "unsupported orchestrator database schema version"
-                    )
-                source_schema_version = (
-                    1 if existing_version is None else int(existing_version["value"])
-                )
-                if (
-                    not self._memory_storage_enabled
-                    and database_preexisting
-                    and (
-                        existing_version is None
-                        or source_schema_version < SCHEMA_VERSION
-                    )
-                ):
-                    # A memory-disabled runtime may inspect schema_meta, but it
-                    # must never read, rename, migrate, sweep, or delete legacy
-                    # plaintext memory.  An operator must explicitly enable
-                    # and complete the encrypted migration first.
-                    raise MemoryStorageUnavailable(
-                        "memory_disabled_legacy_schema"
-                    )
-                _execute_script_tx(self._connection, SCHEMA_SQL)
-                if existing_version is None:
-                    self._connection.execute(
-                        "INSERT INTO schema_meta(key,value) "
-                        "VALUES('schema_version','1')"
-                    )
-                current_version = source_schema_version
-                if current_version == 1:
-                    _execute_script_tx(self._connection, MIGRATION_2_SQL)
-                    self._set_schema_version_tx(self._connection, 1, 2)
-                    current_version = 2
-                if current_version == 2:
-                    _execute_script_tx(self._connection, MIGRATION_3_SQL)
-                    self._set_schema_version_tx(self._connection, 2, 3)
-                    current_version = 3
-                if current_version == 3:
-                    task_columns = {
-                        row["name"]
-                        for row in self._connection.execute(
-                            "PRAGMA table_info(tasks)"
-                        ).fetchall()
-                    }
-                    if "cloud_dispatch_count" not in task_columns:
+                    _execute_script_tx(self._connection, SCHEMA_SQL)
+                    if existing_version is None:
                         self._connection.execute(
-                            "ALTER TABLE tasks ADD COLUMN cloud_dispatch_count "
-                            "INTEGER NOT NULL DEFAULT 0 CHECK("
-                            "cloud_dispatch_count >= 0 AND cloud_dispatch_count <= 1)"
+                            "INSERT INTO schema_meta(key,value) "
+                            "VALUES('schema_version','1')"
                         )
-                    _execute_script_tx(self._connection, MIGRATION_4_SQL)
-                    self._set_schema_version_tx(self._connection, 3, 4)
-                    current_version = 4
-                if current_version == 4:
-                    _execute_script_tx(self._connection, MIGRATION_5_SQL)
-                    self._set_schema_version_tx(self._connection, 4, 5)
-                    current_version = 5
-                if current_version == 5:
-                    tool_columns = {
-                        row["name"]
-                        for row in self._connection.execute(
-                            "PRAGMA table_info(tool_executions)"
-                        ).fetchall()
-                    }
-                    migration_6_lines: list[str] = []
-                    for statement_line in MIGRATION_6_SQL.splitlines():
-                        stripped = statement_line.strip()
-                        if stripped.startswith(
-                            "ALTER TABLE tool_executions ADD COLUMN "
-                        ):
-                            column_name = stripped.split()[5]
-                            if column_name in tool_columns:
-                                continue
-                        migration_6_lines.append(statement_line)
-                    _execute_script_tx(
-                        self._connection, "\n".join(migration_6_lines)
-                    )
-                    self._set_schema_version_tx(self._connection, 5, 6)
-                    current_version = 6
-                if current_version == 6:
-                    _execute_script_tx(self._connection, MIGRATION_7_SQL)
-                    self._set_schema_version_tx(self._connection, 6, 7)
-                    current_version = 7
-                if current_version == 7:
-                    _execute_script_tx(self._connection, MIGRATION_8_SQL)
-                    self._set_schema_version_tx(self._connection, 7, 8)
-                    current_version = 8
-                if current_version == 8:
-                    self._migrate_memory_v9_tx(
-                        self._connection,
-                        source_schema_version=source_schema_version,
-                        now=utc_now(),
-                    )
-                    self._set_schema_version_tx(self._connection, 8, 9)
-                    current_version = 9
-                if current_version == 9:
-                    self._migrate_memory_v10_tx(
-                        self._connection,
-                        now=utc_now(),
-                    )
-                    self._set_schema_version_tx(self._connection, 9, 10)
-                    current_version = 10
-                if current_version != SCHEMA_VERSION:
-                    raise RuntimeError("orchestrator database migration incomplete")
-            except BaseException:
-                self._connection.execute("ROLLBACK")
-                self._connection.close()
-                raise
-            else:
-                self._connection.execute("COMMIT")
-            assert_private_database(self.path)
+                    current_version = source_schema_version
+                    if current_version == 1:
+                        _execute_script_tx(self._connection, MIGRATION_2_SQL)
+                        self._set_schema_version_tx(self._connection, 1, 2)
+                        current_version = 2
+                    if current_version == 2:
+                        _execute_script_tx(self._connection, MIGRATION_3_SQL)
+                        self._set_schema_version_tx(self._connection, 2, 3)
+                        current_version = 3
+                    if current_version == 3:
+                        task_columns = {
+                            row["name"]
+                            for row in self._connection.execute(
+                                "PRAGMA table_info(tasks)"
+                            ).fetchall()
+                        }
+                        if "cloud_dispatch_count" not in task_columns:
+                            self._connection.execute(
+                                "ALTER TABLE tasks ADD COLUMN cloud_dispatch_count "
+                                "INTEGER NOT NULL DEFAULT 0 CHECK("
+                                "cloud_dispatch_count >= 0 AND cloud_dispatch_count <= 1)"
+                            )
+                        _execute_script_tx(self._connection, MIGRATION_4_SQL)
+                        self._set_schema_version_tx(self._connection, 3, 4)
+                        current_version = 4
+                    if current_version == 4:
+                        _execute_script_tx(self._connection, MIGRATION_5_SQL)
+                        self._set_schema_version_tx(self._connection, 4, 5)
+                        current_version = 5
+                    if current_version == 5:
+                        tool_columns = {
+                            row["name"]
+                            for row in self._connection.execute(
+                                "PRAGMA table_info(tool_executions)"
+                            ).fetchall()
+                        }
+                        migration_6_lines: list[str] = []
+                        for statement_line in MIGRATION_6_SQL.splitlines():
+                            stripped = statement_line.strip()
+                            if stripped.startswith(
+                                "ALTER TABLE tool_executions ADD COLUMN "
+                            ):
+                                column_name = stripped.split()[5]
+                                if column_name in tool_columns:
+                                    continue
+                            migration_6_lines.append(statement_line)
+                        _execute_script_tx(
+                            self._connection, "\n".join(migration_6_lines)
+                        )
+                        self._set_schema_version_tx(self._connection, 5, 6)
+                        current_version = 6
+                    if current_version == 6:
+                        _execute_script_tx(self._connection, MIGRATION_7_SQL)
+                        self._set_schema_version_tx(self._connection, 6, 7)
+                        current_version = 7
+                    if current_version == 7:
+                        _execute_script_tx(self._connection, MIGRATION_8_SQL)
+                        self._set_schema_version_tx(self._connection, 7, 8)
+                        current_version = 8
+                    if current_version == 8:
+                        self._migrate_memory_v9_tx(
+                            self._connection,
+                            source_schema_version=source_schema_version,
+                            now=utc_now(),
+                        )
+                        self._set_schema_version_tx(self._connection, 8, 9)
+                        current_version = 9
+                    if current_version == 9:
+                        self._migrate_memory_v10_tx(
+                            self._connection,
+                            now=utc_now(),
+                        )
+                        self._set_schema_version_tx(self._connection, 9, 10)
+                        current_version = 10
+                    if current_version != SCHEMA_VERSION:
+                        raise RuntimeError("orchestrator database migration incomplete")
+                assert_private_database(self.path)
+            cleanup.pop_all()
         # Sweeping is deliberately deferred until an enabled runtime has
         # opened and verified its encrypted epoch session.  In disabled mode
         # even a schema-v10 LEGACY_PENDING table is completely untouched.
@@ -2890,25 +2887,15 @@ class OrchestratorStore:
 
         with self._lock:
             self._connection.execute("BEGIN")
-            try:
+            with self._connection:
                 yield self._connection
-            except BaseException:
-                self._connection.execute("ROLLBACK")
-                raise
-            else:
-                self._connection.execute("COMMIT")
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
-            try:
+            with self._connection:
                 yield self._connection
-            except BaseException:
-                self._connection.execute("ROLLBACK")
-                raise
-            else:
-                self._connection.execute("COMMIT")
 
     @staticmethod
     def _task_from_row(row: sqlite3.Row) -> TaskSnapshot:
