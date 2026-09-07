@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **280 of 401 code files**, plus **230 of 338 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **280 of 401 code files**, plus **231 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **793 tests (778 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **797 tests (782 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1897,3 +1897,20 @@ Two new regression methods produce **five failures and one error before the fixe
 All **13 focused tests pass**, `/tmp/cyrus-redirects-after.log`. Full Voice: **793 tests in 8.306 seconds, 778 passed and 15 skipped**, `/tmp/cyrus-full-review-redirects-voice.log`. Fatal Ruff and unchanged module boundaries pass. Ponytail: extend urllib's existing redirect handler instead of implementing a redirect loop; **12 net production lines**, no dependency. Coverage is **280/401 code, 230/338 tests and 41/308 support**, with **551 reviewed hashes verified across 1047 entries**. Simultaneous partial-writer coordination, remaining whole-codebase review, broader U05 privacy, compiler qualification binding and the final quality assessment remain incomplete.
 
 Mandatory Ponytail hook follow-up: removed the obsolete global-opener mock from the redirect test. The custom opener is independent of urllib's global opener. Both redirect tests pass again, `/tmp/cyrus-redirects-ponytail-tests.log`; the checkpoint is amended with hooks active.
+
+
+### Compact download writer coordination
+
+Redirect checkpoint committed as **ebe4aeb** after the mandatory Ponytail finding was addressed and the amended hook returned clean.
+
+**V324 resolved:** concurrent resume/restart writers could invalidate the relationship between calculated hashes and bytes on disk. A deterministic reproduction resumed a 206 response while another writer restarted the same partial with 200; the first returned downloaded/14 bytes while publishing `pinned fixturened fixture` instead of `pinned fixture`, `/tmp/cyrus-concurrent-download-probe.log`.
+
+A native, nonblocking file lock now covers destination validation through partial hashing, transfer, final verification and publication. A competing call gets retryable download_in_progress before reading/writing that partial. The lock uses a stable empty sidecar inode; it is not unlinked between calls, so separate callers cannot lock different replacement inodes. The file context releases resources on interruption and no PID or stale-owner database is needed. Static lock symlinks/nonregular files are rejected, with no-follow/nonblocking opening where available. This coordinates callers that follow the downloader protocol; it is not protection against arbitrary external writers ignoring the lock.
+
+The initial three regression methods produce **two failures and one error before the fix**, `/tmp/cyrus-download-lock-before.log`. Four final methods cover the corrupting thread interleaving, a separate owned Python process, successful retry after KeyboardInterrupt, lock-link rejection and the Windows acquire/unlock/failure branch through a fake msvcrt API. All **17 focused tests pass**, `/tmp/cyrus-download-lock-after.log`. Full Voice: **797 tests in 8.308 seconds, 782 passed and 15 skipped**, `/tmp/cyrus-full-review-download-lock-voice.log`. Fatal Ruff and unchanged module boundaries pass.
+
+POSIX locking was executed on disposable files on this macOS host. Windows native execution was not performed. The Windows byte-range call uses the documented ability to lock beyond EOF, avoiding a sentinel write; see [Microsoft _locking documentation](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/locking?view=msvc-170). No network transfer, model load, training or user service operation occurred.
+
+Ponytail: one context manager around the existing download flow, using stdlib/native APIs and **37 net production lines**, without a new dependency or process-management abstraction. Separate package lock helpers were inspected; importing Orchestrator or Inference would add an undeclared dependency to independently installed Voice. Coverage is **280/401 code, 231/339 tests and 41/308 support**, with **552 reviewed hashes verified across 1048 entries**. Remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment are still incomplete.
+
+Mandatory Ponytail hook follow-up: removed an unused import from the embedded subprocess fixture. All four locking tests pass again, `/tmp/cyrus-download-lock-ponytail-tests.log`; the checkpoint is amended with hooks active.

@@ -11,10 +11,12 @@ import io
 import json
 import os
 import shutil
+import stat
 import tempfile
 import urllib.parse
 import urllib.request
 import wave
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -164,6 +166,40 @@ def _hash_existing(path: Path) -> tuple[Any, int]:
     return digest, size
 
 
+@contextmanager
+def _artifact_lock(destination: Path):
+    # Keep the lock inode across runs; unlinking it permits competing lock owners.
+    path = destination.with_name(f".{destination.name}.lock")
+    if path.is_symlink():
+        raise _error("tts.f1_compact.download_lock_unsafe", "Artifact lock is unsafe")
+    try:
+        descriptor = os.open(
+            path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0), 0o600,
+        )
+    except OSError as exc:
+        raise _error("tts.f1_compact.download_lock_unavailable", "Artifact lock is unavailable") from exc
+    with os.fdopen(descriptor, "r+b") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise _error("tts.f1_compact.download_lock_unsafe", "Artifact lock is unsafe")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise _error("tts.f1_compact.download_in_progress", "Artifact download is already active", retryable=True) from exc
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def _download_artifact(
     spec: ArtifactSpec,
     destination: Path,
@@ -175,67 +211,68 @@ def _download_artifact(
     if not _download_url_allowed(spec.source_url):
         raise _error("tts.f1_compact.source_url_forbidden", "Artifact URL is forbidden")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.is_symlink() or destination.exists():
-        result = validate_artifact_set(destination.parent, (ArtifactSpec(destination.name, spec.size, spec.sha256, spec.source_url),))
-        if result.ready:
-            return {"relative_path": spec.relative_path, "status": "already_present", "bytes": spec.size}
-        raise _error("tts.f1_compact.existing_artifact_invalid", "Existing artifact is invalid")
+    with _artifact_lock(destination):
+        if destination.is_symlink() or destination.exists():
+            result = validate_artifact_set(destination.parent, (ArtifactSpec(destination.name, spec.size, spec.sha256, spec.source_url),))
+            if result.ready:
+                return {"relative_path": spec.relative_path, "status": "already_present", "bytes": spec.size}
+            raise _error("tts.f1_compact.existing_artifact_invalid", "Existing artifact is invalid")
 
-    partial = destination.with_name(f"{destination.name}.part")
-    digest, offset = _hash_existing(partial)
-    if offset > spec.size:
-        raise _error("tts.f1_compact.partial_too_large", "Partial artifact is too large")
-    total = offset
-    if offset < spec.size:
-        headers = {"Accept-Encoding": "identity", "User-Agent": "JARVIS-Voice-F1-Pilot/1"}
-        if offset:
-            headers["Range"] = f"bytes={offset}-"
-        request = urllib.request.Request(spec.source_url, headers=headers, method="GET")
+        partial = destination.with_name(f"{destination.name}.part")
+        digest, offset = _hash_existing(partial)
+        if offset > spec.size:
+            raise _error("tts.f1_compact.partial_too_large", "Partial artifact is too large")
+        total = offset
+        if offset < spec.size:
+            headers = {"Accept-Encoding": "identity", "User-Agent": "JARVIS-Voice-F1-Pilot/1"}
+            if offset:
+                headers["Range"] = f"bytes={offset}-"
+            request = urllib.request.Request(spec.source_url, headers=headers, method="GET")
 
-        try:
-            opener = urllib.request.build_opener(_ArtifactRedirectHandler()).open if urlopen is None else urlopen
-            response_manager = opener(request, timeout=60)
-            with response_manager as response:
-                final_url = str(response.geturl())
-                if not _download_url_allowed(final_url):
-                    raise _error("tts.f1_compact.redirect_forbidden", "Artifact redirect is forbidden")
-                status = int(getattr(response, "status", response.getcode()))
-                content_encoding = str(response.headers.get("Content-Encoding", "identity")).lower()
-                if content_encoding not in {"", "identity"}:
-                    raise _error("tts.f1_compact.content_encoding_invalid", "Artifact response is encoded")
-                append = offset > 0 and status == 206
-                if append:
-                    content_range = str(response.headers.get("Content-Range", ""))
-                    if not content_range.startswith(f"bytes {offset}-"):
-                        raise _error("tts.f1_compact.range_invalid", "Artifact range response is invalid")
-                elif status in {200, 206}:
-                    digest = hashlib.sha256()
-                    offset = 0
-                else:
-                    raise _error("tts.f1_compact.http_status_invalid", "Artifact HTTP status is invalid", retryable=True)
+            try:
+                opener = urllib.request.build_opener(_ArtifactRedirectHandler()).open if urlopen is None else urlopen
+                response_manager = opener(request, timeout=60)
+                with response_manager as response:
+                    final_url = str(response.geturl())
+                    if not _download_url_allowed(final_url):
+                        raise _error("tts.f1_compact.redirect_forbidden", "Artifact redirect is forbidden")
+                    status = int(getattr(response, "status", response.getcode()))
+                    content_encoding = str(response.headers.get("Content-Encoding", "identity")).lower()
+                    if content_encoding not in {"", "identity"}:
+                        raise _error("tts.f1_compact.content_encoding_invalid", "Artifact response is encoded")
+                    append = offset > 0 and status == 206
+                    if append:
+                        content_range = str(response.headers.get("Content-Range", ""))
+                        if not content_range.startswith(f"bytes {offset}-"):
+                            raise _error("tts.f1_compact.range_invalid", "Artifact range response is invalid")
+                    elif status in {200, 206}:
+                        digest = hashlib.sha256()
+                        offset = 0
+                    else:
+                        raise _error("tts.f1_compact.http_status_invalid", "Artifact HTTP status is invalid", retryable=True)
 
-                mode = "ab" if append else "wb"
-                with partial.open(mode) as output:
-                    total = offset
-                    while True:
-                        chunk = response.read(DOWNLOAD_CHUNK_BYTES)
-                        if not chunk:
-                            break
-                        total += len(chunk)
-                        if total > spec.size:
-                            raise _error("tts.f1_compact.download_too_large", "Artifact exceeded pinned size")
-                        digest.update(chunk)
-                        output.write(chunk)
-                    output.flush()
-                    os.fsync(output.fileno())
-        except OSError as exc:
-            raise _error("tts.f1_compact.download_failed", "Artifact download failed", retryable=True) from exc
+                    mode = "ab" if append else "wb"
+                    with partial.open(mode) as output:
+                        total = offset
+                        while True:
+                            chunk = response.read(DOWNLOAD_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            total += len(chunk)
+                            if total > spec.size:
+                                raise _error("tts.f1_compact.download_too_large", "Artifact exceeded pinned size")
+                            digest.update(chunk)
+                            output.write(chunk)
+                        output.flush()
+                        os.fsync(output.fileno())
+            except OSError as exc:
+                raise _error("tts.f1_compact.download_failed", "Artifact download failed", retryable=True) from exc
 
-    if total != spec.size or digest.hexdigest() != spec.sha256:
-        raise _error("tts.f1_compact.download_hash_mismatch", "Artifact hash validation failed")
-    os.link(partial, destination)
-    partial.unlink()
-    return {"relative_path": spec.relative_path, "status": "downloaded", "bytes": total}
+        if total != spec.size or digest.hexdigest() != spec.sha256:
+            raise _error("tts.f1_compact.download_hash_mismatch", "Artifact hash validation failed")
+        os.link(partial, destination)
+        partial.unlink()
+        return {"relative_path": spec.relative_path, "status": "downloaded", "bytes": total}
 
 
 def acquire_pinned_artifacts(
