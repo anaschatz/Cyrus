@@ -105,7 +105,6 @@ class MacOSSourceRunKeychainModeTests(unittest.TestCase):
             def run(fail_at):
                 calls = 0
                 live = set()
-                next_id = 0
 
                 def step():
                     nonlocal calls
@@ -114,11 +113,9 @@ class MacOSSourceRunKeychainModeTests(unittest.TestCase):
                         raise SchedulerKeyUnavailable("synthetic native failure")
 
                 def allocate(*_args):
-                    nonlocal next_id
                     step()
-                    next_id += 1
-                    live.add(next_id)
-                    return next_id
+                    live.add(calls)
+                    return calls
 
                 def release(pointer):
                     self.assertIn(pointer.value, live)
