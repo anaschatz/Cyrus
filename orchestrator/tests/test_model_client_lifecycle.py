@@ -156,10 +156,6 @@ class ModelClientLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 "jarvis_orchestrator.cloud_provider.OpenRouterCloudAdapter",
                 return_value=cloud,
             ),
-            patch(
-                "jarvis_orchestrator.cloud_provider.revalidate_cloud_endpoints",
-                new=AsyncMock(),
-            ),
         ):
             with self.assertRaisesRegex(
                 RuntimeFailure, "runtime_cloud_shutdown_failed"
