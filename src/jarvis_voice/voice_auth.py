@@ -612,7 +612,7 @@ def _windows_key_sids() -> tuple[Any, Any, Any, Any]:
         raise VoiceAuthError("voice_auth.key_permissions_invalid") from None
 
 
-def _validate_windows_key_permissions(path: Path) -> None:
+def _validate_windows_key_permissions(path: Path, *, descriptor: int | None = None) -> None:
     if os.name != "nt":
         return
     try:
@@ -620,11 +620,20 @@ def _validate_windows_key_permissions(path: Path) -> None:
         import win32file  # type: ignore[import-not-found]
 
         win32security, user_sid, system_sid, administrators_sid = _windows_key_sids()
-        attributes = win32file.GetFileAttributes(str(path))
+        if descriptor is None:
+            target = str(path)
+            attributes = win32file.GetFileAttributes(target)
+            read_security = win32security.GetNamedSecurityInfo
+        else:
+            import msvcrt  # type: ignore[import-not-found]
+
+            target = msvcrt.get_osfhandle(descriptor)
+            attributes = os.fstat(descriptor).st_file_attributes
+            read_security = win32security.GetSecurityInfo
         if attributes & win32con.FILE_ATTRIBUTE_REPARSE_POINT:
             raise VoiceAuthError("voice_auth.key_file_invalid")
-        security = win32security.GetNamedSecurityInfo(
-            str(path),
+        security = read_security(
+            target,
             win32security.SE_FILE_OBJECT,
             win32security.OWNER_SECURITY_INFORMATION
             | win32security.DACL_SECURITY_INFORMATION,
@@ -697,9 +706,6 @@ def _validate_key_parent_security(
 ) -> None:
     selected_platform = os.name if platform_name is None else platform_name
     if selected_platform == "nt":
-        # The stdlib-compatible creation path writes before the file DACL can
-        # be hardened. A private parent closes that otherwise observable
-        # creation window.
         _validate_windows_key_permissions(path)
 
 
@@ -717,7 +723,8 @@ def load_voice_auth_key(path: str | os.PathLike[str]) -> VoiceAuthKey:
     _validate_windows_key_permissions(selected)
     if before.st_size < 1 or before.st_size > MAX_KEY_FILE_BYTES:
         raise VoiceAuthError("voice_auth.key_format_invalid")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+             | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
     try:
         descriptor = os.open(selected, flags)
     except OSError:
@@ -725,8 +732,9 @@ def load_voice_auth_key(path: str | os.PathLike[str]) -> VoiceAuthKey:
     try:
         opened = os.fstat(descriptor)
         _validate_key_stat(opened)
-        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+        if not os.path.samestat(opened, before):
             raise VoiceAuthError("voice_auth.key_file_invalid")
+        _validate_windows_key_permissions(selected, descriptor=descriptor)
         chunks: list[bytes] = []
         remaining = MAX_KEY_FILE_BYTES + 1
         while remaining:
@@ -736,6 +744,17 @@ def load_voice_auth_key(path: str | os.PathLike[str]) -> VoiceAuthKey:
             chunks.append(chunk)
             remaining -= len(chunk)
         encoded = b"".join(chunks)
+        after = os.fstat(descriptor)
+        current = selected.lstat()
+        _validate_key_stat(after)
+        _validate_key_stat(current)
+        if len(encoded) != opened.st_size or any(
+            getattr(metadata, name) != getattr(opened, name)
+            for metadata in (before, after, current)
+            for name in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        ):
+            raise VoiceAuthError("voice_auth.key_file_invalid")
+        _validate_windows_key_permissions(selected, descriptor=descriptor)
     except VoiceAuthError:
         raise
     except OSError:
@@ -781,50 +800,36 @@ def create_voice_auth_key_file(
     if not stat.S_ISDIR(parent.st_mode) or stat.S_ISLNK(parent.st_mode):
         raise VoiceAuthError("voice_auth.key_path_invalid")
     _validate_key_parent_security(selected.parent)
-    flags = (
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    descriptor: int | None = None
-    created = False
-    failure: VoiceAuthError | None = None
+    owned = None
     try:
-        descriptor = os.open(selected, flags, 0o600)
-        created = True
-        if os.name == "posix":
-            os.fchmod(descriptor, 0o600)
-        view = memoryview(encoded)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise OSError
-            view = view[written:]
-        os.fsync(descriptor)
-        _validate_key_stat(os.fstat(descriptor))
-    except VoiceAuthError as exc:
-        failure = exc
-    except OSError:
-        failure = VoiceAuthError("voice_auth.key_create_failed")
-    finally:
-        if descriptor is not None:
+        with open(selected, "xb", opener=lambda name, flags: os.open(
+            name, flags | getattr(os, "O_NOFOLLOW", 0), 0o600,
+        )) as output:
+            owned = os.fstat(output.fileno())
+            if os.name == "posix":
+                os.fchmod(output.fileno(), 0o600)
+            if not os.path.samestat(owned, selected.lstat()):
+                raise VoiceAuthError("voice_auth.key_file_invalid")
+            _harden_windows_key_file(selected)
+            _validate_windows_key_permissions(selected, descriptor=output.fileno())
+            if not os.path.samestat(owned, selected.lstat()):
+                raise VoiceAuthError("voice_auth.key_file_invalid")
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+            _validate_key_stat(os.fstat(output.fileno()))
+            _validate_windows_key_permissions(selected, descriptor=output.fileno())
+            if not os.path.samestat(owned, selected.lstat()):
+                raise VoiceAuthError("voice_auth.key_file_invalid")
+    except BaseException as exc:
+        if owned is not None:
             try:
-                os.close(descriptor)
-            except OSError:
-                failure = VoiceAuthError("voice_auth.key_create_failed")
-    if failure is not None:
-        if created:
-            try:
-                selected.unlink()
+                if os.path.samestat(owned, selected.lstat()):
+                    selected.unlink()
             except OSError:
                 pass
-        raise failure from None
-    try:
-        _harden_windows_key_file(selected)
-    except VoiceAuthError:
-        selected.unlink(missing_ok=True)
+        if isinstance(exc, OSError):
+            raise VoiceAuthError("voice_auth.key_create_failed") from None
         raise
     return VoiceAuthKey(version, secret)
 

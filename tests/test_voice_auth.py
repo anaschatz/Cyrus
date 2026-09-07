@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import _bootstrap  # noqa: F401
 import jarvis_voice.voice_auth as voice_auth
@@ -293,6 +296,209 @@ class VoiceAuthKeyFileTests(unittest.TestCase):
             create_voice_auth_key_file(self.path, key=bytes(reversed(range(32))))
         self.assertEqual(self.path.read_bytes(), before)
         self.assertEqual(load_voice_auth_key(self.path), first)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX FIFO substitution")
+    def test_key_reader_rejects_fifo_substitution_without_blocking(self) -> None:
+        create_voice_auth_key_file(self.path, key=bytes(range(32)))
+        script = """
+import os, sys
+from pathlib import Path
+from unittest.mock import patch
+from jarvis_voice.voice_auth import VoiceAuthError, load_voice_auth_key
+path = Path(sys.argv[1]); real_open = os.open
+def substitute(name, flags, *args, **kwargs):
+    path.unlink()
+    os.mkfifo(path, 0o600)
+    return real_open(name, flags, *args, **kwargs)
+with patch.object(os, "open", side_effect=substitute):
+    try:
+        load_voice_auth_key(path)
+    except VoiceAuthError:
+        pass
+    else:
+        raise AssertionError("FIFO accepted")
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(self.path)],
+            capture_output=True, text=True, timeout=3,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_failed_key_creation_preserves_replacement_files(self) -> None:
+        for phase in ("fsync", "harden", "interrupt"):
+            for replace_file in (False, True):
+                with self.subTest(phase=phase, replace_file=replace_file):
+                    def fail(*args):
+                        if replace_file:
+                            self.path.unlink()
+                            self.path.write_bytes(b"replacement")
+                        if phase == "interrupt":
+                            raise KeyboardInterrupt
+                        if phase == "fsync":
+                            raise OSError("simulated write failure")
+                        raise VoiceAuthError("voice_auth.key_permissions_invalid")
+                    target = "jarvis_voice.voice_auth." + (
+                        "_harden_windows_key_file" if phase == "harden" else "os.fsync"
+                    )
+                    try:
+                        with patch(target, side_effect=fail):
+                            with self.assertRaises(KeyboardInterrupt if phase == "interrupt" else VoiceAuthError):
+                                create_voice_auth_key_file(self.path, key=bytes(range(32)))
+                        if replace_file:
+                            self.assertEqual(self.path.read_bytes(), b"replacement")
+                        else:
+                            self.assertFalse(self.path.exists())
+                    finally:
+                        self.path.unlink(missing_ok=True)
+
+    def test_key_creation_rejects_replacement_around_hardening(self) -> None:
+        for phase in ("fsync", "harden"):
+            with self.subTest(phase=phase):
+                original_fsync = os.fsync
+                def substitute(argument):
+                    if phase == "fsync":
+                        original_fsync(argument)
+                    self.path.unlink()
+                    self.path.write_bytes(b"replacement")
+                target = "jarvis_voice.voice_auth." + (
+                    "os.fsync" if phase == "fsync" else "_harden_windows_key_file"
+                )
+                try:
+                    with patch(target, side_effect=substitute):
+                        with self.assertRaisesRegex(VoiceAuthError, "voice_auth.key_file_invalid"):
+                            create_voice_auth_key_file(self.path, key=bytes(range(32)))
+                    self.assertEqual(self.path.read_bytes(), b"replacement")
+                finally:
+                    self.path.unlink(missing_ok=True)
+
+    def test_key_json_rejects_trailing_data_after_control_z(self) -> None:
+        create_voice_auth_key_file(self.path, key=bytes(range(32)))
+        with self.path.open("ab") as output:
+            output.write(b"\x1a trailing data")
+        with self.assertRaisesRegex(VoiceAuthError, "voice_auth.key_format_invalid"):
+            load_voice_auth_key(self.path)
+
+    def test_windows_acl_rejects_foreign_and_unsupported_grants(self) -> None:
+        descriptor = Mock()
+        descriptor.GetSecurityDescriptorOwner.return_value = "user"
+        acl = descriptor.GetSecurityDescriptorDacl.return_value
+        acl.GetAceCount.return_value = 1
+        security = SimpleNamespace(
+            ACCESS_ALLOWED_ACE_TYPE=0, ACCESS_ALLOWED_OBJECT_ACE_TYPE=5,
+            SE_FILE_OBJECT=1, OWNER_SECURITY_INFORMATION=1, DACL_SECURITY_INFORMATION=4,
+            GetNamedSecurityInfo=lambda *args: descriptor,
+        )
+        modules = {
+            "win32con": SimpleNamespace(FILE_ATTRIBUTE_REPARSE_POINT=1024),
+            "win32file": SimpleNamespace(GetFileAttributes=lambda path: 0),
+        }
+        with patch.dict(sys.modules, modules), patch.object(voice_auth, "os", SimpleNamespace(name="nt")), patch.object(voice_auth, "_windows_key_sids", return_value=(security, "user", "system", "administrators")):
+            for ace_type in (0, 5):
+                for sid in ("user", "system", "administrators", "foreign"):
+                    with self.subTest(ace_type=ace_type, sid=sid):
+                        acl.GetAce.return_value = ((ace_type, 0), 1, sid) if ace_type == 0 else ((ace_type, 0), 1, None, None, sid)
+                        if sid == "foreign":
+                            with self.assertRaisesRegex(VoiceAuthError, "voice_auth.key_permissions_invalid"):
+                                voice_auth._validate_windows_key_permissions(self.path)
+                        else:
+                            voice_auth._validate_windows_key_permissions(self.path)
+            acl.GetAce.side_effect = NotImplementedError("unsupported ACE")
+            with self.assertRaisesRegex(VoiceAuthError, "voice_auth.key_permissions_invalid"):
+                voice_auth._validate_windows_key_permissions(self.path)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX key mutation fixtures")
+    def test_key_reader_rejects_changes_during_read(self) -> None:
+        for mutation in ("replace", "content", "permissions", "symlink"):
+            with self.subTest(mutation=mutation):
+                create_voice_auth_key_file(self.path, key=bytes(range(32)))
+                original = self.path.read_bytes()
+                metadata = self.path.stat()
+                real_read = os.read
+                changed = False
+                def change_after_read(descriptor, maximum):
+                    nonlocal changed
+                    content = real_read(descriptor, maximum)
+                    if content and not changed:
+                        changed = True
+                        if mutation == "replace":
+                            self.path.unlink()
+                            self.write(original)
+                        elif mutation == "content":
+                            self.path.write_bytes(original.replace(b'"key_version":1', b'"key_version":2'))
+                            os.utime(self.path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns + 1_000_000_000))
+                        elif mutation == "permissions":
+                            self.path.chmod(0o640)
+                        else:
+                            target = self.root / "original.json"
+                            self.path.rename(target)
+                            self.path.symlink_to(target)
+                    return content
+                try:
+                    with patch.object(os, "read", side_effect=change_after_read):
+                        with self.assertRaises(VoiceAuthError):
+                            load_voice_auth_key(self.path)
+                finally:
+                    self.path.unlink(missing_ok=True)
+
+    def test_windows_key_reader_checks_the_opened_handle_acl(self) -> None:
+        create_voice_auth_key_file(self.path, key=bytes(range(32)))
+        def security_descriptor(sid):
+            acl = SimpleNamespace(GetAceCount=lambda: 1, GetAce=lambda index: ((0, 0), 1, sid))
+            return SimpleNamespace(GetSecurityDescriptorOwner=lambda: "user", GetSecurityDescriptorDacl=lambda: acl)
+        for change_during_read in (False, True):
+            with self.subTest(change_during_read=change_during_read):
+                exposed = not change_during_read
+                real_read = os.read
+                def read(descriptor, maximum):
+                    nonlocal exposed
+                    data = real_read(descriptor, maximum)
+                    exposed = True
+                    return data
+                security = SimpleNamespace(
+                    ACCESS_ALLOWED_ACE_TYPE=0, ACCESS_ALLOWED_OBJECT_ACE_TYPE=5,
+                    SE_FILE_OBJECT=1, OWNER_SECURITY_INFORMATION=1, DACL_SECURITY_INFORMATION=4,
+                    GetNamedSecurityInfo=lambda *args: security_descriptor("user"),
+                    GetSecurityInfo=lambda *args: security_descriptor("foreign" if exposed else "user"),
+                )
+                def fstat(descriptor):
+                    metadata = os.fstat(descriptor)
+                    return SimpleNamespace(**{**{name: getattr(metadata, name) for name in dir(metadata) if name.startswith("st_")}, "st_file_attributes": 0})
+                fake_os = SimpleNamespace(**{**vars(os), "name": "nt", "read": Mock(side_effect=read), "fstat": fstat})
+                modules = {
+                    "win32con": SimpleNamespace(FILE_ATTRIBUTE_REPARSE_POINT=1024),
+                    "win32file": SimpleNamespace(GetFileAttributes=lambda path: 0),
+                    "msvcrt": SimpleNamespace(get_osfhandle=lambda descriptor: descriptor),
+                }
+                with patch.dict(sys.modules, modules), patch.object(voice_auth, "os", fake_os), patch.object(voice_auth, "_windows_key_sids", return_value=(security, "user", "system", "administrators")):
+                    with self.assertRaisesRegex(VoiceAuthError, "voice_auth.key_permissions_invalid"):
+                        load_voice_auth_key(self.path)
+                if change_during_read:
+                    fake_os.read.assert_called()
+                else:
+                    fake_os.read.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "POSIX creation checkpoint")
+    def test_key_creation_never_hardens_an_observed_replacement(self) -> None:
+        original_fchmod = os.fchmod
+        def replace_after_chmod(descriptor, mode):
+            original_fchmod(descriptor, mode)
+            self.path.unlink()
+            self.path.write_bytes(b"replacement")
+        with patch.object(os, "fchmod", side_effect=replace_after_chmod), patch.object(voice_auth, "_harden_windows_key_file") as harden:
+            with self.assertRaises(VoiceAuthError):
+                create_voice_auth_key_file(self.path, key=bytes(range(32)))
+        harden.assert_not_called()
+        self.assertEqual(self.path.read_bytes(), b"replacement")
+
+    def test_key_creation_checks_private_handle_before_writing(self) -> None:
+        def reject(path, *, descriptor=None):
+            if descriptor is not None:
+                self.assertEqual(os.fstat(descriptor).st_size, 0)
+                raise VoiceAuthError("voice_auth.key_permissions_invalid")
+        with patch.object(voice_auth, "_validate_windows_key_permissions", side_effect=reject):
+            with self.assertRaisesRegex(VoiceAuthError, "voice_auth.key_permissions_invalid"):
+                create_voice_auth_key_file(self.path, key=bytes(range(32)))
+        self.assertFalse(self.path.exists())
 
     def test_windows_creation_validates_private_parent_before_writing(self) -> None:
         with (

@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **224 of 400 code files**, plus **189 of 316 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **225 of 400 code files**, plus **189 of 316 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **721 tests (706 passed, 15 skipped)**; Orchestrator **1087 tests (1082 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1087 tests (1082 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1475,3 +1475,27 @@ All **34 focused tests pass**, `/tmp/cyrus-auth-boundaries-after.log`. Full Voic
 Ponytail: reuse one bounded JSON parser, remove its unused encoded return and the unused frame helper, and share deadline validation plus async I/O guards. **15 fewer production lines**, no new dependency. Sync send remains checked at operation boundaries; the current synchronous connection protocol does not allow forcibly preempting a send already in progress. Async cancellation retains asyncio.wait_for behavior. These fixes prevent late success/dispatch and do not claim a hard preemption guarantee for arbitrary blocking callbacks.
 
 The transport adapter and both auth test modules are reviewed. The complete auth/key source has been read but remains pending key-file mutation/FIFO, failure-cleanup and Windows ACL investigation. Coverage is **224/400 code, 189/316 tests and 41/308 support files**, with **454 reviewed hashes verified across 1024 entries**. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding remain open.
+
+
+### Voice key files and completed authentication source inspection
+
+Authentication parser/transport checkpoint committed as **a6ecad7**, with a clean Ponytail hook. Completed the remaining loader/creator investigation through CLI/config startup, stack migration, readiness and beta-session/lease callers. All files and keys exercised here are disposable or synthetic.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V260 | Replacing a validated key file with a FIFO before open could block startup indefinitely. | Use O_NONBLOCK and retain regular-file validation. Also request binary reads so Windows CRT text translation cannot hide trailing bytes. |
+| V261 | Creation failure cleanup unconditionally removed the pathname, deleting a replacement file the creator did not own. | Bind cleanup to the exclusively created file identity and preserve replacements. |
+| V262 | A pathname replacement could be hardened or accepted as successful creation while the descriptor still referred to the original inode. | Check pathname ownership before hardening, before secret writes and before returning success; reject observed replacements without altering them. |
+| V263 | KeyboardInterrupt during creation closed the descriptor but left the partial key file, preventing an exclusive retry. | Builtin buffered-file ownership closes the descriptor; cleanup on propagated failures/interruption removes only the owned file. |
+| V264 | The reader accepted same-inode content changes, a replacement/symlink pathname or relaxed POSIX permissions during its read. | Recheck descriptor/path metadata, owner/mode, byte count and initial/opened/final identity before accepting the document. |
+| V265 | Windows checks inspected a named path but did not verify the opened handle's ACL. The creator wrote secret bytes before hardening the file. | Reuse the existing ACL policy with GetSecurityInfo on the borrowed CRT handle before and after data access. Harden and verify creation privacy before writing secret bytes. |
+
+The original three-method reproduction has **one failure and three errors**, `/tmp/cyrus-auth-key-before.log`, including a timed-out FIFO subprocess. Expanded writer fault cases have **three failures and two errors** against saved original source, `/tmp/cyrus-auth-key-extended-before.log`. Reader mutation/handle-ACL cases add **six failures**, `/tmp/cyrus-auth-key-mutation-before.log`; pre-write privacy and pre-hardening ownership each fail before their guards, `/tmp/cyrus-auth-key-private-write-before.log` and `/tmp/cyrus-auth-key-harden-target-before.log`. Failure injection covers ordinary I/O failure, hardening failure and KeyboardInterrupt while checking both unchanged-file cleanup and replacement preservation.
+
+The suspected callback-ACE bypass was not confirmed: the [upstream PyACL GetAce implementation inspected](https://github.com/mhammond/pywin32/blob/main/win32/src/PyACL.cpp#L863) raises NotImplementedError for unsupported types, and Voice translates that failure to its private-permissions error. Tests retain ordinary/object ACE checks for user/system/administrators and rejection of foreign grants and unsupported-type errors. No speculative callback/compound-ACE support was added. Windows handle/ACL tests use simulated APIs; native Windows qualification is still required separately.
+
+All **43 focused tests pass**, `/tmp/cyrus-auth-key-after.log`. All **43 exact staged checks pass** as well, `/tmp/cyrus-auth-key-staged-tests.log`, with source/test bytes verified against the index before import. Final full Voice ran **730 tests in 6.551 seconds: 715 passed, 15 skipped**, `/tmp/cyrus-full-review-voice-auth-key-final.log`. Full Orchestrator ran **1087 tests in 20.433 seconds: 1082 passed, five skipped**, `/tmp/cyrus-full-review-orchestrator-auth-key.log`. After the final pre-hardening ownership check, all **67 relevant Orchestrator caller tests complete successfully: 63 passed, four skipped**, `/tmp/cyrus-auth-key-callers-final.log`. Fatal Ruff/unused-import and unchanged module-size checks pass. Existing key-file round trips and exclusivity remain valid; a trailing control-Z fixture must be rejected as malformed JSON. No user key, native service, microphone or provider was accessed.
+
+Ponytail: use the standard exclusive buffered writer instead of a manual write loop and separate descriptor/created/failure state; share the existing Windows ACL policy for both path and handle checks. The complete production diff adds **five lines**, with no new dependency, wire format or key schema. Identity and metadata checks detect observed changes; they do not claim atomic exclusion against arbitrary non-cooperating writers between inspection and pathname operations.
+
+The complete Voice authentication/key implementation and its identified follow-ups are now reviewed. Coverage is **225/400 code, 189/316 tests and 41/308 support files**, with **455 reviewed hashes verified across 1024 entries**. Whole-codebase review and final quality assessment remain incomplete: **175 code, 127 test and 267 support files** remain. U05 and compiler qualification identity binding remain open; source review is not a bug-free or native-qualified claim.
