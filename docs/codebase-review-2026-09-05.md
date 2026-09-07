@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **209 of 400 code files**, plus **165 of 303 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **210 of 400 code files**, plus **168 of 305 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1015 tests (1010 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1020 tests (1015 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -975,3 +975,24 @@ All **38 focused tests** passed. Full Orchestrator verification ran **1014 tests
 The subsequent source inspection also corrected two reversed return annotations: persist_planner_route returns a dictionary, while begin_memory_recall returns a boolean. All callers were traced; this changes no execution behavior. Runtime behavior is unchanged since the latest full suite. Store source is now **8540 lines**, fourteen fewer than before the SQLite ownership checkpoint. Existing constructors, synthetic providers and stdlib error injection were reused; no dependency, generic migration validator or connection wrapper was added. No user database, actual OS key provider or external service was accessed, and no push occurred.
 
 Current coverage is **209/400 code, 165/303 tests and 39/308 support files**, with **413 reviewed hashes verified across 1011 entries**. Full-store/service inspection, compiler qualification identity binding, U05 privacy coverage and the remaining inventory still prevent a final whole-codebase quality assessment.
+
+
+### Atomic deadline expiry and cloud state retention
+
+Finished reading all central store source and the complete 875-line store_schema.py, plus the 287-line store contract test and two new regression modules. The schema and inspected tests are now reviewed. The store remains pending specifically for scheduler-linked conversation deletion and broader cross-store integration; complete source reading is not proof that every relationship has been exercised. The large task-ID list in conversation deletion also needs a bounded-parameter follow-up.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V198 | Deadline expiry used a task snapshot read before the cancellation transaction. A committed reconnect or disconnect-deadline extension in between could still be cancelled using the stale timestamp. | Select current active task epochs, evaluate their deadlines and cancel inside one existing write transaction. Reuse the transaction-level cancellation method and remove the stale-snapshot error-swallowing loop. |
+| V199 | Deleting a conversation removed its cloud cost reservations, restoring spent monthly budget and allowing a later reservation to overlook that cost. | Atomically aggregate dispatched, ambiguous and reconciled costs into one content-free schema_meta total per UTC month before deleting conversation records. Both remaining-budget reads and permit admission use the shared total of live and retired costs. Unused/cancelled reservations are not retained as charges. |
+| V200 | A decision received at or after approval expiry created its ACK and rejection with that same past expiry; the publisher immediately discarded both. | Give decision receipts the existing delivery TTL from receipt creation, independently of the business approval deadline. Expired approval remains rejected. |
+
+V198 baseline had **two failed subcases**, `/tmp/cyrus-deadline-snapshot-before.log`. Real independent SQLite connections use a trace callback immediately before BEGIN to commit either a reconnect or an extension at the vulnerable boundary. Both now preserve the executing task; an extended deadline still expires at its new boundary. **20 focused tests** passed. Full Orchestrator verification ran **1016 tests in 18.089 seconds: 1011 passed, five skipped**, `/tmp/cyrus-full-review-deadline-snapshot.log`. Committed as `b55cae9` with exact staged Ponytail review and the configured hook; no complexity findings.
+
+V199/V200 final baseline had **four failing tests**, `/tmp/cyrus-cloud-retention-final-before.log`. The tests exercise public approval, permit, reconciliation, cancellation and deletion methods against disposable SQLite: retained reconciled cost survives restart and blocks a new permit, another month remains independent, repeated deletions accumulate, unused reservations are released, ambiguous charges remain conservative, and a trigger-induced failed deletion rolls back without double counting. Retained metadata contains only month and integer total; original tasks, conversation, bindings and individual cost records are removed. The expiry test claims the actual ACK and rejected-result outbox rows at the exact approval deadline without granting approval.
+
+All **33 focused tests** passed. Full Orchestrator verification ran **1020 tests in 18.276 seconds: 1015 passed, five skipped**, `/tmp/cyrus-full-review-cloud-store-retention.log`. The final four tests passed again after removing an unused fixture-time parameter and a redundant integer cast; these do not change runtime behavior. Fatal Ruff, unchanged module-size limits and staged whitespace checks pass. Committed as `423b2bb` with exact staged Ponytail review and active hook; no findings. No provider request, real charge, actual native credential access or push occurred.
+
+Ponytail reuses the existing transaction helper, delivery TTL and schema_meta storage; shares the duplicated monthly-cost calculation; uses SQLite's grouped upsert for aggregation. No dependency or schema table was added. Store size is **8555 lines**, below the unchanged 8575-line ceiling. The monthly aggregates preserve costs for deletions performed by the updated code; charges already removed by older versions cannot be reconstructed from the deleted local records. The provider's independently enforced monthly key limit remains an additional gate, and fresh live qualification is still outside these local tests.
+
+Current coverage is **210/400 code, 168/305 tests and 39/308 support files**, with **417 reviewed hashes verified across 1013 entries**. Scheduler-linked history deletion, remaining cross-component source/tests, compiler qualification identity binding and U05 privacy coverage remain open. The whole-codebase review and final quality assessment are not complete.
