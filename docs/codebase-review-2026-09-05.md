@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **280 of 401 code files**, plus **228 of 336 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **280 of 401 code files**, plus **229 of 337 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **787 tests (772 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **791 tests (776 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1867,3 +1867,18 @@ Piper failure-boundary checkpoint committed as **9a52e85**, with a clean mandato
 Three regression methods produce **four failures before the fixes**, `/tmp/cyrus-extraction-boundaries-before.log`. All **16 focused tests pass**, `/tmp/cyrus-extraction-boundaries-after.log`. Full Voice: **787 tests in 8.289 seconds, 772 passed and 15 skipped**, `/tmp/cyrus-full-review-extraction-boundaries-voice.log`. Fatal Ruff and unchanged module boundaries pass. Tests execute the real extractor and WAV reader on synthetic PCM bytes, fake Parquet rows and disposable files. No live dataset/model download, native audio, PyArrow installation or training was performed.
 
 Ponytail: reuse existing WAV and cleanup boundaries, **five net production lines**, no new helper or dependency. Completed source inspection of both implementation modules, acquisition CLI and three test modules brings coverage to **280/401 code, 228/336 tests and 41/308 support**, with **549 reviewed hashes verified across 1045 entries**. Downloader ownership and resume behavior remain follow-up work. Remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment are still incomplete.
+
+
+### Compact artifact resume and publication
+
+Extraction checkpoint committed as **5be63e7**, with a clean mandatory Ponytail review.
+
+**V319 resolved:** a dangling partial symlink failed the exists() check, bypassed the link guard and was subsequently opened for writing through its target. Link checks now occur before existence checks; final destination links also enter the existing rejection path.
+
+**V320 resolved:** a complete partial left by an interrupted transfer still requested a range starting at EOF. That made recovery depend on network/server behavior despite all bytes already being available. Full-size partials now reach the existing size/hash check and publication without any HTTP request. A full-size corrupt partial is rejected, while 206 resume and 200 restart behavior are preserved.
+
+**V321 resolved:** final os.replace could overwrite a destination created during the download. Publication now uses an exclusive same-volume hard link and then removes the completed partial. A late destination is preserved and the verified partial remains available after the collision. This does not serialize simultaneous writers modifying the same partial; that and redirect-hop enforcement remain further boundary work.
+
+Four regression methods produce **three failures before the fixes**, `/tmp/cyrus-download-boundaries-before.log`. All **20 focused tests pass**, `/tmp/cyrus-download-boundaries-after.log`. Full Voice: **791 tests in 8.326 seconds, 776 passed and 15 skipped**, `/tmp/cyrus-full-review-download-boundaries-voice.log`. After removing redundant catch-and-reraise and TimeoutError handling, all **ten downloader/acquisition tests pass**, `/tmp/cyrus-download-boundaries-ponytail-tests.log`. Tests use real disposable files and injected HTTP responses; no live network download, model, training or native device operation occurred.
+
+Ponytail: retain one size/hash/publication path for resumed and newly downloaded files; **three net production lines**, no new helper or dependency. Updated source inspection and the new test module bring coverage to **280/401 code, 229/337 tests and 41/308 support**, with **550 reviewed hashes verified across 1046 entries**. Remaining downloader boundaries, whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment are still incomplete.
