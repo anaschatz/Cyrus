@@ -324,9 +324,9 @@ def run_supertonic3_quality_qualification(
     seed: int = DEFAULT_SEED,
 ) -> dict[str, object]:
     model_path = Path(model_directory).expanduser()
-    validation = validate_supertonic3_model_directory(model_path)
-    if not validation.ready:
-        raise BackendError(validation.code, "Supertonic model validation failed", subsystem="tts")
+    preflight = supertonic3_pilot_preflight(model_path)
+    if not preflight["ready"]:
+        raise BackendError(str(preflight["code"]), "Supertonic preflight failed", subsystem="tts")
     if voice not in VOICE_NAMES:
         raise BackendError("tts.supertonic3.voice_invalid", "Supertonic voice is invalid", subsystem="tts")
     if (
@@ -424,7 +424,7 @@ def run_supertonic3_quality_qualification(
     mean_rtf = sum(float(sample["realtime_factor"]) for sample in samples) / len(samples)
     peak_rss_bytes = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     gates = {
-        "pinned_artifacts": validation.ready,
+        "pinned_artifacts": preflight["model"]["ready"],
         "all_twenty_fixtures_generated": len(samples) == len(QUALITY_FIXTURES),
         "deterministic_fixed_seed": deterministic,
         "load_time_within_limit": load_seconds <= MAX_LOAD_SECONDS,

@@ -521,9 +521,9 @@ def _run_chatterbox_synthesis_suite(
     completion_code: str,
 ) -> dict[str, object]:
     model_path = Path(model_directory).expanduser()
-    validation = validate_chatterbox_model_directory(model_path)
-    if not validation.ready:
-        raise BackendError(validation.code, "Chatterbox model directory is not ready", subsystem="tts")
+    preflight = chatterbox_pilot_preflight(model_path.parent, model_path)
+    if not preflight["ready"]:
+        raise BackendError(str(preflight["code"]), "Chatterbox preflight failed", subsystem="tts")
     output = Path(output_directory).expanduser()
     if not output.is_absolute() or output.is_symlink():
         raise BackendError("tts.chatterbox.output_invalid", "Chatterbox pilot output is invalid", subsystem="tts")
@@ -822,9 +822,9 @@ def run_chatterbox_voice_conversion_pilot(
     """Change speaker timbre while keeping the source audio's linguistic content."""
 
     model_path = Path(model_directory).expanduser()
-    validation = validate_chatterbox_model_directory(model_path)
-    if not validation.ready:
-        raise BackendError(validation.code, "Chatterbox model directory is not ready", subsystem="tts")
+    preflight = chatterbox_pilot_preflight(model_path.parent, model_path)
+    if not preflight["ready"]:
+        raise BackendError(str(preflight["code"]), "Chatterbox preflight failed", subsystem="tts")
     if label not in VOICE_CONVERSION_LABELS:
         raise BackendError(
             "tts.chatterbox.voice_conversion_label_invalid",

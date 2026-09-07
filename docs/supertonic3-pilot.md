@@ -96,3 +96,7 @@ repository’s pinned `faster-whisper-base` manifest before loading the model.
 New reports include its model ID and revision; decoding uses CPU `int8` with
 Greek fixed. These checks apply to new runs; the historical measurements above
 have not been repeated by the code review.
+
+The `qualify` command reruns host, exact dependency-version and artifact
+preflight before importing the TTS runtime. A failed preflight stops the
+command before output creation or model loading.

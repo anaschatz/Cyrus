@@ -33,6 +33,27 @@ from jarvis_voice.macos.supertonic3_pilot import (
 
 
 class Supertonic3PilotTests(unittest.TestCase):
+    def test_generation_commands_enforce_preflight_before_runtime_import(self) -> None:
+        commands = (
+            (chatterbox_pilot, "run_chatterbox_pilot", "chatterbox_pilot_preflight", {}),
+            (chatterbox_pilot, "run_chatterbox_f1_qualification", "chatterbox_pilot_preflight", {"reference_audio": "unused"}),
+            (chatterbox_pilot, "run_chatterbox_voice_conversion_pilot", "chatterbox_pilot_preflight", {"source_audio": "unused", "target_voice_audio": "unused", "label": "serious-male"}),
+            (supertonic, "run_supertonic3_quality_qualification", "supertonic3_pilot_preflight", {}),
+        )
+        for module, command, preflight, options in commands:
+            for ready in (False, True):
+                with self.subTest(command=command, ready=ready), tempfile.TemporaryDirectory() as temp:
+                    model, output = Path(temp) / "model", Path(temp) / "output"
+                    with (mock.patch.object(module, preflight, return_value={"ready": ready, "code": "test.runtime_not_pinned", "model": {"ready": True}}) as probe,
+                          mock.patch.object(chatterbox_pilot, "_validated_f1_reference_audio", return_value=Path("unused")),
+                          mock.patch.object(chatterbox_pilot, "_validated_audio_path", return_value=Path("unused")),
+                          mock.patch.dict("sys.modules", {"numpy": None, "torch": None})):
+                        code = ("tts.supertonic3.dependencies_missing" if module is supertonic else "tts.chatterbox.dependencies_missing") if ready else "test.runtime_not_pinned"
+                        with self.assertRaisesRegex(BackendError, code):
+                            getattr(module, command)(model, output, **options)
+                    probe.assert_called_once_with(model) if module is supertonic else probe.assert_called_once_with(model.parent, model)
+                    self.assertEqual(output.exists(), ready)
+
     def test_all_pilot_scorers_require_the_pinned_whisper_manifest(self) -> None:
         fixture = test_asr.AsrTests()
         fixture.setUp()
@@ -78,7 +99,7 @@ class Supertonic3PilotTests(unittest.TestCase):
             {"seed": 2**32 - len(QUALITY_FIXTURES)},
         )
         for options in settings:
-            with self.subTest(options=options), mock.patch.object(supertonic, "validate_supertonic3_model_directory", return_value=SimpleNamespace(ready=True)):
+            with self.subTest(options=options), mock.patch.object(supertonic, "supertonic3_pilot_preflight", return_value={"ready": True, "model": {"ready": True}}):
                 with mock.patch.object(supertonic, "_prepare_output_directory", side_effect=AssertionError("invalid settings reached output creation")):
                     with self.assertRaisesRegex(BackendError, "tts.supertonic3.settings_invalid"):
                         supertonic.run_supertonic3_quality_qualification("unused", "unused", **options)
@@ -102,7 +123,7 @@ class Supertonic3PilotTests(unittest.TestCase):
                 tts = mock.Mock(sample_rate=SAMPLE_RATE, voice_style_names=supertonic.VOICE_NAMES)
                 tts.synthesize.return_value = (waveform, duration)
                 tts.save_audio.side_effect = lambda waveform, path: Path(path).write_bytes(b"synthetic waveform")
-                with (mock.patch.object(supertonic, "validate_supertonic3_model_directory", return_value=SimpleNamespace(ready=True)),
+                with (mock.patch.object(supertonic, "supertonic3_pilot_preflight", return_value={"ready": True, "model": {"ready": True}}),
                       mock.patch.dict("sys.modules", {"supertonic": SimpleNamespace(TTS=mock.Mock(return_value=tts))}),
                       mock.patch.object(supertonic.resource, "getrusage", return_value=SimpleNamespace(ru_maxrss=1)),
                       mock.patch.object(np.random, "seed")):

@@ -203,3 +203,8 @@ repository’s pinned `faster-whisper-base` manifest before loading the model.
 New reports include its model ID and revision; decoding uses CPU `int8` with
 Greek fixed. These checks apply to new runs; the historical measurements above
 have not been repeated by the code review.
+
+The `run`, `qualify-f1` and `voice-convert` commands rerun host, dependency,
+source-revision and artifact preflight before importing the TTS runtime. The
+model directory’s parent is used for the existing storage-headroom check.
+A failed preflight stops the command before output creation or model loading.
