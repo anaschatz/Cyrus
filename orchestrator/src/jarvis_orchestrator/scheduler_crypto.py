@@ -15,10 +15,12 @@ from pathlib import Path
 from typing import Protocol
 
 from .jcs import domain_sha256, jcs_bytes
+from .private_state import PrivateStateError, _open_private_fd
 
 AEAD_CONTRACT = "scheduler-content-aead/1"
 NONCE_BYTES = 12
 KEY_BYTES = 32
+MAXIMUM_DPAPI_BLOB_BYTES = 16 * 1024
 
 
 class SchedulerCryptoError(RuntimeError):
@@ -188,8 +190,16 @@ class _WindowsDpapiKeyProvider:
 
     def load(self, version: int) -> bytes:
         try:
-            wrapped = self._path(version).read_bytes()
-        except OSError as exc:
+            with open(self._path(version), "rb", opener=lambda path, flags: _open_private_fd(
+                Path(path), flags, create=False,
+            )) as source:
+                expected = os.fstat(source.fileno()).st_size
+                if not 1 <= expected <= MAXIMUM_DPAPI_BLOB_BYTES:
+                    raise SchedulerKeyUnavailable("DPAPI key blob has invalid length")
+                wrapped = source.read(MAXIMUM_DPAPI_BLOB_BYTES + 1)
+                if len(wrapped) != expected:
+                    raise SchedulerKeyUnavailable("DPAPI key blob changed during read")
+        except (OSError, PrivateStateError) as exc:
             raise SchedulerKeyUnavailable("DPAPI key blob is unavailable") from exc
         key = self._unprotect(wrapped)
         if len(key) != KEY_BYTES:
@@ -305,32 +315,41 @@ class _MacOSKeychainKeyProvider:
         if not result:
             raise SchedulerKeyUnavailable("macOS Keychain dictionary allocation failed")
         dictionary = ctypes.c_void_p(result)
-        for key, value in pairs:
-            self._cf.CFDictionarySetValue(dictionary, key, value)
-        return dictionary
+        try:
+            for key, value in pairs:
+                self._cf.CFDictionarySetValue(dictionary, key, value)
+            return dictionary
+        except BaseException:
+            self._cf.CFRelease(dictionary)
+            raise
 
     def _query(
         self, account: str, *, return_data: bool
     ) -> tuple[ctypes.c_void_p, list[ctypes.c_void_p]]:
         service = self._string(self.namespace)
-        account_value = self._string(account)
-        owned = [service, account_value]
-        pairs = [
-            (self._constant("kSecClass"), self._constant("kSecClassGenericPassword")),
-            (self._constant("kSecAttrService"), service),
-            (self._constant("kSecAttrAccount"), account_value),
-        ]
-        if return_data:
-            pairs.extend(
-                [
-                    (self._constant("kSecReturnData"), self._boolean_true()),
-                    (
-                        self._constant("kSecMatchLimit"),
-                        self._constant("kSecMatchLimitOne"),
-                    ),
-                ]
-            )
-        return self._dictionary(pairs), owned
+        owned = [service]
+        try:
+            account_value = self._string(account)
+            owned.append(account_value)
+            pairs = [
+                (self._constant("kSecClass"), self._constant("kSecClassGenericPassword")),
+                (self._constant("kSecAttrService"), service),
+                (self._constant("kSecAttrAccount"), account_value),
+            ]
+            if return_data:
+                pairs.extend(
+                    [
+                        (self._constant("kSecReturnData"), self._boolean_true()),
+                        (
+                            self._constant("kSecMatchLimit"),
+                            self._constant("kSecMatchLimitOne"),
+                        ),
+                    ]
+                )
+            return self._dictionary(pairs), owned
+        except BaseException:
+            self._release_all(owned)
+            raise
 
     def _release_all(self, values: list[ctypes.c_void_p]) -> None:
         for value in reversed(values):
@@ -386,9 +405,12 @@ class _MacOSKeychainKeyProvider:
 
     def _store_secret(self, account: str, secret: bytes) -> None:
         query, owned = self._query(account, return_data=False)
-        value = self._data(secret)
-        additions = self._dictionary([(self._constant("kSecValueData"), value)])
+        owned.append(query)
         try:
+            value = self._data(secret)
+            owned.append(value)
+            additions = self._dictionary([(self._constant("kSecValueData"), value)])
+            owned.append(additions)
             add_dictionary = self._dictionary(
                 [
                     (
@@ -400,16 +422,14 @@ class _MacOSKeychainKeyProvider:
                     (self._constant("kSecValueData"), value),
                 ]
             )
-            try:
-                status = self._security.SecItemAdd(add_dictionary, None)
-            finally:
-                self._cf.CFRelease(add_dictionary)
+            owned.append(add_dictionary)
+            status = self._security.SecItemAdd(add_dictionary, None)
             if status == -25299 and account == "active-version":  # Only the pointer is mutable.
                 status = self._security.SecItemUpdate(query, additions)
             if status != 0:
                 raise SchedulerKeyUnavailable("macOS Keychain write failed")
         finally:
-            self._release_all([additions, value, query, *owned])
+            self._release_all(owned)
 
     def create_next(self) -> tuple[int, bytes]:
         versions = self._known_versions()

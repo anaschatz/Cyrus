@@ -1164,3 +1164,19 @@ The standalone simulated reproduction lost the active marker, obtained a replace
 All **39 focused tests** pass. Full Orchestrator verification ran **1042 tests in 19.167 seconds: 1037 passed, five skipped**, `/tmp/cyrus-full-review-scheduler-key.log`. Fatal Ruff and unchanged size checks pass. The change adds no dependency or key migration. An orphan next-version key after failed publication now stops automatic rotation safely instead of replacing that key; no automatic repair is claimed. Tests never accessed the user's actual Keychain or DPAPI.
 
 Current coverage: **214/400 code, 177/312 tests and 39/308 support files**, with **430 reviewed hashes verified across 1020 entries**. Scheduler crypto source is fully read, with platform resource-allocation and Windows file-boundary follow-ups still pending. Whole-codebase review and final quality assessment remain incomplete; compiler identity binding, U05 and the remaining inventory are also open. Native/live qualification remains separate.
+
+
+### Keychain resource cleanup and bounded DPAPI reads
+
+Immutable-key checkpoint committed as **7a0dc20**, with no Ponytail findings. Continued the platform provider review through partial object construction and file-read failures.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V217 | A failure creating a Keychain query, filling its dictionary or preparing a write could abandon previously allocated CoreFoundation objects. Repeated failures leaked native resources. | Register each acquired object in the existing ownership list. Release partial query/dictionary construction on failure and use one write cleanup path. |
+| V218 | DPAPI blob loading read an arbitrary path without a size bound or regular-file validation. A malformed file could consume excessive memory or block on a FIFO before native validation. | Reuse the existing private-file opener, require a nonempty blob of at most 16 KiB, read with a hard cap and reject a changed length before unprotecting. |
+
+The Keychain regression simulates every allocation/field/read/write failure along actual read and write construction, checking exact ownership release. Original source leaks at **19 failure points**, `/tmp/cyrus-key-resource-before.log`. The DPAPI regression fails in **four cases** against original source: empty input, oversized input, a symlink and a FIFO read that blocks until the test kills its timeout-bounded child, `/tmp/cyrus-key-files-before.log`. Fixed paths release all fake native objects, reject invalid files before invoking mocked unprotect and read a valid synthetic blob successfully. All files and keys are temporary/synthetic; no actual Keychain or DPAPI call occurred.
+
+All **42 focused tests** pass. Full Orchestrator verification ran **1045 tests in 18.192 seconds: 1040 passed, five skipped**, `/tmp/cyrus-full-review-key-boundaries.log`. A subsequent test portability adjustment confines symlink fault injection to POSIX; its **two focused tests** pass again, `/tmp/cyrus-key-files-final-after.log`. Fatal Ruff and unchanged size checks pass. The implementation reuses the existing private-file boundary and ownership list, without a new dependency or cleanup abstraction.
+
+Current coverage: **214/400 code, 178/313 tests and 39/308 support files**, with **431 reviewed hashes verified across 1021 entries**. The identified native-allocation and key-file-reading issues are closed; Windows key-creation cleanup remains a scheduler-crypto follow-up. Whole-codebase review, compiler identity binding, U05 and the final quality assessment remain incomplete; native/live qualification is separate.

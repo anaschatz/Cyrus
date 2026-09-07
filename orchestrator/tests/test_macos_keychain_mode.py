@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -98,6 +99,62 @@ class MacOSSourceRunKeychainModeTests(unittest.TestCase):
             provider.create_next()
         self.assertEqual(secrets, before)
         self.assertEqual(provider.load(1), first_key)
+
+    def test_scheduler_releases_native_objects_after_each_failure(self):
+        for operation in ("read", "write"):
+            def run(fail_at):
+                calls = 0
+                live = set()
+                next_id = 0
+
+                def step():
+                    nonlocal calls
+                    calls += 1
+                    if calls == fail_at:
+                        raise SchedulerKeyUnavailable("synthetic native failure")
+
+                def allocate(*_args):
+                    nonlocal next_id
+                    step()
+                    next_id += 1
+                    live.add(next_id)
+                    return next_id
+
+                def release(pointer):
+                    self.assertIn(pointer.value, live)
+                    live.remove(pointer.value)
+
+                def copy(_query, target):
+                    ctypes.cast(target, ctypes.POINTER(ctypes.c_void_p))[0] = allocate()
+                    return 0
+
+                provider = _MacOSKeychainKeyProvider.__new__(_MacOSKeychainKeyProvider)
+                provider.namespace = "synthetic-resource-test"
+                provider._constant = lambda _name: ctypes.c_void_p(1000)
+                provider._boolean_true = lambda: ctypes.c_void_p(1001)
+                provider._cf = SimpleNamespace(
+                    CFStringCreateWithCString=allocate, CFDataCreate=allocate,
+                    CFDictionaryCreateMutable=allocate, CFDictionarySetValue=lambda *_: step(),
+                    CFRelease=release, CFDataGetLength=lambda _: (step() or 32),
+                    CFDataGetBytePtr=lambda _: (step() or b"a" * 32),
+                )
+                provider._security = SimpleNamespace(SecItemAdd=lambda *_: (step() or 0),
+                                                      SecItemCopyMatching=copy)
+                try:
+                    if operation == "read":
+                        self.assertEqual(provider._load_secret("key-v1"), b"a" * 32)
+                    else:
+                        provider._store_secret("key-v1", b"a" * 32)
+                    self.assertEqual(fail_at, 0)
+                except SchedulerKeyUnavailable:
+                    self.assertGreater(fail_at, 0)
+                self.assertEqual(live, set())
+                return calls
+
+            steps = run(0)
+            for failure in range(1, steps + 1):
+                with self.subTest(operation=operation, failure=failure):
+                    run(failure)
 
     def test_memory_client_never_requests_entitlement_only_keychain(self) -> None:
         client = MacOSKeychainSecretClient.__new__(MacOSKeychainSecretClient)
