@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 from inspect_ai.model import ModelCost
 
 from anamnesis.local_experiment import LOCAL_MODEL_ID, validate_zero_api_pricing
+from anamnesis.local_runtime import verify_zero_local_pricing
 
 PRICING_PATH = Path("eval/local_model_costs.json")
 ZERO_COST = ModelCost(
@@ -45,3 +47,21 @@ def test_nonzero_or_additional_pricing_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="one exact all-zero"):
         validate_zero_api_pricing(path)
+
+
+@pytest.mark.parametrize("verify", [validate_zero_api_pricing, verify_zero_local_pricing])
+def test_pricing_hash_binds_the_bytes_that_were_validated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verify
+) -> None:
+    path = tmp_path / "costs.json"
+    content = PRICING_PATH.read_bytes()
+    path.write_bytes(content)
+    decode = json.loads
+
+    def replace_after_parse(data, **kwargs):
+        result = decode(data, **kwargs)
+        path.write_bytes(b"replaced after parsing")
+        return result
+
+    monkeypatch.setattr(json, "loads", replace_after_parse)
+    assert verify(path) == hashlib.sha256(content).hexdigest()

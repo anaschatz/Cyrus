@@ -56,6 +56,7 @@ from anamnesis.local_experiment import (
     LOCAL_WRITER_W3_PREFLIGHT_PROTOCOL_SHA256,
     LOCAL_WRITER_W3_REFERENCE_SHA256,
     require_local_only_environment,
+    validate_zero_api_pricing,
 )
 from anamnesis.local_wire import (
     LOCAL_MEMORY_COMPILER_VERSION,
@@ -2457,23 +2458,7 @@ def local_scenario_solver(
         decision_model = LocalInspectDecisionModel(state, generate)
         if decision_model.name != expected_model:
             raise ValueError("active model differs from the frozen local manifest")
-        if task_w3_preflight is not None:
-            preflight, performed_here = await task_w3_preflight.ensure(decision_model)
-            preflight_metadata_key = LOCAL_PREFLIGHT_W3_METADATA_KEY
-            preflight_store_key = LOCAL_PREFLIGHT_W3_STORE_KEY
-        elif task_w2_preflight is not None:
-            preflight, performed_here = await task_w2_preflight.ensure(decision_model)
-            preflight_metadata_key = LOCAL_PREFLIGHT_W2_METADATA_KEY
-            preflight_store_key = LOCAL_PREFLIGHT_W2_STORE_KEY
-        else:
-            preflight, performed_here = await task_preflight.ensure(decision_model)
-            preflight_metadata_key = LOCAL_PREFLIGHT_METADATA_KEY
-            preflight_store_key = LOCAL_PREFLIGHT_STORE_KEY
-        state = decision_model.state
-        serialized_preflight = preflight.model_dump(mode="json")
-        state.metadata[preflight_metadata_key] = serialized_preflight
-        state.store.set(preflight_store_key, serialized_preflight)
-        setup_latency_ms = preflight.setup_latency_ms if performed_here else 0.0
+        setup_latency_ms = 0.0
 
         scenario = _scenario_from_state(state)
         if isinstance(shared_vectorizer, FastEmbedVectorizer):
@@ -2546,6 +2531,24 @@ def local_scenario_solver(
             raise ValueError(
                 "runtime system configuration differs from the local manifest"
             )
+        if task_w3_preflight is not None:
+            preflight, performed_here = await task_w3_preflight.ensure(decision_model)
+            preflight_metadata_key = LOCAL_PREFLIGHT_W3_METADATA_KEY
+            preflight_store_key = LOCAL_PREFLIGHT_W3_STORE_KEY
+        elif task_w2_preflight is not None:
+            preflight, performed_here = await task_w2_preflight.ensure(decision_model)
+            preflight_metadata_key = LOCAL_PREFLIGHT_W2_METADATA_KEY
+            preflight_store_key = LOCAL_PREFLIGHT_W2_STORE_KEY
+        else:
+            preflight, performed_here = await task_preflight.ensure(decision_model)
+            preflight_metadata_key = LOCAL_PREFLIGHT_METADATA_KEY
+            preflight_store_key = LOCAL_PREFLIGHT_STORE_KEY
+        state = decision_model.state
+        serialized_preflight = preflight.model_dump(mode="json")
+        state.metadata[preflight_metadata_key] = serialized_preflight
+        state.store.set(preflight_store_key, serialized_preflight)
+        setup_latency_ms += preflight.setup_latency_ms if performed_here else 0.0
+
         run = await run_scenario(
             scenario=scenario,
             strategy=strategy,
@@ -2580,23 +2583,7 @@ def local_scenario_solver(
 def verify_zero_local_pricing(path: str | Path) -> str:
     """Verify the tracked pricing file declares exactly one all-zero local entry."""
 
-    pricing_path = Path(path)
-    content = pricing_path.read_bytes()
-    raw = json.loads(content)
-    if not isinstance(raw, dict) or set(raw) != {LOCAL_OLLAMA_MODEL}:
-        raise ValueError("local pricing config must contain exactly the pinned model")
-    entry = raw[LOCAL_OLLAMA_MODEL]
-    expected_fields = {
-        "input",
-        "output",
-        "input_cache_write",
-        "input_cache_read",
-    }
-    if not isinstance(entry, dict) or set(entry) != expected_fields:
-        raise ValueError("local pricing config has an invalid Inspect cost shape")
-    if any(value != 0 and value != 0.0 for value in entry.values()):
-        raise ValueError("local pricing config contains a non-zero API price")
-    return hashlib.sha256(content).hexdigest()
+    return validate_zero_api_pricing(Path(path))
 
 
 __all__ = [

@@ -579,7 +579,8 @@ def verify_ollama_artifact(
 def validate_zero_api_pricing(path: Path, model: str = LOCAL_MODEL_ID) -> str:
     """Require one exact all-zero Inspect pricing entry and return its file hash."""
 
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    content = path.read_bytes()
+    raw = json.loads(content)
     zero_rates = {
         "input": 0.0,
         "output": 0.0,
@@ -588,7 +589,7 @@ def validate_zero_api_pricing(path: Path, model: str = LOCAL_MODEL_ID) -> str:
     }
     if raw != {model: zero_rates}:
         raise ValueError("local pricing must contain one exact all-zero model entry")
-    return _sha256_file(path)
+    return hashlib.sha256(content).hexdigest()
 
 
 def require_local_only_environment(environment: Mapping[str, str]) -> None:

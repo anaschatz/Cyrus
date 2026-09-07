@@ -894,3 +894,107 @@ def test_runner_hashes_and_labels_the_actual_local_prompt() -> None:
         == hashlib.sha256(model.prompt.encode()).hexdigest()
     )
     assert '"mode":"no_action"' in model.prompt
+
+
+@pytest.mark.parametrize("variant", ["w1", "w2", "w3"])
+@pytest.mark.parametrize("valid_config", [False, True])
+def test_local_solver_checks_configuration_before_live_preflight(
+    monkeypatch: pytest.MonkeyPatch, variant: str, valid_config: bool
+) -> None:
+    import anamnesis.local_runtime as runtime
+    from anamnesis.inspect_adapter import scenario_record_to_sample
+
+    options = {"compiler_prompt_variant": variant}
+    if variant in {"w2", "w3"}:
+        options[f"{variant}_preflight_fixture_path"] = str(
+            Path(f"eval/preflight/local_writer_{variant}.v1.json").resolve()
+        )
+    if variant == "w3":
+        options.update(
+            w3_preflight_protocol_sha256=runtime.LOCAL_WRITER_W3_PREFLIGHT_PROTOCOL_SHA256,
+            w3_dataset_sha256=runtime.LOCAL_WRITER_W3_DATASET_SHA256,
+            w3_reference_sha256=runtime.LOCAL_WRITER_W3_REFERENCE_SHA256,
+        )
+    hash_options = {
+        key: value for key, value in options.items() if not key.endswith("_path")
+    }
+    if variant == "w3":
+        hash_options["w3_preflight_fixture_sha256"] = (
+            runtime.LOCAL_WRITER_W3_PREFLIGHT_FIXTURE_SHA256
+        )
+    config_hash = local_system_config_sha256(system="anamnesis", **hash_options)
+    monkeypatch.setattr(
+        runtime,
+        "LocalInspectDecisionModel",
+        lambda state, _: SimpleNamespace(name=LOCAL_OLLAMA_MODEL, state=state),
+    )
+    calls = []
+
+    async def preflight_reached(*args, **kwargs):
+        calls.append(variant)
+        raise RuntimeError("live preflight reached")
+
+    name = "run_local_model_preflight" + (f"_{variant}" if variant != "w1" else "")
+    monkeypatch.setattr(runtime, name, preflight_reached)
+    solve = local_scenario_solver(
+        "anamnesis",
+        expected_system_config_sha256=config_hash if valid_config else "0" * 64,
+        **options,
+    )
+    scenario = load_scenarios(Path("eval/scenarios/smoke.jsonl"))[0]
+    sample = scenario_record_to_sample(scenario.model_dump(mode="json"))
+    expected_error = RuntimeError if valid_config else ValueError
+    expected_message = (
+        "live preflight reached" if valid_config else "runtime system configuration differs"
+    )
+    with pytest.raises(expected_error, match=expected_message):
+        asyncio.run(solve(SimpleNamespace(metadata=sample.metadata), None))
+    assert calls == ([variant] if valid_config else [])
+
+
+def test_local_solver_preserves_preflight_state_and_counts_setup_once(monkeypatch) -> None:
+    import anamnesis.local_runtime as runtime
+    from anamnesis.inspect_adapter import scenario_record_to_sample
+    from anamnesis.schema import ScenarioRun
+
+    sample = scenario_record_to_sample(
+        load_scenarios(Path("eval/scenarios/smoke.jsonl"))[0].model_dump(mode="json")
+    )
+    performed = []
+
+    class FakeModel:
+        name = LOCAL_OLLAMA_MODEL
+
+        def __init__(self, state, generate):
+            self.state = state
+
+        async def decide(self, request):
+            return DecisionCall(
+                decision=Decision(), usage=Usage(cost_usd=0.0),
+                cost_complete=True, raw_completion='{"mode":"no_action","actions":[]}',
+            )
+
+    async def preflight(self, model):
+        # Inspect may return a new TaskState after generate; retain that state.
+        model.state = SimpleNamespace(
+            metadata=dict(model.state.metadata), store=model.state.store,
+        )
+        performed.append(True)
+        return SimpleNamespace(
+            setup_latency_ms=7.0, model_dump=lambda **_: {"passed": True},
+        ), len(performed) == 1
+
+    monkeypatch.setattr(runtime, "LocalInspectDecisionModel", FakeModel)
+    monkeypatch.setattr(runtime._TaskLocalPreflight, "ensure", preflight)
+    solve = local_scenario_solver("no_memory")
+    for setup_ms in (7.0, 0.0):
+        stored = {}
+        state = SimpleNamespace(
+            metadata=sample.metadata, store=SimpleNamespace(set=stored.__setitem__),
+        )
+        result = asyncio.run(solve(state, None))
+        assert result is not state
+        assert result.metadata[runtime.LOCAL_PREFLIGHT_METADATA_KEY] == {"passed": True}
+        run = ScenarioRun.model_validate(stored[runtime.SCENARIO_RUN_STORE_KEY])
+        assert run.setup_latency_ms == setup_ms
+        assert run == ScenarioRun.model_validate_json(result.output.completion)
