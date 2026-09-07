@@ -66,6 +66,8 @@ class MacSystemTtsBackend:
         if encoded_size == 0 or encoded_size > self.maximum_text_bytes:
             raise BackendError("tts.unit_size_invalid", "Speech unit is empty or too large", subsystem="tts")
         with self._lock:
+            if self._error is not None:
+                raise self._error
             if unit.epoch <= self._cancelled_through_epoch:
                 return
             self._queue.put_nowait(unit)
@@ -142,7 +144,7 @@ class MacSystemTtsBackend:
             pass
 
     def _worker(self) -> None:
-        while not self._stop_event.is_set():
+        while not self._stop_event.is_set() and self._error is None:
             try:
                 unit = self._queue.get(timeout=0.02)
             except queue.Empty:
@@ -208,6 +210,11 @@ class MacSystemTtsBackend:
                 if process is not None:
                     self._stop_process(process)
             finally:
+                if process is not None and process.stdin is not None:
+                    try:
+                        process.stdin.close()
+                    except OSError:
+                        pass
                 with self._lock:
                     if self._process is process:
                         self._process = None

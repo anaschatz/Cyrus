@@ -4,12 +4,10 @@ import hashlib
 import io
 import json
 import os
-import queue
 import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from array import array
 from dataclasses import replace
@@ -724,6 +722,63 @@ class MacTtsTests(unittest.TestCase):
         self.assertTrue(process.killed)
         self.assertEqual(completed, [])
         self.assertTrue(backend.is_idle)
+
+
+    def test_stdin_closes_after_early_cancellation_or_write_failure(self) -> None:
+        class BrokenInput(io.BytesIO):
+            def write(self, data):
+                raise BrokenPipeError("synthetic write failure")
+        for phase in ("cancel", "write"):
+            with self.subTest(phase=phase):
+                process = FakeSayProcess(False)
+                process.stdin = io.BytesIO() if phase == "cancel" else BrokenInput()
+                started, completed = mock.Mock(), mock.Mock()
+                def factory(argv):
+                    if phase == "cancel":
+                        backend.cancel(1, "ptt_down")
+                    return process
+                backend = MacSystemTtsBackend(voice_mapping={}, process_factory=factory, on_started=started, on_completed=completed)
+                try:
+                    backend.enqueue(SpeechUnit("r", 1, 1, "en-US", "fixture"))
+                    self.assertTrue(backend.wait_idle())
+                    self.assertTrue(process.stdin.closed)
+                    self.assertTrue(process.terminated)
+                    started.assert_not_called()
+                    completed.assert_not_called()
+                finally:
+                    backend.close()
+                    process.stdin.close()
+
+    def test_fatal_failure_stops_queued_units_and_future_admission(self) -> None:
+        for phase in ("start", "exit"):
+            with self.subTest(phase=phase):
+                release = threading.Event()
+                calls = []
+                def factory(argv):
+                    calls.append(argv)
+                    if not release.wait(1):
+                        raise OSError("test did not release factory")
+                    if len(calls) == 1:
+                        if phase == "start":
+                            raise OSError("synthetic spawn failure")
+                        process = FakeSayProcess(False)
+                        process.returncode = 1
+                        return process
+                    return FakeSayProcess(True)
+                backend = MacSystemTtsBackend(voice_mapping={}, process_factory=factory)
+                try:
+                    backend.enqueue(SpeechUnit("r", 1, 1, "en-US", "first"))
+                    backend.enqueue(SpeechUnit("r", 1, 2, "en-US", "second"))
+                    release.set()
+                    backend._thread.join(timeout=0.2)
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(backend.last_error.code, "tts.say_failed")
+                    with self.assertRaises(BackendError) as raised:
+                        backend.enqueue(SpeechUnit("r", 1, 3, "en-US", "third"))
+                    self.assertIs(raised.exception, backend.last_error)
+                finally:
+                    release.set()
+                    backend.close()
 
 
 class MacDoctorConfigTests(unittest.TestCase):

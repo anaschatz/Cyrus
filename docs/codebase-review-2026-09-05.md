@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **283 of 401 code files**, plus **233 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **284 of 401 code files**, plus **234 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **800 tests (785 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **802 tests (787 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1940,3 +1940,18 @@ Completed full source inspection of the 85-line ASR-selection module, 71-line re
 All **15 focused checks pass**, `/tmp/cyrus-macos-selection-recovery-tests.log`: twelve CPU selection/doctor tests, two recovery tests and unchanged module boundaries. Fatal Ruff passes. Tests use fake host/device/model probes, clocks, factories and temporary synthetic auth/artifact files. No native model load, audio permission/device query or hardware recovery was performed. The latest complete Voice result remains **800 tests (785 passed, 15 skipped)** from the preceding checkpoint; no unnecessary full rerun was made for this documentation-only checkpoint.
 
 Ponytail: no new code, helper, dependency or tests. Coverage is **283/401 code, 233/339 tests and 41/308 support**, with **557 reviewed hashes verified across 1048 entries**. Full source inspection of test_macos.py is still pending; only its recovery subset was reviewed here. Remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment are incomplete.
+
+
+### macOS system-TTS stdin ownership and fatal errors
+
+Selection/recovery inspection committed as **e6a8189**, with a clean mandatory Ponytail review.
+
+**V328 resolved:** cancellation after process creation but before input writing, or a failing stdin write, skipped the explicit stdin close. The worker now closes its process input in the existing finally block before retiring the active process/unit; cleanup tolerates a broken pipe. The successful path still closes stdin before waiting for speech completion, preserving EOF delivery.
+
+**V329 resolved:** the system-TTS worker recorded spawn/nonzero-exit failures but continued dispatching queued units and accepted future enqueue calls. Its loop now stops when a fatal error is recorded, and enqueue returns that error. This matches runtime/automated-smoke treatment of last_error as fatal.
+
+Two new methods in the existing test module produce **four failures before the fixes**, `/tmp/cyrus-system-tts-before.log`. All **14 focused checks pass**, `/tmp/cyrus-system-tts-after.log`. Full Voice: **802 tests in 8.631 seconds, 787 passed and 15 skipped**, `/tmp/cyrus-full-review-system-tts-voice.log`. Fatal Ruff and unchanged module boundaries pass. New regressions use fake say processes and in-memory streams only. No actual speech, audio capture or model execution was performed.
+
+Full-suite scope clarification: the pre-existing NativeMacSmokeTests include a non-prompting CoreGraphics permission preflight and an executable-presence check on macOS. These read-only checks are not live audio/TCC-event-loop qualification. Earlier statements about fake-only regression paths must not be read as excluding these existing checks from full Voice runs.
+
+Ponytail: use the existing worker/error/cleanup boundaries, **seven net production lines**, remove two unused test imports and keep regressions in the existing test file. Completed system-TTS source and complete macOS test-module inspection bring coverage to **284/401 code, 234/339 tests and 41/308 support**, with **559 reviewed hashes verified across 1048 entries**. Remaining native implementation review, whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment are incomplete.
