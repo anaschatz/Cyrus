@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **210 of 400 code files**, plus **168 of 305 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **211 of 400 code files**, plus **169 of 306 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1020 tests (1015 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1022 tests (1017 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -996,3 +996,22 @@ All **33 focused tests** passed. Full Orchestrator verification ran **1020 tests
 Ponytail reuses the existing transaction helper, delivery TTL and schema_meta storage; shares the duplicated monthly-cost calculation; uses SQLite's grouped upsert for aggregation. No dependency or schema table was added. Store size is **8555 lines**, below the unchanged 8575-line ceiling. The monthly aggregates preserve costs for deletions performed by the updated code; charges already removed by older versions cannot be reconstructed from the deleted local records. The provider's independently enforced monthly key limit remains an additional gate, and fresh live qualification is still outside these local tests.
 
 Current coverage is **210/400 code, 168/305 tests and 39/308 support files**, with **417 reviewed hashes verified across 1013 entries**. Scheduler-linked history deletion, remaining cross-component source/tests, compiler qualification identity binding and U05 privacy coverage remain open. The whole-codebase review and final quality assessment are not complete.
+
+
+### Scheduler-linked history deletion and completed central store inspection
+
+Closed the two specific store follow-ups recorded above. The complete central store source is now marked reviewed after the full read, traced consumers, schema inspection and targeted integration regressions. Full SchedulerStore, service and gateway reviews remain separate pending work; this status is not a claim that no further bugs can exist.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V201 | Conversation deletion left scheduler_task_links referencing the task rows it then deleted. Even an expired link blocked deletion with a foreign-key error. | Remove the links with the existing task-owned cleanup. Preserve independent scheduler proposals and jobs, including already approved reminders. |
+| V202 | Deletion fetched every task ID into Python and expanded one SQL variable per task. A sufficiently large history exceeded the connection's parameter limit and could not be deleted. | Use a constant task-selection subquery by conversation ID in the existing DELETE statements. Delete rows directly in SQLite without a task-ID list. |
+| V203 | Denying a scheduler proposal linked to a conversational task referenced operation before assignment, rolling back the denial with UnboundLocalError. | Read the operation before the approve/deny branch so both paths can record the canonical effect. |
+
+The two regression methods produced **four errors** against the original code, `/tmp/cyrus-conversation-delete-before.log`: missing-link cleanup in cancelled/approved cases, linked denial's unbound variable, and too many SQL variables. After the fixes, cancelled, approved and denied linked histories delete successfully with no foreign-key violations. Approved job rows remain exactly unchanged. A 12-task history deletes with the connection limited to eight variables, demonstrating that parameter usage no longer grows with history length.
+
+All **46 focused tests** passed. Full Orchestrator verification ran **1022 tests in 19.070 seconds: 1017 passed, five skipped**, `/tmp/cyrus-full-review-conversation-deletion.log`. The isolated scheduler change was also applied independently to its HEAD version and both new tests passed with that snapshot, `/tmp/cyrus-scheduler-denial-staged-tests.log`. This allowed the two-line scheduler fix to be committed without absorbing older unrelated scheduler edits.
+
+Committed as `0353bfb` with exact staged Ponytail review and the active hook. The hook requested merging two identical research DELETE statements into the existing cleanup loop. Applied in `bf53fa7`, preserving deletion order and removing seven lines; all **10 relevant conversation/research/cloud tests** passed afterward, `/tmp/cyrus-conversation-deletion-ponytail-followup.log`. The final hook found no further complexity. Fatal Ruff, staged whitespace and unchanged module-size limits pass. The main checkpoint reduced production source by four lines and the follow-up by seven more; store.py is now **8544 lines**. No schema migration or dependency was added. Tests use temporary SQLite, synthetic scheduler keys and in-process compilation, with no native notification or actual external request.
+
+Current coverage is **211/400 code, 169/306 tests and 39/308 support files**, with **419 reviewed hashes verified across 1014 entries**. Whole-codebase review and the final quality assessment remain incomplete. Next scope includes the remaining scheduler/service/gateway integration and pending source/test/support inventory, compiler identity binding and U05 privacy coverage. Earlier accumulated changes still need their own logical commits; no push occurred.
