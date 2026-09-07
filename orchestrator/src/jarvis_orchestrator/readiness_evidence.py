@@ -478,7 +478,7 @@ def _is_windows_reparse(value: os.stat_result) -> bool:
 
 
 def _snapshot(value: os.stat_result) -> tuple[int, ...]:
-    return tuple(
+    snapshot = tuple(
         int(getattr(value, name, 0))
         for name in (
             "st_dev",
@@ -493,6 +493,11 @@ def _snapshot(value: os.stat_result) -> tuple[int, ...]:
             "st_file_attributes",
         )
     )
+
+    # CPython Windows path stat adds suffix-based execute bits; fstat does not.
+    if hasattr(value, "st_file_attributes"):
+        snapshot = snapshot[:2] + (snapshot[2] & ~0o111,) + snapshot[3:]
+    return snapshot
 
 
 def _validate_private_key_descriptor(metadata: os.stat_result, descriptor: int) -> None:
@@ -550,7 +555,10 @@ def _read_regular_file(
             raise _error("readiness_evidence_file_invalid")
         if before_path.st_size > maximum_bytes:
             raise _error("readiness_evidence_file_invalid")
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+        flags = (
+            os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         descriptor = os.open(selected, flags)
@@ -1972,7 +1980,10 @@ def sha256_regular_artifact(path: str | Path) -> str:
             or before_path.st_size > MAXIMUM_ARTIFACT_BYTES
         ):
             raise _error("readiness_artifact_invalid")
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+        flags = (
+            os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         descriptor = os.open(selected, flags)
@@ -1982,11 +1993,11 @@ def sha256_regular_artifact(path: str | Path) -> str:
         digest = hashlib.sha256()
         read_bytes = 0
         while True:
-            chunk = os.read(descriptor, 1024 * 1024)
+            chunk = os.read(descriptor, min(1024 * 1024, before.st_size - read_bytes + 1))
             if not chunk:
                 break
             read_bytes += len(chunk)
-            if read_bytes > MAXIMUM_ARTIFACT_BYTES:
+            if read_bytes > before.st_size:
                 raise _error("readiness_artifact_invalid")
             digest.update(chunk)
         after = os.fstat(descriptor)

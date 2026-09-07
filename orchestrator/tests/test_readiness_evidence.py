@@ -6,6 +6,8 @@ import io
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -773,6 +775,86 @@ class ReadinessEvidenceTests(unittest.TestCase):
             self.skipTest("symlinks unavailable")
         with self.assertRaisesRegex(OperationalError, "readiness_artifact_invalid"):
             sha256_regular_artifact(link)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX FIFO replacement")
+    def test_file_readers_reject_fifo_substitution_without_blocking(self) -> None:
+        script = """
+import os, sys
+from pathlib import Path
+from unittest.mock import patch
+from jarvis_orchestrator import readiness_evidence as evidence
+path = Path(sys.argv[1])
+path.write_bytes(b"artifact")
+real_open = os.open
+def swap(name, flags, *args, **kwargs):
+    if Path(name) == path:
+        path.unlink()
+        os.mkfifo(path, 0o600)
+    return real_open(name, flags, *args, **kwargs)
+with patch.object(os, "open", side_effect=swap):
+    try:
+        if sys.argv[2] == "document":
+            evidence._read_regular_file(path, maximum_bytes=1024)
+        else:
+            evidence.sha256_regular_artifact(path)
+    except evidence.OperationalError:
+        pass
+    else:
+        raise AssertionError("FIFO was accepted")
+"""
+        for kind in ("document", "artifact"):
+            with self.subTest(kind=kind):
+                result = subprocess.run(
+                    [sys.executable, "-c", script, str(self.root / kind), kind],
+                    timeout=3, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_artifact_growth_is_bounded_by_the_initial_size(self) -> None:
+        path = self.root / "growing.bin"
+        path.write_bytes(b"artifact")
+        initial_size = path.stat().st_size
+        real_read = os.read
+        consumed = 0
+        def grow(descriptor, maximum):
+            nonlocal consumed
+            if consumed == 0:
+                with path.open("ab") as output:
+                    output.write(b"x" * 65536)
+            data = real_read(descriptor, maximum)
+            consumed += len(data)
+            return data
+        with patch.object(os, "read", side_effect=grow):
+            with self.assertRaisesRegex(OperationalError, "readiness_artifact_invalid"):
+                sha256_regular_artifact(path)
+        self.assertLessEqual(consumed, initial_size + 1)
+        for content in (b"", b"x" * (1024 * 1024 + 7)):
+            path.write_bytes(content)
+            self.assertEqual(sha256_regular_artifact(path), hashlib.sha256(content).hexdigest())
+
+    def test_windows_suffix_mode_difference_does_not_hide_metadata_changes(self) -> None:
+        path = self.root / "artifact.exe"
+        path.write_bytes(b"artifact")
+        metadata = path.stat()
+        fields = {name: getattr(metadata, name) for name in (
+            "st_dev", "st_ino", "st_mode", "st_nlink", "st_uid", "st_gid",
+            "st_size", "st_mtime_ns", "st_ctime_ns",
+        )}
+        fields["st_mode"] &= ~0o111
+        descriptor_metadata = SimpleNamespace(**fields, st_file_attributes=32)
+        path_metadata = SimpleNamespace(**{**fields, "st_mode": fields["st_mode"] | 0o111}, st_file_attributes=32)
+        with patch.object(os, "fstat", return_value=descriptor_metadata), patch.object(os, "lstat", return_value=path_metadata):
+            self.assertEqual(evidence_module._read_regular_file(path, maximum_bytes=32), b"artifact")
+            self.assertEqual(sha256_regular_artifact(path), hashlib.sha256(b"artifact").hexdigest())
+        for field, value in (
+            ("st_ino", fields["st_ino"] + 1), ("st_size", fields["st_size"] + 1),
+            ("st_mtime_ns", fields["st_mtime_ns"] + 1), ("st_file_attributes", 1024),
+            ("st_mode", fields["st_mode"] ^ 0o200),
+        ):
+            with self.subTest(field=field):
+                changed = SimpleNamespace(**{**vars(path_metadata), field: value})
+                self.assertNotEqual(evidence_module._snapshot(descriptor_metadata), evidence_module._snapshot(changed))
+        self.assertNotEqual(evidence_module._snapshot(SimpleNamespace(**fields)), evidence_module._snapshot(SimpleNamespace(**{**fields, "st_mode": fields["st_mode"] ^ 0o100})))
 
     def test_native_projection_is_strict_content_free_data(self) -> None:
         from jarvis_voice.native_qualification import native_evidence_template

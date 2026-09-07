@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **222 of 400 code files**, plus **187 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **223 of 400 code files**, plus **187 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1080 tests (1075 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1087 tests (1082 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1436,3 +1436,22 @@ All **55 focused tests complete successfully: 54 passed, one skipped**, `/tmp/cy
 Ponytail: consolidate the two real writer formats into one exclusive buffered writer with their existing byte ceilings and error codes, removing **15 production lines** without a new dependency. Identity comparisons detect observed replacements; they do not provide atomic exclusion against arbitrary non-cooperating pathname changes between inspection and mutation. Native Windows ACL/rename qualification remains separate.
 
 Coverage remains **222/400 code, 187/315 tests and 41/308 support files**, with **450 reviewed hashes verified across 1023 entries**. The evidence source's publication investigation is complete; earlier stable file/hash-reader changes remain outside this checkpoint and still need their own verification/commit. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding are also open.
+
+
+### Readiness stable readers and completed source inspection
+
+Publication ownership checkpoint committed as **e40f45c**, with a clean Ponytail hook. Completed the remaining file-reader investigation, including signer/verifier keys, native reports, cohort receipts, runtime build/model identity and the shared stack-config hashing caller.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V253 | On Windows, path stat adds executable bits for .exe/.bat/.cmd/.com while descriptor stat omits that filename-derived adjustment. Comparing the raw modes could reject unchanged artifacts or documents as mutated. | Normalize only execute bits for metadata carrying Windows file attributes. Preserve all other identity, mode, size, timestamp and attribute comparisons; POSIX execute-bit changes still fail. |
+| V254 | Replacing a validated regular file with a FIFO immediately before open could block the evidence/key/receipt reader or artifact hasher indefinitely. | Add O_NONBLOCK to both existing no-follow open paths; their metadata checks reject the substituted FIFO without waiting for a writer. |
+| V255 | An artifact growing during hashing could force reads far beyond its initial size, up to the unrelated 128 GiB admission ceiling, before being rejected. | Bound each read to initial remaining size plus one byte and reject detected growth immediately. Keep streaming hashes for stable large files. |
+
+Three regressions produce **one failure and three errors** against exact HEAD source, `/tmp/cyrus-evidence-readers-before.log`: both real FIFO child processes hit their three-second timeout, the simulated unchanged executable fails, and the growing eight-byte fixture consumes 65,544 bytes instead of at most nine. Baseline testing restores the source in a finally block; timed-out subprocesses are killed and reaped by subprocess.run. No unrelated process is signaled.
+
+The Windows discrepancy was verified in the pinned [CPython path-stat implementation](https://github.com/python/cpython/blob/v3.11.14/Modules/posixmodule.c#L1925) and [descriptor-stat implementation](https://github.com/python/cpython/blob/v3.11.14/Python/fileutils.c#L1042). The regression simulates those metadata values and retains rejection of inode, size, timestamp, attribute, write-permission and POSIX execute-permission changes. This is source-level compatibility evidence, not a native Windows qualification run.
+
+All **67 focused tests complete successfully: 66 passed, one skipped**, `/tmp/cyrus-evidence-readers-after.log`. Full Orchestrator ran **1087 tests in 19.736 seconds: 1082 passed, five skipped**, `/tmp/cyrus-full-review-evidence-readers.log`. The Windows fixture was then made independent of the host's suffix handling and its targeted check passed again. All **36 evidence tests pass against byte-verified exact staged source/test files**, including both subprocess readers, `/tmp/cyrus-evidence-readers-staged-tests.log`. Seven canonical documents/signatures remain identical; fatal Ruff and unchanged module-size checks pass. Stable empty and multi-chunk artifact digests remain correct. No live model, provider, microphone, native action or user key was exercised.
+
+Ponytail: reuse the existing shared snapshots/readers and native O_NONBLOCK flag; **11 additional production lines**, no new dependency or reader abstraction. All readiness evidence source and its identified follow-ups are now reviewed, bringing coverage to **223/400 code, 187/315 tests and 41/308 support files**, with **451 reviewed hashes verified across 1023 entries**. Whole-codebase review and final quality assessment remain incomplete: **177 code, 128 test and 267 support files** remain. U05 and compiler qualification identity binding are still open; reviewed does not mean bug-free or native-qualified.
