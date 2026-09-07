@@ -167,21 +167,26 @@ class ProcessCudaWorkerSession:
         self.metrics: list[dict[str, float | int | str]] = []
         self._connection: Connection | None = None
         self._process: Any | None = None
+        self._lock = threading.RLock()
+        self._cancelled = False
 
     @property
     def alive(self) -> bool:
-        return bool(self._process is not None and self._process.is_alive())
+        with self._lock:
+            return bool(self._process is not None and self._process.is_alive())
 
     def _receive(self, timeout: float, timeout_code: str) -> dict[str, Any]:
-        if self._connection is None or self._process is None:
+        with self._lock:
+            connection, process = self._connection, self._process
+        if connection is None or process is None:
             raise BackendError("cuda.worker_not_started", "CUDA worker is not started", subsystem="cuda")
         try:
-            if not self._connection.poll(timeout):
-                if not self._process.is_alive():
+            if not connection.poll(timeout):
+                if not process.is_alive():
                     raise BackendError("cuda.worker_crashed", "CUDA worker exited unexpectedly", subsystem="cuda", retryable=True)
                 raise BackendError(timeout_code, "CUDA worker timed out", subsystem="cuda", retryable=True)
-            frame = self._connection.recv()
-        except (EOFError, OSError) as exc:
+            frame = connection.recv()
+        except (EOFError, OSError, ValueError) as exc:
             raise BackendError("cuda.worker_crashed", "CUDA worker connection failed", subsystem="cuda", retryable=True) from exc
         if not isinstance(frame, dict) or not isinstance(frame.get("type"), str):
             raise BackendError("cuda.worker_protocol_error", "CUDA worker returned an invalid frame", subsystem="cuda")
@@ -195,18 +200,21 @@ class ProcessCudaWorkerSession:
         raise BackendError(code, "CUDA worker failed", subsystem="cuda", retryable=bool(frame.get("retryable", False)))
 
     def start(self) -> None:
-        if self.alive:
-            return
-        self.cancel()
-        started = self.clock()
-        parent, child = self.context.Pipe(duplex=True)
-        self._connection = parent
         try:
-            try:
-                self._process = self.context.Process(target=_process_entry, args=(child, self.config), name="jarvis-cuda-asr", daemon=True)
-                self._process.start()
-            finally:
-                child.close()
+            with self._lock:
+                if self._cancelled:
+                    raise BackendError("cuda.worker_cancelled", "CUDA worker was cancelled", subsystem="cuda")
+                if self.alive:
+                    return
+                self._close_handles()
+                started = self.clock()
+                parent, child = self.context.Pipe(duplex=True)
+                self._connection = parent
+                try:
+                    self._process = self.context.Process(target=_process_entry, args=(child, self.config), name="jarvis-cuda-asr", daemon=True)
+                    self._process.start()
+                finally:
+                    child.close()
             frame = self._receive(self.config.worker_start_timeout_seconds, "cuda.worker_start_timeout")
             if frame["type"] == "error":
                 self._raise_error(frame)
@@ -225,10 +233,13 @@ class ProcessCudaWorkerSession:
         if len(payload) > self.config.maximum_audio_bytes:
             raise BackendError("cuda.ipc_audio_too_large", "CUDA IPC audio exceeds its bound", subsystem="cuda")
         self.start()
-        assert self._connection is not None
+        with self._lock:
+            connection = self._connection
+        if connection is None:
+            raise BackendError("cuda.worker_cancelled", "CUDA worker was cancelled", subsystem="cuda")
         request_id = str(uuid.uuid4())
         try:
-            self._connection.send({"type": "transcribe", "request_id": request_id, "sample_rate": 16_000, "audio": payload})
+            connection.send({"type": "transcribe", "request_id": request_id, "sample_rate": 16_000, "audio": payload})
             frame = self._receive(self.config.transcription_timeout_seconds, "cuda.transcription_timeout")
         except (EOFError, OSError) as exc:
             self.cancel()
@@ -257,32 +268,36 @@ class ProcessCudaWorkerSession:
         )
 
     def cancel(self) -> None:
-        process = self._process
-        if process is not None:
-            for method in ("terminate", "kill"):
-                if not process.is_alive():
-                    break
-                getattr(process, method)()
-                process.join(timeout=5)
-            if process.is_alive():
-                raise BackendError("cuda.worker_shutdown_timeout", "CUDA worker did not exit", subsystem="cuda")
-        self._close_handles()
+        with self._lock:
+            self._cancelled = True
+            process = self._process
+            if process is not None:
+                for method in ("terminate", "kill"):
+                    if not process.is_alive():
+                        break
+                    getattr(process, method)()
+                    process.join(timeout=5)
+                if process.is_alive():
+                    raise BackendError("cuda.worker_shutdown_timeout", "CUDA worker did not exit", subsystem="cuda")
+            self._close_handles()
 
     def close(self) -> None:
-        started = self.clock()
-        process, connection = self._process, self._connection
-        if process is not None and process.is_alive() and connection is not None:
-            try:
-                connection.send({"type": "shutdown"})
-                frame = self._receive(min(5.0, self.config.worker_start_timeout_seconds), "cuda.worker_shutdown_timeout")
-                if frame.get("type") != "shutdown.complete":
-                    raise BackendError("cuda.worker_protocol_error", "CUDA worker shutdown was not acknowledged", subsystem="cuda")
-            except (BackendError, EOFError, OSError):
-                pass
-            else:
-                process.join(timeout=5)
-        self.cancel()
-        self.metrics.append({"event": "worker_shutdown", "duration_seconds": self.clock() - started})
+        with self._lock:
+            self._cancelled = True
+            started = self.clock()
+            process, connection = self._process, self._connection
+            if process is not None and process.is_alive() and connection is not None:
+                try:
+                    connection.send({"type": "shutdown"})
+                    frame = self._receive(min(5.0, self.config.worker_start_timeout_seconds), "cuda.worker_shutdown_timeout")
+                    if frame.get("type") != "shutdown.complete":
+                        raise BackendError("cuda.worker_protocol_error", "CUDA worker shutdown was not acknowledged", subsystem="cuda")
+                except (BackendError, EOFError, OSError):
+                    pass
+                else:
+                    process.join(timeout=5)
+            self.cancel()
+            self.metrics.append({"event": "worker_shutdown", "duration_seconds": self.clock() - started})
 
     def _close_handles(self) -> None:
         try:
@@ -346,6 +361,7 @@ class CudaFasterWhisperBackend:
         self._active_session: CudaWorkerSession | None = None
         self._warm_restarts = 0
         self._warm_started_once = False
+        self._cancel_generation = 0
         self._lock = threading.RLock()
 
     def _admit(self) -> None:
@@ -360,17 +376,33 @@ class CudaFasterWhisperBackend:
             self.metrics.append({"event": "vram_before_worker", "value_mb": decision.free_vram_mb})
         require_admission(decision)
 
-    def _new_session(self) -> CudaWorkerSession:
+    def _new_session(self, generation: int) -> CudaWorkerSession:
         self._admit()
         session = self.session_factory(self.worker_config)
         try:
+            with self._lock:
+                if generation != self._cancel_generation:
+                    raise BackendError("cuda.worker_cancelled", "CUDA worker was cancelled", subsystem="cuda")
+                self._active_session = session
+                if self.residency == "warm":
+                    self._warm_session = session
             session.start()
+            with self._lock:
+                if generation != self._cancel_generation:
+                    raise BackendError("cuda.worker_cancelled", "CUDA worker was cancelled", subsystem="cuda")
+                if self.residency == "warm":
+                    self._warm_started_once = True
+            self._record_vram("vram_after_model_load")
+            return session
         except BaseException:
             session.cancel()
+            with self._lock:
+                if self._active_session is session:
+                    self._active_session = None
+                if self._warm_session is session:
+                    self._warm_session = None
             self.metrics.extend(session.metrics)
             raise
-        self._record_vram("vram_after_model_load")
-        return session
 
     def _record_vram(self, event: str) -> None:
         try:
@@ -382,32 +414,17 @@ class CudaFasterWhisperBackend:
     def transcribe(self, audio: object) -> TranscriptResult:
         if not isinstance(audio, AudioChunk) or audio.sample_rate != 16_000:
             raise BackendError("asr.invalid_audio", "ASR requires mono 16-kHz audio", subsystem="asr")
-        if self.residency == "turn_scoped":
-            session = self._new_session()
-            with self._lock:
-                self._active_session = session
-            try:
-                result = session.transcribe(audio)
-            finally:
-                session.close()  # Process exit precedes result publication to the caller.
-                self.metrics.extend(session.metrics)
-                self._record_vram("vram_after_worker_exit")
-                with self._lock:
-                    if self._active_session is session:
-                        self._active_session = None
-            return result
-
         with self._lock:
-            session = self._warm_session
-            if session is None:
-                if self._warm_started_once:
-                    if self._warm_restarts >= self.warm_restart_limit:
-                        raise BackendError("cuda.warm_restart_limit", "CUDA warm worker restart limit reached", subsystem="cuda", retryable=True)
-                    self._warm_restarts += 1
-                session = self._new_session()
-                self._warm_session = session
-                self._warm_started_once = True
-            self._active_session = session
+            generation = self._cancel_generation
+            session = self._warm_session if self.residency == "warm" else None
+            if session is None and self.residency == "warm" and self._warm_started_once:
+                if self._warm_restarts >= self.warm_restart_limit:
+                    raise BackendError("cuda.warm_restart_limit", "CUDA warm worker restart limit reached", subsystem="cuda", retryable=True)
+                self._warm_restarts += 1
+            if session is not None:
+                self._active_session = session
+        if session is None:
+            session = self._new_session(generation)
         try:
             return session.transcribe(audio)
         except BackendError:
@@ -417,14 +434,19 @@ class CudaFasterWhisperBackend:
                     self._warm_session = None
             raise
         finally:
+            if self.residency == "turn_scoped":
+                session.close()  # Process exit precedes result publication to the caller.
             self.metrics.extend(session.metrics)
             session.metrics.clear()
+            if self.residency == "turn_scoped":
+                self._record_vram("vram_after_worker_exit")
             with self._lock:
                 if self._active_session is session:
                     self._active_session = None
 
     def cancel_current(self) -> None:
         with self._lock:
+            self._cancel_generation += 1
             session = self._active_session
         if session is not None:
             session.cancel()
@@ -436,6 +458,7 @@ class CudaFasterWhisperBackend:
 
     def close(self) -> None:
         with self._lock:
+            self._cancel_generation += 1
             sessions = {id(item): item for item in (self._active_session, self._warm_session) if item is not None}
         failure: BaseException | None = None
         for session in sessions.values():

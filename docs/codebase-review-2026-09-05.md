@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **244 of 401 code files**, plus **204 of 327 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **244 of 401 code files**, plus **205 of 328 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **747 tests (732 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **751 tests (736 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1664,3 +1664,20 @@ The two new fallback regression methods produce **five failures before the fix**
 Full Voice: **747 tests in 7.361 seconds, 732 passed and 15 skipped**. Full Orchestrator: **1106 tests in 20.698 seconds, 1101 passed and five skipped**, `/tmp/cyrus-full-review-fallback-cancellation-{voice,orchestrator}.log`. Fatal Ruff and unchanged module boundaries pass. Ponytail: one integer generation in the existing shared lifecycle path, with no new abstraction or dependency. Net production growth is **five lines**, including the earlier coordinator cleanup change.
 
 Coverage is **244/401 code, 204/327 tests and 41/308 support**, with **489 reviewed hashes verified across 1036 entries**. CUDA process concurrency/frame follow-ups, remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
+
+
+### CUDA cancellation during admission, startup and receive
+
+ASR fallback cancellation checkpoint committed as **a9c59ea**, with a clean mandatory Ponytail review.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V291 | Concurrent cancellation cleared the shared connection/process fields between poll and recv/is_alive, leaking AttributeError; simultaneous cleanup could operate on the same process handle. | Snapshot receive handles, translate closed-handle ValueError alongside channel errors, and serialize process creation/shutdown ownership with a reentrant lock. Model-ready/transcription waits release that lock so cancellation can proceed. |
+| V292 | A cancelled or closed ProcessCudaWorkerSession could create a fresh subprocess when transcribe called start again. | Make cancellation terminal for that session, reporting non-fallbackable cuda.worker_cancelled; a new turn uses a new session. |
+| V293 | turn-scoped workers were registered only after model loading, while warm startup held the backend lock throughout loading. Cancellation either saw no worker or waited for load completion. Cancellation during admission could also be followed by a new spawn. | Register the session before start, load outside the backend lock, and check the cancellation generation before registration and after startup. Cancel/close advance the generation even before a session exists. |
+
+Four regression methods produce **seven failures and six errors before fixes**, `/tmp/cyrus-cuda-concurrency-before.log`. All **47 focused tests pass**, `/tmp/cyrus-cuda-concurrency-after.log`. Coverage includes concurrent receive/cleanup, no resurrection after cancel/close, both residency modes during admission and model loading, and a successful next turn after cancellation. New tests use bounded threads, fake processes and fake telemetry. Existing focused tests also verify real cleanup of our harmless owned POSIX child; no native CUDA model/device is used.
+
+Full Voice: **751 tests in 7.443 seconds, 736 passed and 15 skipped**. Full Orchestrator: **1106 tests in 21.049 seconds, 1101 passed and five skipped**, `/tmp/cyrus-full-review-cuda-concurrency-{voice,orchestrator}.log`. Fatal Ruff and unchanged module-size checks pass. Ponytail: merge the duplicated warm/turn-scoped transcription and finalization flow, retaining the residency-specific close and VRAM measurement. Net production growth is **23 lines**, with no dependency or restart-limit increase. ASR calls remain serialized by AsyncTranscriptionCoordinator; this handles concurrent lifecycle calls, not arbitrary parallel transcriptions on one pipe. The brief process-creation critical section is distinct from potentially long model loading.
+
+Coverage is **244/401 code, 205/328 tests and 41/308 support**, with **490 reviewed hashes verified across 1037 entries**. CUDA frame validation, remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete. Native Windows/CUDA startup and cancellation timing still require their platform qualification.
