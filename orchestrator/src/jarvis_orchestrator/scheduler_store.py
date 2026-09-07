@@ -2041,11 +2041,9 @@ class SchedulerStore:
         require_uuid4(event_id)
         require_uuid4(attempt_id)
         self._sha(semantic_sha256)
-        strict_utc(observed_at_utc)
-        allowed = {"STAGED", "DISPATCHING", "OS_ACCEPTED", "OS_REJECTED", "AMBIGUOUS_OS_DISPATCH"}
-        if stage not in allowed:
+        selected = strict_utc(observed_at_utc)
+        if stage not in {"STAGED", "DISPATCHING", "OS_ACCEPTED", "OS_REJECTED", "AMBIGUOUS_OS_DISPATCH"}:
             raise OrchestratorError("invalid_request", status=400)
-        selected = parse_utc(observed_at_utc)
         replay_exists, _replay = self._existing_inbox(event_id, semantic_sha256)
         if replay_exists:
             return False
@@ -2062,31 +2060,35 @@ class SchedulerStore:
             ).fetchone()
             if delivery is None:
                 raise OrchestratorError("not_found", status=404)
+            attempt = connection.execute(
+                """SELECT a.*,(SELECT MAX(attempt_ordinal) FROM scheduler_delivery_attempts
+                   WHERE notification_id=a.notification_id) AS latest_ordinal
+                   FROM scheduler_delivery_attempts a WHERE attempt_id=?""", (attempt_id,),
+            ).fetchone()
+            if attempt is not None and attempt["notification_id"] != notification:
+                raise OrchestratorError("binding_mismatch", status=409)
             connection.execute(
                 """INSERT INTO scheduler_inbox(
                    event_id,semantic_sha256,protocol,event_type,state,created_at,applied_at
                    ) VALUES(?,?,?,'scheduler.notification.receipt','APPLIED',?,?)""",
                 (event_id, semantic_sha256, SCHEDULER_PROTOCOL, utc_text(selected), utc_text(selected)),
             )
-            if delivery["state"] in _TERMINAL_DELIVERY_STATES:
+            stale_attempt = attempt is not None and (
+                attempt["state"] == "OS_REJECTED"
+                or (stage == "STAGED" and attempt["state"] != "CREATED")
+                or (stage == "DISPATCHING" and attempt["state"] not in {"CREATED", "DISPATCHING"})
+                or (stage != "OS_ACCEPTED" and attempt["attempt_ordinal"] < attempt["latest_ordinal"])
+            )
+            if delivery["state"] in _TERMINAL_DELIVERY_STATES or stale_attempt:
                 self._ledger_tx(
-                    connection,
-                    entity_type="delivery",
-                    entity_id=notification,
+                    connection, entity_type="delivery", entity_id=notification,
                     event_type="scheduler.delivery.late_receipt_ignored",
-                    from_state=delivery["state"],
-                    to_state=delivery["state"],
-                    now=selected,
-                    cause_event_id=event_id,
-                    attempt_id=attempt_id,
-                    metadata={"reason_code": "terminal_delivery_precedence", "receipt_stage": stage},
+                    from_state=delivery["state"], to_state=delivery["state"], now=selected,
+                    cause_event_id=event_id, attempt_id=attempt_id,
+                    metadata={"reason_code": "attempt_precedence" if stale_attempt else "terminal_delivery_precedence",
+                              "receipt_stage": stage},
                 )
                 return False
-            attempt = connection.execute(
-                "SELECT * FROM scheduler_delivery_attempts WHERE attempt_id=?", (attempt_id,)
-            ).fetchone()
-            if attempt is not None and attempt["notification_id"] != notification:
-                raise OrchestratorError("binding_mismatch", status=409)
             if attempt is None:
                 ordinal = connection.execute(
                     "SELECT COUNT(*)+1 FROM scheduler_delivery_attempts WHERE notification_id=?",

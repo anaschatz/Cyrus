@@ -99,6 +99,59 @@ class SchedulerReceiptBindingTests(StoreCase, unittest.TestCase):
                     "SELECT state FROM scheduler_outbox WHERE event_id=?", (requested["event_id"],),
                 ).fetchone()[0], "ACKED" if phase == "live" else before)
 
+    def test_late_progress_cannot_regress_a_finished_or_newer_attempt(self):
+        for later_attempt in (False, True):
+            for stage in ("STAGED", "DISPATCHING", "AMBIGUOUS_OS_DISPATCH", "OS_REJECTED"):
+                with self.subTest(later_attempt=later_attempt, stage=stage):
+                    notification = self.delivery()
+                    first = str(uuid.uuid4())
+                    self.receipt(notification, first, "DISPATCHING")
+                    self.receipt(notification, first, "OS_REJECTED")
+                    if later_attempt:
+                        self.receipt(notification, str(uuid.uuid4()), "DISPATCHING")
+                    before = tuple(self.store._connection.execute(
+                        "SELECT state,updated_at FROM scheduler_deliveries WHERE notification_id=?", (notification,),
+                    ).fetchone())
+                    self.assertFalse(self.receipt(notification, first, stage))
+                    self.assertEqual(tuple(self.store._connection.execute(
+                        "SELECT state,updated_at FROM scheduler_deliveries WHERE notification_id=?", (notification,),
+                    ).fetchone()), before)
+                    self.assertEqual(self.store._connection.execute(
+                        "SELECT state FROM scheduler_delivery_attempts WHERE attempt_id=?", (first,),
+                    ).fetchone()[0], "OS_REJECTED")
+                    ignored = self.store._connection.execute(
+                        "SELECT event_type FROM scheduler_ledger ORDER BY ledger_seq DESC LIMIT 1",
+                    ).fetchone()[0]
+                    self.assertEqual(ignored, "scheduler.delivery.late_receipt_ignored")
+
+    def test_late_progress_preserves_dispatch_and_recovery_state(self):
+        for initial, late in (("DISPATCHING", "STAGED"), ("AMBIGUOUS_OS_DISPATCH", "STAGED"),
+                              ("AMBIGUOUS_OS_DISPATCH", "DISPATCHING")):
+            with self.subTest(initial=initial, late=late):
+                notification, attempt = self.delivery(), str(uuid.uuid4())
+                self.receipt(notification, attempt, initial)
+                self.assertFalse(self.receipt(notification, attempt, late))
+                self.assertEqual(self.store._connection.execute(
+                    "SELECT state FROM scheduler_delivery_attempts WHERE attempt_id=?", (attempt,),
+                ).fetchone()[0], initial)
+                self.assertTrue(self.receipt(notification, attempt, "OS_ACCEPTED"))
+
+    def test_late_ambiguous_attempt_cannot_regress_new_dispatch_but_can_confirm_acceptance(self):
+        notification = self.delivery()
+        first, second = str(uuid.uuid4()), str(uuid.uuid4())
+        self.receipt(notification, first, "DISPATCHING")
+        self.scheduler.recover_after_restart(now=self.due)
+        self.receipt(notification, second, "DISPATCHING")
+        self.assertFalse(self.receipt(notification, first, "AMBIGUOUS_OS_DISPATCH"))
+        self.assertEqual(self.store._connection.execute(
+            "SELECT state FROM scheduler_deliveries WHERE notification_id=?", (notification,),
+        ).fetchone()[0], "DISPATCHING")
+        self.assertTrue(self.receipt(notification, first, "OS_ACCEPTED"))
+        self.assertFalse(self.receipt(notification, second, "OS_REJECTED"))
+        self.assertEqual(self.store._connection.execute(
+            "SELECT state FROM scheduler_deliveries WHERE notification_id=?", (notification,),
+        ).fetchone()[0], "OS_ACCEPTED")
+
     def test_staged_then_dispatching_attempt_is_recovered_after_restart(self):
         notification = self.delivery()
         attempt = str(uuid.uuid4())
