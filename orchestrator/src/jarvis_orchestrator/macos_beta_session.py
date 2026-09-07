@@ -868,15 +868,6 @@ def _lock_private_session_parent(path: Path) -> int:
         raise
 
 
-def _write_all(descriptor: int, payload: bytes) -> None:
-    offset = 0
-    while offset < len(payload):
-        written = os.write(descriptor, payload[offset:])
-        if written <= 0:
-            raise OSError(errno.EIO, "interlock_write_failed")
-        offset += written
-
-
 def _write_private_at(
     parent_descriptor: int,
     name: str,
@@ -887,56 +878,40 @@ def _write_private_at(
     payload = _canonical(value) + b"\n"
     if len(payload) > _MAX_INTERLOCK_BYTES:
         raise OSError(errno.EFBIG, "interlock_too_large")
-    target = name
-    temporary: str | None = None
-    if not exclusive:
-        temporary = f".{name}.{secrets.token_hex(16)}.tmp"
-        target = temporary
-    flags = (
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    descriptor = os.open(
-        target,
-        flags,
-        0o600,
+    target = name if exclusive else f".{name}.{secrets.token_hex(16)}.tmp"
+    with open(target, "xb", opener=lambda path, flags: os.open(
+        path, flags | getattr(os, "O_NOFOLLOW", 0), 0o600,
         dir_fd=parent_descriptor,
-    )
-    try:
-        os.fchmod(descriptor, 0o600)
-        _write_all(descriptor, payload)
-        os.fsync(descriptor)
+    )) as output:
+        descriptor = output.fileno()
         metadata = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or metadata.st_mode & 0o777 != 0o600
-            or metadata.st_nlink != 1
-        ):
-            raise OSError(errno.EPERM, "interlock_file_invalid")
-    except BaseException:
-        os.close(descriptor)
         try:
-            os.unlink(target, dir_fd=parent_descriptor)
-        except OSError:
-            pass
-        raise
-    else:
-        os.close(descriptor)
-    if temporary is not None:
-        try:
-            os.replace(
-                temporary,
-                name,
-                src_dir_fd=parent_descriptor,
-                dst_dir_fd=parent_descriptor,
-            )
+            os.fchmod(descriptor, 0o600)
+            output.write(payload)
+            output.flush()
+            os.fsync(descriptor)
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or metadata.st_mode & 0o777 != 0o600
+                or metadata.st_nlink != 1
+                or not os.path.samestat(metadata, os.stat(
+                    target, dir_fd=parent_descriptor, follow_symlinks=False,
+                ))
+            ):
+                raise OSError(errno.EPERM, "interlock_file_invalid")
+            if not exclusive:
+                os.replace(
+                    target, name,
+                    src_dir_fd=parent_descriptor, dst_dir_fd=parent_descriptor,
+                )
         except BaseException:
             try:
-                os.unlink(temporary, dir_fd=parent_descriptor)
+                if os.path.samestat(metadata, os.stat(
+                    target, dir_fd=parent_descriptor, follow_symlinks=False,
+                )):
+                    os.unlink(target, dir_fd=parent_descriptor)
             except OSError:
                 pass
             raise

@@ -1305,6 +1305,56 @@ finally:
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertTrue(path.exists())
 
+    def test_interlock_write_failure_only_removes_its_own_file(self) -> None:
+        from jarvis_orchestrator import macos_beta_session as module
+
+        for exclusive, phase in ((True, "fchmod"), (False, "fchmod"), (True, "fsync"), (False, "fsync"), (False, "replace")):
+            for replace_file in (False, True):
+                with self.subTest(exclusive=exclusive, phase=phase, replace_file=replace_file):
+                    name = SESSION_INTERLOCK_FILENAME
+                    target = self.sessions / (name if exclusive else f".{name}.{'e' * 32}.tmp")
+                    def fail(*args, **kwargs):
+                        if replace_file:
+                            target.unlink()
+                            target.write_bytes(b"replacement")
+                        raise OSError("simulated write failure")
+                    parent = os.open(self.sessions, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        with patch.object(module.secrets, "token_hex", return_value="e" * 32), patch.object(module.os, phase, side_effect=fail):
+                            with self.assertRaises(OSError):
+                                module._write_private_at(parent, name, {"value": 1}, exclusive=exclusive)
+                        if replace_file:
+                            self.assertEqual(target.read_bytes(), b"replacement")
+                        else:
+                            self.assertFalse(target.exists())
+                    finally:
+                        os.close(parent)
+                        target.unlink(missing_ok=True)
+
+    def test_interlock_publication_rejects_a_replaced_staging_name(self) -> None:
+        from jarvis_orchestrator import macos_beta_session as module
+
+        name = SESSION_INTERLOCK_FILENAME
+        destination = self.sessions / name
+        destination.write_bytes(b"original interlock")
+        target = self.sessions / f".{name}.{'e' * 32}.tmp"
+        moved = self.sessions / "moved-owned-file"
+        original_fsync = os.fsync
+        def move_and_replace(descriptor):
+            original_fsync(descriptor)
+            target.rename(moved)
+            target.write_bytes(b"replacement")
+        parent = os.open(self.sessions, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            with patch.object(module.secrets, "token_hex", return_value="e" * 32), patch.object(module.os, "fsync", side_effect=move_and_replace):
+                with self.assertRaises(OSError):
+                    module._write_private_at(parent, name, {"value": 1}, exclusive=False)
+            self.assertEqual(destination.read_bytes(), b"original interlock")
+            self.assertEqual(target.read_bytes(), b"replacement")
+            self.assertEqual(json.loads(moved.read_bytes()), {"value": 1})
+        finally:
+            os.close(parent)
+
     def test_recovery_and_new_sessions_cannot_overlap_interlock_ownership(self) -> None:
         from jarvis_orchestrator import macos_beta_session as module
 

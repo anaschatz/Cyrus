@@ -2,7 +2,7 @@
 
 Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **221 of 400 code files**, plus **186 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1070 tests (1065 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1072 tests (1067 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1350,3 +1350,21 @@ The new regression fails against the original source, `/tmp/cyrus-beta-lock-befo
 Full Orchestrator ran **1070 tests in 21.099 seconds: 1065 passed, five skipped**, `/tmp/cyrus-full-review-beta-lock.log`. Four exact staged-source/test checks pass, `/tmp/cyrus-beta-lock-staged-tests.log`, covering the race, successful recovery/startup and incomplete-shutdown relaunch protection. Fatal Ruff/unused-import and unchanged module-size checks pass; the worktree supervisor is 1897 lines against its existing 1900-line limit. Ponytail: one shared native lock acquisition with existing descriptor lifetime/cleanup, no new dependency.
 
 Coverage remains **221/400 code, 186/315 tests and 41/308 support files**, with **448 reviewed hashes verified across 1023 entries**. Whole-codebase review and final quality assessment remain incomplete. Session source remains pending listener-to-child ownership before authenticated probes and file-publication/failure-cleanup ownership checks. U05 and compiler qualification identity binding remain open.
+
+
+### macOS interlock writer ownership checkpoint
+
+Recovery-lock checkpoint committed as **cbaff45**, with a clean Ponytail hook. Traced the single interlock writer through exclusive creation, replacement publication, private metadata checks and failure cleanup.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V243 | fchmod/fsync/replace failure cleanup unconditionally unlinked the target pathname. If the created file had been replaced, cleanup deleted the replacement. | Keep the opened file descriptor through publication and compare file identity with os.path.samestat before cleanup. Remove only a pathname still referring to the opened file. |
+| V244 | Moving the opened staging inode elsewhere and replacing its pathname left the original descriptor's owner/mode/link checks valid. os.replace then published the replacement file over the previous interlock. | Verify that the staging pathname still identifies the opened inode before publication; reject a mismatch and preserve both the prior interlock and the replacement file. |
+
+Two regression methods produce **one failure and five errors** against original source, `/tmp/cyrus-beta-writer-before.log`. Ten failure-injection cases cover exclusive/replacement writes, fchmod/fsync/rename failures, cleanup of unchanged files and preservation of replacements. A separate publication case moves the real opened inode, installs another file at its staging name and verifies that the previous interlock remains intact. All files and faults are synthetic and temporary.
+
+All **41 session tests pass**, `/tmp/cyrus-beta-writer-after.log`. Full Orchestrator ran **1072 tests in 36.018 seconds: 1067 passed, five skipped**, `/tmp/cyrus-full-review-beta-writer.log`. Four exact staged-source/test checks pass, `/tmp/cyrus-beta-writer-staged-tests.log`, including durable owner-only creation and recovery locking. Fatal Ruff/unused-import and unchanged module-size checks pass; the worktree supervisor is 1872 lines. No live model/provider, microphone or native action was exercised.
+
+Ponytail: Python's exclusive buffered binary writer now owns writing and descriptor closure. Removed the custom single-caller write loop, duplicate close/cleanup paths and separate temporary-name state: **25 fewer production lines**, no new dependency. Flush/fsync and parent-directory durability remain. The previous checkpoint's directory lock serializes cooperating session/recovery mutators; identity checks additionally detect replacements observed before publication/cleanup. These checks do not claim atomic protection against arbitrary non-cooperating writers between a stat and a pathname mutation.
+
+Coverage remains **221/400 code, 186/315 tests and 41/308 support files**, with **448 reviewed hashes verified across 1023 entries**. Session source review remains pending listener-to-child ownership before authenticated probes. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding are also open.
