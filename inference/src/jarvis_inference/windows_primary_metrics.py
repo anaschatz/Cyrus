@@ -20,6 +20,7 @@ from decimal import Decimal
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from .errors import ApplianceError
 from .strict_json import canonical_bytes, parse_body
 
 
@@ -28,6 +29,13 @@ _SHA = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 
 class PrimaryRunnerFailure(RuntimeError):
     """A content-free runner failure safe for a diagnostic category."""
+
+
+def _parse_response(raw: bytes) -> Any:
+    try:
+        return parse_body(raw)
+    except (ApplianceError, RecursionError) as exc:
+        raise PrimaryRunnerFailure("invalid gateway JSON") from exc
 
 
 def _exact(value: Any, fields: set[str], name: str) -> dict[str, Any]:
@@ -61,6 +69,7 @@ def _checked_usage(value: Any, expected_prompt_tokens: int) -> int:
         or prompt != expected_prompt_tokens
         or type(completion) is not int
         or not 1 <= completion <= 128
+        or type(total) is not int
         or total != prompt + completion
     ):
         raise PrimaryRunnerFailure("invalid token accounting")
@@ -128,7 +137,7 @@ class PrimaryQualificationClient:
             raw = response.read(2_097_153)
             if len(raw) > 2_097_152:
                 raise PrimaryRunnerFailure("oversized gateway response")
-            value = parse_body(raw) if raw else {}
+            value = _parse_response(raw) if raw else {}
             if not isinstance(value, dict):
                 raise PrimaryRunnerFailure("non-object gateway response")
             return response.status, value
@@ -356,7 +365,7 @@ class PrimaryQualificationClient:
             raw = response.read(2_097_153)
             if response.status != 200 or len(raw) > 2_097_152:
                 raise PrimaryRunnerFailure("buffered completion failed")
-            value = parse_body(raw)
+            value = _parse_response(raw)
         finally:
             ended = self.clock()
             connection.close()
@@ -375,7 +384,7 @@ class PrimaryQualificationClient:
             or not isinstance(message, dict)
             or not isinstance(message.get("content"), str)
             or not message["content"]
-            or choice.get("finish_reason") not in {"stop", "length"}
+            or choice.get("finish_reason") not in ("stop", "length")
         ):
             raise PrimaryRunnerFailure("buffered completion contract failed")
         completion = _checked_usage(value.get("usage"), expected_prompt_tokens)
@@ -409,8 +418,8 @@ class PrimaryQualificationClient:
                 raw = response.readline(524_289)
                 if not raw:
                     break
-                if len(raw) > 524_288:
-                    raise PrimaryRunnerFailure("oversized stream event")
+                if len(raw) > 524_288 or not raw.endswith(b"\n"):
+                    raise PrimaryRunnerFailure("invalid stream frame size")
                 if not raw.startswith(b"data: "):
                     if raw.strip():
                         raise PrimaryRunnerFailure("invalid stream framing")
@@ -419,17 +428,19 @@ class PrimaryQualificationClient:
                 if payload == b"[DONE]":
                     done = True
                     break
-                event = parse_body(payload)
+                event = _parse_response(payload)
                 if not isinstance(event, dict):
                     raise PrimaryRunnerFailure("invalid stream event")
                 choices = event.get("choices")
                 if choices == []:
                     candidate = event.get("usage")
-                    if isinstance(candidate, dict):
-                        usage = candidate
+                    if terminal is None or usage is not None or not isinstance(candidate, dict):
+                        raise PrimaryRunnerFailure("invalid stream usage ordering")
+                    usage = candidate
                     continue
                 if (
-                    not isinstance(choices, list)
+                    terminal is not None
+                    or not isinstance(choices, list)
                     or len(choices) != 1
                     or not isinstance(choices[0], dict)
                     or not isinstance(choices[0].get("delta"), dict)
@@ -439,12 +450,22 @@ class PrimaryQualificationClient:
                 delta = choice["delta"]
                 content = delta.get("content")
                 tool_calls = delta.get("tool_calls")
+                if (
+                    (content is not None and not isinstance(content, str))
+                    or (tool_calls is not None and (
+                        not isinstance(tool_calls, list)
+                        or any(not isinstance(call, dict) for call in tool_calls)
+                    ))
+                ):
+                    raise PrimaryRunnerFailure("invalid stream delta")
                 if (isinstance(content, str) and bool(content)) or (
                     isinstance(tool_calls, list) and bool(tool_calls)
                 ):
                     output_seen = True
                 reason = choice.get("finish_reason")
                 if reason is not None:
+                    if reason not in ("stop", "length", "tool_calls"):
+                        raise PrimaryRunnerFailure("invalid stream finish reason")
                     terminal = reason
         finally:
             ended = self.clock()
@@ -526,7 +547,17 @@ def windows_process_working_set_bytes(pid: int) -> int:
 
     process_query_information = 0x0400
     process_vm_read = 0x0010
-    handle = ctypes.windll.kernel32.OpenProcess(  # type: ignore[attr-defined]
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE, ctypes.POINTER(PROCESS_MEMORY_COUNTERS_EX), wintypes.DWORD
+    ]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(
         process_query_information | process_vm_read, False, pid
     )
     if not handle:
@@ -534,7 +565,7 @@ def windows_process_working_set_bytes(pid: int) -> int:
     counters = PROCESS_MEMORY_COUNTERS_EX()
     counters.cb = ctypes.sizeof(counters)
     try:
-        ok = ctypes.windll.psapi.GetProcessMemoryInfo(  # type: ignore[attr-defined]
+        ok = psapi.GetProcessMemoryInfo(
             handle, ctypes.byref(counters), counters.cb
         )
         value = int(counters.WorkingSetSize)
@@ -542,7 +573,7 @@ def windows_process_working_set_bytes(pid: int) -> int:
             raise PrimaryRunnerFailure("managed process metrics are invalid")
         return value
     finally:
-        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        kernel32.CloseHandle(handle)
 
 
 def combined_working_set_bytes(gateway_pid: int, engine_pid: int) -> int:

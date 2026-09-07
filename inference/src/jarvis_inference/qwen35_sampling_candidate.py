@@ -180,7 +180,7 @@ def _is_sha256(value: object) -> bool:
 
 
 def _read_small_regular(path: Path, *, maximum: int = BODY_BYTES) -> bytes:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -215,7 +215,7 @@ def _read_small_regular(path: Path, *, maximum: int = BODY_BYTES) -> bytes:
 def hash_artifact(path: Path, *, expected_size: int, expected_sha256: str) -> ArtifactIdentity:
     if expected_size < 1 or not _is_sha256(expected_sha256):
         raise CandidateFailure("invalid frozen artifact identity")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -616,8 +616,8 @@ class OfficialSamplingCandidateClient:
             raw = response.readline(BACKEND_EVENT_BYTES + 1)
             if not raw:
                 break
-            if len(raw) > BACKEND_EVENT_BYTES:
-                raise CandidateFailure("candidate stream event is oversized")
+            if len(raw) > BACKEND_EVENT_BYTES or not raw.endswith(b"\n"):
+                raise CandidateFailure("candidate stream event size or framing is invalid")
             if not raw.strip() or raw.startswith(b":"):
                 continue
             if not raw.startswith(b"data: "):
@@ -650,7 +650,7 @@ class OfficialSamplingCandidateClient:
             choice = choices[0]
             if not isinstance(choice, dict) or set(choice) - {"index", "delta", "finish_reason", "logprobs"}:
                 raise CandidateFailure("candidate stream choice shape is invalid")
-            if choice.get("index") != 0 or choice.get("logprobs") not in {None}:
+            if type(choice.get("index")) is not int or choice["index"] != 0 or choice.get("logprobs") is not None:
                 raise CandidateFailure("candidate stream choice metadata is invalid")
             delta = choice.get("delta")
             if not isinstance(delta, dict) or set(delta) - {
@@ -660,7 +660,7 @@ class OfficialSamplingCandidateClient:
             role = delta.get("role")
             if role is not None and role != "assistant":
                 raise CandidateFailure("candidate stream role is invalid")
-            if delta.get("reasoning_content") not in {None, ""} or delta.get("reasoning") not in {None, ""}:
+            if delta.get("reasoning_content") not in (None, "") or delta.get("reasoning") not in (None, ""):
                 raise CandidateFailure("candidate emitted reasoning output")
             tool_calls = delta.get("tool_calls")
             if tool_calls is not None and tool_calls != [] and tool_calls != ():
@@ -681,7 +681,7 @@ class OfficialSamplingCandidateClient:
                 parts.append(content)
             reason = choice.get("finish_reason")
             if reason is not None:
-                if reason not in {"stop", "length"} or finish_reason is not None:
+                if reason not in ("stop", "length") or finish_reason is not None:
                     raise CandidateFailure("candidate stream finish reason is invalid")
                 finish_reason = reason
                 finished = True
@@ -729,13 +729,13 @@ class OfficialSamplingCandidateClient:
         connection = self._connection()
         started = time.perf_counter()
         try:
+            self.generation_dispatches += 1
             connection.request(
                 "POST",
                 "/v1/chat/completions",
                 body=body,
                 headers=self._headers(body, accept="text/event-stream"),
             )
-            self.generation_dispatches += 1
             response = connection.getresponse()
             return self._read_sse(
                 response,

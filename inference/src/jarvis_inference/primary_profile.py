@@ -271,6 +271,8 @@ def _bearer_from_config(path: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .primary_quality_client import PrimaryQualityClient
+
     parser = argparse.ArgumentParser(prog="run-primary-profile-quality")
     parser.add_argument("--base-url", default="http://127.0.0.1:8766/v1")
     parser.add_argument("--orchestrator-config", type=Path, required=True)
@@ -281,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         fixtures, digest = load_primary_corpus(args.corpus)
         report = run_primary_quality_gate(
-            LoopbackClient(
+            PrimaryQualityClient(
                 args.base_url,
                 _bearer_from_config(args.orchestrator_config),
                 expected_capabilities={
@@ -291,7 +293,6 @@ def main(argv: list[str] | None = None) -> int:
                     "json_object": True,
                     "json_schema": True,
                 },
-                system_prompt=PRIMARY_SYSTEM_PROMPT,
             ),
             fixtures,
             digest,

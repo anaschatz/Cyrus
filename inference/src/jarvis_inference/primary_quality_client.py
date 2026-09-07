@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from .errors import ApplianceError
+from .limits import SSE_PAYLOAD_BYTES
 from .primary_profile import PRIMARY_SYSTEM_PROMPT
 from .profile_preflight import (
     Fixture,
@@ -53,9 +55,11 @@ class PrimaryQualityClient(LoopbackClient):
             ):
                 raise PreflightFailure("primary quality stream request failed")
             while True:
-                raw = response.readline()
+                raw = response.readline(SSE_PAYLOAD_BYTES + 8)
                 if not raw:
                     break
+                if len(raw) > SSE_PAYLOAD_BYTES + 7 or not raw.endswith(b"\n"):
+                    raise PreflightFailure("invalid primary quality SSE frame size")
                 if not raw.startswith(b"data: "):
                     if raw.strip():
                         raise PreflightFailure("invalid primary quality SSE framing")
@@ -64,40 +68,52 @@ class PrimaryQualityClient(LoopbackClient):
                 if payload == b"[DONE]":
                     done = True
                     break
-                event = parse_body(payload)
+                try:
+                    event = parse_body(payload)
+                except (ApplianceError, RecursionError) as exc:
+                    raise PreflightFailure("invalid primary quality SSE JSON") from exc
                 if not isinstance(event, dict):
                     raise PreflightFailure("invalid primary quality SSE event")
                 choices = event.get("choices")
                 if choices == []:
                     candidate = event.get("usage")
-                    if isinstance(candidate, dict):
-                        usage = candidate
+                    if finish_reason is None or usage is not None or not isinstance(candidate, dict):
+                        raise PreflightFailure("invalid primary quality usage ordering")
+                    usage = candidate
                     continue
                 if (
-                    not isinstance(choices, list)
+                    finish_reason is not None
+                    or not isinstance(choices, list)
                     or len(choices) != 1
                     or not isinstance(choices[0], dict)
                 ):
                     raise PreflightFailure("invalid primary quality SSE choice")
                 choice = choices[0]
                 delta = choice.get("delta")
-                if not isinstance(delta, dict):
+                if not isinstance(delta, dict) or set(delta) - {"role", "content"} or delta.get("role", "assistant") != "assistant":
                     raise PreflightFailure("invalid primary quality SSE delta")
                 content = delta.get("content")
+                if content is not None and not isinstance(content, str):
+                    raise PreflightFailure("invalid primary quality text content")
                 if isinstance(content, str) and content:
                     if first_content is None:
                         first_content = time.perf_counter()
                     parts.append(content)
                 candidate_reason = choice.get("finish_reason")
                 if candidate_reason is not None:
+                    if candidate_reason not in ("stop", "length"):
+                        raise PreflightFailure("invalid primary quality finish reason")
                     finish_reason = candidate_reason
         finally:
             ended = time.perf_counter()
             connection.close()
-        if first_content is None or not done or not isinstance(usage, dict):
+        if first_content is None or finish_reason is None or not done or not isinstance(usage, dict):
             raise PreflightFailure("incomplete primary quality SSE response")
         completion_tokens = usage.get("completion_tokens")
-        if type(completion_tokens) is not int or completion_tokens <= 0:
+        if (set(usage) != {"prompt_tokens", "completion_tokens", "total_tokens"}
+                or any(type(value) is not int or value < 0 for value in usage.values())
+                or not 1 <= completion_tokens <= fixture.max_tokens
+                or usage["total_tokens"] != usage["prompt_tokens"] + completion_tokens):
             raise PreflightFailure("invalid primary completion token accounting")
         text = "".join(parts).strip()
         score = score_output(fixture, text, finish_reason)

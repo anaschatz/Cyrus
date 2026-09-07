@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import tempfile
+import io
+import json
 import unittest
 from collections import Counter
 from pathlib import Path
+from unittest.mock import patch
 
 from jarvis_inference.primary_profile import (
     PRIMARY_CORPUS_SHA256,
     load_primary_corpus,
+    main,
     run_primary_quality_gate,
 )
 from jarvis_inference.profile_preflight import PreflightFailure
@@ -46,6 +50,17 @@ class _PassingClient:
 
 
 class PrimaryProfileTests(unittest.TestCase):
+    def test_cli_constructs_the_primary_client_and_completes_the_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "config.json"
+            config.write_text(json.dumps({"inference_bearer_token": "k" * 48}))
+            from jarvis_inference.primary_quality_client import PrimaryQualityClient
+
+            with patch.object(PrimaryQualityClient, "readiness"), patch.object(PrimaryQualityClient, "capabilities"), patch.object(PrimaryQualityClient, "stream", side_effect=_PassingClient().stream), patch("sys.stdout", new_callable=io.StringIO) as output:
+                result = main(["--orchestrator-config", str(config), "--corpus", str(CORPUS), "--summary-only"])
+            self.assertEqual(result, 0)
+            self.assertEqual(json.loads(output.getvalue())["status"], "deterministic_quality_pass")
+
     def test_frozen_composite_corpus_has_sixty_cases_per_language(self) -> None:
         fixtures, digest = load_primary_corpus(CORPUS)
         self.assertEqual(digest, PRIMARY_CORPUS_SHA256)

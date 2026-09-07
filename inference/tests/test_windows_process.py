@@ -9,6 +9,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from jarvis_inference.private_temp import (
     _BUILTIN_ADMINISTRATORS_SID,
@@ -26,7 +28,7 @@ from jarvis_inference.private_temp import (
     trusted_windows_directory,
 )
 from jarvis_inference.windows_acl import create_private_directory
-from jarvis_inference.windows_process import WindowsJobProcess
+from jarvis_inference.windows_process import WindowsJobProcess, _Kernel32JobApi
 
 
 class FakeJobApi:
@@ -154,6 +156,23 @@ class FakeCreateAclApi(FakeAclApi):
 
 
 class WindowsJobProcessTests(unittest.TestCase):
+    def test_exit_code_259_is_distinguished_from_a_running_process(self) -> None:
+        for wait_result, code, expected in ((0, 259, 259), (258, 259, None), (0, 7, 7)):
+            with self.subTest(wait_result=wait_result, code=code):
+                def get_exit_code(handle, pointer):
+                    pointer._obj.value = code
+                    return True
+
+                api = _Kernel32JobApi.__new__(_Kernel32JobApi)
+                api.kernel32 = SimpleNamespace(
+                    GetExitCodeProcess=Mock(side_effect=get_exit_code),
+                    WaitForSingleObject=Mock(return_value=wait_result),
+                )
+                self.assertEqual(api.exit_code(20), expected)
+                api.kernel32.WaitForSingleObject.assert_called_once_with(20, 0)
+                if expected is None:
+                    api.kernel32.GetExitCodeProcess.assert_not_called()
+
     def process(self, api: FakeJobApi) -> WindowsJobProcess:
         return WindowsJobProcess(
             [r"C:\runtime\runner.exe", "--fixed"],

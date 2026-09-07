@@ -18,7 +18,6 @@ JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 STARTF_USESTDHANDLES = 0x00000100
 PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
-STILL_ACTIVE = 259
 WAIT_OBJECT_0 = 0
 WAIT_TIMEOUT = 258
 INFINITE = 0xFFFFFFFF
@@ -384,10 +383,13 @@ class _Kernel32JobApi:
             raise _last_error("ResumeThread failed")
 
     def exit_code(self, process: int) -> int | None:  # pragma: no cover
+        # Exit status 259 can also be an application's actual return value.
+        if not self.wait_process(process, 0):
+            return None
         value = wintypes.DWORD()
         if not self.kernel32.GetExitCodeProcess(process, ctypes.byref(value)):
             raise _last_error("GetExitCodeProcess failed")
-        return None if value.value == STILL_ACTIVE else int(value.value)
+        return int(value.value)
 
     def wait_process(self, process: int, timeout: float | None) -> bool:  # pragma: no cover
         result = int(self.kernel32.WaitForSingleObject(process, _milliseconds(timeout)))

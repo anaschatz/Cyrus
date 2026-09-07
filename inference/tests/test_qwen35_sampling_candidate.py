@@ -11,7 +11,6 @@ from unittest.mock import patch
 from jarvis_inference.profile_preflight import Fixture
 from jarvis_inference.qwen35_sampling_candidate import (
     CHAT_TEMPLATE_KWARGS,
-    EXPERIMENT_ID,
     FROZEN_PREREGISTRATION_SHA256,
     GENERATION_DISPATCHES,
     PUBLIC_MODEL_ALIAS,
@@ -23,9 +22,11 @@ from jarvis_inference.qwen35_sampling_candidate import (
     RenderedTokenIdentity,
     _component_counts,
     _sse_content_type,
+    _read_small_regular,
     build_candidate_report,
     hash_artifact,
     load_preregistration,
+    read_private_bearer,
     scorer_code_bundle_identity,
 )
 from jarvis_inference.strict_json import canonical_bytes, parse_body
@@ -104,6 +105,76 @@ def valid_lines(text: str = "yes", *, prompt_tokens: int = 3) -> list[bytes]:
 
 
 class Qwen35SamplingCandidateTests(unittest.TestCase):
+    def test_malformed_json_and_stream_fields_return_candidate_failures(self) -> None:
+        lines = [valid_lines()[:-1] + [b"data: [DONE]"]]
+        for value in (None, [], [1], {"id": "x"}):
+            lines.append([b"data: " + canonical_bytes(value) + b"\n"])
+        for field, value in (("logprobs", {}), ("finish_reason", []), ("index", False)):
+            chunk = parse_body(event(content="yes")[6:])
+            chunk["choices"][0][field] = value
+            lines.append(
+                [b"data: " + canonical_bytes(chunk) + b"\n", *valid_lines()[3:]]
+            )
+        for field in ("reasoning", "reasoning_content"):
+            lines.append([event(delta_extra={field: []}), *valid_lines()])
+        for index, stream in enumerate(lines):
+            with self.subTest(index=index), self.assertRaises(CandidateFailure):
+                self.read(stream)
+        for value in (None, [], [1]):
+            with self.subTest(json=value):
+                response = FakeResponse([], content_type="application/json")
+                response.read = lambda maximum: canonical_bytes(value)
+                client = self.client()
+                with patch.object(
+                    client, "_connection", return_value=FakeConnection(response)
+                ):
+                    with self.assertRaises(CandidateFailure):
+                        client.readiness()
+                with tempfile.TemporaryDirectory() as directory:
+                    config = Path(directory) / "config.json"
+                    config.write_bytes(canonical_bytes(value))
+                    config.chmod(0o600)
+                    with self.assertRaises(CandidateFailure):
+                        read_private_bearer(config)
+
+    def test_failed_dispatch_still_consumes_the_one_shot_budget(self) -> None:
+        client = self.client()
+        self.prime(client)
+        client.generation_dispatches = GENERATION_DISPATCHES - 1
+        connection = FakeConnection(FakeResponse([]))
+        with (
+            patch.object(client, "_connection", return_value=connection),
+            patch.object(
+                connection, "request", side_effect=OSError("dispatch interrupted")
+            ) as dispatch,
+        ):
+            with self.assertRaises(CandidateFailure):
+                client.stream(self.fixture())
+            self.assertEqual(client.generation_dispatches, GENERATION_DISPATCHES)
+            with self.assertRaisesRegex(CandidateFailure, "budget"):
+                client.stream(self.fixture())
+            dispatch.assert_called_once()
+        self.assertTrue(connection.closed)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires POSIX special files")
+    def test_candidate_inputs_cannot_block_on_a_fifo(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input"
+            os.mkfifo(path)
+            original = os.open
+
+            def checked_open(path, flags):
+                self.assertTrue(flags & os.O_NONBLOCK)
+                return original(path, flags)
+
+            with patch(
+                "jarvis_inference.qwen35_sampling_candidate.os.open", checked_open
+            ):
+                with self.assertRaises(CandidateFailure):
+                    _read_small_regular(path)
+                with self.assertRaises(CandidateFailure):
+                    hash_artifact(path, expected_size=1, expected_sha256="a" * 64)
+
     def client(self, before=lambda: None) -> OfficialSamplingCandidateClient:
         return OfficialSamplingCandidateClient(
             "http://127.0.0.1:8878/v1",
