@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import contextvars
 import asyncio
-import json
 from collections.abc import Mapping
 from contextlib import aclosing, asynccontextmanager
 from contextlib import suppress
@@ -17,6 +16,7 @@ from dataclasses import asdict, dataclass
 from dataclasses import replace
 from typing import Any
 
+from .config import _parse_strict_json
 from .common_schema import JarvisCommonSchemaTransformer, route_decision_schema
 from .cloud_routing import ContextScope, OutputContract, TaskKind, TaskProfileV1
 from .domain import (
@@ -135,6 +135,77 @@ def _current_context() -> PydanticDispatchContext:
     return result
 
 
+async def _local_stream_frames(response):
+    # The appliance emits one JSON data line per event, capped at 524,288 bytes.
+    buffer = bytearray()
+    payload = None
+    async for block in response.aiter_bytes():
+        buffer.extend(block)
+        while (end := buffer.find(b"\n")) >= 0:
+            line = bytes(buffer[:end]).removesuffix(b"\r")
+            del buffer[:end + 1]
+            if line:
+                if payload is not None or not line.startswith(b"data: ") or len(line) > 524_288 + 6:
+                    raise ValueError("invalid local stream frame")
+                payload = line[6:]
+            elif payload is not None:
+                yield payload
+                payload = None
+        if len(buffer) > 524_288 + 7:
+            raise ValueError("local stream frame exceeds limit")
+    if buffer or payload is not None:
+        raise ValueError("incomplete local stream frame")
+
+
+async def _local_text_chunks(response, output_allowance):
+    finished = done = False
+    usage = None
+    async for payload in _local_stream_frames(response):
+        if done:
+            raise ValueError("data after local stream completion")
+        if payload == b"[DONE]":
+            if not finished or usage is None:
+                raise ValueError("incomplete local stream")
+            done = True
+            continue
+        event = _parse_strict_json(payload)
+        if not isinstance(event, dict):
+            raise ValueError("invalid local stream event")
+        canonical_json(event).encode("utf-8")
+        choices = event.get("choices")
+        if choices == []:
+            raw = event.get("usage")
+            if not finished or usage is not None or not isinstance(raw, dict):
+                raise ValueError("invalid local stream usage order")
+            counts = [raw.get(key) for key in ("prompt_tokens", "completion_tokens", "total_tokens")]
+            if (any(type(value) is not int or value < 0 for value in counts)
+                    or counts[1] > output_allowance or counts[2] != counts[0] + counts[1]):
+                raise ValueError("invalid local stream usage")
+            usage = ModelUsage(counts[1], counts[0])
+            continue
+        if finished or not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
+            raise ValueError("invalid local stream choice")
+        choice = choices[0]
+        delta = choice.get("delta")
+        if (type(choice.get("index")) is not int or choice["index"] != 0
+                or not isinstance(delta, dict) or set(delta) - {"role", "content"}
+                or delta.get("role", "assistant") != "assistant" or event.get("usage") is not None):
+            raise ValueError("invalid local stream delta")
+        text = delta.get("content")
+        if text is not None and not isinstance(text, str):
+            raise ValueError("invalid local stream text")
+        finish = choice.get("finish_reason")
+        if finish is not None:
+            if finish not in ("stop", "length"):
+                raise ValueError("invalid local stream finish reason")
+            finished = True
+        if text:
+            yield ModelChunk(text)
+    if not done:
+        raise ValueError("local stream ended before completion")
+    yield ModelChunk("", usage)
+
+
 class _DirectLocalTextStreamPort:
     """Incremental, cancellation-safe final text stream for the local appliance."""
 
@@ -178,33 +249,21 @@ class _DirectLocalTextStreamPort:
                     "Authorization": f"Bearer {self._bearer_token}",
                     "Content-Type": "application/json",
                     "Accept": "text/event-stream",
+                    "Accept-Encoding": "identity",
                 },
             ) as response:
                 response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if not data or data == "[DONE]":
-                        continue
-                    parsed = json.loads(data)
-                    usage_raw = parsed.get("usage")
-                    usage = None
-                    if isinstance(usage_raw, dict):
-                        usage = ModelUsage(
-                            usage_raw.get("completion_tokens"),
-                            usage_raw.get("prompt_tokens"),
-                        )
-                    choices = parsed.get("choices") or []
-                    text = ""
-                    if choices:
-                        text = choices[0].get("delta", {}).get("content") or ""
-                    yield ModelChunk(text, usage)
+                if (response.status_code != 200
+                        or response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "text/event-stream"
+                        or response.headers.get("content-encoding", "identity").lower() != "identity"):
+                    raise ValueError("invalid local stream response")
+                async for chunk in _local_text_chunks(response, request.output_allowance):
+                    yield chunk
         except asyncio.CancelledError:
             raise
         except OrchestratorError:
             raise
-        except (httpx.HTTPError, json.JSONDecodeError, UnicodeError) as exc:
+        except (httpx.HTTPError, ValueError, RecursionError) as exc:
             raise OrchestratorError(
                 "backend_failure", status=503, retryable=True
             ) from exc
