@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from contextlib import ExitStack
 from typing import Any
 from urllib.parse import urlparse
 
@@ -124,12 +125,6 @@ class GuidedSmokeController:
             self._markers["asr_result"] = timestamp
         elif name == "input_no_speech_created":
             self._fail("smoke.expected_speech")
-        elif name == "client_error_created":
-            runtime_code = entry.get("code")
-            self._fail("smoke.client_error")
-            self.cases[self.stage]["runtime_code"] = (
-                runtime_code if isinstance(runtime_code, str) else "client.error"
-            )
         elif name == "transcript_final_created":
             expected = "el" if self.stage == "greek_turn" else "en"
             if entry.get("language") != expected:
@@ -223,6 +218,13 @@ class GuidedSmokeController:
             self._fail("smoke.telemetry_invalid")
             return
         value = float(timestamp)
+        if name == "client_error_created":
+            runtime_code = entry.get("code")
+            self._fail("smoke.client_error")
+            self.cases[self.stage]["runtime_code"] = (
+                runtime_code if isinstance(runtime_code, str) else "client.error"
+            )
+            return
         if name == "audio_stream_started":
             self._microphone_opened = True
         elif name == "ptt_source_started":
@@ -256,6 +258,7 @@ class GuidedSmokeController:
     def report(self, *, runtime_error: str | None = None) -> dict[str, object]:
         if runtime_error is not None and self.failure_code is None:
             self._fail(runtime_error)
+            self.failure_code = runtime_error
         ready = self.finished and self.failure_code is None and all(
             item.get("status") == "ready" for item in self.cases.values()
         )
@@ -411,19 +414,26 @@ class MacSmokeLoopbackServer:
     def start(self) -> None:
         if self._thread is not None:
             return
+        self._stop.clear()
+        self._ready.clear()
+        self._error = None
         self._thread = threading.Thread(target=lambda: asyncio.run(self._serve()), name="jarvis-macos-smoke-server", daemon=True)
-        self._thread.start()
-        if not self._ready.wait(timeout=5.0):
+        try:
+            self._thread.start()
+            if not self._ready.wait(timeout=5.0):
+                raise BackendError("smoke.server_start_timeout", "Smoke server startup timed out", subsystem="smoke")
+            if self._error is not None:
+                raise BackendError("smoke.server_start_failed", "Smoke server could not bind to loopback", subsystem="smoke") from self._error
+        except BaseException:
             self.stop()
-            raise BackendError("smoke.server_start_timeout", "Smoke server startup timed out", subsystem="smoke")
-        if self._error is not None:
-            self.stop()
-            raise BackendError("smoke.server_start_failed", "Smoke server could not bind to loopback", subsystem="smoke") from self._error
+            raise
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread is not None:
+        if self._thread is not None and self._thread.ident is not None:
             self._thread.join(timeout=5.0)
+            if self._thread.is_alive():
+                raise BackendError("smoke.server_stop_timeout", "Smoke server did not stop", subsystem="smoke")
         self._thread = None
 
 
@@ -441,64 +451,76 @@ def run_interactive_macos_smoke(
     prompt_sink: Callable[[SmokePrompt], None] | None = None,
     stage_sink: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
-    if timeout_seconds <= 0 or timeout_seconds > 3600:
+    if not 0 < timeout_seconds <= 3600:
         raise BackendError("smoke.timeout_invalid", "Smoke timeout is invalid", subsystem="smoke")
     sink = prompt_sink or (lambda prompt: print(f"[{prompt.code}] {prompt.message}", flush=True))
     controller = GuidedSmokeController(ptt_key=config.ptt_key)
-    server = server_factory(
-        config.orchestrator_url,
-        configured_voice_auth_key(config),
-    )
-    runtime = runtime_factory(config)
     runtime_error: list[str] = []
-
-    def run_runtime() -> None:
-        try:
-            runtime.run()
-        except BaseException as exc:
-            runtime_error.append(_runtime_error_code(exc))
-
-    thread = threading.Thread(target=run_runtime, name="jarvis-macos-smoke-runtime", daemon=True)
-    cursor = 0
-    deadline = time.monotonic() + timeout_seconds
     try:
-        server.start()
-        thread.start()
-        for prompt in controller.take_prompts():
-            sink(prompt)
-        while not controller.finished and not runtime_error:
-            snapshot: Sequence[Mapping[str, object]] = runtime.timing_snapshot()
-            for entry in snapshot[cursor:]:
-                event_name = entry.get("event")
-                if stage_sink is not None and isinstance(event_name, str) and event_name in TRACEABLE_STAGE_EVENTS:
-                    runtime_code = entry.get("code")
-                    if event_name == "client_error_created" and isinstance(runtime_code, str):
-                        stage_sink(f"{event_name}:{runtime_code}")
-                    elif event_name == "transcript_final_created":
-                        stage_sink(
-                            f"{event_name}:{entry.get('language', 'unknown')}:"
-                            f"{entry.get('language_score', 0.0)}"
-                        )
+        with ExitStack() as cleanup:
+            server = server_factory(config.orchestrator_url, configured_voice_auth_key(config))
+            cleanup.callback(server.stop)
+            runtime = runtime_factory(config)
+            thread: threading.Thread | None = None
+            stop_requested = threading.Event()
+
+            def stop_runtime() -> None:
+                stop_requested.set()
+                try:
+                    runtime.request_stop()
+                finally:
+                    if thread is None or thread.ident is None:
+                        runtime.close()
                     else:
-                        stage_sink(event_name)
-                controller.feed(entry)
-            cursor = len(snapshot)
-            controller.tick(backend_idle=runtime.tts.is_idle, now=time.perf_counter())
+                        thread.join(timeout=config.application.shutdown_timeout_seconds)
+                        if thread.is_alive():
+                            runtime_error.append("smoke.runtime_shutdown_timeout")
+
+            cleanup.callback(stop_runtime)
+
+            def run_runtime() -> None:
+                try:
+                    runtime.run()
+                    if not stop_requested.is_set():
+                        runtime_error.append("smoke.runtime_exited")
+                except BaseException as exc:
+                    runtime_error.append(_runtime_error_code(exc))
+
+            thread = threading.Thread(target=run_runtime, name="jarvis-macos-smoke-runtime", daemon=True)
+            cursor = 0
+            deadline = time.monotonic() + timeout_seconds
+            server.start()
+            thread.start()
             for prompt in controller.take_prompts():
                 sink(prompt)
-            if time.monotonic() >= deadline:
-                controller.timeout()
-                break
-            time.sleep(0.02)
+            while not controller.finished and not runtime_error:
+                snapshot: Sequence[Mapping[str, object]] = runtime.timing_snapshot()
+                for entry in snapshot[cursor:]:
+                    event_name = entry.get("event")
+                    if stage_sink is not None and isinstance(event_name, str) and event_name in TRACEABLE_STAGE_EVENTS:
+                        runtime_code = entry.get("code")
+                        if event_name == "client_error_created" and isinstance(runtime_code, str):
+                            stage_sink(f"{event_name}:{runtime_code}")
+                        elif event_name == "transcript_final_created":
+                            stage_sink(
+                                f"{event_name}:{entry.get('language', 'unknown')}:"
+                                f"{entry.get('language_score', 0.0)}"
+                            )
+                        else:
+                            stage_sink(event_name)
+                    controller.feed(entry)
+                cursor = len(snapshot)
+                controller.tick(backend_idle=runtime.tts.is_idle, now=time.perf_counter())
+                for prompt in controller.take_prompts():
+                    sink(prompt)
+                if time.monotonic() >= deadline:
+                    controller.timeout()
+                    break
+                time.sleep(0.02)
     except KeyboardInterrupt:
         runtime_error.append("smoke.user_aborted")
     except BackendError as exc:
         runtime_error.append(exc.code)
-    finally:
-        runtime.request_stop()
-        if thread.is_alive():
-            thread.join(timeout=config.application.shutdown_timeout_seconds)
-        server.stop()
     report = controller.report(runtime_error=runtime_error[0] if runtime_error else None)
     write_report(output, report)
     return report

@@ -1,17 +1,32 @@
 from __future__ import annotations
 
 import importlib.util
+import contextlib
+import io
+import tempfile
 import json
+import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
+from jarvis_voice.config import voice_config_from_mapping
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos import interactive_smoke
 from jarvis_voice.fakes import FakeOrchestrator
 from jarvis_voice.macos.interactive_smoke import GuidedSmokeController, MacSmokeLoopbackServer
 from jarvis_voice.protocol import EventFactory, new_uuid4
 from jarvis_voice.voice_auth import VoiceAuthKey
+
+
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "run_macos_interactive_smoke.py"
+SPEC = importlib.util.spec_from_file_location("run_macos_interactive_smoke", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+SCRIPT_MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(SCRIPT_MODULE)
 
 
 def event(name: str, timestamp: float, **details: object) -> dict[str, object]:
@@ -99,6 +114,10 @@ class GuidedSmokeControllerTests(unittest.TestCase):
             self.assertNotIn(forbidden, encoded)
         self.assertFalse(report["privacy"]["raw_audio_persisted"])  # type: ignore[index]
         self.assertFalse(report["privacy"]["transcript_text_persisted"])  # type: ignore[index]
+        failed = controller.report(runtime_error="smoke.runtime_failed")
+        self.assertFalse(failed["ready"])
+        self.assertEqual(failed["code"], "smoke.runtime_failed")
+        self.assertFalse(controller.report()["ready"])
 
     def test_language_mismatch_and_timeout_are_typed_blockers(self) -> None:
         mismatch = GuidedSmokeController(ptt_key="F9")
@@ -126,12 +145,16 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         self.assertEqual(controller.report()["code"], "smoke.tombstoned_response_completed")
 
     def test_client_error_fails_fast_with_content_free_runtime_code(self) -> None:
-        controller = GuidedSmokeController(ptt_key="CONTROL_OPTION")
-        controller.take_prompts()
-        controller.feed(event("client_error_created", 1.0, code="audio.capture_overflow"))
-        report = controller.report()
-        self.assertEqual(report["code"], "smoke.client_error")
-        self.assertEqual(report["cases"]["greek_turn"]["runtime_code"], "audio.capture_overflow")
+        for stage in interactive_smoke.CASE_ORDER:
+            with self.subTest(stage=stage):
+                controller = GuidedSmokeController(ptt_key="CONTROL_OPTION")
+                controller.stage = stage
+                controller.take_prompts()
+                controller.feed(event("client_error_created", 1.0, code="audio.capture_overflow"))
+                report = controller.report()
+                self.assertTrue(controller.finished)
+                self.assertEqual(report["code"], "smoke.client_error")
+                self.assertEqual(report["cases"][stage]["runtime_code"], "audio.capture_overflow")
 
     def test_server_rejects_non_loopback_url(self) -> None:
         with self.assertRaisesRegex(BackendError, "smoke.non_loopback_server"):
@@ -202,14 +225,236 @@ class GuidedSmokeControllerTests(unittest.TestCase):
         self.assertEqual(english[0].count("This"), 1)
 
 
+class InteractiveSmokeRuntimeTests(unittest.TestCase):
+    def test_completed_cases_and_requested_shutdown_remain_ready(self) -> None:
+        timings = [event("audio_stream_started", 0.0), event("ptt_source_started", 0.1)]
+        recorder = SimpleNamespace(feed=timings.append)
+        complete_voice(recorder, start=1.0, language="el")
+        complete_voice(recorder, start=10.0, language="en")
+        timings.extend([
+            event("ptt_up_received", 20.0), event("input_no_speech_created", 20.1),
+            event("transcript_final_created", 30.0, language="el"),
+            event("tts_unit_started", 30.1), event("ptt_down_received", 30.2, output_active=True),
+            event("tts_cancel_dispatched", 30.3), event("response_cancel_created", 30.4),
+            event("playback_interrupted_created", 30.5), event("ptt_up_received", 30.6),
+        ])
+        stopped = threading.Event()
+        runtime = mock.Mock(timing_snapshot=lambda: tuple(timings), tts=SimpleNamespace(is_idle=True))
+        runtime.request_stop.side_effect = stopped.set
+
+        def run():
+            try:
+                stopped.wait(timeout=2.0)
+            finally:
+                runtime.close()
+
+        runtime.run = run
+        server = mock.Mock()
+        try:
+            with (mock.patch.object(interactive_smoke, "configured_voice_auth_key", return_value=object()),
+                  mock.patch.object(interactive_smoke, "write_report")):
+                report = interactive_smoke.run_interactive_macos_smoke(
+                    voice_config_from_mapping({}), output="unused.json",
+                    runtime_factory=lambda *args: runtime, server_factory=lambda *args: server,
+                    prompt_sink=lambda prompt: None,
+                )
+        finally:
+            stopped.set()
+        self.assertTrue(report["ready"])
+        runtime.request_stop.assert_called_once_with()
+        runtime.close.assert_called_once_with()
+        server.stop.assert_called_once_with()
+
+    def test_invalid_timeout_fails_before_runtime_or_server_construction(self) -> None:
+        for value in (float("nan"), float("inf"), -float("inf"), 0.0, -1.0, 3601.0):
+            with self.subTest(value=value), mock.patch.object(
+                interactive_smoke, "configured_voice_auth_key", side_effect=AssertionError("auth before validation"),
+            ), self.assertRaisesRegex(BackendError, "smoke.timeout_invalid"):
+                interactive_smoke.run_interactive_macos_smoke(
+                    voice_config_from_mapping({}), output="unused.json", timeout_seconds=value,
+                )
+
+    def test_runtime_resources_close_across_start_and_stop_failures(self) -> None:
+        thread_class = threading.Thread
+        for failure in ("server_factory", "runtime_factory", "thread_factory", "thread_start",
+                        "server_start", "request_stop", "runtime_close", "runtime_timeout", "server_stop", "prompt", "write"):
+            with self.subTest(failure=failure):
+                acquired = set()
+                workers = []
+                stopped = threading.Event()
+                entered = threading.Event()
+
+                def fail(stage):
+                    if failure == stage:
+                        raise BackendError("smoke.test_failure", "private failure details", subsystem="smoke")
+
+                def release(name, stage):
+                    acquired.discard(name)
+                    fail(stage)
+
+                server = mock.Mock(start=lambda: fail("server_start"), stop=lambda: release("server", "server_stop"))
+                runtime = mock.Mock(close=lambda: release("runtime", "runtime_close"), timing_snapshot=lambda: ())
+
+                def run():
+                    entered.set()
+                    try:
+                        stopped.wait(timeout=2.0)
+                    finally:
+                        runtime.close()
+
+                def stop():
+                    if failure != "runtime_timeout":
+                        stopped.set()
+                    fail("request_stop")
+
+                runtime.run = run
+                runtime.request_stop = stop
+
+                def make_server(*args):
+                    fail("server_factory")
+                    acquired.add("server")
+                    return server
+
+                def make_runtime(*args):
+                    fail("runtime_factory")
+                    acquired.add("runtime")
+                    return runtime
+
+                def make_thread(*args, **kwargs):
+                    fail("thread_factory")
+                    worker = thread_class(*args, **kwargs)
+                    if failure == "thread_start":
+                        worker.start = lambda: fail("thread_start")
+                    workers.append(worker)
+                    return worker
+
+                def prompt(_prompt):
+                    if not entered.wait(timeout=1.0):
+                        raise AssertionError("fake runtime did not enter")
+                    fail("prompt")
+                    raise KeyboardInterrupt
+
+                report = error = None
+                try:
+                    with (mock.patch.object(interactive_smoke, "configured_voice_auth_key", return_value=object()),
+                          mock.patch.object(interactive_smoke.threading, "Thread", side_effect=make_thread),
+                          mock.patch.object(interactive_smoke, "write_report", side_effect=lambda *args: fail("write"))):
+                        report = interactive_smoke.run_interactive_macos_smoke(
+                            voice_config_from_mapping({"application": {"shutdown_timeout_seconds": 0.01}}), output="unused.json",
+                            runtime_factory=make_runtime, server_factory=make_server, prompt_sink=prompt,
+                        )
+                        if failure == "runtime_timeout":
+                            self.assertIn("runtime", acquired)
+                except BaseException as exc:
+                    error = exc
+                finally:
+                    # Also stop/join owned workers when exercising the broken baseline.
+                    stopped.set()
+                    for worker in workers:
+                        if worker.ident is not None:
+                            worker.join(timeout=1.0)
+                            self.assertFalse(worker.is_alive())
+                self.assertEqual(acquired, set())
+                if failure == "write":
+                    self.assertIsInstance(error, BackendError)
+                else:
+                    self.assertIsNone(error)
+                    self.assertFalse(report["ready"])
+                    self.assertNotIn("private failure details", str(report))
+                    if failure == "runtime_timeout":
+                        self.assertEqual(report["code"], "smoke.runtime_shutdown_timeout")
+
+    def test_unexpected_runtime_return_fails_without_waiting_for_interaction_timeout(self) -> None:
+        class ExitingThread(threading.Thread):
+            def start(self):
+                super().start()
+                self.join(timeout=1.0)
+                if self.is_alive():
+                    raise AssertionError("fake runtime did not exit")
+
+        runtime = mock.Mock(timing_snapshot=lambda: ())
+        with (mock.patch.object(interactive_smoke, "configured_voice_auth_key", return_value=object()),
+              mock.patch.object(interactive_smoke.threading, "Thread", ExitingThread),
+              mock.patch.object(interactive_smoke, "write_report"),
+              mock.patch.object(interactive_smoke, "time", SimpleNamespace(
+                  monotonic=lambda: 0.0, perf_counter=lambda: 0.0,
+                  sleep=mock.Mock(side_effect=AssertionError("collector waited after runtime exit")),
+              ))):
+            report = interactive_smoke.run_interactive_macos_smoke(
+                voice_config_from_mapping({}), output="unused.json",
+                runtime_factory=lambda *args: runtime, server_factory=lambda *args: mock.Mock(),
+                prompt_sink=lambda prompt: None,
+            )
+        self.assertFalse(report["ready"])
+        self.assertEqual(report["code"], "smoke.runtime_exited")
+        runtime.request_stop.assert_called_once_with()
+
+    def test_loopback_server_owns_unstarted_and_late_threads(self) -> None:
+        server = MacSmokeLoopbackServer("ws://127.0.0.1:8765", VoiceAuthKey(1, b"k" * 32))
+        with self.subTest(stage="unstarted"):
+            unstarted = mock.Mock(ident=None, is_alive=lambda: False)
+            unstarted.start.side_effect = RuntimeError("thread creation failed")
+            with mock.patch.object(interactive_smoke.threading, "Thread", return_value=unstarted):
+                with self.assertRaisesRegex(RuntimeError, "thread creation failed"):
+                    server.start()
+            unstarted.join.assert_not_called()
+            self.assertIsNone(server._thread)
+
+        with self.subTest(stage="late"):
+            late = mock.Mock(ident=123)
+            late.is_alive.return_value = True
+            server._thread = late
+            with self.assertRaisesRegex(BackendError, "smoke.server_stop_timeout"):
+                server.stop()
+            self.assertIs(server._thread, late)
+            late.is_alive.return_value = False
+            server.stop()
+            self.assertIsNone(server._thread)
+
+        with self.subTest(stage="restart"):
+            # A completed stop must not poison a later start with stale flags/error.
+            server._thread = None
+            server._ready.set()
+            server._error = RuntimeError("old startup failure")
+            restarted = mock.Mock(ident=124, is_alive=lambda: False)
+
+            def start():
+                self.assertFalse(server._stop.is_set())
+                self.assertFalse(server._ready.is_set())
+                self.assertIsNone(server._error)
+                server._ready.set()
+
+            restarted.start.side_effect = start
+            with mock.patch.object(interactive_smoke.threading, "Thread", return_value=restarted):
+                server.start()
+            server.stop()
+            self.assertIsNone(server._thread)
+
+
 class InteractiveSmokeScriptTests(unittest.TestCase):
+    def test_blocked_report_write_failure_keeps_safe_json_and_exit_status(self) -> None:
+        for code in ("smoke.test_failure", "qualification.output_directory_missing"):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "missing" / "evidence.json"
+                stdout = io.StringIO()
+                with (mock.patch.object(SCRIPT_MODULE, "load_voice_config", return_value=object()),
+                      mock.patch.object(SCRIPT_MODULE, "with_faster_whisper_cpu_smoke", return_value=object()),
+                      mock.patch.object(SCRIPT_MODULE, "run_interactive_macos_smoke",
+                                        side_effect=BackendError(code, "private failure details", subsystem="smoke")),
+                      contextlib.redirect_stdout(stdout)):
+                    status = SCRIPT_MODULE.main([
+                        "--config", "unused.json", "--model-dir", "unused", "--output", str(output),
+                    ])
+                report = json.loads(stdout.getvalue())
+                self.assertEqual(status, 2)
+                self.assertFalse(report["ready"])
+                self.assertEqual(report["code"], code)
+                self.assertEqual(report["output_error_code"], "qualification.output_directory_missing")
+                self.assertNotIn("private failure details", stdout.getvalue())
+                self.assertFalse(output.exists())
+
     def test_script_requires_private_inputs_and_exposes_timeout(self) -> None:
-        script = Path(__file__).resolve().parents[1] / "scripts" / "run_macos_interactive_smoke.py"
-        spec = importlib.util.spec_from_file_location("run_macos_interactive_smoke", script)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        parsed = module.build_parser().parse_args(
+        parsed = SCRIPT_MODULE.build_parser().parse_args(
             [
                 "--config",
                 "/private/voice.json",

@@ -73,7 +73,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "orchestrator_loopback_only": True,
             "network_used": False,
         }
-        write_report(args.output, report)
+        try:
+            write_report(args.output, report)
+        except BackendError as output_error:
+            report["output_error_code"] = output_error.code
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if report.get("ready") else 2
 
