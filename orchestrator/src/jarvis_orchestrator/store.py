@@ -8092,7 +8092,7 @@ class OrchestratorStore:
             guard_epoch = binding["current_epoch"] if binding is not None else connection.execute(
                 "SELECT current_epoch FROM conversations WHERE conversation_id=?", (conversation_id,)
             ).fetchone()["current_epoch"]
-            expires_at = binding["expires_at"] if binding is not None else utc_text(selected + self.delivery_ttl)
+            expires_at = utc_text(selected + self.delivery_ttl)
             ack_event_id = self._append_cloud_outbox_tx(
                 connection,
                 conversation_id=conversation_id,
@@ -8251,15 +8251,8 @@ class OrchestratorStore:
                 or reserved_microusd != int(json.loads(binding["binding_json"])["max_reserved_microusd"])
             ):
                 raise OrchestratorError("binding_mismatch", status=409)
-            used = connection.execute(
-                """SELECT COALESCE(SUM(CASE
-                       WHEN state='RECONCILED' THEN actual_microusd
-                       WHEN state IN ('RESERVED','DISPATCHED','AMBIGUOUS') THEN reserved_microusd
-                       ELSE 0 END),0) AS used
-                   FROM cloud_cost_reservations WHERE utc_month=?""",
-                (utc_month,),
-            ).fetchone()["used"]
-            if int(used) + reserved_microusd > MONTHLY_HARD_CAP_MICROUSD:
+            used = self._cloud_monthly_used_tx(connection, utc_month)
+            if used + reserved_microusd > MONTHLY_HARD_CAP_MICROUSD:
                 raise BudgetExhaustedError("cloud_budget_exhausted")
             reservation_id = new_uuid4()
             permit_id = new_uuid4()
@@ -8353,17 +8346,25 @@ class OrchestratorStore:
             )
             return consumed
 
+    @staticmethod
+    def _cloud_monthly_used_tx(connection: sqlite3.Connection, utc_month: str) -> int:
+        used = connection.execute(
+            """SELECT COALESCE(SUM(CASE
+                   WHEN state='RECONCILED' THEN actual_microusd
+                   WHEN state IN ('RESERVED','DISPATCHED','AMBIGUOUS') THEN reserved_microusd
+                   ELSE 0 END),0)
+               FROM cloud_cost_reservations WHERE utc_month=?""",
+            (utc_month,),
+        ).fetchone()[0]
+        retired = connection.execute(
+            "SELECT value FROM schema_meta WHERE key=?",
+            ("cloud_retired_microusd:" + utc_month,),
+        ).fetchone()
+        return int(used) + (int(retired[0]) if retired is not None else 0)
+
     def cloud_monthly_remaining(self, utc_month: str) -> int:
-        with self._lock:
-            used = self._connection.execute(
-                """SELECT COALESCE(SUM(CASE
-                       WHEN state='RECONCILED' THEN actual_microusd
-                       WHEN state IN ('RESERVED','DISPATCHED','AMBIGUOUS') THEN reserved_microusd
-                       ELSE 0 END),0)
-                   FROM cloud_cost_reservations WHERE utc_month=?""",
-                (utc_month,),
-            ).fetchone()[0]
-        return max(0, MONTHLY_HARD_CAP_MICROUSD - int(used))
+        with self._read_transaction() as connection:
+            return max(0, MONTHLY_HARD_CAP_MICROUSD - self._cloud_monthly_used_tx(connection, utc_month))
 
     def _delete_conversation_tx(
         self,
@@ -8441,6 +8442,19 @@ class OrchestratorStore:
                     principal_id,
                 ),
             )
+        # Preserve only monthly charges when deleting their conversation records.
+        connection.execute(
+            """INSERT INTO schema_meta(key,value)
+               SELECT 'cloud_retired_microusd:' || r.utc_month,
+                      CAST(SUM(CASE WHEN r.state='RECONCILED' THEN r.actual_microusd
+                                    ELSE r.reserved_microusd END) AS TEXT)
+               FROM cloud_cost_reservations r JOIN tasks t USING(task_id)
+               WHERE t.conversation_id=? AND r.state IN ('DISPATCHED','AMBIGUOUS','RECONCILED')
+               GROUP BY r.utc_month
+               ON CONFLICT(key) DO UPDATE SET value=CAST(
+                   CAST(schema_meta.value AS INTEGER) + CAST(excluded.value AS INTEGER) AS TEXT)""",
+            (conversation_id,),
+        )
         if task_ids:
             placeholders = ",".join("?" for _ in task_ids)
             connection.execute(
