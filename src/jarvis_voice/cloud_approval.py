@@ -687,7 +687,7 @@ class CloudApprovalController:
         ]
         if event.type == "cloud.approval.requested" and not duplicate:
             self.journal.record(event, event_kind="requested", status="ARMED", expires_at=event.payload["expires_at"])
-            armed = self.approval_arbiter.stage(
+            self.approval_arbiter.stage(
                 protocol=CLOUD_APPROVAL_PROTOCOL,
                 approval_id=event.payload["approval_id"],
                 presentation_id=event.payload["presentation_id"],
@@ -695,18 +695,14 @@ class CloudApprovalController:
                 key_counter=key_counter,
                 both_keys_up=both_keys_up,
             )
-            self.presentation = (
-                ArmedPresentation(
-                    approval_id=event.payload["approval_id"],
-                    presentation_id=event.payload["presentation_id"],
-                    requested_event_id=event.event_id,
-                    approval_binding_sha256=event.payload["approval_binding_sha256"],
-                    decision_nonce=event.payload["decision_nonce"],
-                    expires_at=event.payload["expires_at"],
-                    arm_counter=key_counter,
-                )
-                if armed
-                else None
+            self.presentation = ArmedPresentation(
+                approval_id=event.payload["approval_id"],
+                presentation_id=event.payload["presentation_id"],
+                requested_event_id=event.event_id,
+                approval_binding_sha256=event.payload["approval_binding_sha256"],
+                decision_nonce=event.payload["decision_nonce"],
+                expires_at=event.payload["expires_at"],
+                arm_counter=key_counter,
             )
         elif event.type in {"cloud.approval.decision_result", "cloud.approval.invalidated"}:
             self.journal.close_presentation(event.payload["approval_id"])

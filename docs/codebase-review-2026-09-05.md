@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **228 of 400 code files**, plus **196 of 320 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **230 of 401 code files**, plus **198 of 322 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1098 tests (1093 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **731 tests (716 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1566,3 +1566,26 @@ The two new journal/sequence tests have **three failures before the fix**, `/tmp
 Completed source inspection of AsrBackendFactory/FallbackAsrBackend and GPU inventory/admission, plus the complete ASR and GPU test modules. **20 ASR/factory/GPU/module-boundary checks pass** with fake backends, synthetic model bytes and fake telemetry. CPU selection remains CUDA-import-free; fallback retains the same audio and configured device/manifest. GPU headroom remains an explicitly documented point-in-time heuristic using trusted driver telemetry. No source change was required in those two modules. The complete CPU decoder was also read, but numerical scoring edge cases remain pending. No microphone, actual model or native GPU query was used.
 
 Coverage is **228/400 code, 196/320 tests and 41/308 support**, with **465 reviewed hashes verified across 1028 entries**. V276, legacy missing-timestamp recovery, broader U05 privacy and compiler qualification identity binding remain open. Whole-codebase review and final code-quality assessment remain incomplete.
+
+
+### Approval recovery across sessions and key release
+
+Journal uniqueness checkpoint committed as **f59bff9**, with a clean Ponytail hook. Completed the action recovery investigation through real journal/arbiter storage, ToolStore ownership/outbox transitions, authenticated gateway handshake and both runtime key loops.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V276 — resolved | An observed request replay did not restore the action controller; duplicated terminal events could also skip interrupted local closure. | Restore only requests with no decision or terminal record, re-stage with fresh key counters, and reapply idempotent terminal effects. Do not rearm decided/invalidated requests. |
+| V277 | ACKed action requests were absent from reconnect replay and still belonged to the old Voice session. Local-only recovery could therefore never complete. | Transactionally reassign the live pending presentation to the negotiated session and requeue its original requested event, even if ACKed. Preserve event ID, timestamp, nonce and binding; expired/retired approvals are not revived. Close the previous owning socket. |
+| V278 | Neither native runtime called existing rearm logic after capture or key release, leaving approvals permanently disarmed. | In each loop, invoke existing shared rearm logic while input is idle. It still requires both keys released and a fresh key counter. |
+| V279 | Cloud request handling discarded its local presentation when keys were held, making later rearming impossible. | Retain the presentation while the shared arbiter prevents decisions until rearmed. |
+| V280 | An ACK arriving from the old socket during its asynchronous close could consume the replay intended for the new owner. | Retire the old socket registration before close and reject action frames from superseded connections. |
+
+The initial five recovery methods have **three failures and two errors**, `/tmp/cyrus-action-recovery-before.log`. Both original runtime loops fail their positive rearm case, `/tmp/cyrus-runtime-rearm-before.log`; the superseded-ACK race separately fails by consuming the new owner's replay, `/tmp/cyrus-action-recovery-ack-race-before.log`. The final **44 focused checks pass**, `/tmp/cyrus-action-recovery-after.log`, plus the six-case runtime test, `/tmp/cyrus-runtime-rearm-after.log`. Tests exercise real disposable stores/journals with synthetic keys and authenticated fake sockets, including an injected SQL failure that rolls back ownership and replay together. No provider, native action, actual input device or microphone is exercised.
+
+Full Orchestrator ran **1106 tests in 22.346 seconds: 1101 passed, five skipped**; full Voice ran **731 tests in 7.176 seconds: 716 passed, 15 skipped**, `/tmp/cyrus-full-review-action-recovery-{orchestrator,voice}.log`. Fatal Ruff and the unchanged module-size ratchet pass. The ToolStore's existing migration literal moved to tool_schema.py: **all 6272 SQL bytes are unchanged**, and the existing MIGRATION_6_SQL import remains compatible. ToolStore is now 884 lines. This is source organization, not a database migration or new transport schema.
+
+All **nine new recovery/runtime test methods pass against the exact staged implementations**, `/tmp/cyrus-approval-recovery-staged-tests.log`. Staged source was loaded explicitly before fixtures, with new test/schema bytes verified against the index; earlier unstaged fixes were not silently included in that check.
+
+Ponytail: reuse existing journals, uniqueness/terminal records, ownership tables, event identity and rearm methods; remove an unused import and redundant conditional presentation wrapper. Net production growth is **53 lines**, including the unchanged moved SQL declaration. Earlier unstaged ToolStore/runtime/parser changes are excluded from this checkpoint. Legacy pending decisions that never recorded their original timestamp still require explicit recovery; no missing identity is fabricated.
+
+The complete action approval source and its identified follow-ups are reviewed. Cloud source has been fully read but retains separate input/journal follow-ups. Coverage is **230/401 code, 198/322 tests and 41/308 support**, with **469 reviewed hashes verified across 1031 entries**. Whole-codebase review, U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete; source review does not constitute native qualification.

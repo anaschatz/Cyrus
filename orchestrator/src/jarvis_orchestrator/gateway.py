@@ -598,8 +598,12 @@ class VoiceGateway:
                     ),
                     timeout=1.0,
                 )
+                old_owner = self.service.tool_store.reset_action_extension_replay(session_id)
+                old_socket = self._action_connections.pop(old_owner, None)
                 self._action_connections[session_id] = websocket
-                self.service.tool_store.reset_action_extension_replay()
+                if old_socket is not None and old_socket is not websocket:
+                    with suppress(Exception):
+                        await old_socket.close(code=4001, reason="session_superseded")
                 self.service.tool_store.promote_next_action_approval(session_id)
             self.service.attach_client(
                 connection_id,
@@ -639,7 +643,8 @@ class VoiceGateway:
                 if isinstance(preview, dict) and "protocol" in preview:
                     protocol = preview.get("protocol")
                     if protocol == ACTION_APPROVAL_PROTOCOL:
-                        if not action_negotiated or self.service.tool_store is None:
+                        if (not action_negotiated or self.service.tool_store is None
+                                or self._action_connections.get(session_id) is not websocket):
                             await websocket.close(code=1002, reason="extension_not_negotiated")
                             break
                         event = ActionApprovalEnvelope.from_json(raw)

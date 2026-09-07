@@ -350,6 +350,16 @@ class ActionApprovalJournal:
             )
             return True
 
+    def request_can_be_presented(self, event: ActionApprovalEnvelope) -> bool:
+        identity = (event.payload["approval_id"], event.payload["presentation_id"])
+        with self._lock:
+            return self._connection.execute(
+                """SELECT 1 FROM action_decisions WHERE approval_id=? AND presentation_id=?
+                   UNION ALL SELECT 1 FROM action_events WHERE approval_id=? AND presentation_id=?
+                   AND event_type IN ('action.approval.decision_result','action.approval.invalidated') LIMIT 1""",
+                identity + identity,
+            ).fetchone() is None
+
     def persist_decision(self, requested: ActionApprovalEnvelope, decision: str, *, factory: ActionApprovalEventFactory | None = None) -> ActionApprovalEnvelope:
         if requested.type != "action.approval.requested" or decision not in ("approve", "deny"):
             raise ProtocolError("protocol.invalid_field", "invalid action decision")
@@ -441,9 +451,11 @@ class ActionApprovalController:
             return []
         duplicate = not self.journal.observe(event)
         replies = [self.factory.create("action.approval.event_ack", {"acked_event_id": event.event_id, "status": "duplicate" if duplicate else "applied"})]
-        if duplicate:
-            return replies
         if event.type == "action.approval.requested":
+            if (duplicate and self.requested is not None) or not self.journal.request_can_be_presented(event):
+                return replies
+            if duplicate:
+                self.approval_arbiter.close(protocol=ACTION_APPROVAL_PROTOCOL, approval_id=event.payload["approval_id"])
             self.approval_arbiter.stage(
                 protocol=ACTION_APPROVAL_PROTOCOL,
                 approval_id=event.payload["approval_id"],

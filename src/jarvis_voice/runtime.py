@@ -268,6 +268,11 @@ class WindowsVoiceRuntime:
                 forced = self.publisher.take_forced_release()
                 if forced is not None:
                     self._handle_ptt(forced)
+                if self.core.state.input_state == InputState.IDLE:
+                    self.cloud_approval.rearm_after_capture(
+                        key_counter=self.approval_keys.counter,
+                        both_keys_up=self.approval_keys.both_keys_up,
+                    )
                 while True:
                     try:
                         key_event = self.approval_keys.events.get_nowait()
