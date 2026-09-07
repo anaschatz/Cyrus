@@ -43,9 +43,9 @@ anamnesis/eval/WRITER_W3_PROTOCOL.md,115,support,pending,,
 anamnesis/eval/__init__.py,1,code,reviewed,c6c54616afbffb71367fe20886d96653e0ad6d29eba1d63ab4e0f68d7c630a04,Complete one-line package docstring inspection; no executable initialization or exports.
 anamnesis/eval/anamnesis_eval.py,361,code,pending,,
 anamnesis/eval/anamnesis_local_eval.py,969,code,pending,,
-anamnesis/eval/anamnesis_openmemory_eval.py,161,code,pending,,
-anamnesis/eval/anamnesis_openmemory_eval_v2.py,170,code,pending,,
-anamnesis/eval/anamnesis_openmemory_eval_v3.py,185,code,pending,,
+anamnesis/eval/anamnesis_openmemory_eval.py,161,code,reviewed,264f370f7739f4ba829eb76dcceaa2434bc594ac2d14d21a3767466bd7493710,"Full161-line legacy v1 task/solver/scorer read; source/model/pinned artifact guards, fixed16-call metadata, zero-cost/raw accounting. Fake scorer probe verifies normal pass+5 accounting failures and empty-matrix acceptance before A08/rejection afterward. Frozen task identities/prompts untouched. Consumes producer-computed metrics; not standalone edited-log authentication."
+anamnesis/eval/anamnesis_openmemory_eval_v2.py,170,code,reviewed,0acdb371b107994b5e0007ab018b0d85a7de8d205215062fc09df79495c1f5d1,"Full170-line legacy v2 task/solver/scorer read; fresh artifact and no-thinking transport, source/model guards, fixed16-call metadata. Fake scorer probe verifies normal pass+5 accounting failures and empty-matrix rejection after A08. Frozen identities unchanged; independent raw/gold metric replay not supplied by scorer."
+anamnesis/eval/anamnesis_openmemory_eval_v3.py,185,code,reviewed,85ec0516e0be783ac3886eb60d44e499f55d1a336a63332fe50c3b3a02e535d3,"Full185-line legacy v3 task/solver/scorer read; frozen immediate-action paired prompt contract, artifact/model/source guards, no-thinking transport. Fake scorer normal pass+5 accounting failures, empty matrix now rejected by A08. Task/prompt/schema pins unchanged; no measured rerun."
 anamnesis/eval/experiment_manifest.template.json,65,support,pending,,
 anamnesis/eval/local_experiment_manifest.template.json,107,support,pending,,
 anamnesis/eval/local_model_costs.json,8,support,pending,,
@@ -163,12 +163,12 @@ anamnesis/src/anamnesis/local_runtime.py,2652,code,pending,,
 anamnesis/src/anamnesis/local_wire.py,532,code,reviewed,6daeb9ae0f0ceebfb5c9667ef46411d27d2637d9f9bc70978b81d2346cbd8a75,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
 anamnesis/src/anamnesis/manifest_cli.py,39,code,reviewed,5b201531ba0f991eaf520805e1a89bd6242071686253cd34a9ac03982ef4d5d9,"Complete 39-line manifest CLI read; installed entrypoint mapping, experiment model validation, frozen-status guard and deterministic model serialization fingerprint traced. Both existing manifest CLI tests pass from the Anamnesis project directory. No manifest or frozen contract changed."
 anamnesis/src/anamnesis/memory.py,1974,code,reviewed,3fba9154119625d9204a0cf72bb9f9d57d6a63bb57a75e16d30ff88ac6111cbd,Complete deterministic memory engine review; A01-A04 fixes verified by 45 tests; redundant empty-date-range return removed; module ratchet passes.
-anamnesis/src/anamnesis/openmemory_diagnostic.py,549,code,pending,,
+anamnesis/src/anamnesis/openmemory_diagnostic.py,559,code,reviewed,8ec056035de56e73b5b48977978994586545b974cad2fcc570d78b9c2220e5bb,"Full549-line baseline and final changes read: frozen case/artifact validation, immediate prompt, paired gate, snapshot and producer. A08 shared result after-validator now rejects empty/duplicate/reversed/mismatched/same-arm matrices.5 baseline failures;47 focused, full Anam666(664 passed/2 xfail). JSON schema unchanged. Full metric/raw/gold provenance for arbitrary serialized results remains separate."
 anamnesis/src/anamnesis/openmemory_recall.py,788,code,pending,,
 anamnesis/src/anamnesis/openmemory_strategy.py,189,code,pending,,
 anamnesis/src/anamnesis/openmemory_vllm.py,720,code,pending,,
 anamnesis/src/anamnesis/openmemory_vllm_report.py,319,code,pending,,
-anamnesis/src/anamnesis/openmemory_vllm_run.py,356,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_run.py,356,code,reviewed,0e748bba94abbe9ed3d12d614f772b021b6b8315be028218abcf8ecd6d355c0e,"Full356-line v4 runner read; pin/dataset/preflight gates, source cleanliness, configured client/probe, one canary then16 paired calls, usage/report model and output path. Existing fake tests pass in focused47/full Anam666(664/2xfail). Follow-ups: pre-try client ownership, input reread consistency, API key argv, output overwrite/collision/permissions; strict reporter still pending full review. No external execution."
 anamnesis/src/anamnesis/openmemory_vllm_v5.py,341,code,pending,,
 anamnesis/src/anamnesis/openmemory_vllm_v5_report.py,209,code,pending,,
 anamnesis/src/anamnesis/openmemory_vllm_v6.py,470,code,pending,,
@@ -207,18 +207,18 @@ anamnesis/tests/test_local_wire.py,538,tests,reviewed,bab84ce35139b89f0c02fed6b3
 anamnesis/tests/test_manifest_cli.py,22,tests,reviewed,fb78a43e234a6e4f7240a9bf7b4e298a6622d87cf5e69cc006ad4e892f52e3ce,Complete 22-line two-test module read. Both tests pass: default draft template validates and fingerprints; require-frozen rejects the draft. Executed in the Anamnesis directory without changing the template or other frozen artifacts.
 anamnesis/tests/test_memory.py,1539,tests,reviewed,fcb27223d8b5e54302c773469dfd246eca335ca6bdc6b838a4d0bd74e916fc14,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
 anamnesis/tests/test_model_costs.py,30,tests,pending,,
-anamnesis/tests/test_openmemory_diagnostic.py,296,tests,pending,,
-anamnesis/tests/test_openmemory_diagnostic_v2.py,117,tests,pending,,
-anamnesis/tests/test_openmemory_diagnostic_v3.py,141,tests,pending,,
-anamnesis/tests/test_openmemory_diagnostic_v4.py,95,tests,pending,,
-anamnesis/tests/test_openmemory_eval_task.py,65,tests,pending,,
-anamnesis/tests/test_openmemory_eval_v2_task.py,74,tests,pending,,
-anamnesis/tests/test_openmemory_eval_v3_task.py,105,tests,pending,,
+anamnesis/tests/test_openmemory_diagnostic.py,315,tests,reviewed,5ac61f9b2ecb6156b67f1608ee81ce24446bdc508f180be2a6aa172f93f9e9ad,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. A08 existing16-call regression expanded into healthy+5 invalid serialized-matrix cases; five baseline failures now rejected, generated JSON schema unchanged."
+anamnesis/tests/test_openmemory_diagnostic_v2.py,117,tests,reviewed,18451bf98cb9813d2a28ea5f869ada0986cb4c0a04efbf29b2c87aac79587405,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. No changes to this test module."
+anamnesis/tests/test_openmemory_diagnostic_v3.py,141,tests,reviewed,70471743638a230b5170274da0e26cf33b5e39f3aadf3c20e2b2333969ef515e,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. No changes to this test module."
+anamnesis/tests/test_openmemory_diagnostic_v4.py,95,tests,reviewed,74c08b568dd0f8c0fefed7981b91796d1b3831fdb6d78712b01066aa5b58cc27,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. No changes to this test module."
+anamnesis/tests/test_openmemory_eval_task.py,65,tests,reviewed,36a2101cbec2993fdc8489382795a8536b05329394754fd5664beb38680aecfe,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. No changes to this test module."
+anamnesis/tests/test_openmemory_eval_v2_task.py,74,tests,reviewed,02af200e2aa5a12adb442e5ca1e991eaf094c816ab1b9acfb9788441aba7db61,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. No changes to this test module."
+anamnesis/tests/test_openmemory_eval_v3_task.py,105,tests,reviewed,62dcc32ad2e40b9fcfec269a73f0a1ecbd97c6a35683a14747574573ee4dcff5,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. No changes to this test module."
 anamnesis/tests/test_openmemory_failure_artifact.py,103,tests,pending,,
 anamnesis/tests/test_openmemory_recall.py,823,tests,pending,,
 anamnesis/tests/test_openmemory_strategy.py,275,tests,pending,,
 anamnesis/tests/test_openmemory_vllm.py,452,tests,pending,,
-anamnesis/tests/test_openmemory_vllm_run.py,218,tests,pending,,
+anamnesis/tests/test_openmemory_vllm_run.py,218,tests,reviewed,efeb35a59ba9f4ce62f55c91ab725bc598919cebe79a4cbcdc0206c7572005a9,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. No changes to this test module."
 anamnesis/tests/test_openmemory_vllm_v5.py,192,tests,pending,,
 anamnesis/tests/test_openmemory_vllm_v6.py,89,tests,pending,,
 anamnesis/tests/test_openmemory_vllm_v7.py,70,tests,pending,,

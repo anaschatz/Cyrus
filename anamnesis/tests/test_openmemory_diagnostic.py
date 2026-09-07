@@ -14,6 +14,7 @@ from anamnesis.local_runtime import build_local_decision_prompt
 from anamnesis.openmemory_diagnostic import (
     FrozenDiagnosticRecallSnapshot,
     OpenMemoryDiagnosticArtifact,
+    OpenMemoryPairedRun,
     build_openmemory_case_prompts,
     load_openmemory_diagnostic,
     openmemory_diagnostic_sha256,
@@ -250,7 +251,8 @@ def test_paired_gate_rejects_missing_or_extra_cases() -> None:
         score_openmemory_pair(artifact, baseline=decisions, recall=decisions)
 
 
-def test_diagnostic_runner_makes_exactly_sixteen_ordered_calls() -> None:
+@pytest.mark.parametrize("corruption", [None, "empty", "duplicate", "reversed", "mismatched", "same_arm"])
+def test_diagnostic_runner_makes_exactly_sixteen_ordered_calls(corruption) -> None:
     artifact = load_openmemory_diagnostic(DATASET_PATH)
     by_event = {case.event.id: case for case in artifact.cases}
 
@@ -294,3 +296,20 @@ def test_diagnostic_runner_makes_exactly_sixteen_ordered_calls() -> None:
     assert all(call.usage_complete and call.cost_complete for call in run.calls)
     assert run.metrics.helpful_gain == 1
     assert run.metrics.gate_passed is True
+
+    if corruption is None:
+        return
+    raw = run.model_dump(mode="json")
+    if corruption == "empty":
+        raw["calls"] = []
+        raw["metrics"]["case_count"] = 0
+    elif corruption == "duplicate":
+        raw["calls"][2:4] = raw["calls"][:2]
+    elif corruption == "reversed":
+        raw["calls"][:2] = raw["calls"][1::-1]
+    elif corruption == "mismatched":
+        raw["calls"][1]["case_id"] = raw["calls"][2]["case_id"]
+    elif corruption == "same_arm":
+        raw["calls"][1]["arm"] = "baseline"
+    with pytest.raises(ValueError, match="paired run"):
+        OpenMemoryPairedRun.model_validate(raw)
