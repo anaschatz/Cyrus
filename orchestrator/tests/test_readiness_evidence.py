@@ -10,7 +10,7 @@ import unittest
 from contextlib import redirect_stdout
 from copy import deepcopy
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -588,6 +588,67 @@ class ReadinessEvidenceTests(unittest.TestCase):
             ):
                 with self.subTest(invalid=invalid, action=action), self.assertRaises(OperationalError):
                     action()
+
+    def test_clock_inputs_and_utc_overflow_fail_with_operational_errors(self) -> None:
+        path = self.root / "clock-evidence.json"
+        path.write_bytes(canonical_json_bytes(self.evidence().canonical()))
+        arguments = dict(
+            evidence_kind=SYNTHETIC_KIND, payload=_synthetic_payload(), identity=_identity(),
+            database_diagnostics=_healthy_diagnostics(), qualification=_qualification(SYNTHETIC_KIND),
+            signer=self.signer,
+        )
+        aggregate = build_readiness_evidence(
+            **{**arguments, "evidence_kind": AGGREGATE_KIND,
+               "qualification": _qualification(AGGREGATE_KIND),
+               "payload": {"checks": {kind: {"ready": True} for kind in LEAF_EVIDENCE_KINDS},
+                           "content_captured": False, "ready": True, "version": READINESS_AGGREGATE_VERSION}},
+            captured_at=NOW,
+            parent_evidence_sha256s={kind: hashlib.sha256(kind.encode()).hexdigest() for kind in LEAF_EVIDENCE_KINDS},
+        )
+        invalid_times = ([], True, "not-a-clock", NOW.replace(tzinfo=None),
+                         datetime.min.replace(tzinfo=timezone(timedelta(hours=14))))
+        for value in invalid_times:
+            for operation, action in (
+                ("build", lambda: build_readiness_evidence(**arguments, captured_at=value)),
+                ("verify", lambda: verify_readiness_evidence(path, verifier=self.verifier,
+                    expected_kind=SYNTHETIC_KIND, expected_identity=_identity(), now=value)),
+                ("publish", lambda: write_readiness_evidence(self.root / "invalid-time-aggregate.json", aggregate,
+                    verifier=self.verifier, cohort_state_directory=self.cohort_state,
+                    current_state_provider=lambda: (_identity(), _healthy_diagnostics()), final_time_provider=lambda: value)),
+            ):
+                with self.subTest(operation=operation, value=value), self.assertRaises(OperationalError):
+                    action()
+        self.assertFalse((self.root / "invalid-time-aggregate.json").exists())
+        self.assertFalse(self.cohort_state.exists())
+        for started in (datetime.max.replace(tzinfo=UTC), invalid_times[-1]):
+            with self.subTest(started=started), self.assertRaises(OperationalError):
+                qualification_binding_for_kind(SYNTHETIC_KIND, cohort_id=COHORT_ID, window_started_at=started)
+        with self.subTest(case="expiry_overflow"), self.assertRaises(OperationalError):
+            build_readiness_evidence(
+                **{**arguments, "qualification": qualification_binding_for_kind(
+                    SYNTHETIC_KIND, cohort_id=COHORT_ID, window_started_at="9999-12-27T00:00:00Z")},
+                captured_at=datetime(9999, 12, 29, tzinfo=UTC), freshness_seconds=7 * 24 * 60 * 60,
+            )
+        with self.subTest(case="maximum_verification_time"), self.assertRaisesRegex(OperationalError, "readiness_evidence_stale"):
+            verify_readiness_evidence(path, verifier=self.verifier, expected_kind=SYNTHETIC_KIND,
+                                      expected_identity=_identity(), now=datetime.max.replace(tzinfo=UTC))
+
+    def test_clock_normalization_preserves_offsets_and_exact_expiry(self) -> None:
+        evidence = self.evidence()
+        path = self.root / "offset-evidence.json"
+        path.write_bytes(canonical_json_bytes(evidence.canonical()))
+        offset = timezone(timedelta(hours=5, minutes=30))
+        for now in (NOW.astimezone(offset), NOW + timedelta(hours=1, microseconds=-1)):
+            self.assertEqual(verify_readiness_evidence(
+                path, verifier=self.verifier, expected_kind=SYNTHETIC_KIND,
+                expected_identity=_identity(), now=now,
+            ), evidence)
+        self.assertEqual(qualification_binding_for_kind(
+            SYNTHETIC_KIND, cohort_id=COHORT_ID, window_started_at=NOW.astimezone(offset),
+        ), _qualification(SYNTHETIC_KIND))
+        with self.assertRaisesRegex(OperationalError, "readiness_evidence_stale"):
+            verify_readiness_evidence(path, verifier=self.verifier, expected_kind=SYNTHETIC_KIND,
+                                      expected_identity=_identity(), now=NOW + timedelta(hours=1))
 
     def test_aggregate_requires_exact_parent_hash_set(self) -> None:
         parents = {

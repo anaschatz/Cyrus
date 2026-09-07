@@ -369,8 +369,20 @@ def _is_key_id(value: Any) -> bool:
     return isinstance(value, str) and _KEY_ID.fullmatch(value) is not None
 
 
-def _utc_text(value: datetime) -> str:
-    selected = value.astimezone(UTC).replace(microsecond=0)
+def _as_utc(value: datetime, *, error_code: str = "readiness_evidence_invalid") -> datetime:
+    try:
+        if not isinstance(value, datetime) or value.utcoffset() is None:
+            raise ValueError
+        return value.astimezone(UTC)
+    except (OverflowError, TypeError, ValueError):
+        raise _error(error_code) from None
+
+
+def _utc_text(value: datetime, *, offset_seconds: int = 0) -> str:
+    try:
+        selected = _as_utc(value).replace(microsecond=0) + timedelta(seconds=offset_seconds)
+    except OverflowError:
+        raise _error("readiness_evidence_invalid") from None
     return selected.isoformat().replace("+00:00", "Z")
 
 
@@ -587,25 +599,7 @@ def _read_regular_file(
 
 
 def _parse_canonical_document(content: bytes) -> dict[str, Any]:
-    if (
-        not content
-        or len(content) > MAXIMUM_EVIDENCE_BYTES
-        or content.startswith(b"\xef\xbb\xbf")
-    ):
-        raise _error("readiness_evidence_invalid")
-    try:
-        text = content.decode("utf-8", errors="strict")
-        raw = json.loads(
-            text,
-            object_pairs_hook=_unique_object,
-            parse_constant=_reject_constant,
-        )
-    except OperationalError:
-        raise
-    except (RecursionError, UnicodeDecodeError, ValueError):
-        raise _error("readiness_evidence_invalid") from None
-    if not isinstance(raw, dict):
-        raise _error("readiness_evidence_invalid")
+    raw = _parse_strict_json_object(content)
     if raw.get("version") != READINESS_EVIDENCE_VERSION:
         raise _error("readiness_evidence_legacy_ineligible")
     if canonical_json_bytes(raw) != content:
@@ -762,9 +756,7 @@ def qualification_binding_for_kind(
     if evidence_kind not in EVIDENCE_KINDS:
         raise _error("readiness_qualification_invalid")
     if isinstance(window_started_at, datetime):
-        if window_started_at.tzinfo is None:
-            raise _error("readiness_qualification_invalid")
-        started = window_started_at.astimezone(UTC).replace(microsecond=0)
+        started = _as_utc(window_started_at, error_code="readiness_qualification_invalid")
     elif isinstance(window_started_at, str):
         started = _parse_utc(window_started_at)
     else:
@@ -774,7 +766,7 @@ def qualification_binding_for_kind(
         sequence=QUALIFICATION_SEQUENCE_BY_KIND[evidence_kind],
         window_started_at_utc=_utc_text(started),
         window_expires_at_utc=_utc_text(
-            started + timedelta(seconds=MAXIMUM_QUALIFICATION_WINDOW_SECONDS)
+            started, offset_seconds=MAXIMUM_QUALIFICATION_WINDOW_SECONDS
         ),
     )
 
@@ -1387,8 +1379,6 @@ def build_readiness_evidence(
         or not isinstance(freshness_seconds, int)
         or not 60 <= freshness_seconds <= MAXIMUM_FRESHNESS_SECONDS
         or not _is_key_id(signer_key_id)
-        or captured_at is not None
-        and captured_at.tzinfo is None
     ):
         raise _error("readiness_evidence_invalid")
     normalized_payload = _closed_payload(evidence_kind, payload)
@@ -1404,12 +1394,12 @@ def build_readiness_evidence(
         evidence_kind,
         {} if parent_evidence_sha256s is None else parent_evidence_sha256s,
     )
-    selected = (captured_at or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
+    selected = _as_utc(datetime.now(UTC) if captured_at is None else captured_at)
     captured_text = _utc_text(selected)
     if not isinstance(qualification, QualificationBindingV2):
         raise _error("readiness_qualification_invalid")
     qualification.validate_for(evidence_kind, captured_text)
-    expires_text = _utc_text(selected + timedelta(seconds=freshness_seconds))
+    expires_text = _utc_text(selected, offset_seconds=freshness_seconds)
     payload_sha256 = hashlib.sha256(
         canonical_json_bytes(normalized_payload)
     ).hexdigest()
@@ -1535,8 +1525,8 @@ def verify_readiness_evidence(
 ) -> ReadinessEvidenceV2:
     if verifier is None:
         raise _error("readiness_verifier_required")
-    if now is not None and now.tzinfo is None:
-        raise _error("readiness_evidence_invalid")
+    if now is not None:
+        now = _as_utc(now)
     raw = _parse_canonical_document(
         _read_regular_file(path, maximum_bytes=MAXIMUM_EVIDENCE_BYTES)
     )
@@ -1553,8 +1543,8 @@ def verify_readiness_evidence(
         or expires - captured != timedelta(seconds=evidence.freshness_seconds)
     ):
         raise _error("readiness_evidence_invalid")
-    selected_now = (now or datetime.now(UTC)).astimezone(UTC)
-    if captured > selected_now + timedelta(seconds=MAXIMUM_CLOCK_SKEW_SECONDS):
+    selected_now = datetime.now(UTC) if now is None else now
+    if captured - selected_now > timedelta(seconds=MAXIMUM_CLOCK_SKEW_SECONDS):
         raise _error("readiness_evidence_not_yet_valid")
     if selected_now >= expires:
         raise _error("readiness_evidence_stale")
@@ -1965,9 +1955,7 @@ def write_readiness_evidence(
             )
         except Exception:  # noqa: BLE001 - injected clocks fail closed
             raise _error("readiness_final_time_unavailable") from None
-        if final_now.tzinfo is None:
-            raise _error("readiness_final_time_invalid")
-        final_now = final_now.astimezone(UTC)
+        final_now = _as_utc(final_now, error_code="readiness_final_time_invalid")
         if _parse_utc(validated.captured_at_utc) > final_now or final_now >= _parse_utc(
             validated.qualification.window_expires_at_utc
         ):

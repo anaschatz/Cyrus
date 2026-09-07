@@ -2,7 +2,7 @@
 
 Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **222 of 400 code files**, plus **187 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1078 tests (1073 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1080 tests (1075 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1399,3 +1399,21 @@ Three regression methods produce **22 errors** against original source, `/tmp/cy
 An independent fixed synthetic key comparison confirms byte-for-byte identical canonical documents, hashes and signatures for all **six leaf kinds and their aggregate**, using `/tmp/cyrus-evidence-canonical-check.py`. Fatal Ruff/unused-import and unchanged module-size checks pass. Ponytail: native tuple membership handles unhashable invalid inputs without a new enum abstraction or repeated exception wrappers; production source grows by one line. Older stable file/hash-reader changes remain outside this commit. All keys, payloads and state are synthetic/temporary; no user signing key or live/native qualification was used.
 
 Coverage: **222/400 code, 187/315 tests and 41/308 support files**, with **450 reviewed hashes verified across 1023 entries**. The complete readiness evidence test module is reviewed. The evidence source remains pending time-value validation, UTC-boundary arithmetic and cohort/evidence publication/cleanup investigation. Whole-codebase review and final quality assessment remain incomplete: **178 code, 128 test and 267 support files** remain. U05 and compiler qualification identity binding remain open.
+
+
+### Readiness evidence UTC and expiry boundaries
+
+Enum checkpoint committed as **5b4d8cb**, with a clean Ponytail hook. Traced every UTC formatter/normalizer caller through qualification creation, evidence signing, file verification and final aggregate publication.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V248 | Non-datetime clocks reached .tzinfo access and leaked AttributeError. Converting an aware datetime near the calendar boundary to UTC could leak OverflowError. Aggregate publication could fail with an untyped error from its injected final clock. | Share datetime/awareness/UTC validation across callers, preserving microsecond precision for verification and the existing content-free error categories. Invalid publication clocks are rejected before cohort state or output creation. |
+| V249 | Adding qualification/freshness durations near datetime.max overflowed. Verification at datetime.max also overflowed while adding future-clock skew, instead of reporting an otherwise valid old document as stale. | Perform checked offset arithmetic inside the UTC formatter and compare captured minus current time against skew, avoiding addition to the verification timestamp. |
+
+Two regression methods produce **16 errors** against original source, `/tmp/cyrus-evidence-clock-before.log`. They cover malformed/naive clocks, UTC underflow, qualification/expiry overflow and verification at datetime.max; positive cases retain non-UTC offsets, validity one microsecond before expiry and rejection at the exact expiry instant. The direct boundary reproduction is also recorded in `/tmp/cyrus-evidence-time-before.log`.
+
+**51 focused tests ran: 50 passed, one skipped**, `/tmp/cyrus-evidence-clock-after.log`. Full Orchestrator ran **1080 tests in 19.961 seconds: 1075 passed, five skipped**, `/tmp/cyrus-full-review-evidence-clock.log`. Five exact staged-source/test checks pass, `/tmp/cyrus-evidence-clock-staged-tests.log`, including canonical round-trip, malformed/legacy rejection and idempotent aggregate publication. Fatal Ruff/unused-import and unchanged module-size checks pass. The fixed synthetic-key comparison still confirms unchanged canonical bytes, hashes and signatures for all six valid leaf documents and their aggregate.
+
+Ponytail: one shared UTC validator and reuse of the existing strict object decoder for canonical evidence parsing remove duplicated checks/decoder plumbing: **12 fewer production lines**, no dependency. The common decoder also validates malformed legacy JSON before version rejection; valid evidence representation is unchanged. The source is now 2282 lines. All keys, clocks, files and qualification payloads are synthetic; no user signing key, live model or native qualification was used.
+
+Coverage remains **222/400 code, 187/315 tests and 41/308 support files**, with **450 reviewed hashes verified across 1023 entries**. The evidence source remains pending cohort/evidence publication and cleanup investigation. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding are also open.
