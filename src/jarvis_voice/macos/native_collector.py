@@ -81,12 +81,47 @@ def mac_source_runtime_sha256(repository_root: str | Path | None = None) -> str:
 def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
     """Hash the stable runtime selection without persisting local paths."""
 
+    tts_profile: dict[str, object] = {"fallback_voice_mapping": dict(config.macos.system_voices)}
+    if config.macos.tts_backend == "greektts15_f1":
+        greek = config.macos.greektts15
+        tts_profile.update({
+            "approval_manifest_sha256": greek.approval_manifest_sha256,
+            "worker_python_sha256": greek.worker_python.sha256,
+            "warm_on_start": greek.warm_on_start,
+        })
+    elif config.macos.tts_backend == "kokoro_onnx":
+        kokoro = config.macos.kokoro_onnx
+        tts_profile.update({
+            "model_sha256": kokoro.model.sha256,
+            "voices_sha256": kokoro.voices.sha256,
+            "language": kokoro.language,
+            "speed": kokoro.speed,
+            "voice_mix": dict(kokoro.voice_mix),
+            "warm_on_start": kokoro.warm_on_start,
+        })
+    elif config.macos.tts_backend == "pocket_tts":
+        pocket = config.pocket_tts
+        tts_profile.update({
+            "distribution_version": POCKET_TTS_DISTRIBUTION_VERSION,
+            "torch_version": POCKET_TTS_TORCH_VERSION,
+            "pyyaml_version": POCKET_TTS_PYYAML_VERSION,
+            "model_sha256": pocket.model.sha256,
+            "tokenizer_sha256": pocket.tokenizer.sha256,
+            "voice_state_sha256": pocket.voice_state.sha256,
+            "temperature": pocket.temperature,
+            "max_tokens": pocket.max_tokens,
+            "warm_on_start": pocket.warm_on_start,
+        })
     profile = {
         "product_version": __version__,
         "protocol_version": PROTOCOL_VERSION,
         "voice_auth_protocol": AUTH_PROTOCOL,
         "source_runtime_sha256": mac_source_runtime_sha256(),
         "ptt_key": config.ptt_key,
+        "ptt_queue_capacity": config.ptt_queue_capacity,
+        "audio_queue_capacity": config.audio_queue_capacity,
+        "maximum_hold_seconds": config.maximum_hold_seconds,
+        "maximum_utterance_seconds": config.maximum_utterance_seconds,
         "asr_backend": config.macos.asr_backend,
         "asr_model_sha256": config.macos.whisper_cpp.model.sha256,
         "asr_executable_sha256": config.macos.whisper_cpp.executable.sha256,
@@ -104,41 +139,24 @@ def mac_runtime_profile_fingerprint(config: VoiceConfig) -> str:
             )
         ],
         "vad_sha256": config.vad.artifact.sha256,
+        "vad_threshold": config.vad.threshold,
+        "vad_minimum_speech_ms": config.vad.minimum_speech_ms,
+        "vad_padding_ms": config.vad.padding_ms,
         "tts_backend": config.macos.tts_backend,
-        "tts_profile": (
-            (
-                {
-                    "approval_manifest_sha256": config.macos.greektts15.approval_manifest_sha256,
-                    "worker_python_sha256": config.macos.greektts15.worker_python.sha256,
-                    "fallback_voice_mapping": dict(sorted(config.macos.system_voices.items())),
-                }
-                if config.macos.greektts15.worker_python.path is not None
-                else {
-                    "approval_manifest_sha256": config.macos.greektts15.approval_manifest_sha256,
-                    "fallback_voice_mapping": dict(sorted(config.macos.system_voices.items())),
-                }
-            )
-            if config.macos.tts_backend == "greektts15_f1"
-            else (
-                {
-                    "distribution_version": POCKET_TTS_DISTRIBUTION_VERSION,
-                    "torch_version": POCKET_TTS_TORCH_VERSION,
-                    "pyyaml_version": POCKET_TTS_PYYAML_VERSION,
-                    "model_sha256": config.pocket_tts.model.sha256,
-                    "tokenizer_sha256": config.pocket_tts.tokenizer.sha256,
-                    "voice_state_sha256": config.pocket_tts.voice_state.sha256,
-                    "temperature": config.pocket_tts.temperature,
-                    "max_tokens": config.pocket_tts.max_tokens,
-                    "warm_on_start": config.pocket_tts.warm_on_start,
-                    "fallback_voice_mapping": dict(
-                        sorted(config.macos.system_voices.items())
-                    ),
-                }
-                if config.macos.tts_backend == "pocket_tts"
-                else {"voice_mapping": dict(sorted(config.macos.system_voices.items()))}
-            )
-        ),
+        "tts_profile": tts_profile,
     }
+    if config.macos.asr_backend == "faster_whisper_cpu_smoke":
+        profile["asr_model_profile"] = config.asr.model_profile
+        profile["asr_cpu_compute_type"] = config.asr.cpu_compute_type
+    else:
+        whisper = config.macos.whisper_cpp
+        profile["asr_language"] = whisper.language
+        profile["asr_threads"] = whisper.threads
+        profile["asr_audio_context_minimum_seconds"] = whisper.qualified_audio_context_minimum_seconds
+        profile["asr_audio_context_maximum_seconds"] = whisper.qualified_audio_context_maximum_seconds
+        profile["asr_startup_timeout_seconds"] = whisper.startup_timeout_seconds
+        profile["asr_request_timeout_seconds"] = whisper.request_timeout_seconds
+        profile["asr_maximum_response_bytes"] = whisper.maximum_response_bytes
     encoded = json.dumps(profile, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -541,7 +559,8 @@ class MacNativeTelemetryCollector:
         return len(self.completed_responses)
 
     def _pass(self, name: str) -> None:
-        self.cases[name]["status"] = "pass"
+        if self.cases[name]["status"] != "fail":
+            self.cases[name]["status"] = "pass"
         self.cases[name]["attempts"] += 1
 
     def _fail(self, name: str) -> None:
@@ -709,7 +728,7 @@ class MacNativeTelemetryCollector:
             "silence_hold_ms": 50 if self.acoustic_monitor is not None else 0,
         }
         template["soak"] = {
-            "duration_seconds": max(0, round(selected_now - self.started_at)),
+            "duration_seconds": max(0, int(selected_now - self.started_at)),
             "rss_samples": len(self._rss),
             "rss_start_bytes": rss_values[0] if rss_values else None,
             "rss_end_bytes": rss_values[-1] if rss_values else None,

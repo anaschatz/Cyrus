@@ -263,6 +263,14 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
         self.assertEqual(collector.real_voice_turn_count, 200)
         self.assertEqual(collector.completed_playback_count, 1)
 
+    def test_soak_duration_never_rounds_up_uncompleted_seconds(self) -> None:
+        collector = MacNativeTelemetryCollector(
+            profile_fingerprint="a" * 64, audio_path="built_in", clock=lambda: 0.0,
+        )
+        for elapsed, seconds in ((0.9, 0), (28_799.9, 28_799), (28_800.0, 28_800)):
+            with self.subTest(elapsed=elapsed):
+                self.assertEqual(collector.evidence(now=elapsed)["soak"]["duration_seconds"], seconds)
+
     def test_runtime_recovery_events_update_native_gate_without_manual_marking(self) -> None:
         collector = MacNativeTelemetryCollector(
             profile_fingerprint="c" * 64,
@@ -297,6 +305,82 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
         encoded = str(evidence)
         self.assertNotIn("response_id", encoded)
         self.assertNotIn("turn_id", encoded)
+
+    def test_selected_backend_artifacts_and_settings_change_profile_identity(self) -> None:
+        artifact = {"path": "/private/model", "size": 1, "sha256": "1" * 64}
+        kokoro = voice_config_from_mapping({
+            "macos": {"tts_backend": "kokoro_onnx", "kokoro_onnx": {
+                "model": artifact, "voices": {**artifact, "path": "/private/voices"},
+            }},
+        })
+        cpu = voice_config_from_mapping({"macos": {"asr_backend": "faster_whisper_cpu_smoke"}})
+        greek = voice_config_from_mapping({"macos": {"tts_backend": "greektts15_f1", "greektts15": {
+            "model_root": "/private/model", "approval_manifest_path": "/private/approval.json",
+            "approval_manifest_sha256": "2" * 64, "repository_root": "/private/repository",
+        }}})
+        with mock.patch("jarvis_voice.macos.native_collector.mac_source_runtime_sha256", return_value="a" * 64):
+            for field in ("model", "voices", "warm_on_start"):
+                with self.subTest(backend="kokoro", field=field):
+                    old = kokoro.macos.kokoro_onnx
+                    value = False if field == "warm_on_start" else replace(getattr(old, field), sha256="3" * 64)
+                    changed = replace(kokoro, macos=replace(kokoro.macos, kokoro_onnx=replace(old, **{field: value})))
+                    self.assertNotEqual(mac_runtime_profile_fingerprint(kokoro), mac_runtime_profile_fingerprint(changed))
+            for field, value in (("model_profile", "large-v3-turbo"), ("cpu_compute_type", "float32")):
+                with self.subTest(backend="cpu", field=field):
+                    changed = replace(cpu, asr=replace(cpu.asr, **{field: value}))
+                    self.assertNotEqual(mac_runtime_profile_fingerprint(cpu), mac_runtime_profile_fingerprint(changed))
+            changed = replace(greek, macos=replace(greek.macos, greektts15=replace(greek.macos.greektts15, warm_on_start=False)))
+            with self.subTest(backend="greek", field="warm_on_start"):
+                self.assertNotEqual(mac_runtime_profile_fingerprint(greek), mac_runtime_profile_fingerprint(changed))
+            relocated = replace(kokoro, macos=replace(kokoro.macos, kokoro_onnx=replace(
+                kokoro.macos.kokoro_onnx,
+                model=replace(kokoro.macos.kokoro_onnx.model, path="/elsewhere/model"),
+                voices=replace(kokoro.macos.kokoro_onnx.voices, path="/elsewhere/voices"),
+            )))
+            self.assertEqual(mac_runtime_profile_fingerprint(kokoro), mac_runtime_profile_fingerprint(relocated))
+
+    def test_capture_vad_and_selected_whisper_settings_are_profile_bound(self) -> None:
+        config = voice_config_from_mapping({})
+        with mock.patch("jarvis_voice.macos.native_collector.mac_source_runtime_sha256", return_value="a" * 64):
+            original = mac_runtime_profile_fingerprint(config)
+            for field, value in (
+                ("ptt_queue_capacity", 32), ("audio_queue_capacity", 128),
+                ("maximum_hold_seconds", 15.0), ("maximum_utterance_seconds", 15.0),
+            ):
+                with self.subTest(section="capture", field=field):
+                    self.assertNotEqual(original, mac_runtime_profile_fingerprint(replace(config, **{field: value})))
+            for field, value in (("threshold", 0.8), ("minimum_speech_ms", 120), ("padding_ms", 100)):
+                with self.subTest(section="vad", field=field):
+                    changed = replace(config, vad=replace(config.vad, **{field: value}))
+                    self.assertNotEqual(original, mac_runtime_profile_fingerprint(changed))
+            for field, value in (
+                ("language", "el"), ("threads", 8),
+                ("qualified_audio_context_minimum_seconds", 4.0),
+                ("qualified_audio_context_maximum_seconds", 10.0),
+                ("startup_timeout_seconds", 40.0), ("request_timeout_seconds", 90.0),
+                ("maximum_response_bytes", 524_288),
+            ):
+                with self.subTest(section="whisper", field=field):
+                    changed = replace(config, macos=replace(config.macos, whisper_cpp=replace(config.macos.whisper_cpp, **{field: value})))
+                    self.assertNotEqual(original, mac_runtime_profile_fingerprint(changed))
+
+    def test_recovery_failure_remains_visible_after_later_success(self) -> None:
+        for kind, recovered, cases, counter in (
+            ("microphone_disconnect", "microphone_disconnect_recovered", ("microphone_disconnect_recovery", "microphone_change"), "microphone_disconnect_recoveries"),
+            ("sleep_resume", "sleep_resume_recovered", ("sleep_resume_recovery", "suspend_resume"), "sleep_resume_recoveries"),
+        ):
+            with self.subTest(kind=kind):
+                collector = MacNativeTelemetryCollector(
+                    profile_fingerprint="a" * 64, audio_path="built_in",
+                    platform_name="darwin", clock=lambda: 0.0,
+                )
+                collector.feed(_event("native_io_recovery_failed", 1.0, recovery_kind=kind))
+                collector.feed(_event(recovered, 2.0))
+                evidence = collector.evidence(now=3.0)
+                for case in cases:
+                    self.assertEqual(evidence["cases"][case], {"status": "fail", "attempts": 2})
+                self.assertEqual(evidence["counters"][counter], 1)
+                self.assertEqual(evaluate_native_evidence(evidence)["checks"]["automatic_recovery"]["status"], "blocked")
 
     def test_profile_fingerprint_does_not_expose_local_paths_or_voice_names(self) -> None:
         config = voice_config_from_mapping(
