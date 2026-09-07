@@ -92,11 +92,22 @@ def _safe_destination(root: Path, group: str, relative_path: str) -> Path:
 
 
 def _download_url_allowed(value: str) -> bool:
-    parsed = urllib.parse.urlsplit(value)
-    host = (parsed.hostname or "").lower()
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return False
     return parsed.scheme == "https" and (
         host in _ALLOWED_DOWNLOAD_HOSTS or any(host.endswith(suffix) for suffix in _ALLOWED_DOWNLOAD_SUFFIXES)
     )
+
+
+class _ArtifactRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _download_url_allowed(newurl):
+            fp.close()
+            raise _error("tts.f1_compact.redirect_forbidden", "Artifact redirect is forbidden")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def compact_acquisition_plan(storage_root: str | Path, *, group: str = "all") -> dict[str, object]:
@@ -157,7 +168,7 @@ def _download_artifact(
     spec: ArtifactSpec,
     destination: Path,
     *,
-    urlopen: Callable[..., object] = urllib.request.urlopen,
+    urlopen: Callable[..., object] | None = None,
 ) -> dict[str, object]:
     """Download one exact artifact with resumable ``.part`` and atomic publish."""
 
@@ -182,7 +193,8 @@ def _download_artifact(
         request = urllib.request.Request(spec.source_url, headers=headers, method="GET")
 
         try:
-            response_manager = urlopen(request, timeout=60)
+            opener = urllib.request.build_opener(_ArtifactRedirectHandler()).open if urlopen is None else urlopen
+            response_manager = opener(request, timeout=60)
             with response_manager as response:
                 final_url = str(response.geturl())
                 if not _download_url_allowed(final_url):

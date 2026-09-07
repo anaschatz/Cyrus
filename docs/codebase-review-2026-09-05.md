@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **280 of 401 code files**, plus **229 of 337 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **280 of 401 code files**, plus **230 of 338 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **791 tests (776 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **793 tests (778 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1882,3 +1882,18 @@ Extraction checkpoint committed as **5be63e7**, with a clean mandatory Ponytail 
 Four regression methods produce **three failures before the fixes**, `/tmp/cyrus-download-boundaries-before.log`. All **20 focused tests pass**, `/tmp/cyrus-download-boundaries-after.log`. Full Voice: **791 tests in 8.326 seconds, 776 passed and 15 skipped**, `/tmp/cyrus-full-review-download-boundaries-voice.log`. After removing redundant catch-and-reraise and TimeoutError handling, all **ten downloader/acquisition tests pass**, `/tmp/cyrus-download-boundaries-ponytail-tests.log`. Tests use real disposable files and injected HTTP responses; no live network download, model, training or native device operation occurred.
 
 Ponytail: retain one size/hash/publication path for resumed and newly downloaded files; **three net production lines**, no new helper or dependency. Updated source inspection and the new test module bring coverage to **280/401 code, 229/337 tests and 41/308 support**, with **550 reviewed hashes verified across 1046 entries**. Remaining downloader boundaries, whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment are still incomplete.
+
+
+### Compact download redirect enforcement
+
+Resume/publication checkpoint committed as **d9c374e**, with a clean mandatory Ponytail review.
+
+**V322 resolved:** the downloader checked only the final response URL, after urllib had already contacted an unapproved redirect destination. A small HTTPRedirectHandler override now validates each new URL before urllib dispatches the next request. It closes a rejected redirect response before raising the existing typed error. The final response check remains for injected openers.
+
+**V323 resolved:** malformed URL syntax could escape allow-list evaluation as ValueError. The shared URL check now returns false for these inputs.
+
+Two new regression methods produce **five failures and one error before the fixes**, `/tmp/cyrus-redirects-before.log`. They exercise the actual urllib redirect/error processors with a replaced HTTPS transport for 301, 302, 303, 307 and 308. Allowed targets complete the pinned download; forbidden targets are rejected after exactly one transport call, and every response closes. No DNS lookup, socket or external request is made by these redirect fixtures.
+
+All **13 focused tests pass**, `/tmp/cyrus-redirects-after.log`. Full Voice: **793 tests in 8.306 seconds, 778 passed and 15 skipped**, `/tmp/cyrus-full-review-redirects-voice.log`. Fatal Ruff and unchanged module boundaries pass. Ponytail: extend urllib's existing redirect handler instead of implementing a redirect loop; **12 net production lines**, no dependency. Coverage is **280/401 code, 230/338 tests and 41/308 support**, with **551 reviewed hashes verified across 1047 entries**. Simultaneous partial-writer coordination, remaining whole-codebase review, broader U05 privacy, compiler qualification binding and the final quality assessment remain incomplete.
+
+Mandatory Ponytail hook follow-up: removed the obsolete global-opener mock from the redirect test. The custom opener is independent of urllib's global opener. Both redirect tests pass again, `/tmp/cyrus-redirects-ponytail-tests.log`; the checkpoint is amended with hooks active.
