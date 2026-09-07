@@ -57,20 +57,22 @@ def _cursor_encode(kind: str, binding: dict[str, Any], key: list[Any]) -> str:
     return base64.urlsafe_b64encode(jcs_bytes(value)).rstrip(b"=").decode("ascii")
 
 
-def _cursor_decode(token: str, *, kind: str, binding: dict[str, Any]) -> list[Any]:
+def _cursor_decode(token: str, *, kind: str, binding: dict[str, Any]) -> list[str]:
     if not isinstance(token, str) or len(token) > 2048 or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
         raise OrchestratorError("invalid_cursor", status=400)
     try:
         raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
         value = json.loads(raw)
-    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        if not isinstance(value, dict) or set(value) != {"binding", "key", "kind", "version", "sha256"}:
+            raise OrchestratorError("invalid_cursor", status=400)
+        core = {name: value[name] for name in ("binding", "key", "kind", "version")}
+        digest_matches = hmac.compare_digest(value["sha256"], hashlib.sha256(jcs_bytes(core)).hexdigest())
+    except (TypeError, ValueError, RecursionError) as exc:
         raise OrchestratorError("invalid_cursor", status=400) from exc
-    if not isinstance(value, dict) or set(value) != {"binding", "key", "kind", "version", "sha256"}:
-        raise OrchestratorError("invalid_cursor", status=400)
-    core = {name: value[name] for name in ("binding", "key", "kind", "version")}
     if (value["kind"] != kind or value["binding"] != binding or value["version"] != "scheduler-cursor/1"
-            or not hmac.compare_digest(value["sha256"], hashlib.sha256(jcs_bytes(core)).hexdigest())
-            or not isinstance(value["key"], list)):
+            or not digest_matches
+            or not isinstance(value["key"], list) or len(value["key"]) != 2
+            or not all(isinstance(item, str) and item for item in value["key"])):
         raise OrchestratorError("cursor_binding_mismatch", status=400)
     return value["key"]
 
@@ -180,7 +182,10 @@ class ControlApplication:
         self._mutation_lock = threading.RLock()
 
     def require_business_admission(self, path: str) -> None:
-        route = urlsplit(path).path
+        try:
+            route = urlsplit(path).path
+        except ValueError as exc:
+            raise OrchestratorError("invalid_request", status=400) from exc
         if route in {"/readyz", "/v1/readiness"}:
             return
         try:
@@ -497,8 +502,6 @@ class ControlApplication:
                 cursor = None
                 if "cursor" in query:
                     key = _cursor_decode(query["cursor"][0], kind="jobs", binding=binding)
-                    if len(key) != 2:
-                        raise OrchestratorError("invalid_cursor", status=400)
                     cursor = (key[0], key[1])
                 jobs = scheduler.list_jobs(limit=limit, cursor=cursor)
                 next_cursor = (_cursor_encode("jobs", binding, [jobs[-1]["created_at_utc"], jobs[-1]["job_id"]])
@@ -512,8 +515,6 @@ class ControlApplication:
                 cursor = None
                 if "cursor" in query:
                     key = _cursor_decode(query["cursor"][0], kind="occurrences", binding=binding)
-                    if len(key) != 2:
-                        raise OrchestratorError("invalid_cursor", status=400)
                     cursor = (key[0], key[1])
                 occurrences = scheduler.list_occurrences(
                     job_id=query["job_id"][0], start_at_utc=query["start_at_utc"][0],
@@ -631,9 +632,12 @@ class ControlApplication:
         if scheduler is None:
             raise OrchestratorError("scheduler_unavailable", status=503)
         with self._mutation_lock:
-            command_semantic = domain_sha256(
-                "scheduler-control-command/1", {"body": body, "method": method, "path": path}
-            )
+            try:
+                command_semantic = domain_sha256(
+                    "scheduler-control-command/1", {"body": body, "method": method, "path": path}
+                )
+            except (TypeError, ValueError) as exc:
+                raise OrchestratorError("invalid_request", status=400) from exc
             if path in {"/v1/scheduler/compile", "/v1/scheduler/proposals"}:
                 replay = scheduler.lookup_api_result(key, command_semantic)
                 if replay is not None:
@@ -743,6 +747,8 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
             total = sum(len(name.encode()) + len(value.encode()) for name, value in items)
             if total > MAX_HEADER_BYTES or any(len(name.encode()) > MAX_FIELD_BYTES or len(value.encode()) > MAX_FIELD_BYTES for name, value in items):
                 raise OrchestratorError("invalid_request", status=400)
+            if self.headers.get_all("Transfer-Encoding", failobj=[]):
+                raise OrchestratorError("invalid_request", status=400)
             hosts = self.headers.get_all("Host", failobj=[])
             expected_host = f"127.0.0.1:{application.config.control_port}"
             if hosts != [expected_host]:
@@ -754,9 +760,9 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
                 authorizations = self.headers.get_all("Authorization", failobj=[])
                 if len(authorizations) != 1:
                     raise OrchestratorError("unauthenticated", status=401)
-                authorization = authorizations[0]
-                expected = f"Bearer {application.config.control_bearer_token}"
-                if len(authorization.encode()) > 512 or not hmac.compare_digest(authorization, expected):
+                authorization = authorizations[0].encode("utf-8")
+                expected = f"Bearer {application.config.control_bearer_token}".encode("utf-8")
+                if len(authorization) > 512 or not hmac.compare_digest(authorization, expected):
                     raise OrchestratorError("unauthenticated", status=401)
 
         def _mutation_headers(self) -> tuple[str, int]:
@@ -804,8 +810,6 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
             return key.lower(), revision
 
         def _memory_delete_body(self) -> Any | None:
-            if self.headers.get_all("Transfer-Encoding", failobj=[]):
-                raise OrchestratorError("invalid_request", status=400)
             lengths = self.headers.get_all("Content-Length", failobj=[])
             if len(lengths) > 1:
                 raise OrchestratorError("invalid_request", status=400)
@@ -855,9 +859,12 @@ def handler_factory(application: ControlApplication) -> type[BaseHTTPRequestHand
                 raise OrchestratorError("invalid_request", status=400) from exc
             if length < 0 or length > MAX_BODY:
                 raise OrchestratorError("request_too_large", status=413)
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise OrchestratorError("invalid_request", status=400)
             try:
-                return json.loads(self.rfile.read(length).decode("utf-8", errors="strict"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                return json.loads(raw.decode("utf-8", errors="strict"))
+            except (ValueError, RecursionError) as exc:
                 raise OrchestratorError("invalid_request", status=400) from exc
 
         def do_GET(self) -> None:

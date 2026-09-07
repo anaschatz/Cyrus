@@ -2379,7 +2379,7 @@ class SchedulerStore:
         return [dict(row) for row in rows]
 
     def ledger(self, *, after_seq: int = 0, limit: int = 50) -> list[dict[str, Any]]:
-        if after_seq < 0 or not 1 <= limit <= MAXIMUM_PAGE_SIZE:
+        if type(after_seq) is not int or not 0 <= after_seq < (1 << 63) or not 1 <= limit <= MAXIMUM_PAGE_SIZE:
             raise OrchestratorError("invalid_request", status=400)
         with self._lock:
             rows = self._connection.execute(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import io
+import json
 import tempfile
 import unittest
 from email.message import Message
@@ -10,7 +12,7 @@ from unittest.mock import patch
 import _bootstrap  # noqa: F401
 
 from jarvis_orchestrator.config import OrchestratorConfig
-from jarvis_orchestrator.control import ControlApplication, handler_factory
+from jarvis_orchestrator.control import ControlApplication, _cursor_decode, _cursor_encode, handler_factory
 from jarvis_orchestrator.domain import OrchestratorError
 from jarvis_orchestrator.model import BudgetedModelPort
 from jarvis_orchestrator.service import OrchestratorService
@@ -58,6 +60,7 @@ class ControlSecurityTests(unittest.TestCase):
             ([('Host', 'localhost:8767'), ('Authorization', 'Bearer control-private')], "forbidden"),
             ([('Host', '127.0.0.1:8767'), ('Authorization', 'Bearer control-private'), ('Origin', 'null')], "forbidden"),
             ([('Host', '127.0.0.1:8767'), ('Authorization', 'Bearer wrong')], "unauthenticated"),
+            ([('Host', '127.0.0.1:8767'), ('Authorization', 'Bearer café')], "unauthenticated"),
         ):
             with self.assertRaisesRegex(OrchestratorError, code):
                 self.handler(headers)._admit(authenticate=True)
@@ -86,6 +89,37 @@ class ControlSecurityTests(unittest.TestCase):
         oversized.rfile = io.BytesIO()
         with self.assertRaisesRegex(OrchestratorError, "request_too_large"):
             oversized._post_body()
+
+    def test_deeply_nested_json_is_a_client_error(self) -> None:
+        raw = b'[' * 2000 + b'0' + b']' * 2000
+        handler = self.handler([
+            ("Content-Type", "application/json"),
+            ("Content-Length", str(len(raw))),
+        ])
+        handler.rfile = io.BytesIO(raw)
+        with self.assertRaisesRegex(OrchestratorError, "invalid_request") as caught:
+            handler._post_body()
+        self.assertEqual(caught.exception.status, 400)
+
+    def test_scheduler_cursor_rejects_invalid_digest_and_json_values(self) -> None:
+        token = _cursor_encode("jobs", {}, ["created-at", "job-id"])
+        self.assertEqual(_cursor_decode(token, kind="jobs", binding={}), ["created-at", "job-id"])
+        for field, invalid in (("sha256", None), ("sha256", 123), ("sha256", "é" * 64), ("key", [1.5])):
+            value = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+            value[field] = invalid
+            malformed = base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
+            with self.subTest(field=field, invalid=invalid):
+                with self.assertRaisesRegex(OrchestratorError, "invalid_cursor") as caught:
+                    _cursor_decode(malformed, kind="jobs", binding={})
+                self.assertEqual(caught.exception.status, 400)
+
+    def test_scheduler_cursor_key_is_validated_even_with_matching_digest(self) -> None:
+        for key in ([], ["timestamp"], ["timestamp", {}], [None, "id"], ["", "id"]):
+            with self.subTest(key=key):
+                token = _cursor_encode("jobs", {}, key)
+                with self.assertRaises(OrchestratorError) as caught:
+                    _cursor_decode(token, kind="jobs", binding={})
+                self.assertEqual(caught.exception.status, 400)
 
     def test_beta_session_reports_real_voice_connection_and_disabled_scope(self) -> None:
         with patch.object(

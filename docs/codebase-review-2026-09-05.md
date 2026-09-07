@@ -1202,3 +1202,21 @@ Scheduler crypto's complete source inspection and identified key-version/resourc
 
 
 The creation checkpoint's Ponytail hook requested two test simplifications: reuse Mock.call_args/assert_called_once instead of manually capturing descriptors, and remove an existence check already covered by read_bytes. Applied the three-line reduction; all **four key-file tests** pass again, `/tmp/cyrus-key-creation-ponytail-after.log`. The checkpoint is amended with these changes; production behavior and coverage counts are unchanged.
+
+
+### Control API boundaries and completed source inspection
+
+Windows key-creation checkpoint finalized as **665849c**, including both Ponytail test simplifications; the final hook had no findings. Read the entire control API and traced admission, cursor consumers, memory/scheduler mutations, preview authorization and the HTTP handlers.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V221 | POST accepted a JSON body shorter than Content-Length and accepted unsupported Transfer-Encoding. Ordinary DELETE also accepted transfer encoding, despite the memory-delete path rejecting it. Malformed requests could mutate conversations. | Move transfer-encoding rejection to shared HTTP admission and require the POST body length to match its declaration before decoding or mutation. |
+| V222 | A scheduler ledger cursor above SQLite's signed-64-bit range reached parameter binding and produced HTTP 500. | Validate the integer range in the shared ledger method. The maximum supported cursor still returns an empty page. |
+| V223 | Scheduler command hashing raised an unhandled canonical-value error for unsupported JSON values, returning 500 before schema validation. | Translate canonicalization errors at the scheduler command boundary into content-free invalid_request/400. Preserve the existing canonical format and hashes. |
+| V224 | Malformed request targets raised during shared admission. GET/POST/DELETE returned 500, while PUT could close the connection without a response. | Translate URL parsing failure in common admission, producing invalid_request/400 consistently before handler-specific work. |
+
+The six new HTTP regression methods produce **14 failures and one error** against original source, `/tmp/cyrus-control-boundaries-complete-before.log`. Actual authenticated loopback requests demonstrate creation/deletion on malformed framing, internal errors for invalid cursor/JSON inputs and a disconnected PUT on malformed URL syntax. Fixed requests return 400 without changing temporary conversation or scheduler state. Positive checks retain normal conversation creation and the maximum valid ledger cursor. No model, native action or external provider call occurs.
+
+All **58 focused tests** pass. Full Orchestrator verification ran **1053 tests in 18.115 seconds: 1048 passed, five skipped**, `/tmp/cyrus-full-review-control-complete.log`. **23 isolated staged-scheduler tests** also pass, `/tmp/cyrus-control-ledger-staged-tests.log`, preserving unrelated older scheduler edits. This checkpoint includes the earlier control cursor, Unicode-bearer and deep-JSON fixes with their existing security regressions, now fully inspected. Fatal Ruff and unchanged module-size limits pass; control.py is 987 lines and SchedulerStore remains 2475. Shared admission avoids duplicating transfer-encoding guards; no dependency or schema change was added.
+
+Current coverage: **216/400 code, 180/314 tests and 39/308 support files**, with **435 reviewed hashes verified across 1022 entries**. The complete control source and identified boundary follow-ups are now reviewed. Whole-codebase review and final quality assessment remain incomplete: 184 code, 134 test and 269 support files remain, with compiler qualification identity binding and U05 still open. Reviewed does not mean bug-free; native/live qualification remains separate.
