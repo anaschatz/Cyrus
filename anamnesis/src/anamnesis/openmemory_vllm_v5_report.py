@@ -9,6 +9,7 @@ import io
 import json
 from pathlib import Path
 
+from anamnesis.io import report_output_paths
 from anamnesis.openmemory_vllm import (
     VllmOpenMemoryAlignedDecisionModel,
     build_openmemory_vllm_aligned_request,
@@ -128,18 +129,6 @@ with no retry, repair, cache, alternate schema, or v4-case reuse.
 """.encode()
 
 
-def _output(path: Path, suffix: str) -> Path:
-    resolved = path.resolve()
-    results = (REPO_ROOT / "results").resolve()
-    if (
-        not resolved.is_relative_to(results)
-        or resolved.is_relative_to((results / "runs").resolve())
-        or resolved.suffix != suffix
-    ):
-        raise ValueError("v5 report output must be tracked under results/")
-    return resolved
-
-
 def write_report(
     *, run_path: Path, csv_path: Path, markdown_path: Path, provenance_path: Path
 ) -> bool:
@@ -149,9 +138,9 @@ def write_report(
     ).resolve()
     if not run_path.is_relative_to(allowed):
         raise ValueError("v5 run must be under its frozen run folder")
-    csv_path = _output(csv_path, ".csv")
-    markdown_path = _output(markdown_path, ".md")
-    provenance_path = _output(provenance_path, ".json")
+    csv_path, markdown_path, provenance_path = report_output_paths(
+        REPO_ROOT / "results", csv_path, markdown_path, provenance_path
+    )
     result = validate_run(run_path)
     csv_data = _csv_bytes(result)
     markdown_data = _markdown_bytes(result)
@@ -186,7 +175,8 @@ def write_report(
         },
     }
     provenance_data = (json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode()
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    for path in (csv_path, markdown_path, provenance_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.write_bytes(csv_data)
     markdown_path.write_bytes(markdown_data)
     provenance_path.write_bytes(provenance_data)

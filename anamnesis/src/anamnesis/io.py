@@ -129,3 +129,24 @@ def write_runs(path: str | Path, runs: list[ScenarioRun]) -> None:
         for run in runs:
             handle.write(run.model_dump_json() + "\n")
     temporary.replace(destination)
+
+
+def report_output_paths(
+    results_root: Path, csv_path: Path, markdown_path: Path, provenance_path: Path
+) -> tuple[Path, Path, Path]:
+    """Resolve distinct report files without permitting writes to run evidence."""
+    results_root = results_root.resolve()
+    runs_root = (results_root / "runs").resolve()
+    paths = (csv_path.resolve(), markdown_path.resolve(), provenance_path.resolve())
+    for path, suffix in zip(paths, (".csv", ".md", ".json"), strict=True):
+        if (
+            not path.is_relative_to(results_root)
+            or path.is_relative_to(runs_root)
+            or path.suffix != suffix
+        ):
+            raise ValueError(
+                "report outputs must be CSV/Markdown/JSON files under results, outside runs"
+            )
+        if path.exists() and (not path.is_file() or path.stat().st_nlink != 1):
+            raise ValueError("report outputs must be regular files without hard links")
+    return paths

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from anamnesis.action_canonicalizer import canonicalize_immediate_decision
+from anamnesis.io import report_output_paths
 from anamnesis.openmemory_vllm import (
     VllmOpenMemoryAlignedDecisionModel,
     build_openmemory_vllm_aligned_request,
@@ -174,6 +175,9 @@ def write_report(
         (REPO_ROOT / "results/runs/local/openmemory_vllm_v7").resolve()
     ):
         raise ValueError("v7 run path differs")
+    csv_path, markdown_path, provenance_path = report_output_paths(
+        REPO_ROOT / "results", csv_path, markdown_path, provenance_path
+    )
     result = validate_run(run_path)
     csv_data, markdown_data = _csv(result), _markdown(result)
     provenance = {
@@ -197,15 +201,17 @@ def write_report(
         },
         "outputs": {
             "csv": {
-                "path": csv_path.resolve().relative_to(REPO_ROOT).as_posix(),
+                "path": csv_path.relative_to(REPO_ROOT).as_posix(),
                 "sha256": hashlib.sha256(csv_data).hexdigest(),
             },
             "markdown": {
-                "path": markdown_path.resolve().relative_to(REPO_ROOT).as_posix(),
+                "path": markdown_path.relative_to(REPO_ROOT).as_posix(),
                 "sha256": hashlib.sha256(markdown_data).hexdigest(),
             },
         },
     }
+    for path in (csv_path, markdown_path, provenance_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.write_bytes(csv_data)
     markdown_path.write_bytes(markdown_data)
     provenance_path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n")

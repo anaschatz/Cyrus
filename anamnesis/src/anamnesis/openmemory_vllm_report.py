@@ -10,6 +10,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from anamnesis.io import report_output_paths
 from anamnesis.openmemory_diagnostic import (
     build_openmemory_case_prompts,
     load_openmemory_diagnostic,
@@ -236,19 +237,6 @@ duplicate run is permitted on these v4 cases.
     return text.encode()
 
 
-def _output_path(path: Path, *, suffix: str) -> Path:
-    resolved = path.resolve()
-    results = (REPO_ROOT / "results").resolve()
-    runs = (results / "runs").resolve()
-    if (
-        not resolved.is_relative_to(results)
-        or resolved.is_relative_to(runs)
-        or resolved.suffix != suffix
-    ):
-        raise ValueError("report outputs must be tracked files under results/")
-    return resolved
-
-
 def write_report(
     *, run_path: Path, csv_path: Path, markdown_path: Path, provenance_path: Path
 ) -> bool:
@@ -256,9 +244,9 @@ def write_report(
     allowed_runs = (REPO_ROOT / "results/runs/local/openmemory_vllm_v4").resolve()
     if not run_path.is_relative_to(allowed_runs):
         raise ValueError("run artifact must be under the frozen v4 run folder")
-    csv_path = _output_path(csv_path, suffix=".csv")
-    markdown_path = _output_path(markdown_path, suffix=".md")
-    provenance_path = _output_path(provenance_path, suffix=".json")
+    csv_path, markdown_path, provenance_path = report_output_paths(
+        REPO_ROOT / "results", csv_path, markdown_path, provenance_path
+    )
     targets = {csv_path, markdown_path, provenance_path}
     sources = {
         run_path,
@@ -309,7 +297,8 @@ def write_report(
         },
     }
     provenance_data = (json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode()
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    for path in (csv_path, markdown_path, provenance_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.write_bytes(csv_data)
     markdown_path.write_bytes(markdown_data)
     provenance_path.write_bytes(provenance_data)
