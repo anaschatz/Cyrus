@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **209 of 400 code files**, plus **162 of 300 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **209 of 400 code files**, plus **163 of 301 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1008 tests (1003 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1013 tests (1008 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -940,3 +940,19 @@ The changed policy identity is `8c25fda844d33cf2706f81489870e8ef7eacc6a07a3b526c
 Committed as `94a18b8` with the previously reviewed V108 Greek sensitive-stem fixes and both regression modules. Exact staged Ponytail review and the active hook found no unnecessary complexity. The fix extends one existing credential pattern; no classifier framework or dependency was introduced. U05 remains open for text outside the finite lexicon and requires broader policy/qualification work before any comprehensive privacy claim.
 
 Coverage is **209/400 code, 162/300 tests and 39/308 support files**, with **410 reviewed hashes verified across 1008 entries**. Whole-store/service review, compiler identity binding and the remaining inventory are still unfinished. No final quality grade or whole-codebase completion is claimed.
+
+
+### SQLite initialization ownership and failed transaction recovery
+
+Inspected store.py initialization, migration and encrypted-memory helpers through line 1285, plus both transaction context managers and close. This is a partial source review of the central store, which remains pending. The new five-method regression module is fully inspected.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V195 | Failures in startup PRAGMAs, BEGIN, COMMIT or the final private-file check could leave the opened SQLite connection unclosed. An invalid memory runtime also touched the database before being rejected. | Validate the supplied runtime before database creation. Use stdlib ExitStack to own the connection until initialization succeeds, including migration commit and the final check. |
+| V196 | A deferred constraint failure during COMMIT left the transaction active and blocked subsequent operations. SQLite's automatic rollback could also be followed by a second ROLLBACK that masked the original constraint error. | Use the connection's native transaction context for commit/rollback in initialization and both transaction helpers. Keep BEGIN outside that context so a rejected nested BEGIN preserves the existing outer transaction. |
+
+The five regression methods produced **seven failures and two errors** against saved original source, `/tmp/cyrus-store-transactions-final-before.log`. They exercise real temporary SQLite connections, authorizer-injected startup failures, deferred foreign-key commit failure, INSERT OR ROLLBACK and nested BEGIN. They require no native credentials or user database. All five passed after the fix. The full Orchestrator suite ran **1013 tests in 17.486 seconds: 1008 passed, five platform/prerequisite skips**, `/tmp/cyrus-full-review-store-transactions.log`. Fatal Ruff, unchanged module-size limits and staged whitespace checks pass.
+
+Committed as `ab98168` with exact staged Ponytail review and the active pre-commit hook. The hook suggested removing a test-only Connection subclass; closure is now checked by SQLite's actual ProgrammingError on further use. Applied in `37a0313`, with all five tests passing again, `/tmp/cyrus-store-transactions-ponytail-followup.log`; its hook found no further complexity. Runtime source is unchanged since the full run. The production store is **13 lines shorter**, now 8541 lines, with no schema change or added dependency. No push occurred.
+
+Current coverage is **209/400 code, 163/301 tests and 39/308 support files**, with **411 reviewed hashes verified across 1009 entries**. Whole-store/service review, compiler qualification identity binding, U05 privacy coverage and the remaining inventory are still unfinished. No final code-quality grade or claim of a completed whole-codebase review is made.
