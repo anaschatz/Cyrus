@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from dataclasses import asdict
+from contextlib import ExitStack, closing
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -95,36 +96,33 @@ def create_macos_calibration_tts(
             on_completed=on_completed,
             warm_on_start=greek.warm_on_start,
         )
-    if config.macos.tts_backend == "kokoro_onnx":
-        return KokoroOnnxTtsBackend(
-            engine=KokoroOnnxCpuEngine(config.macos.kokoro_onnx),
-            fallback_backend=MacSystemTtsBackend(
-                voice_mapping=config.macos.system_voices,
-                on_started=on_started,
-                on_completed=on_completed,
-            ),
+    with ExitStack() as startup:
+        fallback = MacSystemTtsBackend(
+            voice_mapping=config.macos.system_voices,
             on_started=on_started,
             on_completed=on_completed,
-            warm_on_start=config.macos.kokoro_onnx.warm_on_start,
         )
-    if config.macos.tts_backend == "pocket_tts":
-        return PocketTtsBackend(
-            engine=PocketTtsCpuEngine(config.pocket_tts),
-            playback_factory=MacAudioQueueStreamingPlayback,
-            fallback_backend=MacSystemTtsBackend(
-                voice_mapping=config.macos.system_voices,
+        startup.callback(fallback.close)
+        backend: Any = fallback
+        if config.macos.tts_backend == "kokoro_onnx":
+            backend = KokoroOnnxTtsBackend(
+                engine=KokoroOnnxCpuEngine(config.macos.kokoro_onnx),
+                fallback_backend=fallback,
                 on_started=on_started,
                 on_completed=on_completed,
-            ),
-            on_started=on_started,
-            on_completed=on_completed,
-            warm_on_start=config.pocket_tts.warm_on_start,
-        )
-    return MacSystemTtsBackend(
-        voice_mapping=config.macos.system_voices,
-        on_started=on_started,
-        on_completed=on_completed,
-    )
+                warm_on_start=config.macos.kokoro_onnx.warm_on_start,
+            )
+        elif config.macos.tts_backend == "pocket_tts":
+            backend = PocketTtsBackend(
+                engine=PocketTtsCpuEngine(config.pocket_tts),
+                playback_factory=MacAudioQueueStreamingPlayback,
+                fallback_backend=fallback,
+                on_started=on_started,
+                on_completed=on_completed,
+                warm_on_start=config.pocket_tts.warm_on_start,
+            )
+        startup.pop_all()
+        return backend
 
 
 def calibrate_macos_acoustic_threshold(
@@ -143,38 +141,42 @@ def calibrate_macos_acoustic_threshold(
         raise BackendError("qualification.native_macos_required", "Acoustic calibration requires macOS", subsystem="qualification")
     if audio_path not in {"wired", "built_in"} or not 1.0 <= ambient_seconds <= 15.0:
         raise BackendError("qualification.native_collector_config_invalid", "Acoustic calibration settings are invalid", subsystem="qualification")
-    sampler = AcousticCalibrationSampler()
-    started = threading.Event()
-    completed = threading.Event()
+    with ExitStack() as cleanup:
+        sampler = AcousticCalibrationSampler()
+        cleanup.callback(sampler.close)
+        started = threading.Event()
+        completed = threading.Event()
 
-    def playback_started(_unit: SpeechUnit) -> None:
-        sampler.begin("playback")
-        started.set()
+        def playback_started(_unit: SpeechUnit) -> None:
+            sampler.begin("playback")
+            started.set()
 
-    def playback_completed(_unit: SpeechUnit) -> None:
-        sampler.end()
-        completed.set()
+        def playback_completed(_unit: SpeechUnit) -> None:
+            sampler.end()
+            completed.set()
 
-    capture = capture_factory(
-        queue_capacity=config.audio_queue_capacity,
-        maximum_utterance_seconds=config.maximum_utterance_seconds,
-        device=config.audio_input_device,
-        frame_observer=sampler.publish_audio,
-    )
-    tts = (
-        create_macos_calibration_tts(
-            config,
-            on_started=playback_started,
-            on_completed=playback_completed,
+        capture = capture_factory(
+            queue_capacity=config.audio_queue_capacity,
+            maximum_utterance_seconds=config.maximum_utterance_seconds,
+            device=config.audio_input_device,
+            frame_observer=sampler.publish_audio,
         )
-        if tts_factory is None
-        else tts_factory(
-            voice_mapping=config.macos.system_voices,
-            on_started=playback_started,
-            on_completed=playback_completed,
+        cleanup.callback(capture.stop)
+        tts = (
+            create_macos_calibration_tts(
+                config,
+                on_started=playback_started,
+                on_completed=playback_completed,
+            )
+            if tts_factory is None
+            else tts_factory(
+                voice_mapping=config.macos.system_voices,
+                on_started=playback_started,
+                on_completed=playback_completed,
+            )
         )
-    )
-    try:
+        cleanup.callback(tts.close)
+        cleanup.callback(sampler.end)
         capture.start()
         sampler.begin("ambient")
         sleeper(ambient_seconds)
@@ -205,11 +207,6 @@ def calibrate_macos_acoustic_threshold(
                     else None
                 ),
             )
-    finally:
-        sampler.end()
-        capture.stop()
-        tts.close()
-        sampler.close()
     levels = sampler.levels()
     calibration = derive_acoustic_threshold(levels["ambient"], levels["playback"])
     return {
@@ -258,28 +255,33 @@ def run_macos_acoustic_barge_in_sample(
         or not 1 <= sample_count <= 20
     ):
         raise BackendError("qualification.native_collector_config_invalid", "Acoustic sample settings are invalid", subsystem="qualification")
-    monitor = monitor_factory(silence_threshold_dbfs=silence_threshold_dbfs)
-    started = threading.Event()
-    completed = threading.Event()
-    publisher = PttEventPublisher(
-        capacity=config.ptt_queue_capacity,
-        maximum_hold_seconds=config.maximum_hold_seconds,
-        ptt_vkey=mac_ptt_vkey(config.ptt_key),
-    )
-    ptt = ptt_source_factory(publisher, key=config.ptt_key)
-    capture = capture_factory(
-        queue_capacity=config.audio_queue_capacity,
-        maximum_utterance_seconds=config.maximum_utterance_seconds,
-        device=config.audio_input_device,
-        frame_observer=monitor.publish_audio,
-    )
-    tts = tts_builder(
-        config,
-        on_started=lambda _unit: started.set(),
-        on_completed=lambda _unit: completed.set(),
-    )
-    samples: list[dict[str, object]] = []
-    try:
+    with ExitStack() as cleanup:
+        monitor = monitor_factory(silence_threshold_dbfs=silence_threshold_dbfs)
+        cleanup.callback(monitor.close)
+        started = threading.Event()
+        completed = threading.Event()
+        publisher = PttEventPublisher(
+            capacity=config.ptt_queue_capacity,
+            maximum_hold_seconds=config.maximum_hold_seconds,
+            ptt_vkey=mac_ptt_vkey(config.ptt_key),
+        )
+        ptt = ptt_source_factory(publisher, key=config.ptt_key)
+        cleanup.callback(ptt.stop)
+        capture = capture_factory(
+            queue_capacity=config.audio_queue_capacity,
+            maximum_utterance_seconds=config.maximum_utterance_seconds,
+            device=config.audio_input_device,
+            frame_observer=monitor.publish_audio,
+        )
+        cleanup.callback(capture.stop)
+        tts = tts_builder(
+            config,
+            on_started=lambda _unit: started.set(),
+            on_completed=lambda _unit: completed.set(),
+        )
+        cleanup.callback(tts.close)
+        cleanup.callback(tts.cancel, sample_count * 2 + 1, "qualification_end")
+        samples: list[dict[str, object]] = []
         capture.start()
         ptt.start()
         for sample_index in range(1, sample_count + 1):
@@ -431,14 +433,6 @@ def run_macos_acoustic_barge_in_sample(
             "maximum_ptt_to_acoustic_silence_ms": max(latencies) if latencies else None,
             "samples": samples,
         }
-    finally:
-        try:
-            tts.cancel(sample_count * 2 + 1, "qualification_end")
-        finally:
-            ptt.stop()
-            capture.stop()
-            tts.close()
-            monitor.close()
 
 
 def current_process_rss_bytes(
@@ -544,120 +538,137 @@ def run_macos_native_collection(
             "Native turn batch size is invalid",
             subsystem="qualification",
         )
-    monitor = AcousticSilenceMonitor(silence_threshold_dbfs=silence_threshold_dbfs)
-    collector = MacNativeTelemetryCollector(
-        profile_fingerprint=mac_runtime_profile_fingerprint(config),
-        profile_mode="source",
-        audio_path=audio_path,
-        acoustic_monitor=monitor,
-        clock=clock,
-    )
-    runtime = runtime_factory(config, audio_frame_observer=monitor.publish_audio)
-    auth_key = configured_voice_auth_key(config)
-    if server_factory is None:
-        response_locale, _text = _qualification_speech(config, long=False)
-        server = MacSmokeLoopbackServer(
-            config.orchestrator_url,
-            auth_key,
-            response_locale=response_locale,
-            single_unit_responses=maximum_real_voice_turns is not None,
+    with closing(AcousticSilenceMonitor(silence_threshold_dbfs=silence_threshold_dbfs)) as monitor, ExitStack() as cleanup:
+        collector = MacNativeTelemetryCollector(
+            profile_fingerprint=mac_runtime_profile_fingerprint(config),
+            profile_mode="source",
+            audio_path=audio_path,
+            acoustic_monitor=monitor,
+            clock=clock,
         )
-    else:
-        server = server_factory(config.orchestrator_url, auth_key)
-    runtime_errors: list[BaseException] = []
+        auth_key = configured_voice_auth_key(config)
+        if server_factory is None:
+            response_locale, _text = _qualification_speech(config, long=False)
+            server = MacSmokeLoopbackServer(
+                config.orchestrator_url,
+                auth_key,
+                response_locale=response_locale,
+                single_unit_responses=maximum_real_voice_turns is not None,
+            )
+        else:
+            server = server_factory(config.orchestrator_url, auth_key)
+        cleanup.callback(server.stop)
+        runtime = runtime_factory(config, audio_frame_observer=monitor.publish_audio)
+        runtime_errors: list[BaseException] = []
+        thread: threading.Thread | None = None
 
-    def run_runtime() -> None:
+        def stop_runtime() -> None:
+            try:
+                runtime.request_stop()
+            finally:
+                if thread is None or thread.ident is None:
+                    runtime.close()
+                else:
+                    thread.join(timeout=config.application.shutdown_timeout_seconds)
+
+        cleanup.callback(stop_runtime)
+
+        def run_runtime() -> None:
+            try:
+                runtime.run()
+            except BaseException as exc:
+                runtime_errors.append(exc)
+
+        thread = threading.Thread(target=run_runtime, name="jarvis-native-qualification-runtime", daemon=True)
+        cursor = 0
+        started = clock()
+        deadline = started + duration_seconds
+        next_rss = started
+        next_progress = started
+        interrupted = False
+        turn_batch_completed = False
         try:
-            runtime.run()
-        except BaseException as exc:
-            runtime_errors.append(exc)
-
-    thread = threading.Thread(target=run_runtime, name="jarvis-native-qualification-runtime", daemon=True)
-    cursor = 0
-    started = clock()
-    deadline = started + duration_seconds
-    next_rss = started
-    next_progress = started
-    interrupted = False
-    turn_batch_completed = False
-    try:
-        server.start()
-        thread.start()
-        while clock() < deadline and not runtime_errors:
-            snapshot = runtime.timing_snapshot()
-            collector.feed_many(snapshot[cursor:])
-            cursor = len(snapshot)
-            collector.poll_acoustic()
-            if (
-                maximum_real_voice_turns is not None
-                and collector.real_voice_turn_count >= maximum_real_voice_turns
-                and collector.completed_playback_count >= maximum_real_voice_turns
-            ):
-                turn_batch_completed = True
-                break
-            now = clock()
-            if now >= next_rss:
-                collector.sample_rss(rss_probe(), timestamp=now)
-                next_rss += rss_interval_seconds
-            if now >= next_progress:
-                partial = collector.evidence(now=now)
-                write_report(output, partial)
-                if progress_sink is not None:
-                    counters = partial["counters"]
-                    acoustic = partial["acoustic_barge_in"]
-                    progress_sink(
-                        {
-                            "elapsed_seconds": partial["soak"]["duration_seconds"],
-                            "real_voice_turns": counters["real_voice_turns"],
-                            "completed_playbacks": collector.completed_playback_count,
-                            "acoustic_samples": acoustic["samples"],
-                        }
-                    )
-                next_progress += 60.0
-            sleeper(0.02)
-    except KeyboardInterrupt:
-        interrupted = True
-    finally:
-        runtime.request_stop()
-        if thread.is_alive():
-            thread.join(timeout=config.application.shutdown_timeout_seconds)
-        server.stop()
-        snapshot = runtime.timing_snapshot()
-        collector.feed_many(snapshot[cursor:])
-        collector.poll_acoustic()
-        if runtime_errors or thread.is_alive():
+            server.start()
+            thread.start()
+            while clock() < deadline and not runtime_errors:
+                snapshot = runtime.timing_snapshot()
+                collector.feed_many(snapshot[cursor:])
+                cursor = len(snapshot)
+                collector.poll_acoustic()
+                if (
+                    maximum_real_voice_turns is not None
+                    and collector.real_voice_turn_count >= maximum_real_voice_turns
+                    and collector.completed_playback_count >= maximum_real_voice_turns
+                ):
+                    turn_batch_completed = True
+                    break
+                now = clock()
+                if now >= next_rss:
+                    collector.sample_rss(rss_probe(), timestamp=now)
+                    next_rss += rss_interval_seconds
+                if now >= next_progress:
+                    partial = collector.evidence(now=now)
+                    write_report(output, partial)
+                    if progress_sink is not None:
+                        counters = partial["counters"]
+                        acoustic = partial["acoustic_barge_in"]
+                        progress_sink(
+                            {
+                                "elapsed_seconds": partial["soak"]["duration_seconds"],
+                                "real_voice_turns": counters["real_voice_turns"],
+                                "completed_playbacks": collector.completed_playback_count,
+                                "acoustic_samples": acoustic["samples"],
+                            }
+                        )
+                    next_progress += 60.0
+                sleeper(0.02)
+        except KeyboardInterrupt:
+            interrupted = True
+        except BaseException:
             collector.record_crash()
-        try:
-            collector.sample_rss(rss_probe(), timestamp=clock())
-        except BackendError:
-            collector.record_crash()
-        evidence = collector.evidence(now=clock(), final=True)
-        write_report(output, evidence)
-        monitor.close()
+            raise
+        finally:
+            try:
+                cleanup.close()
+            except BaseException:
+                collector.record_crash()
+                raise
+            finally:
+                snapshot = runtime.timing_snapshot()
+                collector.feed_many(snapshot[cursor:])
+                collector.poll_acoustic()
+                if runtime_errors or thread.is_alive():
+                    collector.record_crash()
+                try:
+                    collector.sample_rss(rss_probe(), timestamp=clock())
+                except BackendError:
+                    collector.record_crash()
+                evidence = collector.evidence(now=clock(), final=True)
+                write_report(output, evidence)
 
-    report = evaluate_native_evidence(evidence)
-    runtime_error_codes = sorted(
-        {
-            exc.code if isinstance(exc, BackendError) else "runtime.macos_native_failed"
-            for exc in runtime_errors
+        report = evaluate_native_evidence(evidence)
+        runtime_error_codes = sorted(
+            {
+                exc.code if isinstance(exc, BackendError) else "runtime.macos_native_failed"
+                for exc in runtime_errors
+            }
+        )
+        return {
+            **report,
+            "interrupted": interrupted,
+            "turn_batch_completed": turn_batch_completed,
+            "maximum_real_voice_turns": maximum_real_voice_turns,
+            "collection_stop_reason": (
+                "turn_batch_complete"
+                if turn_batch_completed
+                else "interrupted"
+                if interrupted
+                else "runtime_failed"
+                if runtime_errors or thread.is_alive()
+                else "duration_elapsed"
+            ),
+            "runtime_error_codes": runtime_error_codes,
+            "evidence_written": True,
+            "orchestrator_loopback_only": True,
+            "voice_layer_mocks_used": False,
         }
-    )
-    return {
-        **report,
-        "interrupted": interrupted,
-        "turn_batch_completed": turn_batch_completed,
-        "maximum_real_voice_turns": maximum_real_voice_turns,
-        "collection_stop_reason": (
-            "turn_batch_complete"
-            if turn_batch_completed
-            else "interrupted"
-            if interrupted
-            else "runtime_failed"
-            if runtime_errors
-            else "duration_elapsed"
-        ),
-        "runtime_error_codes": runtime_error_codes,
-        "evidence_written": True,
-        "orchestrator_loopback_only": True,
-        "voice_layer_mocks_used": False,
-    }

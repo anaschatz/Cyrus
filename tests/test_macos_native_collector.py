@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import contextlib
 import tempfile
 import threading
 import unittest
@@ -14,6 +15,7 @@ import _bootstrap  # noqa: F401
 
 from jarvis_voice.config import voice_config_from_mapping
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos import native_run
 from jarvis_voice.macos.native_collector import (
     AcousticCalibrationSampler,
     AcousticResult,
@@ -413,6 +415,197 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
 
 
 class MacNativeRunTests(unittest.TestCase):
+    def test_calibration_factory_transfers_or_closes_fallback_ownership(self) -> None:
+        base = voice_config_from_mapping({})
+        for backend, engine_name, backend_name in (
+            ("kokoro_onnx", "KokoroOnnxCpuEngine", "KokoroOnnxTtsBackend"),
+            ("pocket_tts", "PocketTtsCpuEngine", "PocketTtsBackend"),
+        ):
+            for fails in (True, False):
+                with self.subTest(backend=backend, fails=fails):
+                    fallback, primary = mock.Mock(), mock.Mock()
+                    failure = RuntimeError("private primary startup failure")
+                    with (
+                        mock.patch.object(native_run, "MacSystemTtsBackend", return_value=fallback),
+                        mock.patch.object(native_run, engine_name, return_value=object()),
+                        mock.patch.object(native_run, backend_name, return_value=primary,
+                                          side_effect=failure if fails else None) as factory,
+                    ):
+                        config = replace(base, macos=replace(base.macos, tts_backend=backend))
+                        if fails:
+                            with self.assertRaises(RuntimeError) as raised:
+                                create_macos_calibration_tts(config, on_started=lambda _: None, on_completed=lambda _: None)
+                            self.assertIs(raised.exception, failure)
+                            fallback.close.assert_called_once_with()
+                        else:
+                            selected = create_macos_calibration_tts(config, on_started=lambda _: None, on_completed=lambda _: None)
+                            self.assertIs(selected, primary)
+                            self.assertIs(factory.call_args.kwargs["fallback_backend"], fallback)
+                            fallback.close.assert_not_called()
+
+    def test_calibration_releases_every_acquired_resource_after_failure(self) -> None:
+        for stage in ("capture_factory", "tts_factory", "capture_start", "capture_stop", "tts_close", "sampler_end"):
+            with self.subTest(stage=stage):
+                sampler = mock.Mock()
+                capture = mock.Mock()
+                tts = mock.Mock(last_error=None)
+                failure = RuntimeError("private calibration failure")
+                capture_factory = mock.Mock(return_value=capture)
+                tts_factory = mock.Mock(return_value=tts)
+                if stage == "capture_factory":
+                    capture_factory.side_effect = failure
+                elif stage == "tts_factory":
+                    tts_factory.side_effect = failure
+                else:
+                    operation = {"capture_start": capture.start, "capture_stop": capture.stop,
+                                 "tts_close": tts.close, "sampler_end": sampler.end}[stage]
+                    operation.side_effect = failure
+                def enqueue(unit):
+                    callbacks = tts_factory.call_args.kwargs
+                    callbacks["on_started"](unit)
+                    callbacks["on_completed"](unit)
+                tts.enqueue.side_effect = enqueue
+                with (
+                    mock.patch.object(native_run, "sys", SimpleNamespace(platform="darwin")),
+                    mock.patch.object(native_run, "AcousticCalibrationSampler", return_value=sampler),
+                ):
+                    with self.assertRaises(RuntimeError) as raised:
+                        calibrate_macos_acoustic_threshold(
+                            voice_config_from_mapping({}), audio_path="built_in",
+                            capture_factory=capture_factory, tts_factory=tts_factory,
+                            sleeper=lambda _: None,
+                        )
+                self.assertIs(raised.exception, failure)
+                for name, operation, acquired in (
+                    ("sampler", sampler.close, True),
+                    ("capture", capture.stop, stage != "capture_factory"),
+                    ("tts", tts.close, stage not in ("capture_factory", "tts_factory")),
+                ):
+                    with self.subTest(resource=name):
+                        self.assertEqual(operation.call_count, int(acquired))
+
+    def test_acoustic_sample_releases_resources_on_startup_and_cleanup_failures(self) -> None:
+        for stage in ("ptt_factory", "capture_factory", "tts_factory", "capture_start", "ptt_start", "ptt_stop", "capture_stop", "tts_close", "cancel"):
+            with self.subTest(stage=stage):
+                monitor = mock.Mock()
+                monitor.take_results.return_value = (AcousticResult(True, 75.0, "qualification.acoustic_sample_valid"),)
+                ptt, capture, tts = mock.Mock(), mock.Mock(), mock.Mock(last_error=None)
+                failure = KeyboardInterrupt() if stage == "ptt_stop" else RuntimeError("private sample failure")
+                factories = {name: mock.Mock(return_value=value) for name, value in (("ptt", ptt), ("capture", capture), ("tts", tts))}
+                if stage.endswith("_factory"):
+                    factories[stage.removesuffix("_factory")].side_effect = failure
+                elif stage == "cancel":
+                    def cancel(_epoch, reason):
+                        if reason == "qualification_end":
+                            raise failure
+                    tts.cancel.side_effect = cancel
+                else:
+                    {"capture_start": capture.start, "ptt_start": ptt.start, "ptt_stop": ptt.stop,
+                     "capture_stop": capture.stop, "tts_close": tts.close}[stage].side_effect = failure
+                def enqueue(unit):
+                    factories["tts"].call_args.kwargs["on_started"](unit)
+                    factories["ptt"].call_args.args[0].events.put_nowait(PttEvent(PttTransition.DOWN, time.perf_counter()))
+                tts.enqueue.side_effect = enqueue
+                tts.wait_idle.return_value = True
+                with mock.patch.object(native_run, "sys", SimpleNamespace(platform="darwin")), self.assertRaises(type(failure)) as raised:
+                    run_macos_acoustic_barge_in_sample(
+                        voice_config_from_mapping({}), silence_threshold_dbfs=-40.0,
+                        audio_path="built_in", monitor_factory=lambda **_: monitor,
+                        ptt_source_factory=factories["ptt"], capture_factory=factories["capture"],
+                        tts_builder=factories["tts"],
+                    )
+                self.assertIs(raised.exception, failure)
+                for name, operation, acquired in (
+                    ("monitor", monitor.close, True),
+                    ("ptt", ptt.stop, stage != "ptt_factory"),
+                    ("capture", capture.stop, stage not in ("ptt_factory", "capture_factory")),
+                    ("tts", tts.close, stage not in ("ptt_factory", "capture_factory", "tts_factory")),
+                ):
+                    with self.subTest(resource=name):
+                        self.assertEqual(operation.call_count, int(acquired))
+
+    def test_collection_cleans_up_initialization_thread_and_shutdown_failures(self) -> None:
+        thread_class = threading.Thread
+        for stage in ("profile", "auth", "server_factory", "runtime_factory", "thread_factory", "thread_start", "server_start", "request_stop", "server_stop", "write", "progress"):
+            with self.subTest(stage=stage), contextlib.ExitStack() as patches:
+                monitor = mock.Mock()
+                monitor.take_results.return_value = ()
+                runtime, server = mock.Mock(), mock.Mock()
+                stopped = threading.Event()
+                entered = threading.Event()
+                failure = RuntimeError("private collection failure")
+                acquired = set()
+                workers = []
+                def make_runtime(*args, **kwargs):
+                    if stage == "runtime_factory":
+                        raise failure
+                    acquired.add("runtime")
+                    return runtime
+                def make_server(*args, **kwargs):
+                    if stage == "server_factory":
+                        raise failure
+                    acquired.add("server")
+                    return server
+                def make_thread(*args, **kwargs):
+                    if stage == "thread_factory":
+                        raise failure
+                    worker = thread_class(*args, **kwargs)
+                    workers.append(worker)
+                    return worker
+                def run():
+                    entered.set()
+                    try:
+                        stopped.wait(timeout=2.0)
+                    finally:
+                        runtime.close()
+                def request_stop():
+                    stopped.set()
+                    if stage == "request_stop":
+                        raise failure
+                def interrupt(_seconds):
+                    self.assertTrue(entered.wait(timeout=1.0))
+                    raise KeyboardInterrupt
+                runtime.run.side_effect = run
+                runtime.request_stop.side_effect = request_stop
+                runtime.timing_snapshot.return_value = ()
+                patches.enter_context(mock.patch.object(native_run, "sys", SimpleNamespace(platform="darwin")))
+                patches.enter_context(mock.patch.object(native_run.threading, "Thread", side_effect=make_thread))
+                patches.enter_context(mock.patch.object(native_run, "AcousticSilenceMonitor", return_value=monitor))
+                profile = patches.enter_context(mock.patch.object(native_run, "mac_runtime_profile_fingerprint", return_value="a" * 64))
+                auth = patches.enter_context(mock.patch.object(native_run, "configured_voice_auth_key", return_value=object()))
+                writer = patches.enter_context(mock.patch.object(native_run, "write_report"))
+                if stage in ("profile", "auth", "server_start", "server_stop", "write"):
+                    {"profile": profile, "auth": auth, "server_start": server.start,
+                     "server_stop": server.stop, "write": writer}[stage].side_effect = failure
+                elif stage == "thread_start":
+                    patches.enter_context(mock.patch.object(thread_class, "start", side_effect=failure))
+                progress = mock.Mock(side_effect=failure if stage == "progress" else None)
+                try:
+                    with self.assertRaises(RuntimeError) as raised:
+                        run_macos_native_collection(
+                            voice_config_from_mapping({}), output="/tmp/unused-native-cleanup.json",
+                            silence_threshold_dbfs=-40.0, audio_path="built_in",
+                            duration_seconds=1.0, threshold_calibrated=True,
+                            runtime_factory=make_runtime, server_factory=make_server,
+                            rss_probe=lambda: 100_000_000, sleeper=interrupt, progress_sink=progress,
+                        )
+                    self.assertIs(raised.exception, failure)
+                    for name, operation, owned in (
+                        ("monitor", monitor.close, True),
+                        ("server", server.stop, "server" in acquired),
+                        ("runtime", runtime.close, "runtime" in acquired),
+                    ):
+                        with self.subTest(resource=name):
+                            self.assertEqual(operation.call_count, int(owned))
+                    if stage in ("request_stop", "server_stop", "progress"):
+                        self.assertGreaterEqual(writer.call_args.args[1]["counters"]["crashes"], 1)
+                finally:
+                    stopped.set()
+                    for worker in workers:
+                        if worker.ident is not None:
+                            worker.join(timeout=1.0)
+                            self.assertFalse(worker.is_alive())
+
     def test_focused_acoustic_sample_cancels_on_physical_ptt_and_returns_latency(self) -> None:
         state: dict[str, object] = {}
 
