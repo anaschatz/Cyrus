@@ -73,6 +73,10 @@ def _owned_build_path(value: str | os.PathLike[str], purpose: str) -> Path:
     return candidate
 
 
+def _source_walk_error(error: OSError) -> None:
+    raise SetupError("Voice source tree could not be read") from error
+
+
 def _validate_voice_source_tree() -> None:
     source_parent = VOICE_SOURCE_ROOT.parent
     if (
@@ -84,11 +88,15 @@ def _validate_voice_source_tree() -> None:
     for current_raw, directories, filenames in os.walk(
         VOICE_SOURCE_ROOT,
         followlinks=False,
+        onerror=_source_walk_error,
     ):
         current = Path(current_raw)
         for name in (*directories, *filenames):
-            if _is_link_or_reparse(current / name):
+            entry = current / name
+            if _is_link_or_reparse(entry):
                 raise SetupError("Voice source tree must not contain links")
+            if not (entry.is_dir() or entry.is_file()):
+                raise SetupError("Voice source tree contains an unsupported entry")
         if "__init__.py" in filenames:
             relative = current.relative_to(source_parent)
             if any(not component.isidentifier() for component in relative.parts):
@@ -101,6 +109,7 @@ def _expected_voice_modules() -> set[Path]:
     for current_raw, _directories, filenames in os.walk(
         VOICE_SOURCE_ROOT,
         followlinks=False,
+        onerror=_source_walk_error,
     ):
         current = Path(current_raw)
         if "__init__.py" not in filenames:

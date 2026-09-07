@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -7,9 +9,46 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 
 class VoiceWheelPackagingTests(unittest.TestCase):
+    def test_source_inventory_rejects_unreadable_and_special_entries(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location("voice_setup", repository / "setup.py")
+        build = importlib.util.module_from_spec(spec)
+        with mock.patch("setuptools.setup"):
+            spec.loader.exec_module(build)
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "jarvis_voice"
+            nested = source / "nested"
+            nested.mkdir(parents=True)
+            (source / "__init__.py").touch()
+            (nested / "__init__.py").touch()
+            with mock.patch.object(build, "VOICE_SOURCE_ROOT", source):
+                build._validate_voice_source_tree()
+                self.assertEqual(build._expected_voice_modules(), {
+                    Path("jarvis_voice/__init__.py"),
+                    Path("jarvis_voice/nested/__init__.py"),
+                })
+                scandir = os.scandir
+                for blocked in (source, nested):
+                    def fail_scandir(path):
+                        if Path(path) == blocked:
+                            raise PermissionError("synthetic unreadable source")
+                        return scandir(path)
+
+                    for check in (build._validate_voice_source_tree, build._expected_voice_modules):
+                        with self.subTest(blocked=blocked.name, check=check.__name__):
+                            with mock.patch("os.scandir", side_effect=fail_scandir):
+                                with self.assertRaisesRegex(build.SetupError, "source.*read"):
+                                    check()
+                if hasattr(os, "mkfifo"):
+                    fifo = nested / "blocked.py"
+                    os.mkfifo(fifo)
+                    with self.assertRaisesRegex(build.SetupError, "unsupported entry"):
+                        build._validate_voice_source_tree()
+
     def test_dirty_source_and_stale_build_outputs_cannot_enter_wheel(self) -> None:
         repository = Path(__file__).resolve().parents[1]
 

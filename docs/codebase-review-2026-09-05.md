@@ -1,6 +1,6 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **327 of 401 code files**, plus **256 of 340 test files** and **47 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **328 of 401 code files**, plus **257 of 340 test files** and **47 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
 Updated **2026-09-07**. Latest complete runs: Voice **874 tests (859 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
@@ -2399,3 +2399,14 @@ All **35 focused Chatterbox/Supertonic/Fish/module-boundary checks pass**, `/tmp
 Coverage remains **327/401 code, 256/340 tests and 47/308 support**, with **630 reviewed hashes verified across 1049 entries**. This enforces the existing preflight contract; installed-package metadata alone does not prove every imported byte unchanged, and it is not fresh native qualification. Fish's imported-runtime/Git-source binding remains open, as do malformed artifact inputs, output publication, global-state/cleanup concerns and the remaining whole-codebase review. Broader privacy/provenance/compiler qualification and the final quality assessment remain unfinished.
 
 The mandatory exact-staged Ponytail review requested removing two model-validator mocks made redundant by the preflight mock. Removed both and reran all 12 Supertonic tests successfully before amending the checkpoint. Production code and full-suite results are unchanged.
+
+
+### Wheel source inventory must fail on incomplete traversal
+
+The pilot preflight checkpoint is committed as **4b4d39e**, after the mandatory Ponytail simplification and clean amendment review. Read the complete setup.py and wheel-packaging regression module, traced source validation at setup entry and module inventory checks after build/staging, and inspected all final changes. Builds in tests use disposable copies; the working checkout is not built or installed.
+
+**V394 resolved:** both source-tree walks silently ignored scandir errors. An unreadable package subtree could therefore be omitted from both discovery and the expected module inventory, allowing an incomplete wheel to satisfy the exact-set check. Both walks now use os.walk's onerror callback to raise SetupError with the original cause. Source preflight also rejects entries that are neither regular files nor directories, preventing a FIFO named as a module from reaching blocking source reads. Existing link/reparse rejection and exclusion of non-importable Finder copies remain intact. This is a preflight/inventory check, not a race-free snapshot of the source tree.
+
+One new regression method produces **five baseline failures**, `/tmp/cyrus-wheel-inventory-before.log`: injected scandir PermissionError at the source root and nested package for each of the two walks, plus a local FIFO. The fixture first verifies normal source validation and the complete expected module set. The FIFO is never opened or read. All **4 focused wheel-packaging/module-boundary tests complete in 2.737 seconds, 3 passed and 1 skipped**, `/tmp/cyrus-wheel-inventory-after.log`. The skipped test requires Windows junctions. The existing integration test builds and inspects clean wheels from dirty temporary source/build trees and exercises rejection/preservation cases. Fatal Ruff and whitespace checks pass. No native compilation, runtime capture, model loading or installation occurs. The latest full Voice result remains the prior **874 tests (859 passed, 15 skipped)**; this packaging-only checkpoint uses its focused build checks.
+
+Ponytail uses one shared four-line standard os.walk error callback for both existing callers and a regular-entry guard, adding **9 net production lines**, with no dependency or module-ceiling changes. Coverage is **328/401 code, 257/340 tests and 47/308 support**, with **632 reviewed hashes verified across 1049 entries**. Native Windows build/junction qualification, broader source/support review, privacy/provenance/compiler qualification and the final quality assessment remain unfinished.
