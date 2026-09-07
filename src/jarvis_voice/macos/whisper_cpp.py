@@ -8,7 +8,6 @@ import json
 import math
 import os
 import socket
-import struct
 import subprocess
 import sys
 import threading
@@ -21,7 +20,7 @@ import wave
 from array import array
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, BinaryIO, Protocol
+from typing import Protocol
 
 from ..backends import AsrScore, AudioChunk, LanguageMetadata, TranscriptResult
 from ..config import ArtifactConfig, CoreMlEncoderConfig, WhisperCppConfig
@@ -53,7 +52,16 @@ def _start_sidecar(argv: list[str]) -> SidecarProcess:
     )
 
 
-_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+class _LoopbackResponseProcessor(urllib.request.HTTPErrorProcessor):
+    """Keep status handling with the caller; never follow HTTP redirects."""
+
+    def http_response(self, request, response):
+        return response
+
+    https_response = http_response
+
+
+_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LoopbackResponseProcessor())
 
 
 def _open_loopback(request: urllib.request.Request, *, timeout: float) -> HttpResponse:
@@ -226,7 +234,7 @@ def _multipart(wav: bytes, *, language: str, audio_context: int, boundary: str) 
 def parse_whisper_response(raw: bytes, *, configured_language: str) -> TranscriptResult:
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (ValueError, RecursionError) as exc:
         raise BackendError("asr.whisper_cpp_response_invalid", "whisper.cpp returned invalid JSON", subsystem="asr") from exc
     if not isinstance(payload, Mapping) or not isinstance(payload.get("text"), str):
         raise BackendError("asr.whisper_cpp_response_invalid", "whisper.cpp response schema is invalid", subsystem="asr")
@@ -237,10 +245,10 @@ def parse_whisper_response(raw: bytes, *, configured_language: str) -> Transcrip
     if not isinstance(language, str) or not language:
         language = configured_language if configured_language != "auto" else "und"
     language_score = payload.get("language_probability", 0.0)
-    if not isinstance(language_score, (int, float)) or isinstance(language_score, bool) or not math.isfinite(float(language_score)):
+    if not isinstance(language_score, (int, float)) or isinstance(language_score, bool) or not -sys.float_info.max <= language_score <= sys.float_info.max:
         language_score = 0.0
 
-    weighted = 0.0
+    raw_score = 0.0
     weight = 0
     segments = payload.get("segments", [])
     if isinstance(segments, list):
@@ -248,18 +256,16 @@ def parse_whisper_response(raw: bytes, *, configured_language: str) -> Transcrip
             if not isinstance(segment, Mapping):
                 continue
             avg_logprob = segment.get("avg_logprob")
-            if not isinstance(avg_logprob, (int, float)) or isinstance(avg_logprob, bool) or not math.isfinite(float(avg_logprob)):
+            if not isinstance(avg_logprob, (int, float)) or isinstance(avg_logprob, bool) or not -sys.float_info.max <= avg_logprob <= 0.0:
                 continue
             tokens = segment.get("tokens")
             count = max(1, len(tokens)) if isinstance(tokens, list) else 1
-            weighted += float(avg_logprob) * count
             weight += count
+            raw_score += (float(avg_logprob) - raw_score) * (count / weight)
     if weight:
-        raw_score = weighted / weight
-        score = max(0.0, min(1.0, math.exp(raw_score)))
+        score = math.exp(raw_score)
         method = "exp_weighted_avg_logprob"
     else:
-        raw_score = 0.0
         score = 0.0
         method = "whisper_cpp_score_unavailable"
     return TranscriptResult(

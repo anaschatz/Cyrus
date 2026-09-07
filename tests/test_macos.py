@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import os
 import queue
 import subprocess
@@ -16,6 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+from urllib.response import addinfourl
 
 import _bootstrap  # noqa: F401
 
@@ -28,6 +30,7 @@ from jarvis_voice.config import (
 )
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos import ptt as mac_ptt
+from jarvis_voice.macos import whisper_cpp as mac_whisper_cpp
 from jarvis_voice.macos import runtime as mac_runtime
 from jarvis_voice.macos.audio_capture import CoreAudioCapture
 from jarvis_voice.macos.doctor import macos_doctor_report
@@ -434,6 +437,70 @@ class StubbornSidecarProcess(FakeSidecarProcess):
 
 
 class WhisperCppTests(unittest.TestCase):
+    def test_malformed_response_json_has_a_typed_failure(self) -> None:
+        for raw in (b"[" * 1500 + b"0" + b"]" * 1500,
+                    b'{"text":"test","number":' + b"9" * 5000 + b"}", b"\xff", b"[]"):
+            with self.subTest(size=len(raw)), self.assertRaisesRegex(BackendError, "asr.whisper_cpp_response_invalid"):
+                parse_whisper_response(raw, configured_language="auto")
+
+    def test_response_scores_remain_finite_and_never_accept_positive_logprobs(self) -> None:
+        invalid = (10**1000, -10**1000, float("nan"), float("inf"), -float("inf"), True, None)
+        for value in invalid:
+            with self.subTest(field="language_probability", value=str(value)[:20]):
+                result = parse_whisper_response(json.dumps({"text": "test", "language_probability": value}).encode(), configured_language="auto")
+                self.assertEqual(result.language.score, 0.0)
+        for value in (*invalid, 0.1, 1000.0):
+            with self.subTest(field="avg_logprob", value=str(value)[:20]):
+                result = parse_whisper_response(json.dumps({"text": "test", "segments": [{"avg_logprob": value}]}).encode(), configured_language="auto")
+                self.assertEqual(result.asr_score.value, 0.0)
+                self.assertEqual(result.asr_score.method, "whisper_cpp_score_unavailable")
+        for values, expected in (((-0.2, -0.8), -0.4), ((-1e308, -1.2e308), -1.0666666666666667e308)):
+            with self.subTest(values=values):
+                result = parse_whisper_response(json.dumps({
+                    "text": "test", "segments": [
+                        {"avg_logprob": values[0], "tokens": [1, 2]},
+                        {"avg_logprob": values[1], "tokens": [3]},
+                    ],
+                }).encode(), configured_language="auto")
+                self.assertTrue(math.isfinite(result.asr_score.raw_avg_logprob))
+                self.assertAlmostEqual(result.asr_score.raw_avg_logprob / expected, 1.0)
+                json.dumps(result.to_payload(), allow_nan=False)
+
+    def test_default_http_client_never_follows_redirects_and_closes_error_responses(self) -> None:
+        for status in (200, 302, 307, 500):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                process = FakeSidecarProcess()
+                streams = []
+
+                def http_open(_handler, request):
+                    if not request.full_url.startswith("http://127.0.0.1:43210/"):
+                        raise AssertionError("HTTP client followed a non-loopback redirect")
+                    code = 200 if request.get_method() == "GET" else status
+                    body = io.BytesIO(b'{"text":"test","language":"en"}')
+                    streams.append(body)
+                    response = addinfourl(body, {"Location": "http://example.invalid/redirect"}, request.full_url, code)
+                    response.msg = "Synthetic response"
+                    return response
+
+                backend = WhisperCppSidecarBackend(
+                    self.make_config(Path(directory)), maximum_audio_seconds=1.0,
+                    process_factory=lambda argv: process, port_factory=lambda: 43210, platform_name="darwin",
+                )
+                try:
+                    # Replace the transport, retaining the real default opener's policy.
+                    with mock.patch.object(mac_whisper_cpp.urllib.request.HTTPHandler, "http_open", autospec=True, side_effect=http_open) as transport:
+                        if status == 200:
+                            self.assertEqual(backend.transcribe(AudioChunk(array("f", [0.25]), 16000)).text, "test")
+                        else:
+                            with self.assertRaisesRegex(BackendError, "asr.whisper_cpp_http_failed"):
+                                backend.transcribe(AudioChunk(array("f", [0.25]), 16000))
+                    self.assertEqual(transport.call_count, 2)
+                    self.assertTrue(all(stream.closed for stream in streams))
+                finally:
+                    backend.close()
+                    for stream in streams:
+                        stream.close()
+
     def make_config(self, root: Path, *, response_cap: int = 4096) -> WhisperCppConfig:
         executable = root / "whisper-server"
         model = root / "model.bin"
