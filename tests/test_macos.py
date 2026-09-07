@@ -547,6 +547,62 @@ class WhisperCppTests(unittest.TestCase):
         self.assertTrue(process.killed)
         self.assertEqual(process.wait_calls, 2)
 
+    def test_coreml_inventory_rejects_unreadable_unlisted_directories(self) -> None:
+        for extra in ("unexpected", "weights/unexpected"):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                encoder = root / "model-encoder.mlmodelc"
+                (encoder / "weights").mkdir(parents=True)
+                weights = encoder / "weights/weight.bin"
+                weights.write_bytes(b"weights")
+                unexpected = encoder / extra
+                unexpected.mkdir()
+                (unexpected / "extra.bin").write_bytes(b"extra")
+                config = CoreMlEncoderConfig(
+                    revision="a" * 40, directory=str(encoder),
+                    files=(replace(ArtifactConfig(**artifact(weights)), path="weights/weight.bin"),),
+                )
+                scandir = os.scandir
+
+                def scan(path):
+                    if Path(path) == unexpected:
+                        raise PermissionError("simulated unreadable unlisted directory")
+                    return scandir(path)
+
+                with mock.patch.object(mac_whisper_cpp.os, "scandir", side_effect=scan), self.assertRaisesRegex(
+                    BackendError, "asr.whisper_cpp_coreml_file_set_mismatch",
+                ):
+                    mac_whisper_cpp._validate_coreml_encoder(config, root / "model.bin")
+
+    def test_coreml_manifest_paths_are_canonical_at_config_and_runtime_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            encoder = root / "model-encoder.mlmodelc"
+            (encoder / "weights").mkdir(parents=True)
+            weights = encoder / "weights/weight.bin"
+            weights.write_bytes(b"weights")
+            item = {**artifact(weights), "path": "weights/weight.bin"}
+            manifest = {"revision": "a" * 40, "directory": str(encoder), "files": [item]}
+            config = voice_config_from_mapping({"macos": {"whisper_cpp": {"coreml_encoder": manifest}}})
+            self.assertEqual(mac_whisper_cpp._validate_coreml_encoder(config.macos.whisper_cpp.coreml_encoder, root / "model.bin"), encoder)
+            for path, duplicate in (("./weights/weight.bin", False), ("weights//weight.bin", False),
+                                    ("weights/./weight.bin", False), ("weights/weight.bin/", False),
+                                    (".", False), ("weights/../weight.bin", False),
+                                    ("/weights/weight.bin", False), ("weights\\weight.bin", False),
+                                    ("./weights/weight.bin", True)):
+                files = ([item] if duplicate else []) + [{**item, "path": path}]
+                with self.subTest(path=path, duplicate=duplicate, boundary="config"), self.assertRaisesRegex(
+                    BackendError, "config.whisper_cpp_coreml_profile_required",
+                ):
+                    voice_config_from_mapping({"macos": {"whisper_cpp": {"coreml_encoder": {**manifest, "files": files}}}})
+                with self.subTest(path=path, duplicate=duplicate, boundary="runtime"), self.assertRaisesRegex(
+                    BackendError, "asr.whisper_cpp_coreml_manifest_invalid",
+                ):
+                    mac_whisper_cpp._validate_coreml_encoder(
+                        CoreMlEncoderConfig(revision="a" * 40, directory=str(encoder), files=tuple(ArtifactConfig(**value) for value in files)),
+                        root / "model.bin",
+                    )
+
     def test_coreml_encoder_exact_manifest_precedes_process_start(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

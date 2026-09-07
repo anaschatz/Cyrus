@@ -754,7 +754,9 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 or not artifact.path
                 or "\\" in artifact.path
                 or Path(artifact.path).is_absolute()
-                or any(part in {"", ".", ".."} for part in Path(artifact.path).parts)
+                or not Path(artifact.path).parts
+                or Path(artifact.path).as_posix() != artifact.path
+                or ".." in Path(artifact.path).parts
                 or not isinstance(artifact.size, int)
                 or isinstance(artifact.size, bool)
                 or artifact.size < 1

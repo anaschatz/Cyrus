@@ -83,11 +83,9 @@ def _validate_artifact(artifact: ArtifactConfig, kind: str, *, executable: bool 
             raise BackendError(f"asr.whisper_cpp_{kind}_missing", "Local whisper.cpp artifact is missing", subsystem="asr")
         if path.stat().st_size != artifact.size:
             raise BackendError(f"asr.whisper_cpp_{kind}_size_mismatch", "Local whisper.cpp artifact size differs", subsystem="asr")
-        digest = hashlib.sha256()
         with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-        if digest.hexdigest() != artifact.sha256.lower():
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if digest != artifact.sha256.lower():
             raise BackendError(f"asr.whisper_cpp_{kind}_hash_mismatch", "Local whisper.cpp artifact hash differs", subsystem="asr")
         if executable and not os.access(path, os.X_OK):
             raise BackendError("asr.whisper_cpp_executable_not_executable", "whisper.cpp sidecar is not executable", subsystem="asr")
@@ -146,7 +144,11 @@ def _validate_coreml_encoder(config: CoreMlEncoderConfig, model: Path) -> Path |
         ):
             raise BackendError("asr.whisper_cpp_coreml_manifest_invalid", "Core ML encoder manifest is invalid", subsystem="asr")
         relative = Path(artifact.path)
-        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+        if (
+            relative.is_absolute() or not relative.parts
+            or relative.as_posix() != artifact.path
+            or ".." in relative.parts
+        ):
             raise BackendError("asr.whisper_cpp_coreml_manifest_invalid", "Core ML encoder manifest is invalid", subsystem="asr")
         expected_files[relative.as_posix()] = artifact
         parent = relative.parent
@@ -161,11 +163,9 @@ def _validate_coreml_encoder(config: CoreMlEncoderConfig, model: Path) -> Path |
         actual_directories = {"."}
         for root, directories, files in os.walk(directory, followlinks=False):
             root_path = Path(root)
-            relative_root = root_path.relative_to(directory)
-            if relative_root != Path("."):
-                actual_directories.add(relative_root.as_posix())
             for name in directories:
                 child = root_path / name
+                actual_directories.add(child.relative_to(directory).as_posix())
                 if child.is_symlink():
                     raise BackendError("asr.whisper_cpp_coreml_symlink", "Core ML encoder contains a symbolic link", subsystem="asr")
             for name in files:
@@ -179,11 +179,9 @@ def _validate_coreml_encoder(config: CoreMlEncoderConfig, model: Path) -> Path |
             path = directory / relative_name
             if path.stat().st_size != artifact.size:
                 raise BackendError("asr.whisper_cpp_coreml_size_mismatch", "Core ML encoder file size differs", subsystem="asr")
-            digest = hashlib.sha256()
             with path.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            if digest.hexdigest() != str(artifact.sha256).lower():
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            if digest != artifact.sha256:
                 raise BackendError("asr.whisper_cpp_coreml_hash_mismatch", "Core ML encoder file hash differs", subsystem="asr")
     except OSError as exc:
         raise BackendError("asr.whisper_cpp_coreml_unreadable", "Core ML encoder is unreadable", subsystem="asr") from exc
