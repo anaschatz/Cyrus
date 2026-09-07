@@ -23,11 +23,8 @@ CPU_INTER_OP_THREADS = 1
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def validate_kokoro_artifact(artifact: ArtifactConfig, name: str) -> Path:
@@ -215,7 +212,11 @@ class SoundDevicePlayback:
                 blocksize=0,
                 latency="low",
             )
-            stream.start()
+            try:
+                stream.start()
+            except BaseException:
+                stream.close()
+                raise
         except Exception as exc:
             raise BackendError(
                 "tts.kokoro.playback_open_failed",
@@ -318,6 +319,9 @@ class KokoroOnnxTtsBackend:
         with self._lock:
             if unit.epoch <= self._cancelled_through_epoch:
                 return
+            if self._primary_disabled and not self._warm_ready.is_set():
+                self.fallback_backend.enqueue(unit)
+                return
             try:
                 self._queue.put_nowait(unit)
             except queue.Full as exc:
@@ -340,10 +344,12 @@ class KokoroOnnxTtsBackend:
             playback = self._playback
         if cancelled is not None:
             cancelled.set()
-        self.engine.cancel()
-        if playback is not None:
-            playback.abort()
-        self.fallback_backend.cancel(new_epoch, reason)
+        try:
+            self.engine.cancel()
+            if playback is not None:
+                playback.abort()
+        finally:
+            self.fallback_backend.cancel(new_epoch, reason)
 
     @property
     def is_idle(self) -> bool:
@@ -366,9 +372,13 @@ class KokoroOnnxTtsBackend:
         if self._stop.is_set():
             return
         self._stop.set()
-        self.cancel(2**63 - 1, "application_close")
-        self._thread.join(timeout=2.0)
-        self.fallback_backend.close()
+        try:
+            self.cancel(2**63 - 1, "application_close")
+        finally:
+            try:
+                self._thread.join(timeout=2.0)
+            finally:
+                self.fallback_backend.close()
 
     def _is_stale(self, unit: SpeechUnit, cancelled: threading.Event) -> bool:
         with self._lock:

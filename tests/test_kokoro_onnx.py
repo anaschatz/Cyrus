@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
@@ -15,6 +18,7 @@ from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.kokoro_onnx import (
     KokoroAudio,
     KokoroOnnxTtsBackend,
+    SoundDevicePlayback,
     validate_kokoro_artifact,
 )
 
@@ -204,6 +208,85 @@ class KokoroBackendTests(unittest.TestCase):
         self.assertTrue(backend.wait_idle())
         self.assertTrue(backend.degraded_to_fallback)
         self.assertEqual(fallback.units, [unit()])
+
+    def test_playback_start_failure_closes_the_acquired_stream(self) -> None:
+        for error in (OSError("start failed"), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__):
+                stream = mock.Mock()
+                stream.start.side_effect = error
+                sounddevice = SimpleNamespace(RawOutputStream=mock.Mock(return_value=stream))
+                playback = SoundDevicePlayback()
+                with mock.patch.dict(sys.modules, {"sounddevice": sounddevice}):
+                    with self.assertRaises(BackendError if isinstance(error, Exception) else KeyboardInterrupt):
+                        playback.start(24000)
+                stream.close.assert_called_once()
+                playback.abort()
+                stream.close.assert_called_once()
+
+    def test_abort_failure_does_not_skip_fallback_cancellation_or_shutdown(self) -> None:
+        class FailingPlayback(FakePlayback):
+            def __init__(self):
+                super().__init__(block=True)
+                self.fail_abort = True
+
+            def abort(self):
+                fail, self.fail_abort = self.fail_abort, False
+                super().abort()
+                if fail:
+                    raise OSError("native abort failed")
+
+        for closing in (False, True):
+            with self.subTest(closing=closing):
+                fallback = FakeFallback()
+                playback = FailingPlayback()
+                backend = KokoroOnnxTtsBackend(engine=FakeEngine(), fallback_backend=fallback,
+                                              playback_factory=lambda: playback, warm_on_start=False)
+                try:
+                    backend.enqueue(unit())
+                    self.assertTrue(playback.started.wait(1.0))
+                    with self.assertRaises(OSError):
+                        if closing:
+                            backend.close()
+                        else:
+                            backend.cancel(1, "ptt_down")
+                    expected = (2**63 - 1, "application_close") if closing else (1, "ptt_down")
+                    self.assertIn(expected, fallback.cancelled)
+                    if closing:
+                        self.assertTrue(fallback.closed)
+                        self.assertFalse(backend._thread.is_alive())
+                    else:
+                        self.assertTrue(backend.wait_idle())
+                        self.assertIsNone(backend.last_error)
+                finally:
+                    playback.aborted.set()
+                    backend.close()
+                    backend._thread.join(timeout=2.0)
+                    fallback.close()
+
+    def test_warm_timeout_routes_to_fallback_before_warm_finishes(self) -> None:
+        release = threading.Event()
+        engine = FakeEngine()
+        engine.warm = lambda: (release.wait(2.0), 12.5)[1]
+        fallback = FakeFallback()
+        backend = KokoroOnnxTtsBackend(engine=engine, fallback_backend=fallback,
+                                      playback_factory=FakePlayback, warm_timeout_seconds=0.01)
+        try:
+            self.assertTrue(backend.degraded_to_fallback)
+            self.assertFalse(backend._warm_ready.is_set())
+            backend.enqueue(unit())
+            backend.enqueue(unit(epoch=2))
+            self.assertEqual(fallback.units, [unit(), unit(epoch=2)])
+            self.assertTrue(backend.is_idle)
+            release.set()
+            self.assertTrue(backend._warm_ready.wait(1.0))
+            backend.enqueue(unit(epoch=3))
+            self.assertTrue(backend.wait_idle())
+            self.assertEqual(fallback.units, [unit(), unit(epoch=2), unit(epoch=3)])
+            self.assertEqual(engine.texts, [])
+        finally:
+            release.set()
+            backend.close()
+            self.assertFalse(backend._thread.is_alive())
 
     def test_non_english_output_is_rejected_synchronously(self) -> None:
         backend = KokoroOnnxTtsBackend(

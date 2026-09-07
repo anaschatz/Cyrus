@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **297 of 401 code files**, plus **240 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **298 of 401 code files**, plus **241 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **826 tests (811 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **829 tests (814 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2110,3 +2110,18 @@ Lifecycle cleanup was committed as **9382544** after the mandatory Ponytail find
 Two regression methods restrict raw writes to seven bytes. The proxy test uses an owned fake-worker subprocess and verifies complete init/enqueue/close JSON, including a long Greek text. The worker test executes the real command loop with fake model/backend/monitor dependencies and in-memory raw or already-buffered output, verifying complete ready/callback events before the next input read. **One baseline error and one failure** reproduce, `/tmp/cyrus-sidecar-writes-before.log`. All **15 focused integration checks pass**, `/tmp/cyrus-sidecar-writes-after.log`. Full Voice: **826 tests in 9.509 seconds, 811 passed and 15 skipped**, `/tmp/cyrus-full-review-sidecar-writes-voice.log`. Fatal Ruff and unchanged module boundaries pass. No actual model, playback helper or speech is executed; full-suite native preflight scope is unchanged.
 
 Ponytail: **five production lines**, no custom write loop, new dependency or runtime helper. All **578 reviewed hashes across 1049 entries** are current; coverage remains **297/401 code, 240/340 tests and 41/308 support**. This closes the short-write follow-up; full-message deadlines, parser/numeric validation, unexpected closure and callback error handling remain open, alongside the remaining whole-codebase review and final assessment.
+
+
+### Kokoro stream cleanup and warm-timeout fallback
+
+The sidecar pipe-write checkpoint was committed as **d3d0a1c**, with a clean mandatory Ponytail review. Completed full inspection of the 458-line Kokoro implementation and 221-line existing tests: artifact validation, lazy CPU-only model loading, synthesis conversion, playback, queue/cancellation and system fallback. Traced runtime/calibration constructors and fallback callback ownership.
+
+**V353 resolved:** RawOutputStream was acquired before start, but a start exception or interruption left it unclosed. The local startup boundary now attempts close before propagating; ordinary failures retain the typed playback-open error.
+
+**V354 resolved:** a playback abort failure skipped system-fallback cancellation, and close then skipped joining the worker and closing the fallback. Existing cleanup operations now use finally so subsequent cleanup runs even after the earlier failure. Tests model an abort that detaches/releases its stream and fails once, matching the real adapter's lifecycle rather than repeatedly failing an already-detached stream.
+
+**V355 resolved:** warm-up timeout set degraded_to_fallback but left speech queued behind the same still-warming thread. While that timed-out warm-up remains outstanding, enqueue now forwards units to the existing fallback under the admission lock. Once warm-up finishes, the original worker continues fallback dispatch. The regression verifies ordered units before and after releasing warm-up and no primary synthesis. This restores fallback availability; it does not forcibly terminate a native warm-up operation that never returns.
+
+Three new methods reproduce **five baseline failures**, `/tmp/cyrus-kokoro-lifecycle-before.log`. All **12 focused integration checks pass**, `/tmp/cyrus-kokoro-lifecycle-after.log`. Full Voice: **829 tests in 9.331 seconds, 814 passed and 15 skipped**, `/tmp/cyrus-full-review-kokoro-lifecycle-voice.log`. Fatal Ruff and unchanged module boundaries pass. New tests use fake native streams, fake engine/fallback/playback and owned event-controlled threads; no ONNX model or audio device is opened. Full-suite non-prompting native preflight scope is unchanged.
+
+Ponytail: existing cleanup/dispatch paths plus stdlib file_digest replacing the manual hash loop; **ten net production lines**, no new dependency/helper. Coverage is **298/401 code, 241/340 tests and 41/308 support**, with **580 reviewed hashes verified across 1049 entries**. Artifact I/O error typing, constructor interruption, fatal-queue behavior and native numerical/cancellation qualification remain follow-ups. Remaining source/support review, broader privacy/compiler binding and the final whole-codebase assessment are unfinished.
