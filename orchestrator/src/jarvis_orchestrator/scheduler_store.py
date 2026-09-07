@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .domain import OrchestratorError, TaskState, new_uuid4, parse_utc, require_uuid4, utc_now, utc_text
+from .domain import OrchestratorError, ReasonCode, TaskState, new_uuid4, parse_utc, require_uuid4, utc_now, utc_text
 from .jcs import domain_sha256, jcs_text
 from .scheduler_contract import (
     APPROVAL_TTL_SECONDS,
@@ -803,6 +803,44 @@ class SchedulerStore:
             ).fetchone()
         return str(row["task_id"]) if row is not None else None
 
+    def _expire_proposal_tx(
+        self, connection: sqlite3.Connection, approval_id: str,
+        proposal_id: str | None, now: datetime, *, reason_code: str = "approval_expired",
+    ) -> None:
+        if proposal_id is not None:
+            changed = connection.execute(
+                "UPDATE scheduler_proposals SET state='EXPIRED',decided_at=? WHERE proposal_id=? AND state='PENDING'",
+                (utc_text(now), proposal_id),
+            )
+            if not changed.rowcount:
+                return
+        link = connection.execute(
+            """SELECT l.task_id,l.epoch FROM scheduler_task_links l
+               JOIN tasks t ON t.task_id=l.task_id JOIN conversations c USING(conversation_id)
+               WHERE l.proposal_id=? AND l.state='PENDING' AND t.epoch=l.epoch
+               AND t.state='AWAITING_APPROVAL' AND t.tombstoned=0
+               AND c.current_epoch=l.epoch AND c.state='ACTIVE'""", (proposal_id,),
+        ).fetchone()
+        if link is not None:
+            self._store._cancel_task_request_tx(
+                connection, link["task_id"], link["epoch"], ReasonCode.APPROVAL_EXPIRED, now=now,
+            )
+        connection.execute(
+            "UPDATE approval_arbiter_queue SET state='EXPIRED',updated_at=? WHERE approval_id=?",
+            (utc_text(now), approval_id),
+        )
+        connection.execute(
+            """UPDATE scheduler_outbox SET state='REVOKED',lease_owner=NULL,lease_expires_at=NULL
+               WHERE event_id=(SELECT requested_event_id FROM approval_arbiter_queue WHERE approval_id=?)
+               AND state IN ('PENDING','LEASED')""", (approval_id,),
+        )
+        if proposal_id is not None:
+            self._ledger_tx(
+                connection, entity_type="proposal", entity_id=proposal_id,
+                event_type="scheduler.proposal.expired", from_state="PENDING", to_state="EXPIRED",
+                now=now, metadata={"reason_code": reason_code},
+            )
+
     def _expire_waiting_tx(self, connection: sqlite3.Connection, now: datetime) -> None:
         rows = connection.execute(
             """SELECT q.approval_id,p.proposal_id,p.first_due_at_utc
@@ -813,25 +851,7 @@ class SchedulerStore:
             (SCHEDULER_PROTOCOL, utc_text(now), utc_text(now + timedelta(milliseconds=MINIMUM_LEAD_MS))),
         ).fetchall()
         for row in rows:
-            connection.execute(
-                "UPDATE approval_arbiter_queue SET state='EXPIRED',updated_at=? WHERE approval_id=?",
-                (utc_text(now), row["approval_id"]),
-            )
-            if row["proposal_id"]:
-                connection.execute(
-                    "UPDATE scheduler_proposals SET state='EXPIRED',decided_at=? WHERE proposal_id=? AND state='PENDING'",
-                    (utc_text(now), row["proposal_id"]),
-                )
-                self._ledger_tx(
-                    connection,
-                    entity_type="proposal",
-                    entity_id=row["proposal_id"],
-                    event_type="scheduler.proposal.expired",
-                    from_state="PENDING",
-                    to_state="EXPIRED",
-                    now=now,
-                    metadata={"reason_code": "approval_expired"},
-                )
+            self._expire_proposal_tx(connection, row["approval_id"], row["proposal_id"], now)
 
     def expire_approvals(self, *, now: datetime | None = None) -> int:
         selected = now or utc_now()
@@ -880,13 +900,9 @@ class SchedulerStore:
                 try:
                     ensure_minimum_lead(row["first_due_at_utc"], selected)
                 except ScheduleContractError:
-                    connection.execute(
-                        "UPDATE approval_arbiter_queue SET state='EXPIRED',updated_at=? WHERE approval_id=?",
-                        (utc_text(selected), row["approval_id"]),
-                    )
-                    connection.execute(
-                        "UPDATE scheduler_proposals SET state='EXPIRED',decided_at=? WHERE proposal_id=?",
-                        (utc_text(selected), row["proposal_id"]),
+                    self._expire_proposal_tx(
+                        connection, row["approval_id"], row["proposal_id"], selected,
+                        reason_code="minimum_lead_violated",
                     )
                     return None
             proposal = self._get_content_tx(connection, row["content_record_id"])
@@ -1076,20 +1092,7 @@ class SchedulerStore:
             ).fetchone()
         if lead_row is not None and lead_row["state"] == "PENDING" and parse_utc(lead_row["expires_at"]) <= selected:
             with self._transaction() as connection:
-                changed = connection.execute(
-                    "UPDATE scheduler_proposals SET state='EXPIRED',decided_at=? WHERE proposal_id=? AND state='PENDING'",
-                    (utc_text(selected), proposal_id),
-                )
-                if changed.rowcount:
-                    connection.execute(
-                        "UPDATE approval_arbiter_queue SET state='EXPIRED',updated_at=? WHERE approval_id=?",
-                        (utc_text(selected), approval_id),
-                    )
-                    self._ledger_tx(
-                        connection, entity_type="proposal", entity_id=proposal_id,
-                        event_type="scheduler.proposal.expired", from_state="PENDING", to_state="EXPIRED",
-                        now=selected, metadata={"reason_code": "approval_expired"},
-                    )
+                self._expire_proposal_tx(connection, approval_id, proposal_id, selected)
             raise OrchestratorError("approval_expired", status=410)
         if decision == "approve":
             if lead_row is not None and lead_row["state"] == "PENDING" and lead_row["first_due_at_utc"]:
@@ -1097,22 +1100,9 @@ class SchedulerStore:
                     ensure_minimum_lead(lead_row["first_due_at_utc"], selected)
                 except ScheduleContractError as exc:
                     with self._transaction() as connection:
-                        changed = connection.execute(
-                            """UPDATE scheduler_proposals SET state='EXPIRED',decided_at=?
-                               WHERE proposal_id=? AND state='PENDING'""",
-                            (utc_text(selected), proposal_id),
+                        self._expire_proposal_tx(
+                            connection, approval_id, proposal_id, selected, reason_code="minimum_lead_violated",
                         )
-                        if changed.rowcount:
-                            connection.execute(
-                                "UPDATE approval_arbiter_queue SET state='EXPIRED',updated_at=? WHERE approval_id=?",
-                                (utc_text(selected), approval_id),
-                            )
-                            self._ledger_tx(
-                                connection, entity_type="proposal", entity_id=proposal_id,
-                                event_type="scheduler.proposal.expired", from_state="PENDING",
-                                to_state="EXPIRED", now=selected,
-                                metadata={"reason_code": "minimum_lead_violated"},
-                            )
                     raise OrchestratorError("minimum_lead_violated", status=410) from exc
         with self._transaction() as connection:
             prior = connection.execute(

@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **213 of 400 code files**, plus **173 of 309 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **213 of 400 code files**, plus **174 of 310 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1029 tests (1024 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1031 tests (1026 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1075,3 +1075,18 @@ The two regressions failed against the saved original source, `/tmp/cyrus-schedu
 All **31 focused tests** passed. Full Orchestrator verification ran **1029 tests in 18.318 seconds: 1024 passed, five skipped**, `/tmp/cyrus-full-review-scheduler-receipts.log`. The exact isolated staged SchedulerStore version passed **six focused integration tests**, `/tmp/cyrus-scheduler-receipts-staged-tests.log`, preserving older unrelated unstaged changes. Ponytail removes a redundant content-existence query: the sole activation caller has already loaded/decrypted that row in the same transaction. Fatal Ruff and unchanged module-size checks pass; SchedulerStore remains at its **2475-line ceiling**, with no dependency or schema change.
 
 Current coverage: **213/400 code, 173/309 tests and 39/308 support files**, with **425 reviewed hashes verified across 1017 entries**. Whole-codebase review and final quality assessment remain incomplete. SchedulerStore follow-ups, the remaining inventory, compiler qualification identity binding and U05 privacy coverage remain open.
+
+
+### Linked scheduler approval expiry
+
+Receipt-binding/recovery checkpoint committed as **68e33d5**, with no Ponytail findings. The next temporary-store reproduction expired an approval while its task remained AWAITING_APPROVAL and its link remained PENDING, `/tmp/cyrus-linked-scheduler-expiry-before.log`.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V210 | Scheduler expiry updated only proposal/channel state. The conversational task remained waiting until its separate absolute lifetime elapsed; a minimum-lead expiry could also leave a still-replayable presentation. | All scheduler expiry paths share one transaction helper. Cancel only the linked current waiting task through the existing store cancellation operation, advance its epoch, expire the link/proposal/channel and revoke the old presentation. |
+
+The two regression methods initially produced **seven failures**, `/tmp/cyrus-scheduler-approval-expiry-before.log`. Six cases cover sweep, promotion and late decision at the TTL and minimum-lead boundaries. They verify task cancellation, epoch advance, link/channel state, presentation revocation, one client cancellation event, repeat-expiry idempotence and no job creation. A SQLite abort trigger proves proposal/task/channel/outbox changes roll back together and retry succeeds. Unlinked proposals retain the same expiry behavior; current-task guards prevent cancellation of an unrelated epoch.
+
+All **33 focused tests** passed. Full Orchestrator verification ran **1031 tests in 18.243 seconds: 1026 passed, five skipped**, `/tmp/cyrus-full-review-scheduler-approval-expiry.log`. The isolated staged SchedulerStore version passes **seven integration tests**, `/tmp/cyrus-scheduler-expiry-staged-tests.log`, while older unrelated changes remain unstaged. Fatal Ruff and unchanged size ceilings pass. Replacing duplicated expiry blocks reduced production source by **10 lines**, to **2465**; no dependency or schema migration was added.
+
+Current coverage: **213/400 code, 174/310 tests and 39/308 support files**, with **426 reviewed hashes verified across 1018 entries**. Whole-codebase review and final quality assessment remain incomplete. Scheduler ACK terminal precedence, publication revalidation, receipt ordering, remaining inventory, compiler identity binding and U05 remain open.
