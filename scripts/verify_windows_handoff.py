@@ -453,13 +453,16 @@ def handoff_template(frozen_commit: str) -> dict[str, object]:
 
 
 def _canonical_bytes(value: Mapping[str, object]) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise HandoffError("handoff.schema_invalid") from exc
 
 
 def manifest_sha256(value: Mapping[str, object]) -> str:
@@ -575,7 +578,7 @@ def validate_handoff_manifest(
     if raw.get("artifact_identities") != expected["artifact_identities"]:
         raise HandoffError("handoff.artifact_identities_invalid")
     for name, code in section_codes.items():
-        if raw.get(name) != expected[name]:
+        if _canonical_bytes(raw.get(name)) != _canonical_bytes(expected[name]):
             raise HandoffError(code)
     digest = manifest_sha256(raw)
     return {
@@ -618,7 +621,7 @@ def load_manifest(path: Path) -> dict[str, object]:
         )
     except HandoffError:
         raise
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise HandoffError("handoff.manifest_invalid_json") from exc
     if not isinstance(value, dict):
         raise HandoffError("handoff.schema_invalid")

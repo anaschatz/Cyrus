@@ -206,6 +206,25 @@ class WindowsHandoffVerifierTests(unittest.TestCase):
         changed["profiles"]["llm"]["download_url"] = "https://example.invalid/model"
         self.assert_code("handoff.profile_selection_invalid", changed)
 
+    def test_exact_template_rejects_equal_values_with_wrong_json_types(self) -> None:
+        for path, replacement, code in (
+            (("frozen_source", "untracked_files_included"), 0, "handoff.frozen_source_invalid"),
+            (("host_policy", "components_must_share_host"), 1, "handoff.single_machine_policy_invalid"),
+            (("target", "gpu_vram_mib"), 16384.0, "handoff.target_invalid"),
+            (("profiles", "llm", "context_tokens"), 32768.0, "handoff.profile_selection_invalid"),
+            (("profiles", "llm", "prompt_profile", "thinking"), 0, "handoff.profile_selection_invalid"),
+            (("acceptance", "llm_quality", "maximum_critical_failures"), False, "handoff.acceptance_thresholds_invalid"),
+            (("acceptance", "llm_performance", "p95_ttft_seconds_maximum"), 3, "handoff.acceptance_thresholds_invalid"),
+            (("safety_assertions", "production_ready"), 0, "handoff.safety_assertions_invalid"),
+        ):
+            with self.subTest(path=path):
+                changed = self.template()
+                parent = changed
+                for key in path[:-1]:
+                    parent = parent[key]
+                parent[path[-1]] = replacement
+                self.assert_code(code, changed)
+
     def test_artifact_hash_and_paths_are_exact(self) -> None:
         changed = self.template()
         changed["artifact_identities"]["gemma_primary_model"]["sha256"] = "f" * 64
@@ -239,6 +258,25 @@ class WindowsHandoffVerifierTests(unittest.TestCase):
                 )
             self.assertEqual(result, 2)
             self.assertEqual(json.loads(stdout.getvalue())["code"], "handoff.manifest_unreadable")
+
+    def test_cli_malformed_json_values_return_only_a_failure_report(self) -> None:
+        surrogate = self.template()
+        surrogate["target"]["native_identity"]["windows_build"] = "\ud800"
+        for raw in (
+            '{"schema":' + "1" * 5000 + '}',
+            json.dumps(surrogate),
+            '{"schema":' + "[" * 2000 + "0" + "]" * 2000 + '}',
+        ):
+            with self.subTest(size=len(raw)), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "invalid.json"
+                path.write_text(raw)
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    result = MODULE.main(["verify", "--manifest", str(path), "--expected-commit", COMMIT])
+                report = json.loads(output.getvalue())
+                self.assertEqual(result, 2)
+                self.assertFalse(report["handoff_preparation_ready"])
+                self.assertNotIn(str(path), output.getvalue())
 
     def test_cli_round_trip_is_offline_and_content_free_on_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
