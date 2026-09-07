@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **226 of 400 code files**, plus **193 of 319 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **228 of 400 code files**, plus **196 of 320 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1096 tests (1091 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1098 tests (1093 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1549,3 +1549,20 @@ Three regression methods produce **17 errors and three failures against exact HE
 Ponytail: native membership/type checks and the existing sequence factory, **two additional production lines**, no new helper, dependency or wire schema. Existing valid event round trips and durable retry tests pass. The suspected same-approval replacement-presentation flow was not found: the current ToolStore producer creates one presentation per approval and only changes its owner/requested-event metadata. Direct duplicate decision persistence and connection fingerprint retention still require investigation.
 
 Coverage is **226/400 code, 193/319 tests and 41/308 support**, with **460 reviewed hashes verified across 1027 entries**. Whole-codebase review and the final code-quality assessment remain incomplete.
+
+
+### Journal uniqueness, sequence history and CPU/CUDA source inspection
+
+Input-boundary checkpoint committed as **29207fa**, with a clean Ponytail hook.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V274 | A repeated journal persist_decision call generated a new frame, silently ignored the conflicting insert, then returned the unpersisted event ID. | Remove ON CONFLICT DO NOTHING. The existing unique constraint rejects a second write and preserves the first decision; retransmission continues through the stored-decision API. The normal key controller already prevents repeated key decisions; this fixes the journal API contract. |
+| V275 | The action sequence table retained complete wire metadata for every received event throughout the connection. | Store the full-wire SHA-256 fingerprint with the already-imported stdlib. Exact same-sequence duplicates remain accepted and changed frames remain rejected. History is still O(n) in message count, with fixed-size digests per entry. |
+| V276 — OPEN | Reopening a controller/journal after staging a requested event, then receiving its replay, returns a duplicate ACK while requested remains None. The shared arbiter can still be ARMED, leaving the pending approval unusable locally. | Reproduced with a disposable journal and preserved arbiter state. Pending lifecycle recovery work; no speculative restoration of already-decided or invalidated requests was added. |
+
+The two new journal/sequence tests have **three failures before the fix**, `/tmp/cyrus-action-journal-before.log`; all **26 focused checks pass**, `/tmp/cyrus-action-journal-after.log`. Full Voice ran **730 tests in 6.650 seconds: 715 passed, 15 skipped**; full Orchestrator ran **1098 tests in 21.100 seconds: 1093 passed, five skipped**, `/tmp/cyrus-full-review-action-journal-{voice,orchestrator}.log`. Fatal Ruff and module-size checks pass. Production code is **one line shorter**, without a new abstraction or schema. Duplicate writes intentionally raise the existing SQLite integrity error rather than pretending to be persisted; callers needing replay use the existing retry path.
+
+Completed source inspection of AsrBackendFactory/FallbackAsrBackend and GPU inventory/admission, plus the complete ASR and GPU test modules. **20 ASR/factory/GPU/module-boundary checks pass** with fake backends, synthetic model bytes and fake telemetry. CPU selection remains CUDA-import-free; fallback retains the same audio and configured device/manifest. GPU headroom remains an explicitly documented point-in-time heuristic using trusted driver telemetry. No source change was required in those two modules. The complete CPU decoder was also read, but numerical scoring edge cases remain pending. No microphone, actual model or native GPU query was used.
+
+Coverage is **228/400 code, 196/320 tests and 41/308 support**, with **465 reviewed hashes verified across 1028 entries**. V276, legacy missing-timestamp recovery, broader U05 privacy and compiler qualification identity binding remain open. Whole-codebase review and final code-quality assessment remain incomplete.

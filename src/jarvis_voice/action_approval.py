@@ -371,8 +371,7 @@ class ActionApprovalJournal:
         )
         with self._lock:
             self._connection.execute(
-                """INSERT INTO action_decisions VALUES(?,?,?,?,?,?,?,'PENDING',?,?,NULL,?)
-                   ON CONFLICT(approval_id,presentation_id) DO NOTHING""",
+                "INSERT INTO action_decisions VALUES(?,?,?,?,?,?,?,'PENDING',?,?,NULL,?)",
                 (event.event_id, payload["approval_id"], payload["presentation_id"], requested.event_id, payload["approval_binding_sha256"], payload["decision_nonce"], decision, time.time(), None, event.sent_at),
             )
         return event
@@ -427,7 +426,7 @@ class ActionApprovalController:
     def handle_server_event(self, event: ActionApprovalEnvelope, *, key_counter: int, both_keys_up: bool) -> list[ActionApprovalEnvelope]:
         if event.type not in SERVER_EVENTS:
             raise ProtocolError("protocol.wrong_direction", "server action event required")
-        fingerprint = event.to_json()
+        fingerprint = hashlib.sha256(event.to_json().encode("utf-8")).hexdigest()
         if event.seq == self._next_server_seq:
             self._seen[event.seq] = fingerprint
             self._next_server_seq += 1
