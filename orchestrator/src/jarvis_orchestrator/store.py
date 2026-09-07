@@ -2744,18 +2744,18 @@ class OrchestratorStore:
                 isolation_level=None,
                 timeout=MEMORY_RECALL_BUSY_TIMEOUT_MS / 1000,
             )
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA query_only=ON")
-            connection.execute(
-                f"PRAGMA busy_timeout={MEMORY_RECALL_BUSY_TIMEOUT_MS}"
-            )
-            connection.set_progress_handler(
-                lambda: int(
-                    cancelled.is_set() or time.monotonic() >= deadline
-                ),
-                100,
-            )
             try:
+                connection.row_factory = sqlite3.Row
+                connection.execute("PRAGMA query_only=ON")
+                connection.execute(
+                    f"PRAGMA busy_timeout={MEMORY_RECALL_BUSY_TIMEOUT_MS}"
+                )
+                connection.set_progress_handler(
+                    lambda: int(
+                        cancelled.is_set() or time.monotonic() >= deadline
+                    ),
+                    100,
+                )
                 current_state_row = connection.execute(
                     "SELECT * FROM memory_crypto_state WHERE principal_id=?",
                     (principal_id,),
@@ -2832,7 +2832,6 @@ class OrchestratorStore:
                     ) from None
                 raise
             finally:
-                connection.set_progress_handler(None, 0)
                 connection.close()
             projected_rows: list[dict[str, Any]] = []
             for row in selected_rows:
