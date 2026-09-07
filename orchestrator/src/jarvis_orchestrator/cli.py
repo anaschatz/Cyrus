@@ -8,8 +8,6 @@ import hashlib
 import hmac
 import json
 import sqlite3
-import urllib.error
-import urllib.request
 import uuid
 from dataclasses import replace
 from datetime import timedelta
@@ -18,7 +16,7 @@ from typing import Any
 
 from .background import BackgroundServiceManager
 from .cloud_activation import cloud_qualification_status
-from .config import OrchestratorConfig
+from .config import OrchestratorConfig, _parse_strict_json
 from .control import ControlApplication, ControlServer
 from .domain import OrchestratorError, canonical_sha256
 from .gateway import VoiceGateway
@@ -414,22 +412,39 @@ def _voice_auth_key(config: OrchestratorConfig):
 
 
 def _request(config: OrchestratorConfig, method: str, path: str, *, body: Any = None, epoch: int | None = None, key: str | None = None) -> tuple[int, Any | None]:
+    import httpx
+
     url = f"http://{config.control_host}:{config.control_port}{path}"
     encoded = None if body is None else json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    headers = {"Authorization": f"Bearer {config.control_bearer_token}"}
+    headers = {"Authorization": f"Bearer {config.control_bearer_token}", "Accept-Encoding": "identity"}
     if encoded is not None:
         headers["Content-Type"] = "application/json"
     if epoch is not None:
         headers["If-Match-Epoch"] = str(epoch)
         headers["Idempotency-Key"] = key or str(uuid.uuid4())
-    request = urllib.request.Request(url, data=encoded, method=method, headers=headers)
+
+    async def send():
+        async with asyncio.timeout(3), httpx.AsyncClient(timeout=3, follow_redirects=False, trust_env=False) as client:
+            async with client.stream(method, url, content=encoded, headers=headers) as response:
+                if (300 <= response.status_code < 400
+                        or response.headers.get("content-encoding", "identity").lower() != "identity"):
+                    raise ValueError("invalid control response")
+                raw = bytearray()
+                async for block in response.aiter_bytes():
+                    raw.extend(block)
+                    if len(raw) > 1024 * 1024:
+                        raise ValueError("control response exceeds limit")
+                if raw and response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+                    raise ValueError("invalid control response type")
+                value = _parse_strict_json(bytes(raw)) if raw else None
+                if (not raw and response.status_code != 204) or (raw and (not isinstance(value, dict) or response.status_code == 204)):
+                    raise ValueError("invalid control response body")
+                json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+                return response.status_code, value
     try:
-        with urllib.request.urlopen(request, timeout=3) as response:
-            raw = response.read()
-            return response.status, json.loads(raw) if raw else None
-    except urllib.error.HTTPError as exc:
-        raw = exc.read()
-        return exc.code, json.loads(raw) if raw else None
+        return asyncio.run(send())
+    except (httpx.HTTPError, TimeoutError, ValueError, RecursionError):
+        return 503, {"error": {"code": "control_request_failed", "retryable": True}}
 
 
 async def _serve_components(
