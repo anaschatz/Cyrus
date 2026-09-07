@@ -215,8 +215,8 @@ class CoreGraphicsEventTapAdapter:
         common_modes = ctypes.c_void_p.in_dll(cf, "kCFRunLoopCommonModes").value
         cf.CFRunLoopAddSource(run_loop, source, common_modes)
         cg.CGEventTapEnable(tap, True)
-        on_ready()
         try:
+            on_ready()
             cf.CFRunLoopRun()
         finally:
             self._run_loop = None
@@ -252,10 +252,13 @@ class MacEventTapPttSource:
         self.approval_publisher = approval_publisher
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
-        self._error: Exception | None = None
+        self._stop_requested = threading.Event()
+        self._error: BackendError | None = None
         self._device = "mac_event_tap"
 
     def handle_event(self, event_type: int, keycode: int, autorepeat: bool, received_at: float) -> None:
+        if self._stop_requested.is_set():
+            return
         if event_type in {CG_EVENT_TAP_DISABLED_BY_TIMEOUT, CG_EVENT_TAP_DISABLED_BY_USER_INPUT}:
             self.publisher.force_release(received_at, "event_tap_disabled")
             return
@@ -288,35 +291,55 @@ class MacEventTapPttSource:
     def start(self) -> None:
         if sys.platform != "darwin":
             raise BackendError("input.macos_only", "CoreGraphics PTT requires macOS", subsystem="input")
-        if self._thread is not None:
+        if self._thread is not None and self._thread.is_alive():
+            if self._stop_requested.is_set():
+                raise BackendError("input.macos_event_tap_stopping", "Passive event tap is still stopping", subsystem="input")
             return
         if not self.adapter.preflight():
             raise BackendError("input.macos_listen_permission_required", "Input Monitoring permission is required", subsystem="input")
         self._ready.clear()
+        self._stop_requested.clear()
         self._error = None
         self._thread = threading.Thread(target=self._run, name="jarvis-macos-event-tap", daemon=True)
         self._thread.start()
         self._ready.wait(timeout=5.0)
         if self._error is not None:
-            self._thread = None
-            if isinstance(self._error, BackendError):
-                raise self._error
-            raise BackendError("input.macos_event_tap_failed", "Passive event tap failed", subsystem="input") from self._error
+            self.stop()
+            raise self._error
+        if self._stop_requested.is_set():
+            raise BackendError("input.macos_event_tap_stopping", "Passive event tap is still stopping", subsystem="input")
         if not self._ready.is_set():
-            self.adapter.stop()
-            self._thread = None
+            self.stop()
             raise BackendError("input.macos_event_tap_timeout", "Passive event tap startup timed out", subsystem="input")
 
+    @property
+    def last_error(self) -> BackendError | None:
+        return self._error
+
     def _run(self) -> None:
+        def on_ready() -> None:
+            if self._stop_requested.is_set():
+                raise BackendError("input.macos_event_tap_stopping", "Passive event tap is still stopping", subsystem="input")
+            self._ready.set()
+
         try:
-            self.adapter.run(self.handle_event, self._ready.set)
+            self.adapter.run(self.handle_event, on_ready)
+            if not self._stop_requested.is_set():
+                raise BackendError("input.macos_event_tap_closed", "Passive event tap stopped unexpectedly", subsystem="input")
         except Exception as exc:
-            self._error = exc
+            if not self._stop_requested.is_set():
+                self._error = exc if isinstance(exc, BackendError) else BackendError("input.macos_event_tap_failed", "Passive event tap failed", subsystem="input")
+                if self._error is not exc:
+                    self._error.__cause__ = exc
+        finally:
             self._ready.set()
 
     def stop(self) -> None:
+        self._stop_requested.set()
         self.publisher.force_release(time.perf_counter(), "source_stop")
         self.adapter.stop()
         if self._thread is not None:
             self._thread.join(timeout=5.0)
+            if self._thread.is_alive():
+                return
         self._thread = None

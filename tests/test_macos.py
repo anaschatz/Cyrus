@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import queue
 import subprocess
 import sys
 import tempfile
@@ -292,10 +293,10 @@ class MacPttTests(unittest.TestCase):
         self.assertEqual(publisher.events.get_nowait().transition, PttTransition.UP)
         self.assertEqual(mac_ptt_keycode("RIGHT_OPTION"), MAC_RIGHT_OPTION_KEYCODE)
 
-    def test_native_right_option_release_is_independent_of_left_option(self) -> None:
+    def test_native_tap_handles_right_option_and_cancelled_readiness(self) -> None:
         # SDK IOLLEvent.h: left Option = 0x20, right Option = 0x40.
-        for left_held in (False, True):
-            with self.subTest(left_held=left_held):
+        for left_held, cancelled in ((False, False), (True, False), (False, True)):
+            with self.subTest(left_held=left_held, cancelled=cancelled):
                 publisher = PttEventPublisher(capacity=8, maximum_hold_seconds=5, ptt_vkey=mac_ptt_vkey("RIGHT_OPTION"))
                 adapter = CoreGraphicsEventTapAdapter()
                 source = MacEventTapPttSource(publisher, key="RIGHT_OPTION", adapter=adapter)
@@ -316,13 +317,60 @@ class MacPttTests(unittest.TestCase):
                 pointer = mock.Mock()
                 pointer.in_dll.return_value = SimpleNamespace(value=4)
                 with mock.patch.object(adapter, "_framework", side_effect=[cg, cf]), mock.patch.object(mac_ptt.ctypes, "c_void_p", pointer), mock.patch.object(mac_ptt.ctypes, "CFUNCTYPE", return_value=lambda callback: callback):
-                    adapter.run(source.handle_event, lambda: None)
+                    if cancelled:
+                        with self.assertRaises(BackendError):
+                            adapter.run(source.handle_event, mock.Mock(side_effect=BackendError("input.cancelled", "cancelled", subsystem="input")))
+                        cf.CFRunLoopRun.assert_not_called()
+                    else:
+                        adapter.run(source.handle_event, lambda: None)
                 transitions = []
                 while not publisher.events.empty():
                     transitions.append(publisher.events.get_nowait().transition)
-                self.assertEqual(transitions, [PttTransition.DOWN, PttTransition.UP])
+                self.assertEqual(transitions, [] if cancelled else [PttTransition.DOWN, PttTransition.UP])
                 cf.CFMachPortInvalidate.assert_called_once_with(1)
                 self.assertEqual(cf.CFRelease.call_args_list, [mock.call(2), mock.call(1)])
+
+    def test_startup_timeout_keeps_live_event_tap_worker_owned(self) -> None:
+        source = MacEventTapPttSource(self.publisher(), key="F9", adapter=FakeTapAdapter(True))
+        worker = mock.Mock()
+        worker.is_alive.return_value = True
+        with mock.patch.object(mac_ptt.sys, "platform", "darwin"), mock.patch.object(mac_ptt.threading, "Thread", return_value=worker) as factory, mock.patch.object(source._ready, "wait", return_value=False):
+            with self.assertRaisesRegex(BackendError, "input.macos_event_tap_timeout"):
+                source.start()
+            self.assertIs(source._thread, worker)
+            with self.assertRaisesRegex(BackendError, "input.macos_event_tap_stopping"):
+                source.start()
+            factory.assert_called_once()
+            worker.is_alive.return_value = False
+            source.stop()
+            self.assertIsNone(source._thread)
+
+    def test_worker_exit_and_late_readiness_are_observable(self) -> None:
+        for failure, stopping, code in (
+            (None, False, "input.macos_event_tap_closed"),
+            (OSError("synthetic native failure"), False, "input.macos_event_tap_failed"),
+            (BackendError("input.test_failure", "test", subsystem="input"), False, "input.test_failure"),
+            (None, True, None),
+        ):
+            with self.subTest(code=code):
+                activated = mock.Mock()
+                adapter = mock.Mock()
+                def run(callback, on_ready):
+                    on_ready()
+                    activated()
+                    if failure is not None:
+                        raise failure
+                adapter.run.side_effect = run
+                source = MacEventTapPttSource(self.publisher(), key="F9", adapter=adapter)
+                if stopping:
+                    source.stop()
+                    source.handle_event(CG_EVENT_KEY_DOWN, mac_function_keycode("F9"), False, 1.0)
+                    self.assertTrue(source.publisher.events.empty())
+                source._run()
+                self.assertEqual(activated.called, not stopping)
+                self.assertTrue(source._ready.is_set())
+                error = getattr(source, "last_error", None)
+                self.assertEqual(error.code if error is not None else None, code)
 
     def test_only_f1_through_f20_are_supported(self) -> None:
         self.assertEqual(mac_function_keycode("F20"), 90)
@@ -902,6 +950,32 @@ class MacDoctorConfigTests(unittest.TestCase):
 
 
 class MacRuntimeResourceTests(unittest.TestCase):
+    def test_runtime_surfaces_event_tap_worker_failure(self) -> None:
+        instance = mac_runtime.MacVoiceRuntime.__new__(mac_runtime.MacVoiceRuntime)
+        instance._stop_requested = threading.Event()
+        for name in ("audio", "asr", "vad", "core", "transport", "reliable", "cloud_approval", "action_approval", "recovery"):
+            setattr(instance, name, mock.Mock())
+        instance.ptt = mock.Mock(last_error=BackendError("input.macos_event_tap_closed", "closed", subsystem="input"))
+        instance.tts = mock.Mock(last_error=None)
+        instance.publisher = mock.Mock(events=queue.Queue())
+        instance.publisher.take_forced_release.return_value = None
+        instance.approval_keys = mock.Mock(events=queue.Queue())
+        instance.callbacks = queue.Queue()
+        instance.scheduler_runtime = None
+        instance.recovery.poll.return_value = None
+        instance.reliable.due_retransmissions.return_value = []
+        instance.reliable.consume_connected_timeout.return_value = False
+        instance.cloud_approval.due_decision_retransmissions.return_value = []
+        instance.action_approval.due_decision_retransmissions.return_value = []
+        instance._receive_or_reconnect = mock.Mock(return_value=None)
+        instance._poll_transcription = mock.Mock(side_effect=lambda: setattr(instance, "_running", False))
+        for name in ("close", "_drain_ui_activity", "_heartbeat_ui_state", "_record_timing", "_publish_ui_state"):
+            setattr(instance, name, mock.Mock())
+        with mock.patch.object(mac_runtime, "warm_macos_asr_backend", return_value=None), mock.patch.object(mac_runtime, "warm_macos_vad_backend", return_value=0):
+            with self.assertRaisesRegex(BackendError, "input.macos_event_tap_closed"):
+                instance.run()
+        instance.close.assert_called_once()
+
     def test_partial_startup_and_shutdown_failures_release_owned_resources(self) -> None:
         for failure in ("asr", "CloudApprovalJournal", "SileroOnnxVad", "router", "stop", "interrupt", None):
             with self.subTest(failure=failure), ExitStack() as patches:

@@ -674,9 +674,10 @@ class MacVoiceRuntime:
                             else:
                                 self.cloud_approval.mark_decision_sent(decision.event_id, now=now)
                 self._poll_transcription()
-                tts_error = getattr(self.tts, "last_error", None)
-                if isinstance(tts_error, BackendError):
-                    raise tts_error
+                for backend in (self.tts, self.ptt):
+                    error = getattr(backend, "last_error", None)
+                    if isinstance(error, BackendError):
+                        raise error
                 while True:
                     try:
                         callback = self.callbacks.get_nowait()
