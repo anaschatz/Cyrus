@@ -10,7 +10,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable
 
 from .errors import BackendError
 from .macos.compact_greek_tts_pilot import (
@@ -198,7 +198,7 @@ def piper_mps_training_readiness(
         code = "tts.f1_mps.inputs_invalid"
     elif not smoke_disk_ready:
         code = "tts.f1_mps.smoke_disk_insufficient"
-    elif not source_ready and not wheel_core_ready:
+    elif not source_ready:
         code = "tts.f1_mps.source_checkout_required"
     elif not dependencies_ready:
         code = "tts.f1_mps.environment_materialization_required"

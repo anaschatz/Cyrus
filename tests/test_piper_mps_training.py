@@ -36,7 +36,7 @@ class PiperMpsTrainingTests(unittest.TestCase):
             directory.mkdir(parents=True)
         return data, artifacts, work, source
 
-    def report(self, root: Path, **overrides: object) -> dict[str, object]:
+    def report(self, root: Path, *, wheel_core_ready: bool = False, **overrides: object) -> dict[str, object]:
         data, artifacts, work, source = self.fixture(root)
         versions = {
             "piper-tts": PIPER_VERSION,
@@ -64,7 +64,7 @@ class PiperMpsTrainingTests(unittest.TestCase):
             return_value=SimpleNamespace(ready=True),
         ), mock.patch(
             "jarvis_voice.piper_mps_training._wheel_has_training_core",
-            return_value=False,
+            return_value=wheel_core_ready,
         ):
             return piper_mps_training_readiness(data, artifacts, work, **arguments)
 
@@ -83,6 +83,16 @@ class PiperMpsTrainingTests(unittest.TestCase):
                 Path(temporary), source_revision_probe=lambda _path: None
             )
         self.assertTrue(report["materialization_ready"])
+        self.assertFalse(report["smoke_ready"])
+        self.assertEqual(report["code"], "tts.f1_mps.source_checkout_required")
+
+    def test_missing_source_never_reports_training_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report = self.report(
+                Path(temporary), wheel_core_ready=True,
+                source_revision_probe=lambda _: None,
+            )
+        self.assertFalse(report["ready"])
         self.assertFalse(report["smoke_ready"])
         self.assertEqual(report["code"], "tts.f1_mps.source_checkout_required")
 

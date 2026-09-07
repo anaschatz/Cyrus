@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -126,6 +127,36 @@ class PiperMpsMaterializationTests(unittest.TestCase):
                     revision_probe=lambda _source: PIPER_REVISION,
                     compiler_path="/usr/bin/clang",
                 )
+
+    def test_rejects_resolved_paths_outside_environment_before_build(self):
+        routes = ("parent-components",) if os.name == "nt" else ("parent-components", "platlib-link", "package-link")
+        for route in routes:
+            with self.subTest(route=route), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                python, platlib, source = self.fixture(root)
+                outside = root / "outside"
+                outside_package = outside / "piper/train/vits/monotonic_align"
+                outside_package.mkdir(parents=True)
+                outside_target = outside_package / "monotonic_align"
+                outside_target.mkdir()
+                (outside_package / "__init__.py").write_text("")
+                if route == "parent-components":
+                    selected = python.parent.parent / ".." / "outside"
+                elif route == "platlib-link":
+                    selected = python.parent.parent / "linked-packages"
+                    selected.symlink_to(outside, target_is_directory=True)
+                else:
+                    selected = platlib
+                    (platlib / "piper/train/vits/monotonic_align/monotonic_align").symlink_to(outside_package / "monotonic_align", target_is_directory=True)
+                runner = FakeRunner(selected)
+                with self.assertRaisesRegex(BackendError, "tts.f1_mps.platlib_invalid"):
+                    materialize_piper_mps_extension(
+                        python, source, runner=runner,
+                        revision_probe=lambda _: PIPER_REVISION,
+                        compiler_path="/usr/bin/clang",
+                    )
+                self.assertEqual(len(runner.calls), 1)
+                self.assertEqual(list(outside_target.iterdir()), [])
 
 
 if __name__ == "__main__":

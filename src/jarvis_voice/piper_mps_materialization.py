@@ -133,23 +133,24 @@ def materialize_piper_mps_extension(
             "tts.f1_mps.piper_version_mismatch",
             "Training environment has the wrong Piper version",
         )
-    environment_root = python.parent.parent.absolute()
+    target_directory = platlib / "piper/train/vits/monotonic_align/monotonic_align"
+    parent_package = target_directory.parent / "__init__.py"
     try:
-        inside_environment = os.path.commonpath((environment_root, platlib)) == str(
-            environment_root
+        environment_root = python.parent.parent.resolve()
+        target_directory = target_directory.resolve()
+        inside_environment = (
+            platlib.is_absolute()
+            and platlib.resolve().is_relative_to(environment_root)
+            and target_directory.is_relative_to(environment_root)
         )
-    except ValueError:
+    except (OSError, RuntimeError, ValueError):
         inside_environment = False
-    if not platlib.is_absolute() or not inside_environment:
+    if not inside_environment:
         raise _error(
             "tts.f1_mps.platlib_invalid",
             "Training site-packages path is outside the isolated environment",
         )
 
-    target_directory = (
-        platlib / "piper/train/vits/monotonic_align/monotonic_align"
-    )
-    parent_package = target_directory.parent / "__init__.py"
     if not parent_package.is_file() or parent_package.is_symlink():
         raise _error(
             "tts.f1_mps.piper_package_invalid",
