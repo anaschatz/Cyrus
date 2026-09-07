@@ -1727,3 +1727,18 @@ All **21 probe/doctor tests pass**, `/tmp/cyrus-probe-cleanup-after.log`. Full V
 **V299 — OPEN:** complete audio-buffer and WASAPI/CoreAudio caller inspection found no synchronization across callback copy and turn transitions. A callback paused during copy, followed by abort_turn/begin_turn, appended the cancelled turn's synthetic sample into the next turn. The real-thread probe returns `[7.0]` for the new turn, `/tmp/cyrus-audio-turn-race-probe.log`. This needs a shared buffer handoff fix, not separate behavior in each native adapter.
 
 Coverage is **246/401 code, 210/331 tests and 41/308 support**, with **497 reviewed hashes verified across 1040 entries**. V299, remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
+
+
+### Audio callback and turn handoff
+
+Active-probe cleanup committed as **1e649ac**, with a clean mandatory Ponytail review.
+
+**V299 resolved:** a shared standard-library Lock now makes callback copies atomic with begin/end/abort transitions. Callback acquisition remains nonblocking; contention during active capture invalidates the partial turn instead of publishing incomplete audio. end_turn detaches its completed frame deque before conversion, so a subsequent capture can proceed without sharing or clearing that old data. WASAPI and CoreAudio callbacks retain one local buffer reference when stop concurrently clears the instance field. Queue capacity, duration limits and chunk coalescing remain unchanged. Turn transitions can wait for an in-flight callback copy; this is not a hard real-time guarantee for the control thread.
+
+Four new regression methods produced **three failures and three errors before the fix**, `/tmp/cyrus-audio-handoff-before.log`. They exercise real bounded threads and synthetic samples: old callback completion across abort/begin, immediate contention rejection, concurrent conversion/new capture, and each native adapter's reference race. All **18 focused tests pass**, `/tmp/cyrus-audio-handoff-after.log`. Full Voice: **764 tests in 8.326 seconds, 749 passed and 15 skipped**, `/tmp/cyrus-full-review-audio-handoff-voice.log`. Fatal Ruff and unchanged module boundaries pass. The latest full Orchestrator result remains **1106 tests (1101 passed, five skipped)** from the CUDA deadline checkpoint; this isolated audio change did not rerun it. No native microphone, audio device or model was used.
+
+Ponytail: one standard-library lock and local frame/buffer ownership, no dependency or additional abstraction. Earlier unstaged native resource-cleanup hunks are preserved outside this checkpoint; coverage hashes describe the reviewed worktree, while the exact staged callback/buffer implementation is separately checked with the regression tests.
+
+Coverage is **247/401 code, 211/332 tests and 41/308 support**, with **499 reviewed hashes verified across 1041 entries**. Remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete. Source review and passing synthetic tests do not establish native-platform qualification or absence of further bugs.
+
+Ponytail follow-up for the audio checkpoint: replaced the four-line timeout-catching test block with concurrent.futures.wait, removing three lines. All four regression methods pass again; production behavior and the full-suite results above are unchanged.

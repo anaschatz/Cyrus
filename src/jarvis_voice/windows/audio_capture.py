@@ -47,8 +47,9 @@ class WasapiAudioCapture:
 
     def _callback(self, indata: bytes, frames: int, time_info: Any, status: Any) -> None:
         del frames, time_info, status
-        if self._buffer is not None:
-            self._buffer.publish_from_callback(indata)
+        buffer = self._buffer
+        if buffer is not None:
+            buffer.publish_from_callback(indata)
 
     def begin_turn(self) -> None:
         if self._buffer is None:

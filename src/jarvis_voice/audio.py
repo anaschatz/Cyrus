@@ -6,6 +6,7 @@ from array import array
 from collections import deque
 from dataclasses import dataclass
 from math import ceil
+from threading import Lock
 from typing import Callable
 
 from .backends import AudioChunk
@@ -28,6 +29,7 @@ class BoundedCaptureBuffer:
         self.capacity = capacity
         self.sample_rate = sample_rate
         self.maximum_samples = maximum_samples
+        self._lock = Lock()
         self._frames: deque[bytearray] = deque()
         self._chunk_samples = (
             ceil(maximum_samples / capacity) if maximum_samples is not None else None
@@ -39,65 +41,77 @@ class BoundedCaptureBuffer:
         self._sample_count = 0
 
     def begin_turn(self) -> None:
-        self._frames.clear()
-        self._overflowed = False
-        self._accepted = 0
-        self._sample_count = 0
-        self._capturing = True
-
-    def publish_from_callback(self, frames: bytes) -> bool:
-        if not self._capturing:
-            self._discarded += 1
-            return False
-        incoming_samples = len(frames) // 4
-        if self._overflowed or (
-            self.maximum_samples is not None
-            and self._sample_count + incoming_samples > self.maximum_samples
-        ):
-            self._overflowed = True
+        with self._lock:
             self._capturing = False
             self._frames.clear()
+            self._overflowed = False
+            self._accepted = 0
+            self._sample_count = 0
+            self._capturing = True
+
+    def publish_from_callback(self, frames: bytes) -> bool:
+        if not self._lock.acquire(blocking=False):
+            if self._capturing:
+                self._overflowed = True
+            self._discarded += 1
             return False
-        if self._chunk_samples is None:
-            if len(self._frames) >= self.capacity:
+        try:
+            if not self._capturing:
+                self._discarded += 1
+                return False
+            incoming_samples = len(frames) // 4
+            if self._overflowed or (
+                self.maximum_samples is not None
+                and self._sample_count + incoming_samples > self.maximum_samples
+            ):
                 self._overflowed = True
                 self._capturing = False
                 self._frames.clear()
                 return False
-            self._frames.append(bytearray(frames))
-        else:
-            chunk_bytes = self._chunk_samples * 4
-            remaining = memoryview(frames)
-            while remaining:
-                if not self._frames or len(self._frames[-1]) >= chunk_bytes:
-                    if len(self._frames) >= self.capacity:
-                        self._overflowed = True
-                        self._capturing = False
-                        self._frames.clear()
-                        return False
-                    self._frames.append(bytearray())
-                target = self._frames[-1]
-                take = min(chunk_bytes - len(target), len(remaining))
-                target.extend(remaining[:take])
-                remaining = remaining[take:]
-        self._sample_count += incoming_samples
-        self._accepted += 1
-        return True
+            if self._chunk_samples is None:
+                if len(self._frames) >= self.capacity:
+                    self._overflowed = True
+                    self._capturing = False
+                    self._frames.clear()
+                    return False
+                self._frames.append(bytearray(frames))
+            else:
+                chunk_bytes = self._chunk_samples * 4
+                remaining = memoryview(frames)
+                while remaining:
+                    if not self._frames or len(self._frames[-1]) >= chunk_bytes:
+                        if len(self._frames) >= self.capacity:
+                            self._overflowed = True
+                            self._capturing = False
+                            self._frames.clear()
+                            return False
+                        self._frames.append(bytearray())
+                    target = self._frames[-1]
+                    take = min(chunk_bytes - len(target), len(remaining))
+                    target.extend(remaining[:take])
+                    remaining = remaining[take:]
+            self._sample_count += incoming_samples
+            self._accepted += 1
+            return True
+        finally:
+            self._lock.release()
 
     def end_turn(self) -> AudioChunk:
-        self._capturing = False
-        if self._overflowed:
-            self._frames.clear()
-            raise BackendError("audio.capture_overflow", "Audio capture queue overflowed", subsystem="audio")
+        with self._lock:
+            self._capturing = False
+            if self._overflowed:
+                self._frames.clear()
+                raise BackendError("audio.capture_overflow", "Audio capture queue overflowed", subsystem="audio")
+            frames, self._frames = self._frames, deque()
         samples = array("f")
-        for frame in self._frames:
+        for frame in frames:
             samples.frombytes(frame)
-        self._frames.clear()
         return AudioChunk(samples, self.sample_rate)
 
     def abort_turn(self) -> None:
-        self._capturing = False
-        self._frames.clear()
+        with self._lock:
+            self._capturing = False
+            self._frames.clear()
 
     @property
     def stats(self) -> CaptureStats:

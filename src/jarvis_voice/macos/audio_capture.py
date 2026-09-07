@@ -68,8 +68,9 @@ class CoreAudioCapture:
 
     def _callback(self, indata: bytes, frames: int, time_info: Any, status: Any) -> None:
         del frames, time_info, status
-        if self._buffer is not None:
-            self._buffer.publish_from_callback(indata)
+        buffer = self._buffer
+        if buffer is not None:
+            buffer.publish_from_callback(indata)
         if self.frame_observer is not None and self._sample_rate is not None:
             try:
                 self.frame_observer(bytes(indata), self._sample_rate, time.perf_counter())
