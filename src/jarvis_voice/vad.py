@@ -12,12 +12,16 @@ from .errors import BackendError
 
 
 def validate_artifact(path: str | None, size: int | None, sha256: str | None) -> tuple[bool, str]:
-    if not path or size is None or not sha256:
+    if (
+        not isinstance(path, str) or not path
+        or type(size) is not int or size < 1
+        or not isinstance(sha256, str) or not sha256
+    ):
         return False, "vad.artifact_manifest_required"
     artifact = Path(path).expanduser()
-    if not artifact.is_file():
-        return False, "vad.artifact_missing"
     try:
+        if not artifact.is_file():
+            return False, "vad.artifact_missing"
         if artifact.stat().st_size != size:
             return False, "vad.artifact_size_mismatch"
         digest = hashlib.sha256()

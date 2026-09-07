@@ -205,11 +205,7 @@ def _is_real_directory_chain(path: Path) -> bool:
                 metadata = current.lstat()
             except OSError:
                 return False
-            if (
-                not stat.S_ISDIR(metadata.st_mode)
-                or current.is_symlink()
-                or _is_reparse(metadata)
-            ):
+            if not stat.S_ISDIR(metadata.st_mode) or _is_reparse(metadata):
                 return False
         return True
     if not _windows_drive_is_local(str(path)):
@@ -219,11 +215,7 @@ def _is_real_directory_chain(path: Path) -> bool:
         root_metadata = current.lstat()
     except OSError:
         return False
-    if (
-        not stat.S_ISDIR(root_metadata.st_mode)
-        or current.is_symlink()
-        or _is_reparse(root_metadata)
-    ):
+    if not stat.S_ISDIR(root_metadata.st_mode) or _is_reparse(root_metadata):
         return False
     for component in path.parts[1:]:
         current = current / component
@@ -231,11 +223,7 @@ def _is_real_directory_chain(path: Path) -> bool:
             metadata = current.lstat()
         except OSError:
             return False
-        if (
-            not stat.S_ISDIR(metadata.st_mode)
-            or current.is_symlink()
-            or _is_reparse(metadata)
-        ):
+        if not stat.S_ISDIR(metadata.st_mode) or _is_reparse(metadata):
             return False
     return True
 
@@ -269,7 +257,7 @@ def validate_model_directory(
             "The model directory must be on a local non-network drive",
         )
     try:
-        directory_metadata = directory.lstat()
+        directory_metadata = directory.lstat() if strict_files else directory.stat()
     except OSError:
         return ManifestValidationResult(
             False,
@@ -285,7 +273,7 @@ def validate_model_directory(
             "model.unsafe_directory",
             "The model directory must be a real non-reparse directory",
         )
-    if not directory.is_dir():
+    if not stat.S_ISDIR(directory_metadata.st_mode):
         return ManifestValidationResult(
             False,
             "model.directory_missing",
@@ -295,21 +283,21 @@ def validate_model_directory(
     expected_names = {spec.name for spec in manifest.files}
     try:
         entries = tuple(directory.iterdir())
+        if strict_files:
+            actual_names = {entry.name for entry in entries}
+        else:
+            actual_names = {
+                entry.name
+                for entry in entries
+                if not entry.name.startswith(".")
+                and (entry.is_file() or entry.is_symlink())
+            }
     except OSError:
         return ManifestValidationResult(
             False,
             "model.directory_unreadable",
             "The configured local model directory cannot be enumerated",
         )
-    if strict_files:
-        actual_names = {entry.name for entry in entries}
-    else:
-        actual_names = {
-            entry.name
-            for entry in entries
-            if not entry.name.startswith(".")
-            and (entry.is_file() or entry.is_symlink())
-        }
     missing = sorted(expected_names - actual_names)
     if missing:
         return ManifestValidationResult(
@@ -342,7 +330,6 @@ def validate_model_directory(
             )
         if strict_files and (
             not stat.S_ISREG(file_stat.st_mode)
-            or model_file.is_symlink()
             or _is_reparse(file_stat)
         ):
             return ManifestValidationResult(
