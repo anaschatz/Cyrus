@@ -21,17 +21,29 @@ ISOLATED_TURN_OPTIONS = {
 }
 
 
+def _finite_score(value: Any) -> float:
+    try:
+        score = float(value)
+        if isinstance(value, bool) or not math.isfinite(score):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise BackendError("asr.invalid_score", "ASR returned an invalid score", subsystem="asr") from exc
+    return score
+
+
 def weighted_logprob(segments: Iterable[Any]) -> tuple[float, float]:
-    weighted_sum = 0.0
+    raw = 0.0
     token_count = 0
     for segment in segments:
+        value = _finite_score(segment.avg_logprob)
+        if value > 0.0:
+            raise BackendError("asr.invalid_score", "ASR log probability must be non-positive", subsystem="asr")
         count = max(1, len(getattr(segment, "tokens", ()) or ()))
-        weighted_sum += float(segment.avg_logprob) * count
         token_count += count
+        raw += (value - raw) * (count / token_count)
     if token_count == 0:
         return float("-inf"), 0.0
-    raw = weighted_sum / token_count
-    return raw, max(0.0, min(1.0, math.exp(raw)))
+    return raw, math.exp(raw)
 
 
 def choose_cpu_compute_type(requested: str, supported: Iterable[str]) -> str:
@@ -53,7 +65,9 @@ def decode_bilingual_transcript(
     segments_iter, info = model.transcribe(samples, **ISOLATED_TURN_OPTIONS)
     segments = list(segments_iter)
     detected_language = str(getattr(info, "language", "und"))
-    detected_score = float(getattr(info, "language_probability", 0.0))
+    detected_score = _finite_score(getattr(info, "language_probability", 0.0))
+    if not 0.0 <= detected_score <= 1.0:
+        raise BackendError("asr.invalid_score", "ASR language score must be between zero and one", subsystem="asr")
     text = unicodedata.normalize(
         "NFC",
         "".join(str(segment.text) for segment in segments).strip(),
@@ -73,19 +87,20 @@ def decode_bilingual_transcript(
                     str(segment.text) for segment in candidate_segments
                 ).strip(),
             )
-            candidate_raw, _candidate_score = weighted_logprob(candidate_segments)
+            try:
+                candidate_raw, _candidate_score = weighted_logprob(candidate_segments)
+            except BackendError as exc:
+                if exc.code != "asr.invalid_score":
+                    raise
+                continue
             if candidate_text and math.isfinite(candidate_raw):
                 candidates.append(
                     (candidate_raw, language, candidate_segments, candidate_text)
                 )
         if candidates:
             chosen = max(candidates, key=lambda item: item[0])
-            maximum_raw = max(item[0] for item in candidates)
-            weights = [math.exp(item[0] - maximum_raw) for item in candidates]
-            total_weight = sum(weights)
-            chosen_index = candidates.index(chosen)
             detected_language = chosen[1]
-            detected_score = weights[chosen_index] / total_weight
+            detected_score = 1.0 / sum(math.exp(item[0] - chosen[0]) for item in candidates)
             segments = chosen[2]
             text = chosen[3]
     return text, detected_language, detected_score, segments
