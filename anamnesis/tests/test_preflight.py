@@ -81,7 +81,22 @@ def _model_event(prompt: str, schema, completion: str) -> ModelEvent:
         output=ModelOutput(model=MODEL, completion=completion, usage=usage),
         call=ModelCall(
             request=request,
-            response={"model": SERVICE_MODEL},
+            response={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": SERVICE_MODEL,
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": completion},
+                }],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 10,
+                    "total_tokens": 110,
+                },
+            },
         ),
         cache=None,
         error=None,
@@ -317,3 +332,52 @@ def test_preflight_artifact_binds_bytes_and_pricing(
             model_name=MODEL,
             pricing=pricing,
         )
+
+
+@pytest.mark.parametrize("tamper", [
+    "none", "cached", "matching-invalid-json", "content", "event-content",
+    "prompt-tokens",
+    "completion-tokens", "total-tokens", "cached-tokens", "reasoning-tokens",
+    "missing-usage", "missing-choices", "extra-choice", "invalid-choice",
+])
+def test_raw_response_binds_decoded_content_and_usage(tamper: str) -> None:
+    log = _valid_preflight_log()
+    event = log.samples[0].events[0]
+    response = event.call.response
+    if tamper == "cached":
+        response["usage"]["prompt_tokens_details"] = {"cached_tokens": 25}
+        event.output.usage.input_tokens = 75
+        event.output.usage.input_tokens_cache_read = 25
+        event.output.usage.total_cost = 0.0001075
+    elif tamper in ("content", "matching-invalid-json"):
+        response["choices"][0]["message"]["content"] = "not valid JSON"
+        if tamper == "matching-invalid-json":
+            event.output.completion = "not valid JSON"
+    elif tamper == "event-content":
+        event.output.completion = '{"actions":[]}'
+    elif tamper in ("prompt-tokens", "completion-tokens", "total-tokens"):
+        response["usage"][tamper.replace("-", "_")] += 1
+    elif tamper == "cached-tokens":
+        response["usage"]["prompt_tokens_details"] = {"cached_tokens": 25}
+    elif tamper == "reasoning-tokens":
+        response["usage"]["completion_tokens_details"] = {"reasoning_tokens": 5}
+    elif tamper == "missing-usage":
+        del response["usage"]
+    elif tamper == "missing-choices":
+        del response["choices"]
+    elif tamper == "extra-choice":
+        response["choices"].append(dict(response["choices"][0], index=1))
+    elif tamper == "invalid-choice":
+        response["choices"][0]["message"] = None
+
+    if tamper in ("none", "cached"):
+        validate_model_preflight_log(log, model_name=MODEL, pricing=MODEL_COST)
+    elif tamper == "matching-invalid-json":
+        _validate_openai_chat_completion_log(
+            log, model_name=MODEL, temperature=0.0, seed=101,
+        )
+    else:
+        with pytest.raises(ValueError, match="raw response"):
+            _validate_openai_chat_completion_log(
+                log, model_name=MODEL, temperature=0.0, seed=101,
+            )
