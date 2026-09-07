@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +131,8 @@ class SchedulerNativeRuntime:
         self, payload: dict[str, Any], send: Callable[[SchedulerEnvelope], None]
     ) -> None:
         notification_id = payload["notification_id"]
+        if datetime.fromisoformat(payload["expires_at_utc"]) <= datetime.now(UTC):
+            return
         if not self.controller.native_dispatch_needed(notification_id):
             return
         attempt_id, dispatching = self.controller.begin_native_dispatch(notification_id)

@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **380 of 401 code files**, plus **298 of 344 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **386 of 401 code files**, plus **299 of 345 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **880 tests (865 passed, 15 skipped)**; Orchestrator **1111 tests (1106 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **881 tests (866 passed, 15 skipped)**; Orchestrator **1111 tests (1106 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2671,3 +2671,20 @@ The new single regression test exercises all **20 invalid field/value combinatio
 Collector follow-ups remain: HTTP timeout is per socket operation rather than a whole-response deadline; SSE event sequencing and deep-JSON normalization are incomplete; backend ownership begins before residency/coordinator validation; an early coexistence failure can leave daemon gateway work active until its own request ends; native subprocess capture is bounded after capture. Input/path races and corpus reopens identified in the contract remain relevant despite final revalidation. Clean language/WER metrics are measured separately from coexistence latency, as specified; no extra quality claim is made for coexistence.
 
 Coverage is **380/401 code, 298/344 tests and 48/308 support**, with **726 reviewed hashes verified across 1053 entries**. Remaining file inspection, confirmed follow-up fixes, broader privacy/compiler qualification, earlier uncommitted changes and the final code-quality assessment remain unfinished.
+
+
+### Scheduler source inspection and expired local notification recovery
+
+The GPU throttle checkpoint is committed as **6ce7fdb**, with a clean mandatory Ponytail review. Completed full rereads of the six previously pending scheduler client, compatibility, journal, native, protocol and runtime modules. The transport already validates session identity before forwarding extension frames. Traced the server's expires_at boundary through delivery expiry and outbox leasing; both reject at equality. Existing encrypted transport/replay tests were re-read.
+
+**V402 resolved:** local native dispatch ignored the server-supplied expiry. On scheduler.ready, the client recovers its persisted notification requests before receiving any newer server events, and could display a request whose server delivery/outbox had expired. The same defect affected a delayed initial request. The common _dispatch entry now compares the supplied expiry with UTC wall time and returns before creating a delivery attempt or calling the adapter when expired. This adds **3 production lines**, no dependency or new scheduling authority; the server still supplies the deadline.
+
+The regression uses the real controller/runtime and encrypted SQLite journal, explicitly closes/reopens the journal for restart cases, and injects a fake native adapter and fixed clock. Six subcases exercise initial/recovery routes at one millisecond before expiry, exactly expiry and one millisecond after. Four expired/equal cases fail before the fix while two unexpired controls pass, `/tmp/cyrus-scheduler-expiry-before.log`. Final checks verify zero native posts, zero dispatch rows and zero delivery receipts for expired entries, retaining ordinary DISPATCHING/OS_ACCEPTED for unexpired ones. The existing delivery smoke fixture now has a future expiry relative to execution rather than a hardcoded August date.
+
+All **40 focused checks pass**, `/tmp/cyrus-scheduler-expiry-focused.log`. Full Voice: **881 tests, 866 passed and 15 skipped**, `/tmp/cyrus-full-review-scheduler-expiry-voice.log`, 14.096 seconds. Full Orchestrator: **1111 tests, 1106 passed and 5 skipped**, `/tmp/cyrus-full-review-scheduler-expiry-orchestrator.log`, 33.169 seconds, using temporary local test sockets. Fatal Ruff, whitespace and the unchanged module-size ratchet pass. No actual native notification, user action, key-store access or live provider was invoked by the regression.
+
+Only V402's three runtime lines and the existing test's expiry/import hunk are staged from those two already-dirty files; older initialization/callback/private-state and native-test changes remain outside this checkpoint. Other new checkpoint files are the expiry test and the two review records. Coverage hashes describe inspected working bytes, not just the committed subset.
+
+Remaining scheduler risks include encrypted-journal retention/unbounded scans, plaintext and unbounded per-connection fingerprints, durable approval decisions, callback shutdown/lifecycle durability, incomplete notification payload validation and actual runtime/artifact qualification. The new expiry guard applies at dispatch entry; it does not claim to interrupt a blocking send/native call that crosses the deadline, synchronize divergent machine clocks or remove previously displayed notifications at expiry. Those are distinct qualification/behavior questions.
+
+Coverage is **386/401 code, 299/345 tests and 48/308 support**, with **733 reviewed hashes verified across 1054 entries**. Remaining source/support inspection, confirmed follow-up fixes, prior uncommitted checkpoints and the final quality assessment remain unfinished.

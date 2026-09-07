@@ -11,6 +11,7 @@ import plistlib
 import re
 import os
 import queue
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
@@ -393,7 +394,7 @@ class SchedulerNativeTests(unittest.TestCase):
                 "delivery_generation": 0,
                 "scheduled_at_utc": "2026-08-11T12:00:00.000Z",
                 "effective_due_at_utc": "2026-08-11T12:00:00.000Z",
-                "expires_at_utc": "2026-08-12T12:00:00.000Z",
+                "expires_at_utc": (datetime.now(UTC) + timedelta(days=1)).isoformat().replace("+00:00", "Z"),
                 "content_sha256": "5" * 64,
                 "title": "Sensitive title",
                 "body": "Sensitive body",
