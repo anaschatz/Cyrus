@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
-import stat
 from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
@@ -16,6 +14,8 @@ from .gemma4 import (
     RENDERER_SHA256,
     render_gemma4_prompt,
 )
+from .errors import ApplianceError
+from .manifest import _read_manifest_file
 from .strict_json import canonical_bytes, parse_body
 
 
@@ -63,24 +63,11 @@ def _exact(value: Any, fields: set[str], name: str) -> dict[str, Any]:
 
 def _safe_regular_file(path: Path, *, maximum: int, name: str) -> bytes:
     try:
-        info = path.lstat()
-    except OSError as exc:
-        raise WindowsPrimaryFixtureFailure(f"unsafe {name} path") from exc
-    reparse = bool(
-        os.name == "nt"
-        and getattr(info, "st_file_attributes", 0)
-        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    )
-    if not stat.S_ISREG(info.st_mode) or path.is_symlink() or reparse:
-        raise WindowsPrimaryFixtureFailure(f"unsafe {name} path")
-    if info.st_size <= 0 or info.st_size > maximum:
-        raise WindowsPrimaryFixtureFailure(f"invalid {name} size")
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        raise WindowsPrimaryFixtureFailure(f"unreadable {name}") from exc
-    if len(raw) != info.st_size:
-        raise WindowsPrimaryFixtureFailure(f"unstable {name}")
+        raw = _read_manifest_file(path, maximum=maximum)
+    except (ApplianceError, OSError) as exc:
+        raise WindowsPrimaryFixtureFailure(f"unsafe {name}") from exc
+    if not raw:
+        raise WindowsPrimaryFixtureFailure(f"unsafe {name}")
     return raw
 
 

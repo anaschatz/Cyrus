@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import tempfile
 import threading
@@ -10,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from jarvis_inference.durable import read_report
+from jarvis_inference.durable import generic_report_matches, read_report
 from jarvis_inference.errors import ApplianceError
 from jarvis_inference.manifest import load_manifest
 from jarvis_inference.primary_qualification import _PrimaryQualificationProduction
@@ -23,6 +24,79 @@ from jarvis_inference.qualification import (
 )
 from jarvis_inference.strict_json import canonical_bytes
 
+TEST_HARDWARE_ENV = {
+    "JARVIS_QUAL_GPU_DRIVER": "test",
+    "JARVIS_QUAL_COMPUTE_RUNTIME": "CUDA 12.8",
+}
+
+
+def passing_report(manifest, identity: dict, runner: dict) -> dict:
+    """Synthetic passing evidence for transport and report-admission tests."""
+    from jarvis_inference.qualification import (
+        _WINDOWS_QUALIFICATION_ASSETS,
+        _load_windows_qualification_assets,
+    )
+
+    evidence = QualificationTests().evidence(identity)
+    evidence["tools"] = (
+        {"named_success": 10, "required_success": 10}
+        if manifest.capabilities.tools
+        else {"named_success": 0, "required_success": 0}
+    )
+    evidence["json_schema"] = {
+        "strict_success": 20 if manifest.capabilities.json_schema else 0
+    }
+    if manifest.platform == "windows-x86_64":
+        for name, (relative, _) in _WINDOWS_QUALIFICATION_ASSETS.items():
+            path = manifest.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode())
+        assets = _load_windows_qualification_assets(manifest)
+        evidence["platform_gate"]["assets"] = assets
+        evidence["platform_gate"]["audio_corpus_digest"] = assets["audio_corpus"][
+            "sha256"
+        ]
+        evidence["fixture_digest"] = hashlib.sha256(
+            canonical_bytes({"runner": runner, "assets": assets})
+        ).hexdigest()
+    else:
+        evidence["platform_gate"] = {
+            "kind": "mac_unified_memory",
+            "warmup_requests": 20,
+            "normal_requests": 200,
+            "final_drift": 0.01,
+            "theil_sen_projected_growth": 0.01,
+            "oom": 0,
+            "crashes": 0,
+            "stale_state_references": 0,
+        }
+    evidence["provenance"].update(
+        identity_digest=hashlib.sha256(canonical_bytes(identity)).hexdigest(),
+        fixture_digest=evidence["fixture_digest"],
+        started_unix_ns="1100000000",
+        completed_unix_ns="1900000000",
+        monotonic_elapsed_ns=800000000,
+    )
+    metadata = {
+        "suite_version",
+        "fixture_digest",
+        "deterministic_seeds",
+        "identity",
+        "provenance",
+    }
+    return {
+        "report_schema_version": 1,
+        "status": "pass",
+        "started": 1,
+        "completed": 2,
+        "evidence_digest": hashlib.sha256(canonical_bytes(evidence)).hexdigest(),
+        "fixture_runner": runner,
+        **{key: evidence[key] for key in metadata},
+        "results": {
+            key: value for key, value in evidence.items() if key not in metadata
+        },
+    }
+
 
 def artifact(path: Path, root: Path) -> dict:
     raw = path.read_bytes()
@@ -30,6 +104,61 @@ def artifact(path: Path, root: Path) -> dict:
 
 
 class QualificationTests(unittest.TestCase):
+    def test_persisted_windows_report_rechecks_gates_and_current_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = self.manifest(root)
+            runner = root / "fixture-runner"
+            runner.write_bytes(b"runner")
+            identity = self.identity()
+            good = passing_report(manifest, identity, artifact(runner, root))
+            self.assertTrue(generic_report_matches(manifest, identity, good))
+            mutations = [
+                ("results", {}, None),
+                ("results", {"greek_success": 20}, "streaming"),
+                (
+                    "results",
+                    {"greek_success": 20.0, "english_success": 20},
+                    "streaming",
+                ),
+                ("report_schema_version", True, None),
+                ("provenance", "0" * 64, "identity_digest"),
+                ("provenance", "3000000000", "completed_unix_ns"),
+                ("provenance", None, None),
+            ]
+            for field, value, child in mutations:
+                bad = copy.deepcopy(good)
+                if child is None:
+                    bad[field] = value
+                else:
+                    bad[field][child] = value
+                with self.subTest(field=field, child=child, value=value):
+                    self.assertFalse(generic_report_matches(manifest, identity, bad))
+            bad = copy.deepcopy(good)
+            bad["results"]["platform_gate"]["coexistence_p95"] = 2
+            self.assertFalse(generic_report_matches(manifest, identity, bad))
+            asset = (
+                root
+                / good["results"]["platform_gate"]["assets"]["audio_corpus"]["path"]
+            )
+            asset.write_bytes(b"changed corpus")
+            self.assertFalse(generic_report_matches(manifest, identity, good))
+
+    def test_stopped_or_failed_qualification_supervision_is_not_ready(self) -> None:
+        for production_type in (_QualificationProduction, _PrimaryQualificationProduction):
+            with self.subTest(production=production_type.__name__):
+                production = production_type(SimpleNamespace(), "test", None)
+                production.engine = SimpleNamespace(ready=lambda: True)
+                production.ready_state = True
+                production.stop.set()
+                self.assertFalse(production.is_ready())
+                production.stop.clear()
+                failure = OSError("supervision failed")
+                with patch.object(production_type, "_supervise_loop", side_effect=failure):
+                    production._supervise()
+                self.assertFalse(production.is_ready())
+                self.assertIs(production.loader_failure, failure)
+
     def test_generic_and_profile_supervisors_cannot_publish_after_close(self) -> None:
         for production_type in (
             _QualificationProduction,

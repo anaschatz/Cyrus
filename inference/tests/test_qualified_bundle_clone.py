@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import copy
 import hashlib
 import importlib.util
 import io
@@ -17,6 +18,11 @@ from unittest.mock import patch
 from jarvis_inference.strict_json import canonical_bytes
 from jarvis_inference.gateway import effective_configuration
 from jarvis_inference.qualification import SUITE_VERSION
+from jarvis_inference.manifest import load_manifest, _verify_python_record_files
+from jarvis_inference.errors import ApplianceError
+from jarvis_inference.durable import generic_report_matches
+from jarvis_inference.python_environment import hash_environment
+from test_qualification import passing_report
 
 
 SCRIPT = (
@@ -103,9 +109,10 @@ class QualifiedBundleFixture:
             dist_info / "METADATA",
             f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n".encode(),
         )
+        wheel_metadata = self._write(dist_info / "WHEEL", b"Wheel-Version: 1.0\n")
         record = dist_info / "RECORD"
         rows: list[list[str]] = []
-        for path in sorted([*package.iterdir(), metadata]):
+        for path in sorted([*package.iterdir(), metadata, wheel_metadata]):
             relative = path.relative_to(self.site).as_posix()
             raw = path.read_bytes()
             rows.append([relative, _record_hash(raw), str(len(raw))])
@@ -192,6 +199,7 @@ class QualifiedBundleFixture:
             },
             "platform": "macos-arm64",
             "python": {
+                "environment_sha256": hash_environment(self.root / "python"),
                 "executable": _artifact(self.root, executable),
                 "implementation": "CPython",
                 "packages": [
@@ -244,34 +252,13 @@ class QualifiedBundleFixture:
             },
             "python": {"implementation": "CPython", "version": "3.11.9"},
         }
-        report = {
-            "completed": 2,
-            "deterministic_seeds": [1],
-            "evidence_digest": "a" * 64,
-            "fixture_digest": "b" * 64,
-            "fixture_runner": _artifact(self.root, fixture_runner),
-            "identity": identity,
-            "provenance": {
-                "challenge": "c" * 64,
-                "completed_unix_ns": "2",
-                "fixture_digest": "b" * 64,
-                "identity_digest": hashlib.sha256(
-                    canonical_bytes(identity)
-                ).hexdigest(),
-                "monotonic_elapsed_ns": 1,
-                "started_unix_ns": "1",
-            },
-            "report_schema_version": 1,
-            "results": {},
-            "started": 1,
-            "status": "pass",
-            "suite_version": clone_module.QUALIFICATION_SUITE_VERSION,
-        }
+        report = passing_report(load_manifest(self.root / "manifest.json"), identity, _artifact(self.root, fixture_runner))
         (self.root / "qualification-report.json").write_text(
             json.dumps(report, sort_keys=True), encoding="utf-8"
         )
 
     def _refresh_manifest_report(self, manifest: dict[str, object]) -> None:
+        manifest["python"]["environment_sha256"] = hash_environment(self.root / "python")
         manifest_path = self.root / "manifest.json"
         manifest_path.write_text(
             json.dumps(manifest, sort_keys=True), encoding="utf-8"
@@ -476,6 +463,7 @@ class QualifiedBundleFixture:
                 )
             link.parent.mkdir(parents=True, exist_ok=True)
             link.symlink_to(target)
+        self._refresh_manifest_report(json.loads((self.root / "manifest.json").read_text()))
 
     def record_convenience_link(self, relative: str) -> None:
         link = self.root / relative
@@ -498,6 +486,7 @@ class QualifiedBundleFixture:
         stream = io.StringIO(newline="")
         csv.writer(stream, lineterminator="\n").writerows(rows)
         record.write_text(stream.getvalue(), encoding="utf-8")
+        self._refresh_manifest_report(json.loads((self.root / "manifest.json").read_text()))
         return conflict
 
     def refresh_gateway_identity(self) -> None:
@@ -520,6 +509,327 @@ class QualifiedBundleFixture:
 
 
 class QualifiedBundleCloneTests(unittest.TestCase):
+    def test_python_environment_binds_generated_scripts_and_standard_library(
+        self,
+    ) -> None:
+        for variant in (
+            "script",
+            "stdlib",
+            "extra",
+            "rename",
+            "missing-digest",
+            "mode",
+        ):
+            with (
+                self.subTest(variant=variant),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                parent = Path(temporary).resolve()
+                fixture = self.fixture(parent)
+                script = fixture._write(
+                    fixture.root / "python/bin/generated-command",
+                    b"original wrapper\n",
+                    executable=True,
+                )
+                stdlib = fixture._write(
+                    fixture.root / "python/lib/python3.11/operator_module.py",
+                    b"ORIGINAL = True\n",
+                )
+                record = fixture.sdk_dist / "RECORD"
+                rows = list(csv.reader(record.read_text().splitlines()))
+                rows.append(
+                    [
+                        "../../../bin/generated-command",
+                        _record_hash(script.read_bytes()),
+                        str(script.stat().st_size),
+                    ]
+                )
+                stream = io.StringIO(newline="")
+                csv.writer(stream).writerows(rows)
+                record.write_text(stream.getvalue())
+                fixture._refresh_manifest_report(
+                    json.loads((fixture.root / "manifest.json").read_text())
+                )
+                manifest = load_manifest(fixture.root / "manifest.json")
+                _verify_python_record_files(manifest)
+                if variant == "script":
+                    script.write_bytes(b"modified wrapper\n")
+                    fixture.rewrite_record_row(
+                        fixture.sdk_dist,
+                        "../../../bin/generated-command",
+                        encoded_digest=_record_hash(script.read_bytes()),
+                        encoded_size=str(script.stat().st_size),
+                    )
+                elif variant == "stdlib":
+                    stdlib.write_bytes(b"ORIGINAL = False\n")
+                elif variant == "extra":
+                    fixture._write(
+                        fixture.root / "python/lib/python3.11/new_module.py",
+                        b"EXTRA = True\n",
+                    )
+                elif variant == "rename":
+                    stdlib.rename(stdlib.with_name("renamed_module.py"))
+                elif variant == "mode":
+                    script.chmod(0o600)
+                else:
+                    document = json.loads((fixture.root / "manifest.json").read_text())
+                    del document["python"]["environment_sha256"]
+                    # Simulate a legacy report genuinely bound to its older manifest.
+                    (fixture.root / "manifest.json").write_text(json.dumps(document))
+                    report_path = fixture.root / "qualification-report.json"
+                    report = json.loads(report_path.read_text())
+                    report["identity"]["manifest_digest"] = hashlib.sha256(
+                        canonical_bytes(document)
+                    ).hexdigest()
+                    report["provenance"]["identity_digest"] = hashlib.sha256(
+                        canonical_bytes(report["identity"])
+                    ).hexdigest()
+                    report_path.write_text(json.dumps(report))
+                    manifest = load_manifest(fixture.root / "manifest.json")
+                with self.assertRaises(ApplianceError):
+                    _verify_python_record_files(manifest)
+                with self.assertRaises(clone_module.BundleCloneError) as caught:
+                    clone_module.clone_qualified_bundle(fixture.root, parent / "clone")
+                self.assertEqual(
+                    caught.exception.code, "bundle_python_environment_mismatch"
+                )
+                self.assertFalse((parent / "clone").exists())
+
+    def test_installed_payload_cannot_be_replaced_by_rewriting_record(self) -> None:
+        for variant in ("changed", "extra", "missing"):
+            with (
+                self.subTest(variant=variant),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                parent = Path(temporary).resolve()
+                fixture = self.fixture(parent)
+                manifest = load_manifest(fixture.root / "manifest.json")
+                _verify_python_record_files(manifest)
+                unchanged = {
+                    item.path: (fixture.root / item.path).read_bytes()
+                    for item in manifest.artifacts
+                }
+                if variant == "changed":
+                    raw = b"SDK = 'modified after wheel install'\n"
+                    (fixture.sdk / "__init__.py").write_bytes(raw)
+                    fixture.rewrite_record_row(
+                        fixture.sdk_dist,
+                        "openai/__init__.py",
+                        encoded_digest=_record_hash(raw),
+                        encoded_size=str(len(raw)),
+                    )
+                elif variant == "extra":
+                    extra = fixture._write(
+                        fixture.site / "injected.pth", b"import unexpected\n"
+                    )
+                    fixture.record_file(fixture.sdk_dist, extra)
+                else:
+                    (fixture.sdk / "__init__.py").unlink()
+                    record = fixture.sdk_dist / "RECORD"
+                    rows = [
+                        row
+                        for row in csv.reader(record.read_text().splitlines())
+                        if row[0] != "openai/__init__.py"
+                    ]
+                    stream = io.StringIO(newline="")
+                    csv.writer(stream).writerows(rows)
+                    record.write_text(stream.getvalue())
+                self.assertEqual(
+                    unchanged,
+                    {
+                        item.path: (fixture.root / item.path).read_bytes()
+                        for item in manifest.artifacts
+                    },
+                )
+                with self.assertRaises(ApplianceError):
+                    _verify_python_record_files(manifest)
+                with self.assertRaises(clone_module.BundleCloneError) as caught:
+                    clone_module.clone_qualified_bundle(fixture.root, parent / "clone")
+                self.assertEqual(
+                    caught.exception.code, "bundle_installed_wheel_mismatch"
+                )
+                self.assertFalse((parent / "clone").exists())
+
+    def test_runtime_rejects_unrecorded_imports_and_bytecode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = self.fixture(Path(temporary).resolve())
+            manifest = load_manifest(fixture.root / "manifest.json")
+            for relative in (
+                "injected.py",
+                "openai/__pycache__/__init__.cpython-311.pyc",
+            ):
+                extra = fixture._write(fixture.site / relative, b"unverified")
+                with self.subTest(relative=relative), self.assertRaises(ApplianceError):
+                    _verify_python_record_files(manifest)
+                extra.unlink()
+            _verify_python_record_files(manifest)
+
+    def test_incomplete_or_failed_qualification_cannot_admit_a_clone(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary).resolve()
+            fixture = self.fixture(parent)
+            manifest = load_manifest(fixture.root / "manifest.json")
+            path = fixture.root / "qualification-report.json"
+            good = json.loads(path.read_text())
+            self.assertTrue(generic_report_matches(manifest, good["identity"], good))
+            for field, value in (
+                ("results", {}),
+                ("streaming", {"greek_success": 19, "english_success": 20}),
+                ("privacy_leaks", 1),
+                ("platform_gate", {}),
+            ):
+                bad = copy.deepcopy(good)
+                if field == "results":
+                    bad[field] = value
+                else:
+                    bad["results"][field] = value
+                path.write_text(json.dumps(bad))
+                with self.subTest(field=field):
+                    self.assertFalse(
+                        generic_report_matches(manifest, good["identity"], bad)
+                    )
+                    with self.assertRaises(clone_module.BundleCloneError) as caught:
+                        clone_module.clone_qualified_bundle(
+                            fixture.root, parent / "clone"
+                        )
+                    self.assertEqual(
+                        caught.exception.code, "bundle_qualification_report_not_pass"
+                    )
+                    self.assertFalse((parent / "clone").exists())
+
+    def test_limited_reader_rejects_a_swapped_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            outside = root / "outside"
+            source.write_bytes(b"original")
+            outside.write_bytes(b"substituted")
+            probe = root / "probe"
+            try:
+                probe.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink creation unavailable")
+            probe.unlink()
+            original = Path.lstat
+            swapped = False
+
+            def swap(path, *args, **kwargs):
+                nonlocal swapped
+                metadata = original(path, *args, **kwargs)
+                if path == source and not swapped:
+                    swapped = True
+                    source.unlink()
+                    source.symlink_to(outside)
+                return metadata
+
+            with patch.object(Path, "lstat", swap):
+                with self.assertRaises(clone_module.BundleCloneError):
+                    clone_module._read_limited(source, 32, "invalid_input")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires FIFO support")
+    def test_source_readers_reject_fifo_substitution_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.write_bytes(b"original")
+            (root / "other").write_bytes(b"original")
+            snapshot = clone_module._scan_tree(root)
+            source.unlink()
+            os.mkfifo(source)
+            original_open = os.open
+
+            def checked_open(path, flags, *args, **kwargs):
+                if Path(path) == source:
+                    self.assertTrue(flags & os.O_NONBLOCK)
+                return original_open(path, flags, *args, **kwargs)
+
+            with patch.object(os, "open", side_effect=checked_open):
+                with self.assertRaises(clone_module.BundleCloneError):
+                    clone_module._hash_file(source)
+                self.assertFalse(
+                    clone_module._artifact_bytes_equal(snapshot, "source", "other")
+                )
+                with self.assertRaises(clone_module.BundleCloneError):
+                    clone_module._copy_regular(
+                        source, root / "copy", snapshot.files["source"]
+                    )
+            self.assertFalse((root / "copy").exists())
+
+    @unittest.skipUnless(
+        clone_module.shutil.rmtree.avoids_symlink_attacks,
+        "requires safe directory removal",
+    )
+    def test_rollback_does_not_follow_a_substituted_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary)
+            root = parent / "clone"
+            child = root / "child"
+            child.mkdir(parents=True)
+            outside = parent / "outside"
+            outside.mkdir()
+            marker = outside / "keep.txt"
+            marker.write_text("preserve")
+            metadata = root.stat()
+            original_scandir = os.scandir
+            swapped = False
+
+            class Entry:
+                def __init__(self, entry):
+                    self.entry = entry
+
+                def __getattr__(self, name):
+                    return getattr(self.entry, name)
+
+                def is_dir(self, **kwargs):
+                    result = self.entry.is_dir(**kwargs)
+                    self.stat(**kwargs)
+                    return result
+
+                def stat(self, **kwargs):
+                    nonlocal swapped
+                    result = self.entry.stat(**kwargs)
+                    if self.entry.name == "child" and not swapped:
+                        swapped = True
+                        child.rename(parent / "saved-child")
+                        child.symlink_to(outside, target_is_directory=True)
+                    return result
+
+            class Scan:
+                def __init__(self, path):
+                    self.scan = original_scandir(path)
+
+                def __enter__(self):
+                    return (Entry(entry) for entry in self.scan)
+
+                def __exit__(self, *args):
+                    self.scan.close()
+
+            with patch.object(os, "scandir", Scan):
+                self.assertFalse(
+                    clone_module._remove_created_tree(
+                        root, (metadata.st_dev, metadata.st_ino)
+                    )
+                )
+            self.assertTrue(swapped)
+            self.assertEqual(marker.read_text(), "preserve")
+
+    def test_rollback_preserves_an_unowned_root_and_unsupported_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "clone"
+            root.mkdir()
+            marker = root / "keep.txt"
+            marker.write_text("preserve")
+            metadata = root.stat()
+            identity = (metadata.st_dev, metadata.st_ino)
+            self.assertFalse(
+                clone_module._remove_created_tree(root, (identity[0], identity[1] + 1))
+            )
+            with patch.object(
+                clone_module.shutil.rmtree, "avoids_symlink_attacks", False
+            ):
+                self.assertFalse(clone_module._remove_created_tree(root, identity))
+            self.assertEqual(marker.read_text(), "preserve")
+
     def fixture(self, parent: Path, name: str = "source") -> QualifiedBundleFixture:
         root = parent / name
         root.mkdir()
@@ -721,7 +1031,7 @@ class QualifiedBundleCloneTests(unittest.TestCase):
             self.assertTrue(report["qualification_preserved"])
             self.assertFalse(report["requalification_required"])
             self.assertEqual(report["package_count"], 4)
-            self.assertEqual(report["record_file_count"], 16)
+            self.assertEqual(report["record_file_count"], 20)
             self.assertEqual(before, fixture.source_hashes())
             for member in clone_module._MLX_SHARED_WHEEL_MEMBERS:
                 source = fixture.site / member
@@ -896,15 +1206,17 @@ class QualifiedBundleCloneTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary).resolve()
             fixture = self.fixture(parent)
-            fixture.add_python_cache()
-            fixture.add_python_cache(
-                cache_name="gateway.cpython-311.opt-2.pyc",
-                raw=b"synthetic optimized bytecode\n",
-            )
             standard_library_cache = fixture._write(
                 fixture.root
                 / "python/lib/python3.11/__pycache__/os.cpython-311.pyc",
                 b"standard-library cache remains ordinary bundle data\n",
+            )
+            # This ordinary runtime file belongs to the original qualified installation.
+            fixture._refresh_manifest_report(json.loads((fixture.root / "manifest.json").read_text()))
+            fixture.add_python_cache()
+            fixture.add_python_cache(
+                cache_name="gateway.cpython-311.opt-2.pyc",
+                raw=b"synthetic optimized bytecode\n",
             )
             before = fixture.source_hashes()
             destination = parent / "destination"
@@ -1322,8 +1634,9 @@ class QualifiedBundleCloneTests(unittest.TestCase):
                     clone_module.clone_qualified_bundle(
                         rollback.root, destination
                     )
-            self.assertEqual(caught.exception.code, "synthetic_copy_failure")
-            self.assertFalse(destination.exists())
+            safe_removal = clone_module.shutil.rmtree.avoids_symlink_attacks
+            self.assertEqual(caught.exception.code, "synthetic_copy_failure" if safe_removal else "bundle_rollback_incomplete")
+            self.assertEqual(destination.exists(), not safe_removal)
             self.assertEqual(before, rollback.source_hashes())
 
     @unittest.skipUnless(sys.platform == "win32", "native Windows reparse test")

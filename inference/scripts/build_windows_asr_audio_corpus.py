@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from pathlib import Path
 
 from jarvis_inference.errors import ApplianceError
+from jarvis_inference.python_environment import hash_file
 from jarvis_inference.windows_asr_corpus import (
     WindowsAsrCorpusError,
     build_corpus_manifest,
@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "written": True,
                     "entry_count": len(document["entries"]),
-                    "sha256": hashlib.sha256(args.output.read_bytes()).hexdigest(),
+                    "sha256": hash_file(args.output)[1],
                 },
                 separators=(",", ":"),
             )

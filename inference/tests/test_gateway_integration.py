@@ -3,11 +3,15 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
+import os
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from test_qualification import TEST_HARDWARE_ENV, passing_report
 
 from jarvis_inference.durable import durable_replace
 from jarvis_inference.engine import GenerationEvent, PreparedPrompt
@@ -53,6 +57,7 @@ class FakeEngine:
 class GatewayIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        cls.enterClassContext(patch.dict(os.environ, TEST_HARDWARE_ENV))
         cls.temporary = tempfile.TemporaryDirectory()
         root = Path(cls.temporary.name)
         executable = root / "llama-server.exe"; executable.write_bytes(b"exe")
@@ -67,12 +72,8 @@ class GatewayIntegrationTests(unittest.TestCase):
         }
         manifest_path = root / "manifest.json"; manifest_path.write_text(json.dumps(manifest_document), encoding="utf-8")
         cls.manifest = load_manifest(manifest_path)
-        identity = runtime_identity(cls.manifest, package_digest(), effective_configuration())
         runner = root / "fixture-runner"; runner.write_bytes(b"runner")
-        durable_replace(cls.manifest.qualification_report, {
-            "report_schema_version": 1, "status": "pass", "identity": identity,
-            "fixture_runner": artifact(runner, root),
-        })
+        durable_replace(cls.manifest.qualification_report, passing_report(cls.manifest, runtime_identity(cls.manifest, package_digest(), effective_configuration()), artifact(runner, root)))
         cls.production = Production(cls.manifest, "s" * 40, FakeEngine)
         cls.server = GatewayServer(cls.production, ("127.0.0.1", 0))
         cls.port = int(cls.server.server_address[1])
@@ -115,6 +116,21 @@ class GatewayIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(raw), {"ready": True})
         self.assertEqual(response.getheader("Cache-Control"), "no-store")
+
+    def test_non_ascii_authorization_is_rejected(self) -> None:
+        response, raw = self.request(
+            "GET", "/v1/models", headers={"Authorization": "Bearer café"},
+        )
+        self.assertEqual(response.status, 401)
+        self.assertEqual(json.loads(raw)["error"]["code"], "invalid_api_key")
+
+    def test_deeply_nested_body_returns_client_error(self) -> None:
+        response, raw = self.request(
+            "POST", "/v1/chat/completions", b'[' * 2000 + b'0' + b']' * 2000,
+            {"Authorization": "Bearer " + "s" * 40, "Content-Type": "application/json"},
+        )
+        self.assertEqual(response.status, 400)
+        self.assertEqual(json.loads(raw)["error"]["code"], "invalid_json")
 
     def test_profile_generation_metric_endpoints_are_absent_in_production(self) -> None:
         headers = {

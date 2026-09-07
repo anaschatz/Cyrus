@@ -143,10 +143,11 @@ Apple Silicon `backend` is exactly:
 {"type":"mlx-worker","worker":{"path":"runtime/mlx_worker.py","size_bytes":0,"sha256":"..."}}
 ```
 
-Apple Silicon `python` is exactly:
+Apple Silicon `python` has the following shape:
 
 ```json
 {
+  "environment_sha256": "...",
   "implementation": "CPython",
   "version": "3.11.0",
   "executable": {"path":"python/bin/python3.11","size_bytes":0,"sha256":"..."},
@@ -163,6 +164,19 @@ Apple Silicon `python` is exactly:
 ```
 
 `packages` is sorted and contains every transitive installed distribution.
+`environment_sha256` is a lowercase 64-character SHA-256 digest required for
+runtime verification and qualified cloning. It binds every regular file below
+the Python installation by relative path, size, content hash and executable-bit
+presence, including the standard library and generated command wrappers.
+The builder computes it using `python_environment.hash_environment`; it is not
+the hash of the interpreter alone. Only the nine exact CPython convenience
+aliases accepted by that module are allowed and excluded from the digest.
+
+Legacy manifests without this field can be parsed for inspection but cannot
+pass verification or qualified cloning. Rebuild a clean installation, generate
+a new manifest and obtain fresh native qualification. Run the sealed Python
+with `-B` to avoid creating bytecode files that change its identity. Installed
+wheel contents and RECORD entries are checked separately from this digest.
 
 `model` is exactly:
 

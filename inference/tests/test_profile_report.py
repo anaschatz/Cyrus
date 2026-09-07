@@ -37,6 +37,7 @@ from jarvis_inference.profile_report import (
     PROFILE_EVIDENCE_RELATIVE,
     PROFILE_RUNNER_RELATIVE,
     REPORT_SCHEMA,
+    _validate_coexistence,
     expected_profile_identity,
     load_valid_profile_report,
     profile_report_matches,
@@ -222,6 +223,21 @@ class QualifiedPrimaryFixture:
                 "platform_gate": self.generic_gate,
             },
         }
+        fixture_digest = hashlib.sha256(canonical_bytes({
+            "runner": self.generic_report["fixture_runner"], "assets": assets,
+        })).hexdigest()
+        self.generic_report.update(
+            suite_version="jarvis-inference-qualification-v1",
+            started=1, completed=2, deterministic_seeds=[1],
+            fixture_digest=fixture_digest,
+            provenance={
+                "challenge": "c" * 64,
+                "identity_digest": hashlib.sha256(canonical_bytes(self.current_identity)).hexdigest(),
+                "fixture_digest": fixture_digest,
+                "started_unix_ns": "1100000000", "completed_unix_ns": "1900000000",
+                "monotonic_elapsed_ns": 800000000,
+            },
+        )
         durable_replace(self.manifest.qualification_report, self.generic_report)
         parsed_report = read_report(self.manifest.qualification_report)
         assert isinstance(parsed_report, dict)
@@ -437,6 +453,74 @@ class QualifiedPrimaryFixture:
 
 
 class ProfileReportTests(unittest.TestCase):
+    def test_coexistence_accepts_exact_fifteen_percent_but_not_more(self) -> None:
+        for kind in ("asr", "llm"):
+            for concurrent in (4.025, 4.0250000001):
+                with (
+                    self.subTest(kind=kind, concurrent=concurrent),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    fixture = QualifiedPrimaryFixture(Path(directory))
+                    evidence = fixture.evidence()
+                    gate = fixture.generic_report["results"]["platform_gate"]
+                    baseline_key = (
+                        "baseline_p95" if kind == "asr" else "baseline_llm_p95"
+                    )
+                    concurrent_key = (
+                        "coexistence_p95" if kind == "asr" else "coexistence_llm_p95"
+                    )
+                    ratio_key = (
+                        "asr_degradation_ratio"
+                        if kind == "asr"
+                        else "llm_regression_ratio"
+                    )
+                    gate[baseline_key] = 3.5
+                    gate[concurrent_key] = concurrent
+                    coexistence = evidence["windows_coexistence"]
+                    coexistence[baseline_key + "_seconds"] = 3.5
+                    coexistence[concurrent_key + "_seconds"] = concurrent
+                    coexistence[ratio_key] = concurrent / 3.5 - 1
+                    durable_replace(
+                        fixture.manifest.qualification_report, fixture.generic_report
+                    )
+                    fixture.generic_report = read_report(
+                        fixture.manifest.qualification_report
+                    )
+                    if concurrent == 4.025:
+                        evidence["identity"] = fixture.evidence()["identity"]
+                        validate_profile_document(
+                            evidence,
+                            fixture.manifest,
+                            fixture.current_identity,
+                            fixture.generic_report,
+                            evidence=True,
+                        )
+                    else:
+                        with self.assertRaisesRegex(ValueError, "degradation"):
+                            fixture.evidence()
+                        with self.assertRaisesRegex(ValueError, "coexistence gate"):
+                            _validate_coexistence(coexistence, gate)
+
+    def test_soak_rejects_memory_summaries_that_contradict_the_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = QualifiedPrimaryFixture(Path(directory))
+            for change in (
+                {"final_bytes": 106},
+                {"final_bytes": 104, "global_growth_fraction": 0},
+                {"epoch_sample_counts": [13] + [12] * 7},
+            ):
+                with self.subTest(change=change):
+                    evidence = fixture.evidence()
+                    evidence["soak"]["memory"].update(change)
+                    with self.assertRaisesRegex(ValueError, "soak gate"):
+                        validate_profile_document(
+                            evidence,
+                            fixture.manifest,
+                            fixture.current_identity,
+                            fixture.generic_report,
+                            evidence=True,
+                        )
+
     def test_qualification_tokenizer_returns_only_count_and_real_id_digest(self) -> None:
         class TokenEngine:
             def ready(self):

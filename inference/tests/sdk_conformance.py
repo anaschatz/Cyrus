@@ -8,13 +8,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from openai import AsyncOpenAI, OpenAI
+
+from test_qualification import TEST_HARDWARE_ENV, passing_report
 
 from jarvis_inference.durable import durable_replace
 from jarvis_inference.engine import GenerationEvent, PreparedPrompt
@@ -44,6 +48,7 @@ class Engine:
 class OfficialSdkConformance(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.enterClassContext(patch.dict(os.environ, TEST_HARDWARE_ENV))
         cls.temporary = tempfile.TemporaryDirectory(); root = Path(cls.temporary.name)
         exe = root / "server.exe"; exe.write_bytes(b"x")
         model = root / "model.gguf"; model.write_bytes(b"x")
@@ -57,11 +62,7 @@ class OfficialSdkConformance(unittest.TestCase):
         path = root / "manifest.json"; path.write_text(json.dumps(value))
         manifest = load_manifest(path)
         runner = root / "fixture-runner"; runner.write_bytes(b"runner")
-        durable_replace(manifest.qualification_report, {
-            "report_schema_version": 1, "status": "pass",
-            "identity": runtime_identity(manifest, package_digest(), effective_configuration()),
-            "fixture_runner": artifact(runner, root),
-        })
+        durable_replace(manifest.qualification_report, passing_report(manifest, runtime_identity(manifest, package_digest(), effective_configuration()), artifact(runner, root)))
         cls.production = Production(manifest, "sdk-secret-" + "x" * 32, Engine)
         cls.server = GatewayServer(cls.production, ("127.0.0.1", 0)); cls.port = int(cls.server.server_address[1])
         cls.thread = threading.Thread(target=cls.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True); cls.thread.start()

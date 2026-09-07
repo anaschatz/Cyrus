@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import threading
 import unittest
 from types import SimpleNamespace
 
@@ -62,13 +61,10 @@ class MetricEngine:
 
 
 def _production(engine: MetricEngine) -> _PrimaryQualificationProduction:
-    production = object.__new__(_PrimaryQualificationProduction)
-    production.admission = threading.Lock()
-    production.state_lock = threading.Lock()
-    production.engine = engine
+    production = _PrimaryQualificationProduction(
+        SimpleNamespace(context_window=4096), "test", None, engine=engine
+    )
     production.ready_state = True
-    production._qualification_history = []
-    production.manifest = SimpleNamespace(context_window=4096)
     return production
 
 

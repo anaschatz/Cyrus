@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import re
-import stat
 from collections import Counter
 from decimal import Decimal
 from pathlib import Path
@@ -21,7 +19,7 @@ from .gemma4 import (
     uses_gemma4_profile,
 )
 from .limits import BODY_BYTES
-from .manifest import Manifest, hash_file, resolve_local
+from .manifest import Manifest, _read_manifest_file, hash_file, resolve_local
 from .primary_profile import (
     PRIMARY_CORPUS_SHA256,
     PRIMARY_QUALITY_SUITE_VERSION,
@@ -116,28 +114,11 @@ def _number(value: Any, name: str, *, positive: bool = False) -> float:
 
 def _safe_bytes(path: Path, name: str) -> bytes:
     try:
-        info = path.lstat()
-    except OSError as exc:
-        raise _fail(f"missing {name}") from exc
-    attributes = getattr(info, "st_file_attributes", 0)
-    reparse = bool(
-        os.name == "nt"
-        and attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    )
-    if (
-        not stat.S_ISREG(info.st_mode)
-        or path.is_symlink()
-        or reparse
-        or info.st_size <= 0
-        or info.st_size > BODY_BYTES
-    ):
-        raise _fail(f"unsafe {name}")
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        raise _fail(f"unreadable {name}") from exc
-    if len(raw) != info.st_size:
-        raise _fail(f"unstable {name}")
+        raw = _read_manifest_file(path, maximum=BODY_BYTES)
+    except (ApplianceError, OSError) as exc:
+        raise ProfileQualificationFailure(f"unsafe {name}") from exc
+    if not raw:
+        raise ProfileQualificationFailure(f"unsafe {name}")
     return raw
 
 
@@ -363,7 +344,7 @@ def _generic_context(
     coexistence = _number(
         gate["coexistence_p95"], "coexistence ASR p95", positive=True
     )
-    if coexistence / baseline - 1 > 0.15:
+    if Decimal(str(coexistence)) > Decimal(str(baseline)) * Decimal("1.15"):
         raise _fail("generic ASR degradation exceeded its threshold")
     baseline_llm = _number(
         gate["baseline_llm_p95"], "baseline LLM p95", positive=True
@@ -371,7 +352,7 @@ def _generic_context(
     coexistence_llm = _number(
         gate["coexistence_llm_p95"], "coexistence LLM p95", positive=True
     )
-    if coexistence_llm / baseline_llm - 1 > 0.15:
+    if Decimal(str(coexistence_llm)) > Decimal(str(baseline_llm)) * Decimal("1.15"):
         raise _fail("generic LLM degradation exceeded its threshold")
     return (
         {
@@ -626,10 +607,13 @@ def _validate_soak(value: Any, provenance: dict[str, Any]) -> dict[str, Any]:
         # process epoch ID, but intentionally has no post-restart workload.
         or len(epoch_sample_counts) != restarts
         or any(type(count) is not int or count < 12 for count in epoch_sample_counts)
+        or sum(epoch_sample_counts) != cycles
         or growth < 0
         or growth > 0.05
         or global_growth < 0
         or global_growth > 0.05
+        or global_growth < max(0, memory["final_bytes"] - memory["baseline_bytes"])
+        / memory["baseline_bytes"]
     ):
         raise _fail("eight-hour soak gate failed")
     return soak
@@ -719,13 +703,13 @@ def _validate_coexistence(value: Any, gate: dict[str, Any]) -> dict[str, Any]:
         or baseline != float(gate["baseline_p95"])
         or concurrent != float(gate["coexistence_p95"])
         or not math.isclose(observed_ratio, ratio, rel_tol=1e-9, abs_tol=1e-9)
-        or ratio > 0.15
+        or Decimal(str(concurrent)) > Decimal(str(baseline)) * Decimal("1.15")
         or baseline_llm != float(gate["baseline_llm_p95"])
         or concurrent_llm != float(gate["coexistence_llm_p95"])
         or not math.isclose(
             observed_llm_ratio, llm_ratio, rel_tol=1e-9, abs_tol=1e-9
         )
-        or llm_ratio > 0.15
+        or Decimal(str(concurrent_llm)) > Decimal(str(baseline_llm)) * Decimal("1.15")
         or coexistence["minimum_free_vram_mib"]
         != gate["minimum_free_vram_mib"]
         or coexistence["minimum_free_vram_mib"] < 2048

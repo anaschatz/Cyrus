@@ -28,6 +28,8 @@ and its [streaming event reference](https://developers.openai.com/api/reference/
   inlining, bounds, and instance validation.
 - `manifest.py`: strict manifest, safe path resolution, artifact/DLL/wheel
   identity and installed wheel `RECORD` verification.
+- `python_environment.py`: stable streamed artifact hashing and the complete
+  installed Python file identity used by macOS manifests and bundle cloning.
 - `durable.py`: exclusive qualification lock and platform-specific durable
   atomic report replacement.
 - `gateway.py`: loopback security, one-request admission, deadline/backpressure,
@@ -199,6 +201,31 @@ and worker. The MLX environment is expected to be installed offline with
 `pip --no-index --require-hashes`; startup verifies both wheel artifacts and all
 installed `RECORD` hashes.
 
+Current macOS manifests also require `python.environment_sha256` for admission.
+It binds every regular file under the Python installation, including generated
+commands, installed metadata, the standard library and its existing caches, by
+relative path, size, SHA-256 and executable-bit presence. Only the nine exact
+validated CPython convenience symlinks may be omitted without changing this
+identity. Wheel payload verification remains a separate check.
+
+Legacy manifests remain readable but cannot pass runtime verification or
+qualified cloning without this field. Prepare a clean offline installation,
+generate a new manifest with the current builder, and perform a new native
+qualification. Do not add the digest to an old pass report or reuse its identity.
+Install wheel payloads with `--no-compile` and run every appliance command,
+including verification, through the sealed interpreter with
+`python -B -m jarvis_inference ...`; new import caches would change the sealed
+installation. `-I` ignores Python environment variables, so an
+environment-only bytecode setting is insufficient. Existing bundles and
+historical evidence are not rewritten by this source change.
+
+The digest format starts with the bytes `cyrus-python-environment-v1\n` and then
+one compact ASCII JSON array `[relative_path,size,sha256,executable]` plus newline
+per file, sorted by relative path. JSON escapes non-ASCII path characters.
+`executable` is a boolean indicating whether any execute bit is set. Directory
+entries and the validated convenience aliases contribute no bytes; their regular
+file targets are included normally. This definition is fixed for this field.
+
 `JARVIS_QUAL_GPU_DEVICE`, `JARVIS_QUAL_GPU_MEMORY_BYTES`,
 `JARVIS_QUAL_GPU_DRIVER`, `JARVIS_QUAL_COMPUTE_RUNTIME`, and
 `JARVIS_QUAL_COMPUTE_CAPABILITY` are captured as native qualification identity.
@@ -240,7 +267,7 @@ Build the capability manifest from the sealed local bundle and use the
 package-owned hash-pinned runner:
 
 ```text
-python inference/scripts/build_macos_manifest.py \
+PYTHONPATH=inference/src python inference/scripts/build_macos_manifest.py \
   --root inference/native/macos-m3 \
   --model-dir inference/native/macos-m3/models/qwen3-4b-instruct-2507-4bit \
   --output inference/native/macos-m3/manifest-qwen3-4b-capable.json \
@@ -259,10 +286,11 @@ runner SHA-256
 `7cc5884165be054d8c793e23c0a5cb2d017e57bec8f91aae785e433a96720943`
 and manifest digest
 `175217e22550c260c6fadccea357968fb9b21805a819d6b6108a329017b4ebb4`.
-It passed all 40 streaming cases, all 20 tool cases, all 20 schema cases, all
+That historical run passed all 40 streaming cases, all 20 tool cases, all 20 schema cases, all
 cancellation/restart/isolation gates, and the 20-warmup/200-request
 `phys_footprint` gate. It remains an appliance-capability pass, not a production
-model-profile pass: the same Qwen3 4B weights failed the frozen bilingual
+model-profile pass, and does not satisfy the new complete-installation identity
+requirement above: the same Qwen3 4B weights failed the frozen bilingual
 quality corpus and have not completed the required eight-hour soak.
 
 The existing 4B manifest is capped at a qualified `32768`-token context window

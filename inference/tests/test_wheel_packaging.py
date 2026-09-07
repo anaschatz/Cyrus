@@ -127,6 +127,7 @@ class InferenceWheelPackagingTests(unittest.TestCase):
                 "jarvis_inference/primary_quality_client.py",
                 "jarvis_inference/primary_qualification.py",
                 "jarvis_inference/private_temp.py",
+                "jarvis_inference/python_environment.py",
                 "jarvis_inference/profile_performance.py",
                 "jarvis_inference/profile_report.py",
                 "jarvis_inference/windows_primary_fixture.py",

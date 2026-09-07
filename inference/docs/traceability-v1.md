@@ -17,6 +17,8 @@
 | MLX inherited pipes and per-request parser/KV state | `mlx_engine.py`, `mlx_worker_runtime.py` | compile/import suite; native qualification is mandatory |
 | Pinned Qwen3 text/tool/history/structured rendering | `rendering.py` | `test_mlx_rendering.py`; native named/required/schema fixtures |
 | Strict manifest, artifacts, DLL allowlist, wheel RECORD | `manifest.py` | `test_manifest.py`; native platform qualification |
+| Complete Python installation identity and installed wheel payloads | `python_environment.py`, `manifest.py`, `clone_qualified_macos_bundle.py` | `test_qualified_bundle_clone.py`, `test_macos_packaging_scripts.py` |
+| Operator cleanup before success, safe artifact reads and writer error cleanup | operator scripts, native fixture writers | `test_operator_scripts.py` |
 | Durable report replacement and fail-closed readiness | `durable.py`, `gateway.py`, `qualification.py` | `test_qualification.py`, `test_gateway_lifecycle.py` |
 | Challenge-bound same-session native evidence | `qualification.py` | `test_qualification.py`; native fixture runner |
 | Official sync/async OpenAI SDK subset | `qualification.py` | `sdk_conformance.py`; repeated during native qualification |

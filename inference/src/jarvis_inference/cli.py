@@ -15,14 +15,12 @@ from .llama_engine import LlamaServerEngine
 from .manifest import (
     Manifest,
     assert_runtime_platform,
-    hash_file,
     load_manifest,
-    resolve_local,
     runtime_identity,
     verify_artifacts,
 )
 from .mlx_engine import MlxWorkerEngine
-from .durable import read_report
+from .durable import generic_report_matches, read_report
 from .primary_qualification import qualify_primary_profile
 from .profile_report import (
     ATTESTATION_LEVEL,
@@ -75,35 +73,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _generic_report_matches(
-    manifest: Manifest, identity: dict[str, Any], report: Any
-) -> bool:
-    if (
-        not isinstance(report, dict)
-        or report.get("report_schema_version") != 1
-        or report.get("status") != "pass"
-        or report.get("identity") != identity
-    ):
-        return False
-    runner = report.get("fixture_runner")
-    if not isinstance(runner, dict) or set(runner) != {
-        "path",
-        "size_bytes",
-        "sha256",
-    }:
-        return False
-    try:
-        path = resolve_local(manifest.root, runner["path"], "fixture_runner")
-        size, digest = hash_file(path)
-    except (ApplianceError, OSError, TypeError):
-        return False
-    return (
-        type(runner["size_bytes"]) is int
-        and runner["size_bytes"] == size
-        and runner["sha256"] == digest
-    )
-
-
 def verify_readiness(manifest: Manifest) -> dict[str, Any]:
     assert_runtime_platform(manifest)
     verify_artifacts(manifest)
@@ -111,7 +80,7 @@ def verify_readiness(manifest: Manifest) -> dict[str, Any]:
         manifest, package_digest(), effective_configuration()
     )
     report = read_report(manifest.qualification_report)
-    if not _generic_report_matches(manifest, identity, report):
+    if not generic_report_matches(manifest, identity, report):
         raise ApplianceError(
             503,
             "qualification_not_ready",

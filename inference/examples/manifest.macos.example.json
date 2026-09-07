@@ -32,6 +32,7 @@
     ]
   },
   "python": {
+    "environment_sha256": "REPLACE_WITH_64_LOWERCASE_HEX",
     "implementation": "CPython",
     "version": "REPLACE_WITH_EXACT_VERSION",
     "executable": {

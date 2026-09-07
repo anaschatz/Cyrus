@@ -23,8 +23,8 @@ import io
 import json
 import os
 import re
+import shutil
 import stat
-import sys
 import zipfile
 from dataclasses import dataclass
 from email.parser import BytesParser
@@ -33,8 +33,11 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable
 
 from jarvis_inference.limits import MANIFEST_BYTES
-from jarvis_inference.manifest import Manifest, load_manifest
+from jarvis_inference.errors import ApplianceError
+from jarvis_inference.durable import generic_report_matches
+from jarvis_inference.manifest import Manifest, _read_manifest_file, _verify_installed_wheel, load_manifest
 from jarvis_inference.strict_json import canonical_bytes, parse_body
+from jarvis_inference.python_environment import PYTHON_CONVENIENCE_LINKS, environment_digest, hash_file
 
 
 REPORT_VERSION = "jarvis-qualified-bundle-clone/1"
@@ -46,17 +49,7 @@ _CPYTHON_311_PYC = re.compile(
     r"^(?P<stem>.+)\.cpython-311(?:\.opt-[1-9][0-9]*)?\.pyc$",
     re.ASCII,
 )
-_PYTHON_CONVENIENCE_LINKS = {
-    "python/bin/2to3": "2to3-3.11",
-    "python/bin/idle3": "idle3.11",
-    "python/bin/pydoc3": "pydoc3.11",
-    "python/bin/python": "python3.11",
-    "python/bin/python3": "python3.11",
-    "python/bin/python3-config": "python3.11-config",
-    "python/lib/pkgconfig/python3-embed.pc": "python-3.11-embed.pc",
-    "python/lib/pkgconfig/python3.pc": "python-3.11.pc",
-    "python/share/man/man1/python3.1": "python3.11.1",
-}
+_PYTHON_CONVENIENCE_LINKS = {f"python/{path}": target for path, target in PYTHON_CONVENIENCE_LINKS.items()}
 _MLX_SHARED_OWNER_VERSIONS = {
     "mlx": "0.32.0",
     "mlx-metal": "0.32.0",
@@ -218,21 +211,10 @@ def _hash_stream(stream: Any) -> tuple[int, str]:
 
 
 def _hash_file(path: Path) -> tuple[int, str]:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
-        os, "O_NOFOLLOW", 0
-    )
     try:
-        descriptor = os.open(path, flags)
+        return hash_file(path)
     except OSError:
         raise BundleCloneError("bundle_source_changed") from None
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode):
-            raise BundleCloneError("bundle_source_tree_unsafe")
-        with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            return _hash_stream(stream)
-    finally:
-        os.close(descriptor)
 
 
 def _scan_tree(root: Path) -> TreeSnapshot:
@@ -375,17 +357,8 @@ def _any_bundle_identity_document_references(
 
 def _read_limited(path: Path, maximum: int, code: str) -> bytes:
     try:
-        metadata = path.lstat()
-        if (
-            _is_link_or_reparse_status(metadata)
-            or not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_size > maximum
-        ):
-            raise BundleCloneError(code)
-        return path.read_bytes()
-    except BundleCloneError:
-        raise
-    except OSError:
+        return _read_manifest_file(path, maximum=maximum)
+    except (ApplianceError, OSError):
         raise BundleCloneError(code) from None
 
 
@@ -430,8 +403,12 @@ def _artifact_bytes_equal(
 ) -> bool:
     if left_relative == right_relative:
         return True
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
-        os, "O_NOFOLLOW", 0
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
     )
     descriptors: list[int] = []
     try:
@@ -842,6 +819,8 @@ def _validate_report_identity(
         or provenance["monotonic_elapsed_ns"] <= 0
     ):
         raise BundleCloneError("bundle_qualification_provenance_invalid")
+    if not generic_report_matches(manifest, identity, report):
+        raise BundleCloneError("bundle_qualification_report_not_pass")
     return identity_digest, fixture_relative
 
 
@@ -1164,6 +1143,13 @@ def _inspect_bundle(
     ):
         raise BundleCloneError("bundle_generated_pycache_referenced")
 
+    for name, package in expected_packages.items():
+        owned = {relative for relative, owners in record_owner_distributions.items() if name in owners}
+        try:
+            _verify_installed_wheel(manifest, package, owned)
+        except ApplianceError:
+            raise BundleCloneError("bundle_installed_wheel_mismatch") from None
+
     required.update(record_files)
     provisional_included = set(snapshot.files)
     excluded: set[str] = set()
@@ -1227,6 +1213,14 @@ def _inspect_bundle(
     required.add(fixture_relative)
     if fixture_relative not in provisional_included:
         raise BundleCloneError("bundle_fixture_runner_invalid")
+    prefix = environment_relative + "/"
+    installation_digest = environment_digest(
+        (relative[len(prefix):], snapshot.files[relative].size_bytes,
+         snapshot.files[relative].sha256, bool(snapshot.files[relative].mode & 0o111))
+        for relative in provisional_included if relative.startswith(prefix)
+    )
+    if python.get("environment_sha256") != installation_digest:
+        raise BundleCloneError("bundle_python_environment_mismatch")
     return BundlePlan(
         tree=snapshot,
         manifest_relative=manifest_relative,
@@ -1245,8 +1239,12 @@ def _inspect_bundle(
 
 
 def _copy_regular(source: Path, destination: Path, expected: FileSnapshot) -> None:
-    source_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
-        os, "O_NOFOLLOW", 0
+    source_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
     )
     destination_flags = (
         os.O_WRONLY
@@ -1319,32 +1317,31 @@ def _remove_created_tree(path: Path, root_identity: tuple[int, int]) -> bool:
     ):
         return False
 
-    def remove(directory: Path) -> None:
-        try:
-            with os.scandir(directory) as iterator:
-                entries = list(iterator)
-        except OSError:
-            return
-        for entry in entries:
-            target = Path(entry.path)
-            try:
-                metadata = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            try:
-                if stat.S_ISDIR(metadata.st_mode) and not _is_link_or_reparse_status(metadata):
-                    remove(target)
-                    target.rmdir()
-                else:
-                    target.unlink()
-            except OSError:
-                continue
-
-    remove(path)
+    if not shutil.rmtree.avoids_symlink_attacks:
+        return False
+    descriptor = -1
     try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != root_identity:
+            return False
+        # Anchor deletion to the directory we created, even if its path is replaced.
+        with os.scandir(descriptor) as iterator:
+            entries = list(iterator)
+        for entry in entries:
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(entry.name, dir_fd=descriptor)
+            else:
+                os.unlink(entry.name, dir_fd=descriptor)
+        current = path.lstat()
+        if (current.st_dev, current.st_ino) != root_identity:
+            return False
         path.rmdir()
     except OSError:
         return False
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
     return not os.path.lexists(path)
 
 

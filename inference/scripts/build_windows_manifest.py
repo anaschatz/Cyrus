@@ -5,12 +5,12 @@ The builder is deliberately offline.  It hashes an already materialized
 llama-server bundle and accepts only the exact primary GGUF selected by the
 Windows handoff contract.  It performs no download, install, model load, or
 qualification and never writes outside the supplied runtime root.
+Run with the gateway package installed or with PYTHONPATH=inference/src.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -18,6 +18,8 @@ import stat
 import tempfile
 from pathlib import Path, PureWindowsPath
 from typing import Any
+
+from jarvis_inference.python_environment import hash_file as _hash
 
 
 GEMMA_REPOSITORY = "google/gemma-4-12B-it-qat-q4_0-gguf"
@@ -134,16 +136,6 @@ def _regular_file(path: Path) -> bool:
     return path.is_file() and not path.is_symlink() and not _is_reparse(path)
 
 
-def _hash(path: Path) -> tuple[int, str]:
-    digest = hashlib.sha256()
-    size = 0
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            size += len(chunk)
-            digest.update(chunk)
-    return size, digest.hexdigest()
-
-
 def _artifact(root: Path, path: Path) -> dict[str, Any]:
     if not _regular_file(path):
         raise ValueError("artifact must be a regular non-reparse file")
@@ -186,9 +178,9 @@ def _write(path: Path, value: dict[str, Any]) -> None:
     )
     temporary = Path(temporary_name)
     try:
-        if os.name != "nt":
-            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
+            if os.name != "nt":
+                os.fchmod(stream.fileno(), 0o600)
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())

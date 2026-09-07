@@ -9,6 +9,7 @@ import platform
 import re
 import stat
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -23,6 +24,7 @@ from .gemma4 import (
 )
 from .limits import MANIFEST_BYTES
 from .strict_json import canonical_bytes, parse_body
+from .python_environment import hash_environment, hash_file
 
 SHA_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$", re.ASCII)
@@ -121,7 +123,7 @@ def resolve_local(root: Path, text: str, parameter: str, *, must_exist: bool = T
 
 def _model(value: Any) -> tuple[dict[str, Any], list[Artifact], int]:
     obj = _exact(value, {"format", "context_window", "artifacts"}, set(), "model")
-    if obj["format"] not in {"gguf", "mlx"}:
+    if not isinstance(obj["format"], str) or obj["format"] not in {"gguf", "mlx"}:
         raise invalid("invalid_manifest", "The model format is unsupported.", "model.format")
     window = obj["context_window"]
     if not isinstance(window, int) or isinstance(window, bool) or window <= 0:
@@ -167,7 +169,9 @@ def _backend(value: Any, target: str) -> tuple[dict[str, Any], list[Artifact]]:
 def _python(value: Any, target: str) -> tuple[dict[str, Any], list[Artifact]]:
     if target == "windows-x86_64":
         return _exact(value, set(), set(), "python"), []
-    obj = _exact(value, {"implementation", "version", "executable", "site_packages", "packages"}, set(), "python")
+    obj = _exact(value, {"implementation", "version", "executable", "site_packages", "packages"}, {"environment_sha256"}, "python")
+    if "environment_sha256" in obj and (not isinstance(obj["environment_sha256"], str) or not SHA_RE.fullmatch(obj["environment_sha256"])):
+        raise invalid("invalid_manifest", "The Python environment digest is invalid.", "python.environment_sha256")
     if obj["implementation"] != "CPython" or not isinstance(obj["version"], str):
         raise invalid("invalid_manifest", "The Python runtime identity is invalid.", "python")
     _relative_path(obj["site_packages"], "python.site_packages")
@@ -211,8 +215,8 @@ def _prompt_profile(value: Any, target: str, model: dict[str, Any]) -> dict[str,
     return value
 
 
-def _read_manifest_file(path: Path) -> bytes:
-    """Read one stable regular manifest without following a leaf link."""
+def _read_manifest_file(path: Path, *, maximum: int = MANIFEST_BYTES) -> bytes:
+    """Read one bounded stable regular file with manifest-style errors."""
 
     try:
         initial = path.lstat()
@@ -225,13 +229,13 @@ def _read_manifest_file(path: Path) -> bytes:
         and getattr(initial, "st_file_attributes", 0)
         & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
     )
-    if initial.st_size > MANIFEST_BYTES:
+    if initial.st_size > maximum:
         raise invalid("manifest_too_large", "The manifest exceeds its size limit.")
     if not stat.S_ISREG(initial.st_mode) or path.is_symlink() or initial_reparse:
         raise invalid(
             "invalid_manifest_path", "The manifest path is not a safe regular file."
         )
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -250,17 +254,24 @@ def _read_manifest_file(path: Path) -> bytes:
             or opened_reparse
             or (initial.st_dev, initial.st_ino) != (opened.st_dev, opened.st_ino)
             or opened.st_size != initial.st_size
-            or opened.st_size > MANIFEST_BYTES
+            or opened.st_size > maximum
         ):
             raise invalid(
                 "invalid_manifest_path", "The manifest changed before it was read."
             )
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
-            raw = handle.read(MANIFEST_BYTES + 1)
+            raw = handle.read(maximum + 1)
         completed = os.fstat(descriptor)
+        try:
+            current = path.lstat()
+        except OSError as exc:
+            raise invalid("invalid_manifest_path", "The file changed while it was read.") from exc
         if (
-            len(raw) != opened.st_size
-            or len(raw) > MANIFEST_BYTES
+            not stat.S_ISREG(current.st_mode)
+            or (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns)
+            != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+            or len(raw) != opened.st_size
+            or len(raw) > maximum
             or (completed.st_dev, completed.st_ino, completed.st_size)
             != (opened.st_dev, opened.st_ino, opened.st_size)
             or completed.st_mtime_ns != opened.st_mtime_ns
@@ -362,19 +373,22 @@ def load_manifest(path: Path) -> Manifest:
     # would erase evidence that a Windows parent was a junction/reparse point.
     _reject_windows_reparse_ancestors(path)
     raw_bytes = _read_manifest_file(path)
-    raw = parse_body(raw_bytes)
+    try:
+        raw = parse_body(raw_bytes)
+    except RecursionError as exc:
+        raise invalid("invalid_manifest", "The manifest JSON is invalid.") from exc
     top = _exact(
         raw,
         {"manifest_schema_version", "alias", "platform", "backend", "model", "python", "capabilities", "qualification_report"},
         {"prompt_profile", "profile_qualification_report"},
         "manifest",
     )
-    if top["manifest_schema_version"] != 1:
+    if type(top["manifest_schema_version"]) is not int or top["manifest_schema_version"] != 1:
         raise invalid("invalid_manifest", "The manifest schema version is unsupported.", "manifest_schema_version")
     if not isinstance(top["alias"], str) or not ALIAS_RE.fullmatch(top["alias"]):
         raise invalid("invalid_manifest", "The logical alias is invalid.", "alias")
     target = top["platform"]
-    if target not in PLATFORMS:
+    if not isinstance(target, str) or target not in PLATFORMS:
         raise invalid("invalid_manifest", "The target platform is unsupported.", "platform")
     capabilities_raw = _exact(top["capabilities"], {"text", "stream", "tools", "json_object", "json_schema"}, set(), "capabilities")
     if any(type(value) is not bool for value in capabilities_raw.values()) or capabilities_raw["text"] is not True:
@@ -436,16 +450,6 @@ def load_manifest(path: Path) -> Manifest:
     )
 
 
-def hash_file(path: Path) -> tuple[int, str]:
-    digest = hashlib.sha256()
-    size = 0
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            size += len(chunk)
-            digest.update(chunk)
-    return size, digest.hexdigest()
-
-
 def verify_artifacts(manifest: Manifest) -> None:
     declared_dlls: set[str] = set()
     executable_dir: Path | None = None
@@ -494,7 +498,98 @@ def assert_runtime_platform(manifest: Manifest) -> None:
         raise ApplianceError(503, "platform_identity_mismatch", "The manifest target does not match this native runtime.")
 
 
+def _verify_installed_wheel(
+    manifest: Manifest, package: dict[str, Any], recorded: set[str]
+) -> None:
+    """Bind installed importable payloads to the declared wheel, not mutable RECORD hashes."""
+    wheel = resolve_local(manifest.root, package["wheel"]["path"], "python.wheel")
+    if hash_file(wheel) != (package["wheel"]["size_bytes"], package["wheel"]["sha256"]):
+        raise ApplianceError(
+            503, "artifact_identity_mismatch", "The Python wheel identity changed."
+        )
+    site = PurePosixPath(manifest.python["site_packages"])
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            infos = archive.infolist()
+            names = [info.filename for info in infos]
+            metadata = [
+                name
+                for name in names
+                if name.count("/") == 1 and name.endswith(".dist-info/METADATA")
+            ]
+            if len(set(names)) != len(names) or len(metadata) != 1:
+                raise ValueError("ambiguous wheel")
+            dist_info = PurePosixPath(metadata[0]).parent
+            own_record = (site / dist_info / "RECORD").as_posix()
+            if own_record not in recorded:
+                raise ValueError("missing installed RECORD")
+            members: set[str] = set()
+            for info in infos:
+                member = PurePosixPath(info.filename)
+                if (
+                    not member.parts
+                    or member.is_absolute()
+                    or "\\" in info.filename
+                    or member.as_posix() != info.filename.rstrip("/")
+                    or any(part in {".", ".."} for part in member.parts)
+                    or info.flag_bits & 1
+                    or stat.S_ISLNK(info.external_attr >> 16)
+                ):
+                    raise ValueError("unsafe wheel member")
+                if info.is_dir():
+                    continue
+                if member.parent == dist_info and member.name in {
+                    "RECORD",
+                    "RECORD.jws",
+                    "RECORD.p7s",
+                }:
+                    continue
+                if member.parts[0].endswith(".data"):
+                    if len(member.parts) < 3 or member.parts[1] not in {
+                        "purelib",
+                        "platlib",
+                    }:
+                        raise ValueError("unsupported wheel installation layout")
+                    member = PurePosixPath(*member.parts[2:])
+                relative = (site / member).as_posix()
+                if relative in members or relative not in recorded:
+                    raise ValueError("missing or duplicated installed wheel member")
+                members.add(relative)
+                installed = resolve_local(
+                    manifest.root, relative, "python.installed_file"
+                )
+                with archive.open(info) as stream:
+                    expected_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                if hash_file(installed) != (info.file_size, expected_digest):
+                    raise ValueError("installed wheel payload changed")
+            for relative in recorded - members - {own_record}:
+                path = PurePosixPath(relative)
+                if not path.is_relative_to(site):
+                    continue  # Installer-generated command wrappers have no wheel member.
+                if path.parent == site / dist_info and (
+                    path.name
+                    in {
+                        "INSTALLER",
+                        "REQUESTED",
+                        "direct_url.json",
+                        "RECORD.jws",
+                        "RECORD.p7s",
+                    }
+                    or re.fullmatch(r".+ [2-9][0-9]*(?:\.[^./]+)?", path.name)
+                ):
+                    continue
+                raise ValueError("installed payload is absent from the pinned wheel")
+    except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as exc:
+        raise ApplianceError(
+            503,
+            "artifact_identity_mismatch",
+            "Installed Python payloads do not match their pinned wheel.",
+        ) from exc
+
+
 def _verify_python_record_files(manifest: Manifest) -> None:
+    if not manifest.python.get("environment_sha256"):
+        raise ApplianceError(503, "artifact_identity_mismatch", "The complete Python environment has no qualified identity.")
     site = resolve_local(manifest.root, manifest.python["site_packages"], "python.site_packages", must_exist=False)
     if not site.is_dir():
         raise ApplianceError(503, "artifact_identity_mismatch", "The pinned Python site-packages directory is missing.")
@@ -511,15 +606,25 @@ def _verify_python_record_files(manifest: Manifest) -> None:
     environment_root = resolve_local(manifest.root, executable_parts[0], "python.environment", must_exist=False)
     if not environment_root.is_dir():
         raise ApplianceError(503, "artifact_identity_mismatch", "The pinned Python environment root is missing.")
+    verified_files: set[str] = set()
     for name, distribution in actual.items():
         if distribution.version != expected[name]["version"]:
             raise ApplianceError(503, "artifact_identity_mismatch", "A Python distribution version does not match the manifest.")
         record = distribution.read_text("RECORD")
         if record is None:
             raise ApplianceError(503, "artifact_identity_mismatch", "A Python distribution has no RECORD.")
+        recorded: set[str] = set()
         for row in csv.reader(record.splitlines()):
             if len(row) != 3:
                 raise ApplianceError(503, "artifact_identity_mismatch", "A RECORD row has an invalid shape.")
+            installed = Path(os.path.abspath(distribution.locate_file(row[0])))
+            try:
+                relative_record = installed.relative_to(manifest.root.absolute()).as_posix()
+            except ValueError as exc:
+                raise ApplianceError(503, "artifact_identity_mismatch", "A RECORD path escapes the bundle.") from exc
+            if relative_record in recorded:
+                raise ApplianceError(503, "artifact_identity_mismatch", "A RECORD path is duplicated.")
+            recorded.add(relative_record)
             if not row[1]:
                 if PurePosixPath(row[0]).name != "RECORD" or row[2]:
                     raise ApplianceError(503, "artifact_identity_mismatch", "A RECORD entry lacks a SHA-256 hash.")
@@ -527,7 +632,6 @@ def _verify_python_record_files(manifest: Manifest) -> None:
             algorithm, separator, encoded = row[1].partition("=")
             if separator != "=" or algorithm != "sha256":
                 raise ApplianceError(503, "artifact_identity_mismatch", "A RECORD entry lacks a SHA-256 hash.")
-            installed = Path(os.path.abspath(distribution.locate_file(row[0])))
             try:
                 relative = installed.relative_to(environment_root.absolute())
             except ValueError as exc:
@@ -547,6 +651,13 @@ def _verify_python_record_files(manifest: Manifest) -> None:
             expected_digest = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).hex()
             if digest != expected_digest or (row[2] and size != int(row[2])):
                 raise ApplianceError(503, "artifact_identity_mismatch", "An installed Python file failed RECORD verification.")
+        _verify_installed_wheel(manifest, expected[name], recorded)
+        verified_files.update(recorded)
+    for path in site.rglob("*"):
+        if path.is_symlink() or (path.is_file() and path.relative_to(manifest.root).as_posix() not in verified_files):
+            raise ApplianceError(503, "artifact_identity_mismatch", "The Python environment contains an unverified file or bytecode cache.")
+    if manifest.python.get("environment_sha256") != hash_environment(environment_root):
+        raise ApplianceError(503, "artifact_identity_mismatch", "The complete Python environment is unqualified or has changed.")
 
 
 def runtime_identity(manifest: Manifest, gateway_digest: str, effective_configuration: dict[str, Any]) -> dict[str, Any]:

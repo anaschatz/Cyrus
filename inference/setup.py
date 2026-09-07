@@ -52,6 +52,7 @@ MODULES = frozenset(
         "profile_performance.py",
         "profile_quality.py",
         "profile_report.py",
+        "python_environment.py",
         "qualification.py",
         "qwen35_sampling_candidate.py",
         "rendering.py",

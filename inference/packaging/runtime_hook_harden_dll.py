@@ -28,7 +28,7 @@ set_default_directories = ctypes.WinDLL(  # type: ignore[attr-defined]
 set_default_directories.argtypes = [wintypes.DWORD]
 set_default_directories.restype = wintypes.BOOL
 if not set_default_directories(0x00001000):  # LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
-    raise ctypes.WinError()  # pragma: no cover - native failure path
+    raise ctypes.WinError(ctypes.get_last_error())  # pragma: no cover - native failure path
 
 # Keep the handle alive for the lifetime of the process. The selected policy
 # excludes the current directory and PATH while retaining application/System32

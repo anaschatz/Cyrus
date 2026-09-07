@@ -30,6 +30,8 @@ from .macos_fixture import (
 )
 from .private_temp import PrivateLaunchDirectory, private_temp_environment
 from .qualification import SUITE_VERSION
+from .errors import ApplianceError
+from .manifest import _read_manifest_file
 from .strict_json import canonical_bytes, parse_body
 from .windows_asr_corpus import WindowsAsrCorpusError, validate_corpus_manifest
 from .windows_process import WindowsProcessFailure, run_windows_job
@@ -156,35 +158,11 @@ def _safe_existing_chain(path: Path, *, final_directory: bool, name: str) -> Non
 def _safe_file(path: Path, *, maximum: int, name: str) -> bytes:
     _safe_existing_chain(path, final_directory=False, name=name)
     try:
-        info = path.lstat()
-    except OSError as exc:
-        raise FixtureFailure(f"unsafe {name} path") from exc
-    reparse = bool(
-        os.name == "nt"
-        and getattr(info, "st_file_attributes", 0)
-        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    )
-    if (
-        not stat.S_ISREG(info.st_mode)
-        or path.is_symlink()
-        or reparse
-        or info.st_size <= 0
-        or info.st_size > maximum
-    ):
-        raise FixtureFailure(f"unsafe {name} path")
-    try:
-        raw = path.read_bytes()
-        after = path.lstat()
-    except OSError as exc:
-        raise FixtureFailure(f"unreadable {name}") from exc
-    if (
-        (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
-        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-        or path.is_symlink()
-        or getattr(after, "st_file_attributes", 0) & _REPARSE_POINT
-        or len(raw) != info.st_size
-    ):
-        raise FixtureFailure(f"unstable {name}")
+        raw = _read_manifest_file(path, maximum=maximum)
+    except (ApplianceError, OSError) as exc:
+        raise FixtureFailure(f"unsafe {name}") from exc
+    if not raw:
+        raise FixtureFailure(f"unsafe {name}")
     return raw
 
 
@@ -533,9 +511,9 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=".qualification-", dir=path.parent)
     temporary = Path(temporary_name)
     try:
-        if os.name != "nt":
-            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
+            if os.name != "nt":
+                os.fchmod(stream.fileno(), 0o600)
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())

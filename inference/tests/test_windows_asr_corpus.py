@@ -13,6 +13,7 @@ from jarvis_inference.windows_asr_corpus import (
     WindowsAsrCorpusError,
     _is_local_windows_absolute,
     _windows_drive_is_local,
+    _wav_metadata,
     build_corpus_manifest,
     coexistence_entries,
     validate_corpus_manifest,
@@ -55,6 +56,22 @@ def _corpus(root: Path) -> Path:
 
 
 class WindowsAsrCorpusTests(unittest.TestCase):
+    def test_wav_header_cannot_attest_missing_audio_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audio.wav"
+            _write_wav(path)
+            raw = path.read_bytes()
+            self.assertEqual(_wav_metadata(raw), 1500)
+            partial_frame = bytearray(raw + b"\0")
+            partial_frame[4:8] = (len(partial_frame) - 8).to_bytes(4, "little")
+            partial_frame[40:44] = (len(partial_frame) - 44).to_bytes(4, "little")
+            for bad in (raw[:44], raw[:-1], bytes(partial_frame), b"RIFF", b""):
+                with (
+                    self.subTest(length=len(bad)),
+                    self.assertRaises(WindowsAsrCorpusError),
+                ):
+                    _wav_metadata(bad)
+
     def test_windows_paths_are_local_drive_only(self) -> None:
         self.assertTrue(_is_local_windows_absolute(r"D:\CYRUS\qualification"))
         self.assertFalse(_is_local_windows_absolute(r"\\server\share\qualification"))

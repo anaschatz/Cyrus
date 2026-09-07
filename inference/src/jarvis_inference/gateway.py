@@ -21,7 +21,7 @@ from .contracts import (
     validate_generated_tool,
     validate_structured_content,
 )
-from .durable import read_report
+from .durable import generic_report_matches, read_report
 from .engine import (
     Engine,
     EngineFailure,
@@ -44,10 +44,7 @@ from .limits import (
 )
 from .manifest import (
     Manifest,
-    hash_file,
-    resolve_local,
     runtime_identity,
-    verify_artifacts,
 )
 from .profile_report import profile_report_matches
 from .strict_json import canonical_bytes, parse_body
@@ -165,7 +162,7 @@ class Production:
 
     def is_ready(self) -> bool:
         with self.state_lock:
-            return bool(self.ready_state and self.engine is not None and self.engine.ready())
+            return bool(not self.stop.is_set() and self.ready_state and self.engine is not None and self.engine.ready())
 
     def start_background(self) -> None:
         with self.state_lock:
@@ -184,6 +181,8 @@ class Production:
             self._supervise_loop()
         except BaseException as exc:  # noqa: BLE001 - surfaced by close proof
             self.loader_failure = exc
+            with self.state_lock:
+                self.ready_state = False
         finally:
             self.loader_exited.set()
 
@@ -192,11 +191,7 @@ class Production:
             current = runtime_identity(self.manifest, package_digest(), effective_configuration())
             report = read_report(self.manifest.qualification_report)
             valid = bool(
-                report
-                and report.get("report_schema_version") == 1
-                and report.get("status") == "pass"
-                and report.get("identity") == current
-                and self._report_artifacts_match(report)
+                generic_report_matches(self.manifest, current, report)
                 and self.profile_validator(self.manifest, current, report)
             )
             with self.state_lock:
@@ -291,19 +286,6 @@ class Production:
                 self.ready_state = False
             if candidate is not None:
                 candidate.close()
-
-    def _report_artifacts_match(self, report: dict[str, Any]) -> bool:
-        runner = report.get("fixture_runner")
-        if runner is None:
-            return False
-        if not isinstance(runner, dict) or set(runner) != {"path", "size_bytes", "sha256"}:
-            return False
-        try:
-            path = resolve_local(self.manifest.root, runner["path"], "fixture_runner")
-            size, digest = hash_file(path)
-            return type(runner["size_bytes"]) is int and size == runner["size_bytes"] and digest == runner["sha256"]
-        except (ApplianceError, OSError, TypeError):
-            return False
 
     def close(self) -> None:
         self.stop.set()
@@ -485,15 +467,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
             inject_cancel = getattr(self.production, "inject_qualification_cancel", None)
             if self.path == "/jarvis/qualification/cancel" and callable(inject_cancel):
                 self._media_headers()
-                document = parse_body(self._read_body(started))
-                if not isinstance(document, dict) or set(document) != {"phase"} or document["phase"] not in {"prefill", "stream"}:
+                document = self._read_body(started)
+                if set(document) != {"phase"} or not isinstance(document["phase"], str) or document["phase"] not in {"prefill", "stream"}:
                     raise ApplianceError(400, "invalid_qualification_control", "The qualification control payload is invalid.")
                 self._json(200, inject_cancel(document["phase"]))
                 return
             inject_crash = getattr(self.production, "inject_qualification_crash", None)
             if self.path == "/jarvis/qualification/crash" and callable(inject_crash):
                 self._media_headers()
-                document = parse_body(self._read_body(started))
+                document = self._read_body(started)
                 if document != {}:
                     raise ApplianceError(400, "invalid_qualification_control", "The qualification control payload is invalid.")
                 self._json(200, inject_crash())
@@ -506,7 +488,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 and callable(arm_generation)
             ):
                 self._media_headers()
-                document = parse_body(self._read_body(started))
+                document = self._read_body(started)
                 if document != {}:
                     raise ApplianceError(
                         400,
@@ -523,7 +505,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 and callable(generation_metric)
             ):
                 self._media_headers()
-                document = parse_body(self._read_body(started))
+                document = self._read_body(started)
                 if (
                     not isinstance(document, dict)
                     or set(document) != {"expected_serial"}
@@ -542,7 +524,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             tokenize = getattr(self.production, "qualification_tokenize", None)
             if self.path == "/jarvis/qualification/tokenize" and callable(tokenize):
                 self._media_headers()
-                document = parse_body(self._read_body(started))
+                document = self._read_body(started)
                 request = normalize_request(
                     document,
                     alias=self.production.manifest.alias,
@@ -554,8 +536,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             if self.path != "/v1/chat/completions":
                 raise ApplianceError(404, "not_found", "The endpoint does not exist.")
             self._media_headers()
-            raw = self._read_body(started)
-            document = parse_body(raw)
+            document = self._read_body(started)
             request = normalize_request(
                 document,
                 alias=self.production.manifest.alias,
@@ -611,7 +592,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def _authenticate(self) -> None:
         values = self.headers.get_all("Authorization", failobj=[])
         expected = "Bearer " + self.production.secret
-        if len(values) != 1 or not hmac.compare_digest(values[0], expected):
+        if len(values) != 1 or not hmac.compare_digest(values[0].encode("utf-8"), expected.encode("utf-8")):
             raise ApplianceError(401, "invalid_api_key", "Authentication failed.")
 
     def _media_headers(self) -> None:
@@ -627,7 +608,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if self.headers.get_all("Transfer-Encoding", failobj=[]):
             raise ApplianceError(415, "unsupported_content_encoding", "Transfer encodings are not supported.")
 
-    def _read_body(self, started: float) -> bytes:
+    def _read_body(self, started: float) -> dict[str, Any]:
         values = self.headers.get_all("Content-Length", failobj=[])
         if len(values) != 1:
             raise ApplianceError(411, "length_required", "Exactly one Content-Length header is required.")
@@ -639,11 +620,29 @@ class GatewayHandler(BaseHTTPRequestHandler):
             raise ApplianceError(400, "invalid_content_length", "Content-Length is invalid.") from exc
         if length < 0 or length > BODY_BYTES:
             raise ApplianceError(413, "request_too_large", "The request body exceeds its size limit.")
-        self.connection.settimeout(min(BODY_SECONDS, max(0.001, started + TOTAL_SECONDS - time.monotonic())))
-        raw = self.rfile.read(length)
-        if len(raw) != length:
-            raise ApplianceError(400, "incomplete_body", "The request body is incomplete.")
-        return raw
+        deadline = started + min(BODY_SECONDS, TOTAL_SECONDS)
+        raw = bytearray()
+        try:
+            while len(raw) < length:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError
+                self.connection.settimeout(remaining)
+                chunk = self.rfile.read1(length - len(raw))
+                if not chunk:
+                    self.close_connection = True
+                    raise ApplianceError(400, "incomplete_body", "The request body is incomplete.")
+                raw.extend(chunk)
+            if time.monotonic() >= deadline:
+                raise TimeoutError
+        except TimeoutError as exc:
+            self.close_connection = True
+            raise ApplianceError(408, "request_timeout", "The request body deadline expired.") from exc
+        try:
+            return parse_body(bytes(raw))
+        except RecursionError as exc:
+            # strict_json is hash-pinned by the frozen sampling experiment.
+            raise ApplianceError(400, "invalid_json", "The JSON payload is invalid.") from exc
 
     def _require_ready(self) -> None:
         if not self.production.is_ready():
@@ -686,26 +685,32 @@ class GatewayHandler(BaseHTTPRequestHandler):
             except ApplianceError as exc:
                 cancel.set()
                 if exc.status >= 500:
-                    try:
-                        engine.cancel()
-                        engine.cleanup(min(deadline, time.monotonic() + CANCEL_SECONDS))
-                    except Exception:
-                        pass
+                    self._cancel_generation(engine, cancel, deadline)
                 raise
-            except (EngineFailure, queue.Empty) as exc:
+            except Exception as exc:
                 last_error = exc
-                cancel.set()
-                try:
-                    engine.cancel()
-                    engine.cleanup(min(deadline, time.monotonic() + CANCEL_SECONDS))
-                except Exception:
-                    pass
-                if attempt == 0 and not isinstance(exc, EngineProtocolFailure) and not disconnected.is_set():
+                self._cancel_generation(engine, cancel, deadline)
+                if (attempt == 0 and isinstance(exc, (EngineFailure, queue.Empty))
+                        and not isinstance(exc, EngineProtocolFailure)
+                        and not disconnected.is_set() and not self.production.stop.is_set()):
                     cancel = threading.Event()
                     engine = self.production.restart_engine(min(deadline, time.monotonic() + PREFILL_SECONDS))
                     continue
                 raise backend_error() from exc
         raise backend_error() from last_error
+
+    def _cancel_generation(self, engine: Engine, cancel: threading.Event, deadline: float) -> None:
+        cancel.set()
+        try:
+            engine.cancel()
+            engine.cleanup(min(deadline, time.monotonic() + CANCEL_SECONDS))
+        except Exception:
+            try:
+                engine.close()
+            except Exception:
+                # An engine whose cleanup and exit are both unproven must not
+                # accept another request or be replaced by the supervisor.
+                self.production.stop.set()
 
     @staticmethod
     def _produce(engine: Engine, prepared: PreparedPrompt, cancel: threading.Event, deadline: float, events: EventQueue) -> None:
@@ -714,18 +719,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 events.put(event, cancel, deadline)
             events.put(END, cancel, deadline)
         except Exception as exc:
+            if not isinstance(exc, EngineFailure):
+                exc = EngineProtocolFailure("invalid backend generation")
             events.put(exc, cancel, deadline)
 
     @staticmethod
     def _validate_event(event: GenerationEvent) -> None:
-        if event.kind not in {"text", "tool", "final"}:
+        if not isinstance(event.kind, str) or event.kind not in {"text", "tool", "final"}:
             raise EngineProtocolFailure("unknown backend event")
         if event.kind == "text" and (not isinstance(event.text, str) or not event.text):
             raise EngineProtocolFailure("empty or invalid backend text event")
-        if event.kind == "tool" and (not event.tool_name or event.tool_arguments is None):
+        if event.kind == "tool" and (not isinstance(event.tool_name, str) or not event.tool_name or not isinstance(event.tool_arguments, str)):
             raise EngineProtocolFailure("invalid backend tool event")
         if event.kind == "final":
-            if event.finish_reason not in {"stop", "length", "tool_calls"} or type(event.completion_tokens) is not int or event.completion_tokens < 0:
+            if not isinstance(event.finish_reason, str) or event.finish_reason not in {"stop", "length", "tool_calls"} or type(event.completion_tokens) is not int or event.completion_tokens < 0:
                 raise EngineProtocolFailure("invalid backend terminal event")
 
     @staticmethod
@@ -814,13 +821,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
         response_id = "chatcmpl-" + secrets.token_hex(16)
         call_id = "call_" + secrets.token_hex(16)
         created = int(time.time())
-        self.connection.settimeout(BLOCKED_WRITE_SECONDS)
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Connection", "close")
-        self.end_headers()
         try:
+            self.connection.settimeout(BLOCKED_WRITE_SECONDS)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
             self._chunk(response_id, created, request, {"role": "assistant", "content": ""}, None)
             final: GenerationEvent | None = None
             tool_seen = False
@@ -849,21 +856,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 raise EngineProtocolFailure("the required tool call is missing")
             if tool_seen != (final.finish_reason == "tool_calls"):
                 raise EngineProtocolFailure("tool output has an inconsistent finish reason")
+            usage = self._usage(prepared, final)
             cancel.set()
             engine.cleanup(deadline)
             self._chunk(response_id, created, request, {}, final.finish_reason)
             if request.include_usage:
                 self._sse({
                     "id": response_id, "object": "chat.completion.chunk", "created": created,
-                    "model": request.model, "choices": [], "usage": self._usage(prepared, final),
+                    "model": request.model, "choices": [], "usage": usage,
                 })
             if time.monotonic() >= deadline:
                 raise EngineFailure("request deadline expired before stream completion")
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
         except Exception:
-            cancel.set()
-            engine.cancel()
+            self._cancel_generation(engine, cancel, deadline)
             self._abort()
             return
         finally:

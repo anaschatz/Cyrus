@@ -21,6 +21,7 @@ from .limits import BODY_BYTES
 from .manifest import (
     Manifest,
     assert_runtime_platform,
+    hash_file,
     resolve_local,
     runtime_identity,
     verify_artifacts,
@@ -130,6 +131,8 @@ def evaluate_evidence(
         raise invalid("qualification_gate_failed", "The cancellation gate did not pass.")
     crashes = _exact(item["crash_restart"], {"isolated_success"}, "crash_restart")
     isolation = _exact(item["isolation"], {"pairs_success", "leaks"}, "isolation")
+    if any(type(value) is not int for counts in (streaming, tools, schemas, cancellation, crashes, isolation) for value in counts.values()):
+        raise invalid("invalid_qualification_evidence", "Qualification counts must be integers.")
     if crashes != {"isolated_success": 5} or isolation != {"pairs_success": 50, "leaks": 0}:
         raise invalid("qualification_gate_failed", "The restart or semantic-isolation gate did not pass.")
     protocol = item["protocol_conformance"]
@@ -396,7 +399,7 @@ def _run_fixture_runner(
                 manifest.python["executable"]["path"],
                 "python.executable",
             )
-            command = [str(executable), "-I", str(runner)]
+            command = [str(executable), "-I", "-B", str(runner)]
         else:
             command = [str(runner)]
         try:
@@ -478,10 +481,17 @@ def _load_windows_qualification_assets(manifest: Manifest) -> dict[str, Any]:
                 "windows_qualification_asset_invalid",
                 "A Windows qualification asset has an invalid size.",
             )
+        observed_size, digest = hash_file(path)
+        if observed_size != size:
+            raise ApplianceError(
+                503,
+                "windows_qualification_asset_invalid",
+                "A Windows qualification asset changed while hashing.",
+            )
         result[name] = {
             "path": relative,
             "size_bytes": size,
-            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "sha256": digest,
         }
     return result
 
@@ -505,7 +515,7 @@ class _QualificationProduction(Production):
             if process is not None:
                 setattr(self.engine, "_qualification_original_pid", process.pid)
             self.ready_state = self.engine is not None and self.engine.ready()
-            self.loader = threading.Thread(target=self._qualification_supervise, name="jarvis-qualification-loader", daemon=True)
+            self.loader = threading.Thread(target=self._supervise, name="jarvis-qualification-loader", daemon=True)
             self.loader.start()
 
     def _record_termination(self, engine: Any) -> None:
@@ -528,76 +538,63 @@ class _QualificationProduction(Production):
         })
         self._qualification_history[:] = self._qualification_history[-64:]
 
-    def _qualification_supervise(self) -> None:
-        try:
-            self._qualification_supervise_loop()
-        except BaseException as exc:  # noqa: BLE001 - surfaced by close proof
-            self.loader_failure = exc
-        finally:
-            self.loader_exited.set()
-
-    def _qualification_supervise_loop(self) -> None:
+    def _supervise_loop(self) -> None:
         while not self.stop.is_set():
-            with self.state_lock:
-                active = self.engine
-            if active is None or not active.ready():
-                if active is not None:
-                    self._record_termination(active)
-                    active.close()
-                candidate = None
-                try:
-                    if self.stop.is_set():
-                        break
-                    candidate = self.engine_factory(self.manifest)
-                    with self.state_lock:
-                        shutting_down = self.stop.is_set()
-                        if not shutting_down:
-                            self.engine = None
-                            self.loading_engine = candidate
-                            self.ready_state = False
-                    if shutting_down:
-                        candidate.close()
-                        break
-                    start = getattr(candidate, "start", None)
-                    if callable(start):
-                        start(time.monotonic() + 600.0)
-                    if self.stop.is_set():
-                        candidate.close()
+            with self.engine_transition:
+                with self.state_lock:
+                    active = self.engine
+                if active is None or not active.ready():
+                    if active is not None:
+                        self._record_termination(active)
+                        active.close()
+                    candidate = None
+                    try:
+                        if self.stop.is_set():
+                            break
+                        candidate = self.engine_factory(self.manifest)
                         with self.state_lock:
-                            if self.loading_engine is candidate:
-                                self.loading_engine = None
+                            shutting_down = self.stop.is_set()
+                            if not shutting_down:
+                                self.engine = None
+                                self.loading_engine = candidate
+                                self.ready_state = False
+                        if shutting_down:
+                            candidate.close()
+                            break
+                        start = getattr(candidate, "start", None)
+                        if callable(start):
+                            start(time.monotonic() + 600.0)
+                        if self.stop.is_set():
+                            candidate.close()
+                            with self.state_lock:
+                                if self.loading_engine is candidate:
+                                    self.loading_engine = None
+                                self.ready_state = False
+                            break
+                        process = getattr(candidate, "process", None)
+                        if process is not None:
+                            setattr(candidate, "_qualification_original_pid", process.pid)
+                        with self.state_lock:
+                            publish = not self.stop.is_set()
+                            if publish:
+                                self.engine = candidate
+                            self.loading_engine = None
+                            self.ready_state = bool(publish and candidate.ready())
+                        if not publish:
+                            candidate.close()
+                            break
+                    except Exception:
+                        if candidate is not None:
+                            candidate.close()
+                        with self.state_lock:
+                            self.loading_engine = None
                             self.ready_state = False
-                        break
-                    process = getattr(candidate, "process", None)
-                    if process is not None:
-                        setattr(candidate, "_qualification_original_pid", process.pid)
-                    with self.state_lock:
-                        publish = not self.stop.is_set()
-                        if publish:
-                            self.engine = candidate
-                        self.loading_engine = None
-                        self.ready_state = bool(publish and candidate.ready())
-                    if not publish:
-                        candidate.close()
-                        break
-                except Exception:
-                    if candidate is not None:
-                        candidate.close()
-                    with self.state_lock:
-                        self.loading_engine = None
-                        self.ready_state = False
             self.stop.wait(0.05)
-
-    def is_ready(self) -> bool:
-        return self.engine is not None and self.engine.ready()
-
-    def refresh(self) -> bool:
-        return self.is_ready()
 
     def qualification_runtime(self) -> dict[str, Any]:
         with self.state_lock:
             engine = self.engine
-            ready = bool(self.ready_state and engine is not None and engine.ready())
+            ready = bool(not self.stop.is_set() and self.ready_state and engine is not None and engine.ready())
         snapshot = getattr(engine, "runtime_snapshot", lambda: {})() if engine is not None else {}
         return {
             "ready": ready,

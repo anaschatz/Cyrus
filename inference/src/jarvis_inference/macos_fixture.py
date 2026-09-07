@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import http.client
-import json
 import os
 import re
 import statistics
@@ -23,11 +22,46 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .qualification import SUITE_VERSION
+from .errors import ApplianceError
+from .limits import BODY_BYTES, SSE_PAYLOAD_BYTES
+from .manifest import _read_manifest_file
+from .schema_subset import validate_instance
 from .strict_json import canonical_bytes, parse_body
 
 
 class FixtureFailure(RuntimeError):
     """Content-free native fixture failure."""
+
+
+def _parse_response(raw: bytes) -> Any:
+    try:
+        return parse_body(raw)
+    except (ApplianceError, RecursionError) as exc:
+        raise FixtureFailure("invalid qualification JSON") from exc
+
+
+def _check_usage(usage: Any, max_tokens: int) -> None:
+    if (
+        not isinstance(usage, dict)
+        or set(usage) != {"prompt_tokens", "completion_tokens", "total_tokens"}
+        or any(type(value) is not int or value < 0 for value in usage.values())
+        or not 1 <= usage["completion_tokens"] <= max_tokens
+        or usage["total_tokens"] != usage["prompt_tokens"] + usage["completion_tokens"]
+    ):
+        raise FixtureFailure("invalid completion accounting")
+
+
+def _checked_choice(value: dict[str, Any], max_tokens: int) -> dict[str, Any]:
+    choices = value.get("choices")
+    if (
+        not isinstance(choices, list)
+        or len(choices) != 1
+        or not isinstance(choices[0], dict)
+        or not isinstance(choices[0].get("message"), dict)
+    ):
+        raise FixtureFailure("completion response shape failed")
+    _check_usage(value.get("usage"), max_tokens)
+    return choices[0]
 
 
 _STAGES = {
@@ -82,8 +116,10 @@ class QualificationClient:
         try:
             connection.request(method, path, body=body if payload is not None else None, headers=headers)
             response = connection.getresponse()
-            raw = response.read()
-            value = parse_body(raw) if raw else {}
+            raw = response.read(BODY_BYTES + 1)
+            if len(raw) > BODY_BYTES:
+                raise FixtureFailure("oversized gateway response")
+            value = _parse_response(raw) if raw else {}
             if not isinstance(value, dict):
                 raise FixtureFailure("non-object gateway response")
             return response.status, value
@@ -110,16 +146,13 @@ class QualificationClient:
             if status != 200:
                 raise FixtureFailure("completion request failed")
             try:
-                choice = value["choices"][0]
+                choice = _checked_choice(value, max_tokens)
                 text = choice["message"]["content"]
-                usage = value["usage"]
             except (KeyError, IndexError, TypeError) as exc:
                 raise FixtureFailure("completion response shape failed") from exc
             if (
                 not isinstance(text, str)
-                or choice.get("finish_reason") not in {"stop", "length"}
-                or not isinstance(usage, dict)
-                or type(usage.get("completion_tokens")) is not int
+                or choice.get("finish_reason") not in ("stop", "length")
             ):
                 raise FixtureFailure("completion response contract failed")
             return text
@@ -146,9 +179,11 @@ class QualificationClient:
             if response.status != 200 or response.getheader("Content-Type") != "text/event-stream; charset=utf-8":
                 raise FixtureFailure("stream response failed")
             while True:
-                raw = response.readline()
+                raw = response.readline(SSE_PAYLOAD_BYTES + 8)
                 if not raw:
                     break
+                if len(raw) > SSE_PAYLOAD_BYTES + 7 or not raw.endswith(b"\n"):
+                    raise FixtureFailure("stream frame size failed")
                 if not raw.startswith(b"data: "):
                     if raw.strip():
                         raise FixtureFailure("stream framing failed")
@@ -157,23 +192,35 @@ class QualificationClient:
                 if data == b"[DONE]":
                     done_seen = True
                     break
-                event = parse_body(data)
+                event = _parse_response(data)
                 if not isinstance(event, dict):
                     raise FixtureFailure("stream event failed")
                 choices = event.get("choices")
                 if choices == []:
+                    if not terminal or usage_seen:
+                        raise FixtureFailure("stream usage ordering failed")
                     usage = event.get("usage")
-                    usage_seen = isinstance(usage, dict) and type(usage.get("completion_tokens")) is int
+                    _check_usage(usage, max_tokens)
+                    usage_seen = True
                     continue
+                if terminal or not isinstance(choices, list) or len(choices) != 1:
+                    raise FixtureFailure("stream choice failed")
                 try:
                     choice = choices[0]
                     delta = choice["delta"]
                 except (KeyError, IndexError, TypeError) as exc:
                     raise FixtureFailure("stream choice failed") from exc
+                if not isinstance(delta, dict) or set(delta) - {"role", "content"} or delta.get("role", "assistant") != "assistant":
+                    raise FixtureFailure("stream delta failed")
                 content = delta.get("content")
+                if content is not None and not isinstance(content, str):
+                    raise FixtureFailure("stream content failed")
                 if isinstance(content, str) and content:
                     text_parts.append(content)
-                if choice.get("finish_reason") in {"stop", "length"}:
+                reason = choice.get("finish_reason")
+                if reason is not None:
+                    if reason not in ("stop", "length"):
+                        raise FixtureFailure("stream finish reason failed")
                     terminal = True
         finally:
             connection.close()
@@ -198,15 +245,19 @@ class QualificationClient:
         if status != 200:
             raise FixtureFailure("structured request failed")
         try:
-            choice = value["choices"][0]
+            choice = _checked_choice(value, max_tokens)
             content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise FixtureFailure("structured response shape failed") from exc
-        if not isinstance(content, str) or choice.get("finish_reason") not in {"stop", "length"}:
+        if not isinstance(content, str) or choice.get("finish_reason") not in ("stop", "length"):
             raise FixtureFailure("structured response contract failed")
-        parsed = parse_body(content.encode("utf-8"))
+        parsed = _parse_response(content.encode("utf-8"))
         if not isinstance(parsed, dict):
             raise FixtureFailure("structured response is not an object")
+        try:
+            validate_instance(parsed, schema)
+        except ApplianceError as exc:
+            raise FixtureFailure("structured response violates its schema") from exc
         return parsed
 
     def tool_call(self, prompt: str, *, index: int, named: bool) -> dict[str, Any]:
@@ -242,14 +293,18 @@ class QualificationClient:
         if status != 200:
             raise FixtureFailure("tool request failed")
         try:
-            choice = value["choices"][0]
+            choice = _checked_choice(value, 96)
             message = choice["message"]
             calls = message["tool_calls"]
             call = calls[0]
             function = call["function"]
-            arguments = parse_body(function["arguments"].encode("utf-8"))
+            arguments = _parse_response(function["arguments"].encode("utf-8"))
         except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise FixtureFailure("tool response shape failed") from exc
+        try:
+            validate_instance(arguments, parameters)
+        except ApplianceError as exc:
+            raise FixtureFailure("tool arguments violate their schema") from exc
         if (
             choice.get("finish_reason") != "tool_calls"
             or message.get("content") is not None
@@ -290,13 +345,19 @@ class QualificationClient:
 
 
 def _read_identity(manifest_path: Path, challenge: str) -> tuple[str, dict[str, Any], dict[str, bool]]:
-    manifest = parse_body(manifest_path.read_bytes())
+    try:
+        manifest = _parse_response(_read_manifest_file(manifest_path))
+    except (ApplianceError, OSError) as exc:
+        raise FixtureFailure("unsafe manifest identity") from exc
     if not isinstance(manifest, dict) or manifest.get("alias") != "jarvis-local":
         raise FixtureFailure("manifest identity failed")
     report_name = manifest.get("qualification_report")
     if not isinstance(report_name, str) or Path(report_name).is_absolute() or ".." in Path(report_name).parts:
         raise FixtureFailure("qualification report path failed")
-    report = parse_body((manifest_path.parent / report_name).read_bytes())
+    try:
+        report = _parse_response(_read_manifest_file(manifest_path.parent / report_name))
+    except (ApplianceError, OSError) as exc:
+        raise FixtureFailure("unsafe qualification identity") from exc
     if (
         not isinstance(report, dict)
         or report.get("status") != "in_progress"
@@ -384,12 +445,13 @@ def _write_evidence(path: Path, value: dict[str, Any]) -> None:
     raw = canonical_bytes(value)
     descriptor, temporary = tempfile.mkstemp(prefix=".qualification-", dir=path.parent)
     try:
-        os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        os.link(temporary, path)
+        os.unlink(temporary)
     except BaseException:
         try:
             os.unlink(temporary)

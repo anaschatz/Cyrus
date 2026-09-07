@@ -19,6 +19,8 @@ import wave
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
 
+from .errors import ApplianceError
+from .manifest import _read_manifest_file
 from .strict_json import canonical_bytes, parse_body
 
 
@@ -115,36 +117,11 @@ def _validate_existing_chain(
 def _safe_regular(path: Path, *, maximum: int, name: str) -> bytes:
     _validate_existing_chain(path, final_directory=False, name=name)
     try:
-        info = path.lstat()
-    except OSError as exc:
-        raise WindowsAsrCorpusError(f"unsafe {name} path") from exc
-    if (
-        not stat.S_ISREG(info.st_mode)
-        or path.is_symlink()
-        or _is_reparse(path)
-        or info.st_size <= 0
-        or info.st_size > maximum
-    ):
-        raise WindowsAsrCorpusError(f"unsafe {name} path")
-    try:
-        raw = path.read_bytes()
-        after = path.lstat()
-    except OSError as exc:
-        raise WindowsAsrCorpusError(f"unreadable {name}") from exc
-    before_identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
-    after_identity = (
-        after.st_dev,
-        after.st_ino,
-        after.st_size,
-        after.st_mtime_ns,
-    )
-    if (
-        before_identity != after_identity
-        or path.is_symlink()
-        or _is_reparse(path)
-        or len(raw) != info.st_size
-    ):
-        raise WindowsAsrCorpusError(f"unstable {name}")
+        raw = _read_manifest_file(path, maximum=maximum)
+    except (ApplianceError, OSError) as exc:
+        raise WindowsAsrCorpusError(f"unsafe {name}") from exc
+    if not raw:
+        raise WindowsAsrCorpusError(f"unsafe {name}")
     return raw
 
 
@@ -214,7 +191,8 @@ def _wav_metadata(raw: bytes) -> int:
             sample_rate = reader.getframerate()
             frames = reader.getnframes()
             compression = reader.getcomptype()
-    except (OSError, wave.Error) as exc:
+            actual_bytes = len(reader.readframes(frames + 1))
+    except (OSError, EOFError, wave.Error) as exc:
         raise WindowsAsrCorpusError("invalid WAV fixture") from exc
     if (
         channels != 1
@@ -222,6 +200,7 @@ def _wav_metadata(raw: bytes) -> int:
         or sample_rate != 16_000
         or frames <= 0
         or compression != "NONE"
+        or actual_bytes != frames * channels * sample_width
     ):
         raise WindowsAsrCorpusError("WAV fixture format mismatch")
     duration_ms = (frames * 1000 + sample_rate // 2) // sample_rate
@@ -574,9 +553,9 @@ def write_corpus_manifest(path: Path, document: dict[str, Any]) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=".audio-corpus-", dir=path.parent)
     temporary = Path(temporary_name)
     try:
-        if os.name != "nt":
-            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
+            if os.name != "nt":
+                os.fchmod(stream.fileno(), 0o600)
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())

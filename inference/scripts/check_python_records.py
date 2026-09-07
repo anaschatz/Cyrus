@@ -6,13 +6,13 @@ from __future__ import annotations
 import argparse
 import base64
 import csv
-import hashlib
 import importlib.metadata
 import json
 import os
 import re
 import stat
 from pathlib import Path
+from jarvis_inference.python_environment import hash_file
 
 
 def _canonical(value: str) -> str:
@@ -24,8 +24,14 @@ def check(root: Path) -> tuple[bool, str | None, str]:
     site = root / "python/lib/python3.11/site-packages"
     if not root.is_dir() or root.is_symlink() or not site.is_dir():
         return False, None, "record.runtime_layout_invalid"
-    for distribution in importlib.metadata.distributions(path=[str(site)]):
-        name = _canonical(distribution.metadata["Name"])
+    distributions = list(importlib.metadata.distributions(path=[str(site)]))
+    if not distributions:
+        return False, None, "record.distributions_missing"
+    for distribution in distributions:
+        declared_name = distribution.metadata["Name"]
+        if not isinstance(declared_name, str) or not declared_name:
+            return False, None, "record.distribution_name_invalid"
+        name = _canonical(declared_name)
         record = distribution.read_text("RECORD")
         if record is None:
             return False, name, "record.missing"
@@ -56,11 +62,11 @@ def check(root: Path) -> tuple[bool, str | None, str]:
                         return False, name, "record.symlink"
                 if not installed.is_file():
                     return False, name, "record.file_missing"
-                raw = installed.read_bytes()
+                size, digest = hash_file(installed)
                 expected = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).hex()
-                if hashlib.sha256(raw).hexdigest() != expected:
+                if digest != expected:
                     return False, name, "record.digest_mismatch"
-                if row[2] and len(raw) != int(row[2]):
+                if row[2] and size != int(row[2]):
                     return False, name, "record.size_mismatch"
             except (OSError, ValueError):
                 return False, name, "record.file_unreadable"

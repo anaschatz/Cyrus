@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import importlib.metadata
 import json
 import os
@@ -22,20 +21,11 @@ from email.parser import BytesParser
 from email.policy import default as email_policy
 from pathlib import Path
 from typing import Any
+from jarvis_inference.python_environment import hash_environment, hash_file as _hash
 
 
 def _canonical_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
-
-
-def _hash(path: Path) -> tuple[int, str]:
-    digest = hashlib.sha256()
-    size = 0
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            size += len(chunk)
-            digest.update(chunk)
-    return size, digest.hexdigest()
 
 
 def _artifact(root: Path, path: Path) -> dict[str, Any]:
@@ -67,7 +57,10 @@ def _wheel_identity(path: Path) -> tuple[str, str]:
 def _installed(site: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     for distribution in importlib.metadata.distributions(path=[str(site)]):
-        name = _canonical_name(distribution.metadata["Name"])
+        declared_name = distribution.metadata["Name"]
+        if not isinstance(declared_name, str) or not declared_name:
+            raise ValueError("installed distribution has no name")
+        name = _canonical_name(declared_name)
         if name in result:
             raise ValueError("duplicate installed distribution")
         if distribution.read_text("RECORD") is None:
@@ -85,7 +78,7 @@ def _python_identity(executable: Path) -> tuple[str, str]:
         "'version':platform.python_version()}))"
     )
     completed = subprocess.run(
-        [str(executable), "-I", "-S", "-c", code],
+        [str(executable), "-I", "-B", "-S", "-c", code],
         capture_output=True,
         text=True,
         timeout=10.0,
@@ -107,8 +100,8 @@ def _write(path: Path, value: dict[str, Any]) -> None:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False).encode("utf-8") + b"\n"
     descriptor, temporary = tempfile.mkstemp(prefix=".manifest-", dir=path.parent)
     try:
-        os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o600)
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())
@@ -142,7 +135,7 @@ def build(
         raise ValueError("model directory escapes runtime root") from exc
     if len(model_relative.parts) != 2 or model_relative.parts[0] != "models" or not model_dir.is_dir() or model_dir.is_symlink():
         raise ValueError("model directory must be one dedicated models child")
-    if isinstance(context_window, bool) or not 1024 <= context_window <= 262_144:
+    if type(context_window) is not int or not 1024 <= context_window <= 262_144:
         raise ValueError("context window is invalid")
     report_path = Path(qualification_report)
     if (
@@ -207,6 +200,7 @@ def build(
             "artifacts": [_artifact(root, path) for path in model_files],
         },
         "python": {
+            "environment_sha256": hash_environment(root / "python"),
             "implementation": implementation,
             "version": version,
             "executable": _artifact(root, executable),

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import os
-import stat
 from pathlib import Path
 from typing import Any
 
+from .errors import ApplianceError
+from .manifest import _read_manifest_file
 from .strict_json import parse_body
 from .windows_primary_fixture import (
     SUITE_ID,
@@ -39,24 +39,11 @@ def _exact(value: Any, fields: set[str], name: str) -> dict[str, Any]:
 
 def _safe_regular_file(path: Path) -> bytes:
     try:
-        info = path.lstat()
-    except OSError as exc:
-        raise WindowsPrimaryFixtureFailure("unsafe report skeleton path") from exc
-    reparse = bool(
-        os.name == "nt"
-        and getattr(info, "st_file_attributes", 0)
-        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    )
-    if not stat.S_ISREG(info.st_mode) or path.is_symlink() or reparse:
-        raise WindowsPrimaryFixtureFailure("unsafe report skeleton path")
-    if info.st_size <= 0 or info.st_size > REPORT_BYTES:
-        raise WindowsPrimaryFixtureFailure("invalid report skeleton size")
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        raise WindowsPrimaryFixtureFailure("unreadable report skeleton") from exc
-    if len(raw) != info.st_size:
-        raise WindowsPrimaryFixtureFailure("unstable report skeleton")
+        raw = _read_manifest_file(path, maximum=REPORT_BYTES)
+    except (ApplianceError, OSError) as exc:
+        raise WindowsPrimaryFixtureFailure("unsafe report skeleton") from exc
+    if not raw:
+        raise WindowsPrimaryFixtureFailure("unsafe report skeleton")
     return raw
 
 

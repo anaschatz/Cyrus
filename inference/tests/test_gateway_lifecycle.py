@@ -3,12 +3,16 @@ from __future__ import annotations
 import hashlib
 import http.client
 import json
+import os
 import socket
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from test_qualification import TEST_HARDWARE_ENV, passing_report
 
 from jarvis_inference.durable import durable_replace
 from jarvis_inference.engine import EngineFailure, GenerationEvent, PreparedPrompt
@@ -26,6 +30,7 @@ from jarvis_inference.gemma4 import (
     MODEL_SIZE_BYTES,
 )
 from jarvis_inference.manifest import load_manifest, runtime_identity
+from jarvis_inference.qualification import _QualificationProduction
 
 
 def artifact(path: Path, root: Path) -> dict:
@@ -56,11 +61,7 @@ def make_manifest(root: Path, capabilities: dict | None = None):
     path = root / "manifest.json"; path.write_text(json.dumps(value), encoding="utf-8")
     manifest = load_manifest(path)
     runner = root / "fixture-runner"; runner.write_bytes(b"runner")
-    durable_replace(manifest.qualification_report, {
-        "report_schema_version": 1, "status": "pass",
-        "identity": runtime_identity(manifest, package_digest(), effective_configuration()),
-        "fixture_runner": artifact(runner, root),
-    })
+    durable_replace(manifest.qualification_report, passing_report(manifest, runtime_identity(manifest, package_digest(), effective_configuration()), artifact(runner, root)))
     return manifest
 
 
@@ -101,6 +102,8 @@ class ConfigurableEngine:
 
     def cancel(self):
         self.state["cancel_calls"] = self.state.get("cancel_calls", 0) + 1
+        if self.state.get("cancel_failure"):
+            raise EngineFailure("injected cancellation failure")
 
     def close(self):
         self.open = False
@@ -158,6 +161,20 @@ class Harness:
 
 
 class GatewayLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.dict(os.environ, TEST_HARDWARE_ENV))
+
+    def test_supervisor_failure_revokes_readiness(self) -> None:
+        production = Production(None, "test", None)
+        production.engine = ConfigurableEngine({})
+        production.ready_state = True
+        failure = OSError("qualification artifact unavailable")
+        with patch.object(Production, "_supervise_loop", side_effect=failure):
+            production._supervise()
+        self.assertFalse(production.is_ready())
+        self.assertIs(production.loader_failure, failure)
+        self.assertTrue(production.loader_exited.is_set())
+
     def test_rendered_context_overflow_is_client_error(self) -> None:
         harness = Harness({"prompt_tokens": 15})
         try:
@@ -185,8 +202,53 @@ class GatewayLifecycleTests(unittest.TestCase):
             self.assertNotIn(b'"usage":{', raw)
             self.assertNotIn(b"[DONE]", raw)
             self.assertEqual(harness.state["factory_calls"], 1)
+            self.assertEqual(harness.state.get("cleanup_calls"), 1)
         finally:
             harness.close()
+
+    def test_failed_stream_cancellation_cannot_restart_the_response(self) -> None:
+        harness = Harness({
+            "events": [GenerationEvent("text", text="visible"), EngineFailure("after output")],
+            "cancel_failure": True,
+        })
+        try:
+            with patch.object(Production, "restart_engine") as restart:
+                response, raw = harness.request(stream=True)
+            self.assertEqual(response.status, 200)
+            self.assertNotIn(b"HTTP/1.1", raw)
+            self.assertNotIn(b"[DONE]", raw)
+            restart.assert_not_called()
+        finally:
+            harness.close()
+
+    def test_stream_without_usage_still_validates_token_limit(self) -> None:
+        harness = Harness({
+            "request_document": {
+                "model": "jarvis-local", "messages": [{"role": "user", "content": "x"}],
+                "stream": True, "max_completion_tokens": 2,
+            },
+            "events": [GenerationEvent("text", text="visible"), GenerationEvent("final", finish_reason="stop", completion_tokens=3)],
+        })
+        try:
+            response, raw = harness.request(stream=True)
+            self.assertEqual(response.status, 200)
+            self.assertNotIn(b"[DONE]", raw)
+            self.assertNotIn(b'"finish_reason":"stop"', raw)
+        finally:
+            harness.close()
+
+    def test_unexpected_backend_failure_returns_typed_error_and_cleans_up(self) -> None:
+        for failure in (TypeError("malformed backend value"), OSError("pipe failed")):
+            with self.subTest(failure=type(failure).__name__):
+                harness = Harness({"events": [failure]})
+                try:
+                    response, raw = harness.request()
+                    self.assertEqual(response.status, 502)
+                    self.assertEqual(json.loads(raw)["error"]["code"], "backend_protocol_error")
+                    self.assertEqual(harness.state["factory_calls"], 1)
+                    self.assertEqual(harness.state.get("cleanup_calls"), 1)
+                finally:
+                    harness.close()
 
     def test_preoutput_retry_is_exactly_once(self) -> None:
         harness = Harness({"fail_prepares": 1})
@@ -364,6 +426,12 @@ class GatewayLifecycleTests(unittest.TestCase):
             server.server_close(); production.close(); temporary.cleanup()
 
     def test_supervisor_and_request_restart_never_load_engines_concurrently(self) -> None:
+        self._assert_serialized_engine_loads(Production)
+
+    def test_qualification_supervisor_serializes_request_restarts(self) -> None:
+        self._assert_serialized_engine_loads(_QualificationProduction)
+
+    def _assert_serialized_engine_loads(self, production_type) -> None:
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)
         manifest = make_manifest(root)
@@ -388,7 +456,7 @@ class GatewayLifecycleTests(unittest.TestCase):
                 counts["factory"] += 1
             return SerializedStart({})
 
-        production = Production(
+        production = production_type(
             manifest,
             "k" * 40,
             factory,

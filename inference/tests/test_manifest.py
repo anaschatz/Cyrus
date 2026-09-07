@@ -25,6 +25,22 @@ def artifact(path: Path, root: Path) -> dict:
 
 
 class ManifestTests(unittest.TestCase):
+    def test_malformed_manifest_values_return_typed_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "manifest.json"
+            base = self.document(root)
+            for field, value in (("platform", []), ("platform", {}), ("manifest_schema_version", True), ("manifest_schema_version", 1.0), ("format", [])):
+                with self.subTest(field=field, value=value):
+                    document = deepcopy(base)
+                    (document["model"] if field == "format" else document)[field] = value
+                    path.write_text(json.dumps(document))
+                    with self.assertRaises(ApplianceError):
+                        load_manifest(path)
+            path.write_bytes(b"[" * 2000 + b"0" + b"]" * 2000)
+            with self.assertRaises(ApplianceError):
+                load_manifest(path)
+
     @staticmethod
     def document(root: Path) -> dict:
         exe = root / "llama-server.exe"; exe.write_bytes(b"x")

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import copy
+import io
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from jarvis_inference.macos_fixture import (
     FixtureFailure,
@@ -20,6 +22,69 @@ from jarvis_inference.macos_fixture import (
 
 
 class MacosFixtureTests(unittest.TestCase):
+    def test_streaming_rejects_false_protocol_success(self) -> None:
+        def frame(event):
+            return b"data: " + json.dumps(event).encode() + b"\n"
+
+        content = frame(
+            {"choices": [{"delta": {"content": "yes"}, "finish_reason": None}]}
+        )
+        terminal = frame({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+        usage = frame(
+            {
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 1,
+                    "total_tokens": 4,
+                },
+            }
+        )
+        done = b"data: [DONE]\n"
+        cases = [
+            [content, terminal, usage, done],
+            [content, usage, terminal, done],
+            [content, terminal, terminal, usage, done],
+            [content, terminal, content, usage, done],
+            [content, terminal, usage, usage, done],
+            [content, terminal, usage, done.rstrip()],
+            [b"data: " + b"[" * 2000 + b"0" + b"]" * 2000 + b"\n"],
+            [
+                content,
+                terminal,
+                frame(
+                    {
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": 3,
+                            "completion_tokens": 17,
+                            "total_tokens": 20,
+                        },
+                    }
+                ),
+                done,
+            ],
+        ]
+        for index, lines in enumerate(cases):
+            with self.subTest(index=index):
+                response = Mock(readline=io.BytesIO(b"".join(lines)).readline)
+                response.status = 200
+                response.getheader.return_value = "text/event-stream; charset=utf-8"
+                connection = Mock()
+                connection.getresponse.return_value = response
+                client = QualificationClient(
+                    "http://127.0.0.1:1234/v1", "secret", "jarvis-local"
+                )
+                with patch.object(client, "_connection", return_value=connection):
+                    if index == 0:
+                        self.assertEqual(
+                            client.completion("sample", stream=True), "yes"
+                        )
+                    else:
+                        with self.assertRaises(FixtureFailure):
+                            client.completion("sample", stream=True)
+                connection.close.assert_called_once()
+
     def test_loopback_url_is_exact(self) -> None:
         client = QualificationClient("http://127.0.0.1:1234/v1", "secret", "jarvis-local")
         self.assertEqual(client.port, 1234)
@@ -35,40 +100,81 @@ class MacosFixtureTests(unittest.TestCase):
         client = QualificationClient("http://127.0.0.1:1234/v1", "secret", "jarvis-local")
         response = {
             "choices": [{"message": {"content": ""}, "finish_reason": "stop"}],
-            "usage": {"completion_tokens": 1},
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
         }
         with patch.object(client, "json_request", return_value=(200, response)):
             self.assertEqual(client.completion("sample"), "")
 
     def test_tool_and_structured_helpers_validate_public_shapes(self) -> None:
-        client = QualificationClient("http://127.0.0.1:1234/v1", "secret", "jarvis-local")
+        client = QualificationClient(
+            "http://127.0.0.1:1234/v1", "secret", "jarvis-local"
+        )
         tool = {
-            "choices": [{
-                "finish_reason": "tool_calls",
-                "message": {
-                    "content": None,
-                    "tool_calls": [{
-                        "id": "call_" + "a" * 32,
-                        "type": "function",
-                        "function": {"name": "record_index", "arguments": '{"index":7}'},
-                    }],
-                },
-            }],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_" + "a" * 32,
+                                "type": "function",
+                                "function": {
+                                    "name": "record_index",
+                                    "arguments": '{"index":7}',
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
         }
         structured = {
-            "choices": [{
-                "finish_reason": "stop",
-                "message": {"content": '{"accepted":true}'},
-            }],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": '{"accepted":true}'},
+                }
+            ],
         }
-        with patch.object(client, "json_request", side_effect=[(200, tool), (200, structured)]):
+        with patch.object(
+            client, "json_request", side_effect=[(200, tool), (200, structured)]
+        ):
             client.tool_call("sample", index=7, named=True)
-            self.assertEqual(client.structured("sample", {
-                "type": "object",
-                "properties": {"accepted": {"type": "boolean"}},
-                "required": ["accepted"],
-                "additionalProperties": False,
-            }), {"accepted": True})
+            self.assertEqual(
+                client.structured(
+                    "sample",
+                    {
+                        "type": "object",
+                        "properties": {"accepted": {"type": "boolean"}},
+                        "required": ["accepted"],
+                        "additionalProperties": False,
+                    },
+                ),
+                {"accepted": True},
+            )
+        malformed = copy.deepcopy(tool)
+        malformed["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = (
+            '{"index":true}'
+        )
+        with patch.object(client, "json_request", return_value=(200, malformed)):
+            with self.assertRaises(FixtureFailure):
+                client.tool_call("sample", index=1, named=True)
+        malformed = copy.deepcopy(structured)
+        malformed["choices"][0]["message"]["content"] = '{"accepted":1}'
+        with patch.object(client, "json_request", return_value=(200, malformed)):
+            with self.assertRaises(FixtureFailure):
+                client.structured(
+                    "sample",
+                    {
+                        "type": "object",
+                        "properties": {"accepted": {"type": "boolean"}},
+                        "required": ["accepted"],
+                        "additionalProperties": False,
+                    },
+                )
 
     def test_failure_diagnostic_contains_only_stage_and_kind(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -144,6 +250,21 @@ class MacosFixtureTests(unittest.TestCase):
             self.assertEqual(json.loads(output.read_text()), {"ready": True})
             with self.assertRaises(FixtureFailure):
                 _write_evidence(output, {"ready": False})
+
+    def test_evidence_publication_cannot_replace_a_racing_writer(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "evidence.json"
+            original = os.fsync
+
+            def publish_first(descriptor):
+                original(descriptor)
+                output.write_bytes(b"first writer")
+
+            with patch("jarvis_inference.macos_fixture.os.fsync", publish_first):
+                with self.assertRaises(FileExistsError):
+                    _write_evidence(output, {"ready": True})
+            self.assertEqual(output.read_bytes(), b"first writer")
+            self.assertEqual(list(Path(temporary).iterdir()), [output])
 
 
 if __name__ == "__main__":
