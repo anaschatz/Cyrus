@@ -4,7 +4,6 @@ import contextlib
 import hashlib
 import io
 import json
-import os
 import stat
 import tempfile
 import unittest
@@ -188,6 +187,25 @@ class ArtifactAuditTests(unittest.TestCase):
         self.assertFalse(summary["completed"])
         self.assertTrue(summary["scan"]["truncated"])
         self.assertEqual(summary["scan"]["candidates"], 1)
+
+    def test_depth_limit_marks_omitted_subtrees_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            models = root / "models"
+            models.mkdir()
+            self.populate(models)
+            for depth, completed, count in ((0, False, 0), (1, True, 1)):
+                with self.subTest(depth=depth):
+                    report = run_artifact_audit(
+                        [models], output=root / "summary.json",
+                        private_manifest=root / "private.json", max_depth=depth,
+                    )
+                    self.assertEqual(report["completed"], completed)
+                    self.assertEqual(report["scan"]["truncated"], not completed)
+                    self.assertEqual(report["counts"]["faster_whisper_ct2"], count)
+                    self.assertEqual(report["counts"]["whisper_cpp_model"], 1)
+            leaf = models / "ct2"
+            self.assertFalse(discover_artifacts([leaf], max_depth=0)[2].truncated)
 
     def test_roots_outputs_and_limits_are_guarded(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

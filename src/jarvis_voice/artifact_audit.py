@@ -150,6 +150,7 @@ def discover_artifacts(
             state.dataless_candidates += 1
         return True
 
+    depth_truncated = False
     while stack and not state.truncated:
         if state.directories_scanned >= max_directories:
             state.truncated = True
@@ -177,6 +178,8 @@ def discover_artifacts(
                         state.privacy_directories_skipped += 1
                     elif depth < max_depth:
                         child_directories.append(Path(entry.path))
+                    else:
+                        depth_truncated = True
                     continue
                 if entry.is_symlink() and entry.is_dir(follow_symlinks=True):
                     state.symlink_directories_skipped += 1
@@ -212,6 +215,7 @@ def discover_artifacts(
             break
         for child in reversed(child_directories):
             stack.append((child, depth + 1))
+    state.truncated |= depth_truncated
     ordered = sorted(candidates.values(), key=lambda item: (item.kind, item.path.as_posix()))
     return selected_roots, ordered, state
 
@@ -225,11 +229,8 @@ def _path_is_within(path: Path, roots: list[Path]) -> bool:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _candidate_record(candidate: Candidate, roots: list[Path], *, hash_candidates: bool, state: ScanState) -> dict[str, object]:

@@ -36,7 +36,7 @@ Only files already classified by the exact rules are opened. Dataless File Provi
 
 ## Interpretation
 
-- `faster_whisper_ct2` proves only that the four expected runtime artifacts are present. Exact hashes must still match the pinned project manifest before loading.
+- `faster_whisper_ct2` proves only that the expected runtime artifacts for a supported profile are present (four for base, five for large-v3-turbo). Exact hashes must still match the pinned project manifest before loading.
 - `whisper_cpp_model` is a filename/layout compatibility candidate, not a successful native load probe.
 - `openai_whisper_checkpoint` is never converted automatically.
 - `whisper_cpp_server` is only an existing executable candidate. M5 still requires the approved revision and artifact manifest.

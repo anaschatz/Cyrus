@@ -103,6 +103,15 @@ class NativeEvidenceBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(BackendError, "qualification.native_bundle_privacy_invalid"):
             aggregate_native_evidence([first, captured])
 
+    def test_incomplete_source_measurements_cannot_borrow_another_runs_latency(self) -> None:
+        for field, value in (("max_ptt_to_silence_ms", None), ("method", "pending")):
+            with self.subTest(field=field):
+                incomplete = partial_run(turns=19, samples=19, latency_ms=30.0, duration_seconds=10)
+                incomplete["acoustic_barge_in"][field] = value
+                measured = partial_run(turns=1, samples=1, latency_ms=20.0, duration_seconds=10)
+                with self.assertRaisesRegex(BackendError, "qualification.native_bundle_acoustic_invalid"):
+                    aggregate_native_evidence([incomplete, measured])
+
     def test_rejects_mixed_acoustic_profiles(self) -> None:
         first = partial_run(turns=1, samples=1, latency_ms=20.0, duration_seconds=10)
         second = partial_run(turns=1, samples=1, latency_ms=21.0, duration_seconds=10)

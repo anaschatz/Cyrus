@@ -7,7 +7,6 @@ recovery exercises, and an eight-hour soak.
 
 from __future__ import annotations
 
-import json
 import math
 import re
 import uuid
@@ -17,7 +16,7 @@ from typing import Any
 
 from . import PROTOCOL_VERSION, __version__
 from .errors import BackendError
-from .qualification import write_report
+from .qualification import _load_json, write_report
 from .voice_auth import AUTH_PROTOCOL
 
 
@@ -77,12 +76,12 @@ def native_evidence_template(
 ) -> dict[str, object]:
     """Create a strict pending template; it is never evidence of a pass."""
 
-    if platform_name not in PLATFORMS:
+    if not isinstance(platform_name, str) or platform_name not in PLATFORMS:
         raise _error("qualification.native_platform_invalid")
     identifier = str(uuid.uuid4()) if run_id is None else run_id
     try:
         parsed = uuid.UUID(identifier)
-    except (ValueError, AttributeError) as exc:
+    except (ValueError, TypeError, AttributeError) as exc:
         raise _error("qualification.native_run_id_invalid") from exc
     if parsed.version != 4 or str(parsed) != identifier:
         raise _error("qualification.native_run_id_invalid")
@@ -161,12 +160,15 @@ def _nonnegative_integer(value: object) -> bool:
 
 
 def _finite_nonnegative(value: object) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(float(value))
-        and float(value) >= 0
-    )
+    try:
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value >= 0
+        )
+    except OverflowError:
+        return False
 
 
 def validate_native_evidence(raw: Any) -> dict[str, object]:
@@ -187,6 +189,7 @@ def validate_native_evidence(raw: Any) -> dict[str, object]:
     }
     if (
         not _exact_keys(raw, top_keys)
+        or not isinstance(raw.get("schema_version"), int)
         or raw.get("schema_version") != SCHEMA_VERSION
         or raw.get("product_version") != __version__
         or raw.get("protocol_version") != PROTOCOL_VERSION
@@ -194,7 +197,7 @@ def validate_native_evidence(raw: Any) -> dict[str, object]:
     ):
         raise _error("qualification.native_schema_invalid")
     platform_name = raw.get("platform")
-    if platform_name not in PLATFORMS:
+    if not isinstance(platform_name, str) or platform_name not in PLATFORMS:
         raise _error("qualification.native_platform_invalid")
     try:
         identifier = uuid.UUID(raw.get("run_id"))
@@ -224,7 +227,7 @@ def validate_native_evidence(raw: Any) -> dict[str, object]:
     for value in cases.values():
         if (
             not _exact_keys(value, {"status", "attempts"})
-            or value.get("status") not in {"pending", "pass", "fail"}
+            or value.get("status") not in ("pending", "pass", "fail")
             or not _nonnegative_integer(value.get("attempts"))
             or (value.get("status") == "pass" and value.get("attempts") < 1)
         ):
@@ -255,8 +258,8 @@ def validate_native_evidence(raw: Any) -> dict[str, object]:
     acoustic = raw.get("acoustic_barge_in")
     if (
         not _exact_keys(acoustic, acoustic_keys)
-        or acoustic.get("method") not in {"pending", "acoustic_microphone"}
-        or acoustic.get("audio_path") not in {"pending", "wired", "built_in"}
+        or acoustic.get("method") not in ("pending", "acoustic_microphone")
+        or acoustic.get("audio_path") not in ("pending", "wired", "built_in")
         or not _nonnegative_integer(acoustic.get("samples"))
         or not _nonnegative_integer(acoustic.get("silence_hold_ms"))
         or (
@@ -284,14 +287,14 @@ def validate_native_evidence(raw: Any) -> dict[str, object]:
             raise _error("qualification.native_soak_invalid")
     slope = soak.get("rss_slope_bytes_per_hour")
     if slope is not None and (
-        not isinstance(slope, (int, float)) or isinstance(slope, bool) or not math.isfinite(float(slope))
+        not isinstance(slope, (int, float)) or isinstance(slope, bool) or not _finite_nonnegative(abs(slope))
     ):
         raise _error("qualification.native_soak_invalid")
 
     profile = raw.get("runtime_profile")
     if (
         not _exact_keys(profile, {"mode", "fingerprint_sha256", "stable", "signed"})
-        or profile.get("mode") not in {"pending", "source", "signed_package"}
+        or profile.get("mode") not in ("pending", "source", "signed_package")
         or not isinstance(profile.get("stable"), bool)
         or not isinstance(profile.get("signed"), bool)
         or (
@@ -456,11 +459,7 @@ def evaluate_native_evidence(
 
 
 def load_native_evidence(path: str | Path) -> dict[str, object]:
-    try:
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise _error("qualification.native_evidence_unreadable") from exc
-    return validate_native_evidence(raw)
+    return validate_native_evidence(_load_json(path, "qualification.native_evidence_unreadable"))
 
 
 def write_native_evidence_template(

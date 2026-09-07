@@ -78,6 +78,13 @@ def aggregate_native_evidence(runs: Sequence[Any]) -> dict[str, object]:
             or provenance["synthetic_voice_turns"] is not False
         ):
             raise _error("qualification.native_bundle_provenance_invalid")
+        acoustic = value["acoustic_barge_in"]
+        if acoustic["samples"] > 0 and (
+            acoustic["method"] == "pending"
+            or acoustic["audio_path"] == "pending"
+            or acoustic["max_ptt_to_silence_ms"] is None
+        ):
+            raise _error("qualification.native_bundle_acoustic_invalid")
         if any(value["privacy"].values()):
             raise _error("qualification.native_bundle_privacy_invalid")
 
@@ -125,8 +132,6 @@ def aggregate_native_evidence(runs: Sequence[Any]) -> dict[str, object]:
         for value in evidence
         if value["acoustic_barge_in"]["max_ptt_to_silence_ms"] is not None
     ]
-    if acoustic_samples > 0 and (not acoustic_profiles or not acoustic_maxima):
-        raise _error("qualification.native_bundle_acoustic_invalid")
     if acoustic_profiles:
         method, audio_path, silence_hold_ms = next(iter(acoustic_profiles))
     else:

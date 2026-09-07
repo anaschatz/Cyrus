@@ -16,7 +16,7 @@ if str(SRC) not in sys.path:
 
 from jarvis_voice.errors import BackendError  # noqa: E402
 from jarvis_voice.native_evidence_bundle import aggregate_native_evidence  # noqa: E402
-from jarvis_voice.qualification import write_report  # noqa: E402
+from jarvis_voice.qualification import _load_json, write_report  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,19 +29,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        runs = [json.loads(path.read_text(encoding="utf-8")) for path in args.input]
+        runs = [_load_json(path, "qualification.native_bundle_input_invalid") for path in args.input]
         bundle = aggregate_native_evidence(runs)
-    except (OSError, json.JSONDecodeError, BackendError) as exc:
-        code = exc.code if isinstance(exc, BackendError) else "qualification.native_bundle_input_invalid"
+        write_report(args.output.resolve(), bundle)
+    except BackendError as exc:
         result = {
             "ready": False,
-            "code": code,
+            "code": exc.code,
             "source_count": len(args.input),
             "content_captured": False,
         }
         print(json.dumps(result, indent=2, sort_keys=True))
         return 2
-    write_report(args.output.resolve(), bundle)
     result = {
         "ready": bundle["report"]["ready"],
         "code": bundle["report"]["code"],
