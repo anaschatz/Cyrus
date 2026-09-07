@@ -8,6 +8,7 @@ authenticated as associated data so ciphertext cannot be moved between rows.
 from __future__ import annotations
 
 import ctypes
+from contextlib import suppress
 import os
 import sys
 from dataclasses import dataclass
@@ -207,18 +208,22 @@ class _WindowsDpapiKeyProvider:
         return key
 
     def create_next(self) -> tuple[int, bytes]:
-        version = (self._versions()[-1] + 1) if self._versions() else 1
+        versions = self._versions()
+        version = versions[-1] + 1 if versions else 1
         key = os.urandom(KEY_BYTES)
         wrapped = self._protect(key)
         destination = self._path(version)
-        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = None
         try:
-            with os.fdopen(descriptor, "wb") as target:
+            with open(destination, "xb", opener=lambda path, flags: os.open(path, flags, 0o600)) as target:
+                created = os.fstat(target.fileno())
                 target.write(wrapped)
                 target.flush()
                 os.fsync(target.fileno())
         except BaseException:
-            destination.unlink(missing_ok=True)
+            with suppress(OSError):
+                if created is not None and os.path.samestat(created, destination.lstat()):
+                    destination.unlink()
             raise
         return version, key
 

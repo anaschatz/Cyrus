@@ -1183,3 +1183,22 @@ Current coverage: **214/400 code, 178/313 tests and 39/308 support files**, with
 
 
 The key-boundary checkpoint committed as **a8343ae**. Its Ponytail hook identified a redundant counter in the native-resource test: allocation IDs can use the existing monotonically increasing call count. Applied the three-line deletion; all **six Keychain tests** pass again, `/tmp/cyrus-key-resource-ponytail-after.log`. Production behavior and coverage counts are unchanged.
+
+
+### Windows key-file creation and completed crypto source review
+
+Key-boundary fixes committed as **a8343ae**, followed by Ponytail's test simplification in **046ec07**, whose hook reported no further findings. The remaining creation-path reproduction confirmed a leaked descriptor, deletion of a replacement file and IndexError from a changing version list, `/tmp/cyrus-dpapi-creation-before.log`.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V219 | Failure handing a raw descriptor to fdopen left it open. Later write/sync failure unconditionally deleted the destination pathname, even if another file had replaced the original. | Use builtin exclusive binary open to own the descriptor. Record the created file's identity and remove an incomplete file only when the destination still matches it. Existing collisions and observed replacements remain untouched. |
+| V220 | Version selection enumerated the directory twice. If the first list was nonempty and the second became empty, indexing raised IndexError. | Select the next version from one directory snapshot; exclusive creation remains the collision guard. |
+
+Two regression methods produce **one failure and one error** against original source, `/tmp/cyrus-key-creation-before.log`. Temporary-file tests inject fsync failure, verify descriptor closure, preserve an inserted replacement, remove the writer's own incomplete file and successfully retry. A changing version snapshot selects version 2 without a second read; a subsequent collision preserves the existing wrapped key. The separate descriptor probe confirms the raw fdopen handoff is gone and the builtin file owner closes its descriptor, `/tmp/cyrus-dpapi-descriptor-after.log`. No native DPAPI or real keys were used.
+
+All **44 focused tests** pass. Full Orchestrator verification ran **1047 tests in 18.525 seconds: 1042 passed, five skipped**, `/tmp/cyrus-full-review-key-creation.log`. Fatal Ruff and unchanged size checks pass. The changes use builtin file ownership and os.path.samestat, with no new dependency or key-storage migration.
+
+Scheduler crypto's complete source inspection and identified key-version/resource/file follow-ups are now closed. Current coverage: **215/400 code, 178/313 tests and 39/308 support files**, with **432 reviewed hashes verified across 1021 entries**. Whole-codebase review and final quality assessment remain incomplete: 185 code, 135 test and 269 support files still need inspection, with compiler identity binding and U05 also open. Reviewed is not a bug-free guarantee; native/live qualification remains separate.
+
+
+The creation checkpoint's Ponytail hook requested two test simplifications: reuse Mock.call_args/assert_called_once instead of manually capturing descriptors, and remove an existence check already covered by read_bytes. Applied the three-line reduction; all **four key-file tests** pass again, `/tmp/cyrus-key-creation-ponytail-after.log`. The checkpoint is amended with these changes; production behavior and coverage counts are unchanged.

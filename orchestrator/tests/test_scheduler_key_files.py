@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import _bootstrap  # noqa: F401
 from jarvis_orchestrator.scheduler_crypto import SchedulerKeyUnavailable, _WindowsDpapiKeyProvider
@@ -40,6 +40,58 @@ class SchedulerKeyFileTests(unittest.TestCase):
                     provider.load(1)
                 provider._unprotect.assert_not_called()
                 self.assertEqual(target.read_bytes(), b"wrapped synthetic key")
+
+    def test_failed_creation_closes_file_and_only_removes_its_own_path(self):
+        for replacement in ((False, True) if os.name == "posix" else (False,)):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as temporary:
+                provider = _WindowsDpapiKeyProvider.__new__(_WindowsDpapiKeyProvider)
+                provider.root, provider.namespace = Path(temporary), "synthetic-keys"
+                provider._protect = Mock(return_value=b"synthetic wrapped key")
+                destination = provider._path(1)
+
+                def fail_sync(descriptor):
+                    if replacement:
+                        destination.unlink()
+                        destination.write_bytes(b"replacement file")
+                    raise OSError("synthetic sync failure")
+
+                with patch("jarvis_orchestrator.scheduler_crypto.os.fsync", side_effect=fail_sync) as sync:
+                    with self.assertRaisesRegex(OSError, "synthetic sync failure"):
+                        provider.create_next()
+                sync.assert_called_once()
+                with self.assertRaises(OSError):
+                    os.fstat(sync.call_args.args[0])
+                if replacement:
+                    self.assertEqual(destination.read_bytes(), b"replacement file")
+                else:
+                    self.assertFalse(destination.exists())
+                    self.assertEqual(provider.create_next()[0], 1)
+                    self.assertEqual(destination.read_bytes(), b"synthetic wrapped key")
+
+    def test_key_creation_uses_one_version_snapshot_and_never_replaces_a_collision(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            provider = _WindowsDpapiKeyProvider.__new__(_WindowsDpapiKeyProvider)
+            provider.root, provider.namespace = Path(temporary), "synthetic-keys"
+            provider._protect = Mock(return_value=b"synthetic wrapped key")
+            first = provider._path(1)
+            first.write_bytes(b"old wrapped key")
+            original_versions = provider._versions
+
+            def changing_versions():
+                versions = original_versions()
+                first.unlink(missing_ok=True)
+                return versions
+
+            with patch.object(provider, "_versions", side_effect=changing_versions):
+                version, key = provider.create_next()
+            self.assertEqual(version, 2)
+            self.assertEqual(len(key), 32)
+            second = provider._path(2)
+            self.assertEqual(second.read_bytes(), b"synthetic wrapped key")
+            with patch.object(provider, "_versions", return_value=[1]):
+                with self.assertRaises(FileExistsError):
+                    provider.create_next()
+            self.assertEqual(second.read_bytes(), b"synthetic wrapped key")
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFO fault injection")
     def test_key_fifo_is_rejected_without_blocking(self):
