@@ -1090,3 +1090,16 @@ The two regression methods initially produced **seven failures**, `/tmp/cyrus-sc
 All **33 focused tests** passed. Full Orchestrator verification ran **1031 tests in 18.243 seconds: 1026 passed, five skipped**, `/tmp/cyrus-full-review-scheduler-approval-expiry.log`. The isolated staged SchedulerStore version passes **seven integration tests**, `/tmp/cyrus-scheduler-expiry-staged-tests.log`, while older unrelated changes remain unstaged. Fatal Ruff and unchanged size ceilings pass. Replacing duplicated expiry blocks reduced production source by **10 lines**, to **2465**; no dependency or schema migration was added.
 
 Current coverage: **213/400 code, 174/310 tests and 39/308 support files**, with **426 reviewed hashes verified across 1018 entries**. Whole-codebase review and final quality assessment remain incomplete. Scheduler ACK terminal precedence, publication revalidation, receipt ordering, remaining inventory, compiler identity binding and U05 remain open.
+
+
+### Late scheduler ACK cannot revive cancelled speech
+
+Linked-expiry checkpoint committed as **17f16c3**, with no Ponytail findings. A separate temporary-store reproduction cancelled a speakable reminder, then acknowledged its revoked notification request. The old handler accepted that ACK and created a new speech event after cancellation, `/tmp/cyrus-scheduler-late-ack-before.log`.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V211 | ACK handling ignored REVOKED/EXPIRED state and the event's expiry instant, so a late ACK could create speech after cancellation or revive an expired outbox event. | Accept ACKs only for PENDING/LEASED events whose deadline remains in the future. Terminal and expired ACKs return without mutation. |
+
+The new regression covers live, revoked, explicitly expired and deadline-expired-before-sweep events, including repeated ACKs. It failed in **three cases** against original source, `/tmp/cyrus-scheduler-ack-regression-before.log`. The fixed live path still emits speech exactly once; other paths preserve the outbox state and emit none. **34 relevant tests** pass, `/tmp/cyrus-scheduler-ack-after.log`; **eight isolated staged-source integration tests** pass, `/tmp/cyrus-scheduler-ack-staged-tests.log`. Fatal Ruff passes. The production change replaces one condition, keeping the 2465-line source size and existing transaction. No native speech or notification occurred.
+
+The most recent complete Orchestrator run remains **1031 tests, five skipped**; this subsequent condition change was checked with the focused tests above. Coverage remains **213/400 code, 174/310 tests and 39/308 support files**, with **426 reviewed hashes verified across 1018 entries**. Whole-codebase review and final quality assessment remain incomplete. Scheduler publication revalidation and receipt ordering, remaining inventory, compiler identity binding and U05 remain open.

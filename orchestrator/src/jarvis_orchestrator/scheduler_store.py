@@ -973,7 +973,7 @@ class SchedulerStore:
             ).fetchone()
             if row is None:
                 raise OrchestratorError("not_found", status=404)
-            if row["state"] == "ACKED":
+            if row["state"] not in {"PENDING", "LEASED"} or parse_utc(row["expires_at"]) <= selected:
                 return False
             connection.execute(
                 "UPDATE scheduler_outbox SET state='ACKED',ack_status=?,lease_owner=NULL,lease_expires_at=NULL WHERE event_id=?",

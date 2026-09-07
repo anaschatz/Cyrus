@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import _bootstrap  # noqa: F401
 from helpers import NOW, StoreCase
-from jarvis_orchestrator.domain import OrchestratorError, utc_text
+from jarvis_orchestrator.domain import OrchestratorError, parse_utc, utc_text
 from jarvis_orchestrator.scheduler_contract import PackagedTimezoneProvider, compile_proposal, notification_id
 from jarvis_orchestrator.scheduler_crypto import InMemorySchedulerKeyProvider, SchedulerContentCipher
 from jarvis_orchestrator.scheduler_store import SchedulerStore
@@ -26,8 +26,10 @@ class SchedulerReceiptBindingTests(StoreCase, unittest.TestCase):
 
     def delivery(self):
         request_id = str(uuid.uuid4())
+        output = proposal_output(request_id)
+        output["notification"]["speakable_text"] = "Ώρα για διάλειμμα."
         compiled = compile_proposal(
-            proposal_input(request_id, utc_text(NOW)), proposal_output(request_id),
+            proposal_input(request_id, utc_text(NOW)), output,
             compiler_qualification_sha256="1" * 64, zones=self.scheduler.zones,
         )
         proposal = self.scheduler.create_proposal(compiled, now=NOW)
@@ -65,6 +67,37 @@ class SchedulerReceiptBindingTests(StoreCase, unittest.TestCase):
                              before[table])
         self.assertTrue(self.receipt(first, attempt, "OS_ACCEPTED"))
         self.assertTrue(self.receipt(second, str(uuid.uuid4()), "OS_ACCEPTED"))
+
+    def test_only_live_ack_can_create_notification_speech(self):
+        for phase in ("live", "revoked", "expired", "deadline"):
+            with self.subTest(phase=phase):
+                notification = self.delivery()
+                requested = next(row for row in self.scheduler.claim_outbox(str(uuid.uuid4()), now=self.due)
+                                 if row["event_type"] == "scheduler.notification.requested"
+                                 and row["payload"]["notification_id"] == notification)
+                selected = self.due
+                if phase == "revoked":
+                    self.scheduler.cancel_job(requested["payload"]["job_id"], 1,
+                                              cause_event_id=str(uuid.uuid4()), now=selected)
+                elif phase in {"expired", "deadline"}:
+                    selected = parse_utc(requested["payload"]["expires_at_utc"])
+                    if phase == "expired":
+                        self.scheduler.claim_outbox(str(uuid.uuid4()), now=selected)
+                before = self.store._connection.execute(
+                    "SELECT state FROM scheduler_outbox WHERE event_id=?", (requested["event_id"],),
+                ).fetchone()[0]
+                for replay in (False, True):
+                    accepted = self.scheduler.acknowledge_scheduler_event(
+                        requested["event_id"], status="applied", speech_supported=True, now=selected,
+                    )
+                    self.assertEqual(accepted, phase == "live" and not replay)
+                self.assertEqual(self.store._connection.execute(
+                    "SELECT COUNT(*) FROM scheduler_outbox WHERE entity_id=? AND event_type='scheduler.notification.speech'",
+                    (notification,),
+                ).fetchone()[0], int(phase == "live"))
+                self.assertEqual(self.store._connection.execute(
+                    "SELECT state FROM scheduler_outbox WHERE event_id=?", (requested["event_id"],),
+                ).fetchone()[0], "ACKED" if phase == "live" else before)
 
     def test_staged_then_dispatching_attempt_is_recovered_after_restart(self):
         notification = self.delivery()
