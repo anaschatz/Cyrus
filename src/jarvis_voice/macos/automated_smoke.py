@@ -8,8 +8,9 @@ import tempfile
 import time
 import wave
 from array import array
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from contextlib import ExitStack
 from pathlib import Path
 
 from ..backends import AudioChunk, SpeechUnit
@@ -17,7 +18,6 @@ from ..config import VoiceConfig
 from ..core import VoiceCore
 from ..errors import BackendError
 from ..fakes import FakeOrchestrator
-from ..protocol import Envelope
 from ..qualification import write_report
 from ..vad import SileroOnnxVad
 from .asr_selection import create_macos_asr_backend
@@ -210,140 +210,146 @@ def run_automated_macos_smoke(
     current_case = CASE_ORDER[0]
     tts_exercised = False
     callbacks: queue.Queue[TtsCallback] = queue.Queue()
-    tts = MacSystemTtsBackend(
-        voice_mapping=config.macos.system_voices,
-        on_started=lambda unit: callbacks.put_nowait(TtsCallback("started", unit, time.perf_counter())),
-        on_completed=lambda unit: callbacks.put_nowait(TtsCallback("completed", unit, time.perf_counter())),
-    )
-    core = VoiceCore(asr=create_macos_asr_backend(config), tts=tts)
-    vad = _vad_from_config(config)
-    orchestrator = FakeOrchestrator(session_id=core.session_id)
-    fixtures = synthesizer or MacSpeechFixtureSynthesizer()
     try:
-        for current_case, locale, expected_language in (
-            ("greek_fixture", "el-GR", "el"),
-            ("english_fixture", "en-US", "en"),
-        ):
-            voice = config.macos.system_voices.get(locale, "")
-            audio = fixtures.synthesize(locale=locale, voice=voice)
-            core.ptt_down()
-            started = time.perf_counter()
-            transcript = core.ptt_up_and_process(audio, vad)
-            transcript_at = time.perf_counter()
-            if transcript.type != "input.transcript.final":
+        with ExitStack() as cleanup:
+            tts = MacSystemTtsBackend(
+                voice_mapping=config.macos.system_voices,
+                on_started=lambda unit: callbacks.put_nowait(TtsCallback("started", unit, time.perf_counter())),
+                on_completed=lambda unit: callbacks.put_nowait(TtsCallback("completed", unit, time.perf_counter())),
+            )
+            cleanup.callback(tts.close)
+            asr = create_macos_asr_backend(config)
+            close_asr = getattr(asr, "close", None)
+            if close_asr is not None:
+                cleanup.callback(close_asr)
+            core = VoiceCore(asr=asr, tts=tts)
+            vad = _vad_from_config(config)
+            orchestrator = FakeOrchestrator(session_id=core.session_id)
+            fixtures = synthesizer or MacSpeechFixtureSynthesizer()
+            for current_case, locale, expected_language in (
+                ("greek_fixture", "el-GR", "el"),
+                ("english_fixture", "en-US", "en"),
+            ):
+                voice = config.macos.system_voices.get(locale, "")
+                audio = fixtures.synthesize(locale=locale, voice=voice)
+                core.ptt_down()
+                started = time.perf_counter()
+                transcript = core.ptt_up_and_process(audio, vad)
+                transcript_at = time.perf_counter()
+                if transcript.type != "input.transcript.final":
+                    cases[current_case] = {
+                        "status": "blocked",
+                        "code": "smoke.fixture_vad_no_speech",
+                        "vad_speech_detected": False,
+                        "metrics": {"fixture_vad_ms": _milliseconds(transcript_at, started)},
+                    }
+                    raise BackendError("smoke.fixture_vad_no_speech", "Speech fixture was rejected by VAD", subsystem="smoke")
+                language = transcript.payload.get("language", {})
+                language_code = language.get("code") if isinstance(language, Mapping) else None
+                if language_code != expected_language:
+                    cases[current_case] = {
+                        "status": "blocked",
+                        "code": "smoke.fixture_language_mismatch",
+                        "detected_language": str(language_code) if language_code else "unknown",
+                        "expected_language": expected_language,
+                        "vad_speech_detected": True,
+                        "metrics": {"fixture_to_transcript_final_ms": _milliseconds(transcript_at, started)},
+                    }
+                    raise BackendError("smoke.fixture_language_mismatch", "Fixture ASR language did not match", subsystem="smoke")
+                for reply in orchestrator.accept(transcript):
+                    core.handle_server_event(reply)
+                commit_at: float | None = None
+                speech_done_at: float | None = None
+                response = orchestrator.script_response(
+                    RESPONSE_TEXT[locale],
+                    locale=locale,
+                    turn_id=transcript.turn_id,
+                    interleave_speech=True,
+                )
+                for server_event in response.events:
+                    if server_event.type == "response.speech.commit" and commit_at is None:
+                        commit_at = time.perf_counter()
+                    elif server_event.type == "response.speech.done":
+                        speech_done_at = time.perf_counter()
+                    core.handle_server_event(server_event)
+                if commit_at is None or speech_done_at is None:
+                    raise BackendError("smoke.fixture_protocol_incomplete", "Fixture speech protocol was incomplete", subsystem="smoke")
+                tts_started_at, playback_completed_at = _await_completed_playback(
+                    core,
+                    tts,
+                    callbacks,
+                    last_unit_index=len(RESPONSE_TEXT[locale]),
+                )
+                tts_exercised = True
                 cases[current_case] = {
-                    "status": "blocked",
-                    "code": "smoke.fixture_vad_no_speech",
-                    "vad_speech_detected": False,
-                    "metrics": {"fixture_vad_ms": _milliseconds(transcript_at, started)},
-                }
-                raise BackendError("smoke.fixture_vad_no_speech", "Speech fixture was rejected by VAD", subsystem="smoke")
-            language = transcript.payload.get("language", {})
-            language_code = language.get("code") if isinstance(language, Mapping) else None
-            if language_code != expected_language:
-                cases[current_case] = {
-                    "status": "blocked",
-                    "code": "smoke.fixture_language_mismatch",
-                    "detected_language": str(language_code) if language_code else "unknown",
-                    "expected_language": expected_language,
+                    "status": "ready",
+                    "language": expected_language,
                     "vad_speech_detected": True,
-                    "metrics": {"fixture_to_transcript_final_ms": _milliseconds(transcript_at, started)},
+                    "speech_units": len(RESPONSE_TEXT[locale]),
+                    "metrics": {
+                        "fixture_to_transcript_final_ms": _milliseconds(transcript_at, started),
+                        "speech_commit_to_tts_start_ms": _milliseconds(tts_started_at, commit_at),
+                        "speech_done_to_playback_completed_ms": _milliseconds(playback_completed_at, speech_done_at),
+                    },
                 }
-                raise BackendError("smoke.fixture_language_mismatch", "Fixture ASR language did not match", subsystem="smoke")
-            for reply in orchestrator.accept(transcript):
-                core.handle_server_event(reply)
-            commit_at: float | None = None
-            speech_done_at: float | None = None
-            response = orchestrator.script_response(
-                RESPONSE_TEXT[locale],
-                locale=locale,
-                turn_id=transcript.turn_id,
-                interleave_speech=True,
-            )
-            for server_event in response.events:
-                if server_event.type == "response.speech.commit" and commit_at is None:
-                    commit_at = time.perf_counter()
-                elif server_event.type == "response.speech.done":
-                    speech_done_at = time.perf_counter()
-                core.handle_server_event(server_event)
-            if commit_at is None or speech_done_at is None:
-                raise BackendError("smoke.fixture_protocol_incomplete", "Fixture speech protocol was incomplete", subsystem="smoke")
-            tts_started_at, playback_completed_at = _await_completed_playback(
-                core,
-                tts,
-                callbacks,
-                last_unit_index=len(RESPONSE_TEXT[locale]),
-            )
-            tts_exercised = True
+
+            current_case = "silence_fixture"
+            core.ptt_down()
+            silence_started = time.perf_counter()
+            no_speech = core.ptt_up_and_process(AudioChunk(array("f", [0.0] * 16_000), 16_000), vad)
+            silence_completed = time.perf_counter()
+            if no_speech.type != "input.no_speech":
+                raise BackendError("smoke.silence_detected_as_speech", "Synthetic silence was classified as speech", subsystem="smoke")
             cases[current_case] = {
                 "status": "ready",
-                "language": expected_language,
-                "vad_speech_detected": True,
-                "speech_units": len(RESPONSE_TEXT[locale]),
-                "metrics": {
-                    "fixture_to_transcript_final_ms": _milliseconds(transcript_at, started),
-                    "speech_commit_to_tts_start_ms": _milliseconds(tts_started_at, commit_at),
-                    "speech_done_to_playback_completed_ms": _milliseconds(playback_completed_at, speech_done_at),
-                },
+                "asr_invoked": False,
+                "metrics": {"silence_vad_ms": _milliseconds(silence_completed, silence_started)},
             }
 
-        current_case = "silence_fixture"
-        core.ptt_down()
-        silence_started = time.perf_counter()
-        no_speech = core.ptt_up_and_process(AudioChunk(array("f", [0.0] * 16_000), 16_000), vad)
-        silence_completed = time.perf_counter()
-        if no_speech.type != "input.no_speech":
-            raise BackendError("smoke.silence_detected_as_speech", "Synthetic silence was classified as speech", subsystem="smoke")
-        cases[current_case] = {
-            "status": "ready",
-            "asr_invoked": False,
-            "metrics": {"silence_vad_ms": _milliseconds(silence_completed, silence_started)},
-        }
-
-        current_case = "programmatic_barge_in"
-        scripted = orchestrator.script_response(BARGE_TEXT, locale="el-GR", turn_id=no_speech.turn_id, interleave_speech=True)
-        for server_event in scripted.events:
-            core.handle_server_event(server_event)
-        try:
-            first = callbacks.get(timeout=5.0)
-        except queue.Empty as exc:
-            raise BackendError("smoke.barge_tts_not_started", "Barge-in TTS did not start", subsystem="smoke") from exc
-        if first.kind != "started":
-            raise BackendError("smoke.barge_callback_order_invalid", "Barge-in callback order was invalid", subsystem="smoke")
-        core.on_tts_unit_started(first.unit)
-        down_at = time.perf_counter()
-        outbound = core.ptt_down()
-        cancel_dispatched_at = time.perf_counter()
-        outbound_types = {event.type for event in outbound}
-        if not {"response.cancel", "playback.interrupted"}.issubset(outbound_types):
-            raise BackendError("smoke.barge_protocol_incomplete", "Barge-in protocol events were incomplete", subsystem="smoke")
-        if not tts.wait_idle(timeout=2.0):
-            raise BackendError("smoke.barge_tts_not_idle", "Cancelled system TTS did not become idle", subsystem="smoke")
-        idle_at = time.perf_counter()
-        while True:
+            current_case = "programmatic_barge_in"
+            scripted = orchestrator.script_response(BARGE_TEXT, locale="el-GR", turn_id=no_speech.turn_id, interleave_speech=True)
+            for server_event in scripted.events:
+                core.handle_server_event(server_event)
             try:
-                callback = callbacks.get_nowait()
-            except queue.Empty:
-                break
-            stale = core.on_tts_unit_started(callback.unit) if callback.kind == "started" else core.on_tts_unit_completed(callback.unit)
-            if any(event.type == "playback.completed" for event in stale):
-                raise BackendError("smoke.tombstoned_response_completed", "Tombstoned response completed playback", subsystem="smoke")
-        cases[current_case] = {
-            "status": "ready",
-            "playback_interrupted": True,
-            "backend_idle": True,
-            "stale_completion_rejected": True,
-            "metrics": {
-                "ptt_down_to_cancel_dispatch_ms": _milliseconds(cancel_dispatched_at, down_at),
-                "ptt_down_to_backend_idle_ms": _milliseconds(idle_at, down_at),
-            },
-        }
-        report = _base_report(cases, ready=True, code="smoke.macos_automated_fixture_ready", tts_exercised=tts_exercised)
+                first = callbacks.get(timeout=5.0)
+            except queue.Empty as exc:
+                raise BackendError("smoke.barge_tts_not_started", "Barge-in TTS did not start", subsystem="smoke") from exc
+            if first.kind != "started":
+                raise BackendError("smoke.barge_callback_order_invalid", "Barge-in callback order was invalid", subsystem="smoke")
+            core.on_tts_unit_started(first.unit)
+            down_at = time.perf_counter()
+            outbound = core.ptt_down()
+            cancel_dispatched_at = time.perf_counter()
+            outbound_types = {event.type for event in outbound}
+            if not {"response.cancel", "playback.interrupted"}.issubset(outbound_types):
+                raise BackendError("smoke.barge_protocol_incomplete", "Barge-in protocol events were incomplete", subsystem="smoke")
+            if not tts.wait_idle(timeout=2.0):
+                raise BackendError("smoke.barge_tts_not_idle", "Cancelled system TTS did not become idle", subsystem="smoke")
+            if tts.last_error is not None:
+                raise tts.last_error
+            idle_at = time.perf_counter()
+            while True:
+                try:
+                    callback = callbacks.get_nowait()
+                except queue.Empty:
+                    break
+                stale = core.on_tts_unit_started(callback.unit) if callback.kind == "started" else core.on_tts_unit_completed(callback.unit)
+                if any(event.type == "playback.completed" for event in stale):
+                    raise BackendError("smoke.tombstoned_response_completed", "Tombstoned response completed playback", subsystem="smoke")
+            cases[current_case] = {
+                "status": "ready",
+                "playback_interrupted": True,
+                "backend_idle": True,
+                "stale_completion_rejected": True,
+                "metrics": {
+                    "ptt_down_to_cancel_dispatch_ms": _milliseconds(cancel_dispatched_at, down_at),
+                    "ptt_down_to_backend_idle_ms": _milliseconds(idle_at, down_at),
+                },
+            }
+            report = _base_report(cases, ready=True, code="smoke.macos_automated_fixture_ready", tts_exercised=tts_exercised)
     except BackendError as exc:
         if cases[current_case].get("status") != "blocked":
             cases[current_case] = {"status": "blocked", "code": exc.code, "metrics": {}}
         report = _base_report(cases, ready=False, code=exc.code, tts_exercised=tts_exercised)
-    finally:
-        tts.close()
     write_report(output, report)
     return report
