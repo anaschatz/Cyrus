@@ -337,22 +337,15 @@ class VectorRAGMemory:
 
     def select(self, current: ObservableEvent) -> ContextSelection:
         candidates: list[
-            tuple[ObservableEvent | DecisionHistoryRecord, np.ndarray, str]
+            tuple[ObservableEvent | DecisionHistoryRecord, np.ndarray]
         ] = []
         candidates.extend(
-            (event, vector, event.text)
+            (event, vector)
             for event, vector in zip(self._events, self._vectors, strict=True)
             if event.id != current.id
         )
         candidates.extend(
-            (
-                decision,
-                vector,
-                f"Assistant decision output: {decision.decision.model_dump_json()}",
-            )
-            for decision, vector in zip(
-                self._decisions, self._decision_vectors, strict=True
-            )
+            zip(self._decisions, self._decision_vectors, strict=True)
         )
         if not candidates:
             return ContextSelection(events=[current])

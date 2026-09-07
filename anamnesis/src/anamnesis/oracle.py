@@ -150,7 +150,6 @@ class OracleCompiler:
         artifact: OracleCompilerArtifact,
         scenario: RuntimeScenario,
     ) -> None:
-        self._scenario = scenario
         self._records = artifact.records_for(scenario)
         self.requests: list[CompilerRequest] = []
         self.reset()

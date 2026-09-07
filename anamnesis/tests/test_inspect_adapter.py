@@ -207,3 +207,25 @@ def test_openai_wire_schemas_are_closed_required_and_fully_constrained(
         creates = properties["intent_creates"].items
         kind = creates.properties["action_template"].properties["kind"]
     assert kind.enum == ["reminder"]
+
+
+def test_solver_checks_configuration_before_hosted_warmup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "anamnesis.inspect_adapter.InspectDecisionModel",
+        lambda *_: SimpleNamespace(name="openai/frozen-snapshot"),
+    )
+
+    async def unexpected_warmup(model):
+        raise AssertionError("provider warmup ran before configuration validation")
+
+    monkeypatch.setattr(
+        "anamnesis.inspect_adapter._run_hosted_model_warmup", unexpected_warmup,
+    )
+    solve = scenario_solver(
+        "no_memory",
+        manifest_sha256="a" * 64,
+        expected_system_config_sha256="0" * 64,
+    )
+    sample = scenario_record_to_sample(first_record())
+    with pytest.raises(ValueError, match="runtime system configuration differs"):
+        asyncio.run(solve(SimpleNamespace(metadata=sample.metadata), None))

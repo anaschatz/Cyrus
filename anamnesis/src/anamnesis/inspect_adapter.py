@@ -454,11 +454,6 @@ def scenario_solver(
             _verify_effective_model_cost(pricing_config_path, decision_model.name)
         if expected_model is not None and decision_model.name != expected_model:
             raise ValueError("active model differs from the frozen final manifest")
-        hosted_warmup: HostedWarmupAttestation | None = None
-        if manifest_sha256 is not None:
-            hosted_warmup, performed_here = await task_warmup.ensure(decision_model)
-            if performed_here:
-                setup_latency_ms += hosted_warmup.latency_ms
         if baseline == "anamnesis":
             strategy = AnamnesisMemoryStrategy(
                 compiler=InspectMemoryCompiler(decision_model)
@@ -490,6 +485,11 @@ def scenario_solver(
             raise ValueError(
                 "runtime system configuration differs from the final manifest"
             )
+        hosted_warmup: HostedWarmupAttestation | None = None
+        if manifest_sha256 is not None:
+            hosted_warmup, performed_here = await task_warmup.ensure(decision_model)
+            if performed_here:
+                setup_latency_ms += hosted_warmup.latency_ms
         run = await run_scenario(
             scenario=scenario,
             strategy=strategy,
