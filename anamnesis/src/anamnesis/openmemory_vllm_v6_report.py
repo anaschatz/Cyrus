@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from anamnesis.openmemory_vllm import (
+    VllmOpenMemoryAlignedDecisionModel,
     build_openmemory_vllm_aligned_request,
     build_openmemory_vllm_user_envelope,
 )
@@ -20,8 +21,10 @@ from anamnesis.openmemory_vllm_v6 import (
     RealMemoryRun,
     _correct,
     _load_inputs,
+    _metrics,
 )
 from anamnesis.runner import DecisionRequest
+from anamnesis.schema import Decision
 from anamnesis.vllm_runtime import canonical_json_sha256
 
 TITLE = "OpenMemory-compatible real indexed-memory diagnostic — not a hypothesis test"
@@ -55,10 +58,21 @@ def validate_run(path: Path) -> RealMemoryRun:
             or not observed.retrieval_correct
         ):
             raise ValueError("v6 retrieved content differs from frozen memory")
-        for arm, recall in (
-            (observed.baseline, None),
-            (observed.recall, observed.retrieved_contents),
+        for name, arm, recall in (
+            ("baseline", observed.baseline, None),
+            ("recall", observed.recall, observed.retrieved_contents),
         ):
+            decoded = (
+                VllmOpenMemoryAlignedDecisionModel.wire_model.model_validate_json(
+                    arm.audit.raw_completion
+                ).to_domain()
+                if arm.audit.validation.accepted
+                else Decision()
+            )
+            if arm.decision != decoded or arm.arm != name:
+                raise ValueError("v6 arm or decision differs from raw completion")
+            if arm.latency_ms != arm.audit.latency_ms:
+                raise ValueError("v6 latency differs from audit")
             prompt = build_openmemory_vllm_user_envelope(
                 now=case.event.at.isoformat(),
                 current_event_id=case.event.id,
@@ -79,6 +93,8 @@ def validate_run(path: Path) -> RealMemoryRun:
                 or arm.audit.usage != arm.usage
             ):
                 raise ValueError("v6 score or usage differs")
+    if result.metrics != _metrics(fixture, result.cases):
+        raise ValueError("v6 aggregate metrics differ from cases")
     return result
 
 

@@ -245,6 +245,50 @@ def _probe(runtime: VllmDecisionRuntimePin) -> VllmProbeSnapshot:
     )
 
 
+def _metrics(
+    fixture: V7Fixture, results: list[V7CaseResult] | tuple[V7CaseResult, ...]
+) -> V7Metrics:
+    baseline_correct = sum(item.baseline.correct for item in results)
+    recall_correct = sum(item.recall.correct for item in results)
+    helpful_gain = sum(
+        case.helpful_opportunity
+        and not result.baseline.correct
+        and result.recall.correct
+        for case, result in zip(fixture.cases, results, strict=True)
+    )
+    safety_regressions = sum(
+        not case.helpful_opportunity
+        and result.baseline.correct
+        and not result.recall.correct
+        for case, result in zip(fixture.cases, results, strict=True)
+    )
+    retrieval_correct = sum(item.retrieval_correct for item in results)
+    accepted = sum(
+        item.baseline.audit.validation.accepted + item.recall.audit.validation.accepted
+        for item in results
+    )
+    changes = sum(
+        len(item.baseline.changes) + len(item.recall.changes) for item in results
+    )
+    passed = (
+        retrieval_correct == 6
+        and accepted == 12
+        and helpful_gain >= 2
+        and safety_regressions == 0
+        and recall_correct > baseline_correct
+    )
+    return V7Metrics(
+        baseline_correct=baseline_correct,
+        recall_correct=recall_correct,
+        helpful_gain=helpful_gain,
+        safety_regressions=safety_regressions,
+        retrieval_correct=retrieval_correct,
+        accepted_calls=accepted,
+        canonicalizer_changes=changes,
+        gate_passed=passed,
+    )
+
+
 async def run_v7(
     *, artifact_root: Path, embedding_snapshot: Path, api_key: str, source_commit: str
 ) -> V7Run:
@@ -332,45 +376,7 @@ async def run_v7(
             )
     finally:
         await client.aclose()
-    baseline_correct = sum(item.baseline.correct for item in results)
-    recall_correct = sum(item.recall.correct for item in results)
-    helpful_gain = sum(
-        case.helpful_opportunity
-        and not result.baseline.correct
-        and result.recall.correct
-        for case, result in zip(fixture.cases, results, strict=True)
-    )
-    safety_regressions = sum(
-        not case.helpful_opportunity
-        and result.baseline.correct
-        and not result.recall.correct
-        for case, result in zip(fixture.cases, results, strict=True)
-    )
-    retrieval_correct = sum(item.retrieval_correct for item in results)
-    accepted = sum(
-        item.baseline.audit.validation.accepted + item.recall.audit.validation.accepted
-        for item in results
-    )
-    changes = sum(
-        len(item.baseline.changes) + len(item.recall.changes) for item in results
-    )
-    passed = (
-        retrieval_correct == 6
-        and accepted == 12
-        and helpful_gain >= 2
-        and safety_regressions == 0
-        and recall_correct > baseline_correct
-    )
-    metrics = V7Metrics(
-        baseline_correct=baseline_correct,
-        recall_correct=recall_correct,
-        helpful_gain=helpful_gain,
-        safety_regressions=safety_regressions,
-        retrieval_correct=retrieval_correct,
-        accepted_calls=accepted,
-        canonicalizer_changes=changes,
-        gate_passed=passed,
-    )
+    metrics = _metrics(fixture, results)
     usage = Usage()
     for result in results:
         usage = usage.plus(result.baseline.usage).plus(result.recall.usage)
@@ -382,7 +388,7 @@ async def run_v7(
         cases=tuple(results),
         metrics=metrics,
         usage=usage,
-        passed=passed,
+        passed=metrics.gate_passed,
     )
 
 

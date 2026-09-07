@@ -317,6 +317,42 @@ def _correct(expected: ExpectedRecallDecision, decision: Decision) -> bool:
     )
 
 
+def _metrics(
+    fixture: RealMemoryFixture, results: list[CaseResult] | tuple[CaseResult, ...]
+) -> RealMemoryMetrics:
+    baseline_correct = sum(x.baseline.correct for x in results)
+    recall_correct = sum(x.recall.correct for x in results)
+    helpful_gain = sum(
+        c.helpful_opportunity and not r.baseline.correct and r.recall.correct
+        for c, r in zip(fixture.cases, results, strict=True)
+    )
+    safety_regressions = sum(
+        (not c.helpful_opportunity) and r.baseline.correct and not r.recall.correct
+        for c, r in zip(fixture.cases, results, strict=True)
+    )
+    retrieval_correct = sum(x.retrieval_correct for x in results)
+    accepted = sum(
+        x.baseline.audit.validation.accepted + x.recall.audit.validation.accepted
+        for x in results
+    )
+    passed = (
+        retrieval_correct == 8
+        and accepted == 16
+        and helpful_gain >= 1
+        and safety_regressions == 0
+        and recall_correct > baseline_correct
+    )
+    return RealMemoryMetrics(
+        baseline_correct=baseline_correct,
+        recall_correct=recall_correct,
+        helpful_gain=helpful_gain,
+        safety_regressions=safety_regressions,
+        retrieval_correct=retrieval_correct,
+        accepted_calls=accepted,
+        gate_passed=passed,
+    )
+
+
 async def run_real_memory(
     *, artifact_root: Path, embedding_snapshot: Path, api_key: str, source_commit: str
 ) -> RealMemoryRun:
@@ -395,37 +431,7 @@ async def run_real_memory(
             )
     finally:
         await client.aclose()
-    baseline_correct = sum(x.baseline.correct for x in results)
-    recall_correct = sum(x.recall.correct for x in results)
-    helpful_gain = sum(
-        c.helpful_opportunity and not r.baseline.correct and r.recall.correct
-        for c, r in zip(fixture.cases, results, strict=True)
-    )
-    safety_regressions = sum(
-        (not c.helpful_opportunity) and r.baseline.correct and not r.recall.correct
-        for c, r in zip(fixture.cases, results, strict=True)
-    )
-    retrieval_correct = sum(x.retrieval_correct for x in results)
-    accepted = sum(
-        x.baseline.audit.validation.accepted + x.recall.audit.validation.accepted
-        for x in results
-    )
-    passed = (
-        retrieval_correct == 8
-        and accepted == 16
-        and helpful_gain >= 1
-        and safety_regressions == 0
-        and recall_correct > baseline_correct
-    )
-    metrics = RealMemoryMetrics(
-        baseline_correct=baseline_correct,
-        recall_correct=recall_correct,
-        helpful_gain=helpful_gain,
-        safety_regressions=safety_regressions,
-        retrieval_correct=retrieval_correct,
-        accepted_calls=accepted,
-        gate_passed=passed,
-    )
+    metrics = _metrics(fixture, results)
     usage = Usage()
     for result in results:
         usage = usage.plus(result.baseline.usage).plus(result.recall.usage)
@@ -437,7 +443,7 @@ async def run_real_memory(
         cases=tuple(results),
         metrics=metrics,
         usage=usage,
-        passed=passed,
+        passed=metrics.gate_passed,
     )
 
 

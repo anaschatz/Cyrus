@@ -11,6 +11,7 @@ from pathlib import Path
 
 from anamnesis.action_canonicalizer import canonicalize_immediate_decision
 from anamnesis.openmemory_vllm import (
+    VllmOpenMemoryAlignedDecisionModel,
     build_openmemory_vllm_aligned_request,
     build_openmemory_vllm_user_envelope,
 )
@@ -21,8 +22,10 @@ from anamnesis.openmemory_vllm_v7 import (
     PIN_PATH,
     V7Run,
     _load_inputs,
+    _metrics,
 )
 from anamnesis.runner import DecisionRequest
+from anamnesis.schema import Decision
 from anamnesis.vllm_runtime import canonical_json_sha256
 
 TITLE = "OpenMemory canonicalizer v7 prospective diagnostic — not a hypothesis test"
@@ -36,8 +39,12 @@ def validate_run(path: Path) -> V7Run:
     result = V7Run.model_validate_json(path.read_text())
     _verify_source_commit(REPO_ROOT, result.source_commit)
     pin, fixture, runtime = _load_inputs()
-    if result.pin_sha256 != _sha256(PIN_PATH):
-        raise ValueError("v7 pin hash differs")
+    if (
+        result.pin_sha256 != _sha256(PIN_PATH)
+        or result.fixture_sha256 != pin.fixture_raw_sha256
+        or result.canonicalizer_source_sha256 != pin.canonicalizer_source_sha256
+    ):
+        raise ValueError("v7 input hashes differ")
     for case, observed in zip(fixture.cases, result.cases, strict=True):
         if observed.case_id != case.id:
             raise ValueError("v7 case order differs")
@@ -47,12 +54,26 @@ def validate_run(path: Path) -> V7Run:
             next(item.content for item in case.memories if item.id == memory_id)
             for memory_id in case.expected_retrieved_memory_ids
         )
-        if observed.retrieved_contents != expected_contents:
-            raise ValueError("v7 retrieved content differs")
-        for arm, recall in (
-            (observed.baseline, None),
-            (observed.recall, observed.retrieved_contents),
+        if (
+            observed.retrieved_contents != expected_contents
+            or not observed.retrieval_correct
         ):
+            raise ValueError("v7 retrieved content differs")
+        for name, arm, recall in (
+            ("baseline", observed.baseline, None),
+            ("recall", observed.recall, observed.retrieved_contents),
+        ):
+            decoded = (
+                VllmOpenMemoryAlignedDecisionModel.wire_model.model_validate_json(
+                    arm.audit.raw_completion
+                ).to_domain()
+                if arm.audit.validation.accepted
+                else Decision()
+            )
+            if arm.raw_decision != decoded or arm.arm != name:
+                raise ValueError("v7 arm or decision differs from raw completion")
+            if arm.latency_ms != arm.audit.latency_ms:
+                raise ValueError("v7 latency differs from audit")
             prompt = build_openmemory_vllm_user_envelope(
                 now=case.event.at.isoformat(),
                 current_event_id=case.event.id,
@@ -79,6 +100,8 @@ def validate_run(path: Path) -> V7Run:
             )
             if not all(checks):
                 raise ValueError("v7 request, normalization, score, or usage differs")
+    if result.metrics != _metrics(fixture, result.cases):
+        raise ValueError("v7 aggregate metrics differ from cases")
     return result
 
 
