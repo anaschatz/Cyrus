@@ -175,11 +175,14 @@ class ProcessCudaWorkerSession:
     def _receive(self, timeout: float, timeout_code: str) -> dict[str, Any]:
         if self._connection is None or self._process is None:
             raise BackendError("cuda.worker_not_started", "CUDA worker is not started", subsystem="cuda")
-        if not self._connection.poll(timeout):
-            if not self._process.is_alive():
-                raise BackendError("cuda.worker_crashed", "CUDA worker exited unexpectedly", subsystem="cuda", retryable=True)
-            raise BackendError(timeout_code, "CUDA worker timed out", subsystem="cuda", retryable=True)
-        frame = self._connection.recv()
+        try:
+            if not self._connection.poll(timeout):
+                if not self._process.is_alive():
+                    raise BackendError("cuda.worker_crashed", "CUDA worker exited unexpectedly", subsystem="cuda", retryable=True)
+                raise BackendError(timeout_code, "CUDA worker timed out", subsystem="cuda", retryable=True)
+            frame = self._connection.recv()
+        except (EOFError, OSError) as exc:
+            raise BackendError("cuda.worker_crashed", "CUDA worker connection failed", subsystem="cuda", retryable=True) from exc
         if not isinstance(frame, dict) or not isinstance(frame.get("type"), str):
             raise BackendError("cuda.worker_protocol_error", "CUDA worker returned an invalid frame", subsystem="cuda")
         return frame
@@ -221,9 +224,12 @@ class ProcessCudaWorkerSession:
         self.start()
         assert self._connection is not None
         request_id = str(uuid.uuid4())
-        self._connection.send({"type": "transcribe", "request_id": request_id, "sample_rate": 16_000, "audio": payload})
         try:
+            self._connection.send({"type": "transcribe", "request_id": request_id, "sample_rate": 16_000, "audio": payload})
             frame = self._receive(self.config.transcription_timeout_seconds, "cuda.transcription_timeout")
+        except (EOFError, OSError) as exc:
+            self.cancel()
+            raise BackendError("cuda.worker_crashed", "CUDA worker connection failed", subsystem="cuda", retryable=True) from exc
         except BackendError:
             self.cancel()
             raise

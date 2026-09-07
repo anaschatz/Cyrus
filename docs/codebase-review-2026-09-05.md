@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **231 of 401 code files**, plus **200 of 323 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **231 of 401 code files**, plus **201 of 324 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **735 tests (720 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **737 tests (722 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1600,10 +1600,23 @@ Approval recovery checkpoint committed as **c520d72**, with a clean Ponytail hoo
 | V281 | NaN/infinite segment scores could produce a displayed score of 1.0; large positive scores leaked OverflowError, and malformed values leaked conversion errors. | Share typed finite-score conversion, reject booleans/nonfinite values and positive log probabilities, and report asr.invalid_score. |
 | V282 | Multiplying a large but finite negative log probability by its token count overflowed the sum, returning nonfinite raw metadata for a finite weighted mean. | Update the weighted mean incrementally. Valid non-positive inputs keep intermediate differences bounded; the empty-input sentinel remains (-inf, 0). |
 | V283 | Invalid language probabilities bypassed low-confidence resolution or escaped as untyped errors, and could enter CPU/CUDA result metadata. | Validate the probability in [0,1] at the common decoder. Invalid candidate scores are skipped without discarding valid candidates. |
-| V284 — OPEN | Parent IPC can report readable and then raise EOFError in recv. The exception bypasses BackendError cleanup and CUDA-to-CPU fallback. | Reproduced using the existing fake process/connection: EOFError escaped with the parent connection still open and no cancellation. Native process behavior and the broader supervisor lifecycle remain pending. |
+| V284 — resolved below | Parent IPC can report readable and then raise EOFError in recv. The exception bypasses BackendError cleanup and CUDA-to-CPU fallback. | Reproduced using the existing fake process/connection: EOFError escaped with the parent connection still open and no cancellation. Native process behavior and the broader supervisor lifecycle remain pending. |
 
 Four score regressions produce **12 failures and eight errors before the fix**, `/tmp/cyrus-asr-scores-before.log`; all **34 focused ASR/CUDA/factory/GPU tests pass**, `/tmp/cyrus-asr-scores-after.log`. CPU and the actual child function use fake models and disposable manifest bytes; no CUDA library/model or microphone is loaded. Full Voice ran **735 tests in 6.859 seconds: 720 passed, 15 skipped**; full Orchestrator ran **1106 tests in 22.341 seconds: 1101 passed, five skipped**, `/tmp/cyrus-full-review-asr-scores-{voice,orchestrator}.log`. Fatal Ruff and unchanged module-size checks pass.
 
 Ponytail: share one finite-number conversion and remove the redundant maximum scan, weights list, total variable and winner-index search. The winner's normalized numerator is already 1. Net production growth is **15 lines**, with no dependency or model/decoding-option change. The incremental mean may change floating-point rounding slightly; confidence remains explicitly uncalibrated. Greek-first equal-score ties and valid-candidate behavior are retained. Frozen inference scoring artifacts are untouched.
 
 Coverage is **231/401 code, 200/323 tests and 41/308 support**, with **472 reviewed hashes verified across 1032 entries**. CUDA lifecycle/IPC review, broader source inspection, U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
+
+
+### CUDA parent channel failures and CPU fallback
+
+Shared ASR scoring committed as **8287b6b**, with the mandatory Ponytail hook reporting “Lean already. Ship.”
+
+**V284 resolved:** poll/recv EOFError or OSError now becomes retryable cuda.worker_crashed in the shared parent receive path. Sending transcription requests is inside the cleanup boundary; a broken send receives the same typed error. Existing startup/transcription cleanup, warm-session reset and configured CPU fallback now run. This adds **six production lines** and no helper, dependency, protocol or restart-policy change.
+
+Two regression methods reproduce **19 errors before the fix** (15 startup/transcription send/poll/recv fault cases and four CPU-fallback cases). All **36 focused tests pass**, including the existing ASR/CUDA/factory/GPU checks. The fallback check traverses the actual supervisor, both CUDA residency modes and FallbackAsrBackend, asserting one CPU call with the same audio and cleared session state. Processes, connections, telemetry, models and CPU output are fake; no CUDA library, actual GPU, microphone or native model is used. Logs: `/tmp/cyrus-cuda-ipc-{before,after}.log`.
+
+Full Voice: **737 tests in 6.667 seconds, 722 passed and 15 skipped**. Full Orchestrator: **1106 tests in 20.248 seconds, 1101 passed and five skipped**. Logs: `/tmp/cyrus-full-review-cuda-ipc-{voice,orchestrator}.log`. Fatal Ruff and unchanged module boundaries pass. Source process creation/shutdown ownership, concurrency and result-frame validation remain follow-ups; this checkpoint does not claim full CUDA lifecycle qualification.
+
+Coverage is **231/401 code, 201/324 tests and 41/308 support**, with **473 reviewed hashes verified across 1033 entries**. Whole-repository review, U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
