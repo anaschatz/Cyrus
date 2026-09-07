@@ -44,6 +44,7 @@ CG_KEYBOARD_EVENT_AUTOREPEAT = 8
 CG_KEYBOARD_EVENT_KEYCODE = 9
 CG_EVENT_FLAG_MASK_CONTROL = 1 << 18
 CG_EVENT_FLAG_MASK_ALTERNATE = 1 << 19
+NX_DEVICERALTKEYMASK = 0x00000040
 
 # Synthetic values are kept outside the native keycode/Win32 VK ranges. They
 # exist only inside the passive macOS adapter and never leave the process.
@@ -172,7 +173,7 @@ class CoreGraphicsEventTapAdapter:
                 if keycode == MAC_RIGHT_OPTION_KEYCODE:
                     callback(
                         CG_EVENT_KEY_DOWN
-                        if flags & CG_EVENT_FLAG_MASK_ALTERNATE
+                        if flags & NX_DEVICERALTKEYMASK
                         else CG_EVENT_KEY_UP,
                         MAC_RIGHT_OPTION_KEYCODE,
                         False,

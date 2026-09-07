@@ -26,6 +26,7 @@ from jarvis_voice.config import (
     voice_config_from_mapping,
 )
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos import ptt as mac_ptt
 from jarvis_voice.macos import runtime as mac_runtime
 from jarvis_voice.macos.audio_capture import CoreAudioCapture
 from jarvis_voice.macos.doctor import macos_doctor_report
@@ -290,6 +291,38 @@ class MacPttTests(unittest.TestCase):
         self.assertEqual(publisher.events.get_nowait().transition, PttTransition.DOWN)
         self.assertEqual(publisher.events.get_nowait().transition, PttTransition.UP)
         self.assertEqual(mac_ptt_keycode("RIGHT_OPTION"), MAC_RIGHT_OPTION_KEYCODE)
+
+    def test_native_right_option_release_is_independent_of_left_option(self) -> None:
+        # SDK IOLLEvent.h: left Option = 0x20, right Option = 0x40.
+        for left_held in (False, True):
+            with self.subTest(left_held=left_held):
+                publisher = PttEventPublisher(capacity=8, maximum_hold_seconds=5, ptt_vkey=mac_ptt_vkey("RIGHT_OPTION"))
+                adapter = CoreGraphicsEventTapAdapter()
+                source = MacEventTapPttSource(publisher, key="RIGHT_OPTION", adapter=adapter)
+                cg, cf = mock.Mock(), mock.Mock()
+                cg.CGEventTapCreate.return_value = 1
+                cf.CFMachPortCreateRunLoopSource.return_value = 2
+                cf.CFRunLoopGetCurrent.return_value = 3
+                cg.CGEventGetIntegerValueField.return_value = MAC_RIGHT_OPTION_KEYCODE
+                left = (1 << 19) | 0x20 if left_held else 0
+                cg.CGEventGetFlags.side_effect = [(1 << 19) | 0x40 | left, left]
+
+                def run_loop():
+                    receive = cg.CGEventTapCreate.call_args.args[4]
+                    for event in (100, 101):
+                        self.assertEqual(receive(0, mac_ptt.CG_EVENT_FLAGS_CHANGED, event, 0), event)
+
+                cf.CFRunLoopRun.side_effect = run_loop
+                pointer = mock.Mock()
+                pointer.in_dll.return_value = SimpleNamespace(value=4)
+                with mock.patch.object(adapter, "_framework", side_effect=[cg, cf]), mock.patch.object(mac_ptt.ctypes, "c_void_p", pointer), mock.patch.object(mac_ptt.ctypes, "CFUNCTYPE", return_value=lambda callback: callback):
+                    adapter.run(source.handle_event, lambda: None)
+                transitions = []
+                while not publisher.events.empty():
+                    transitions.append(publisher.events.get_nowait().transition)
+                self.assertEqual(transitions, [PttTransition.DOWN, PttTransition.UP])
+                cf.CFMachPortInvalidate.assert_called_once_with(1)
+                self.assertEqual(cf.CFRelease.call_args_list, [mock.call(2), mock.call(1)])
 
     def test_only_f1_through_f20_are_supported(self) -> None:
         self.assertEqual(mac_function_keycode("F20"), 90)
