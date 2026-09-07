@@ -8387,10 +8387,6 @@ class OrchestratorStore:
             raise OrchestratorError(
                 "conversation_busy", status=409, retryable=True
             )
-        task_rows = connection.execute(
-            "SELECT task_id FROM tasks WHERE conversation_id=?", (conversation_id,)
-        ).fetchall()
-        task_ids = [item["task_id"] for item in task_rows]
         principal_id = self._principal_for_conversation_tx(
             connection, conversation_id
         )
@@ -8455,54 +8451,54 @@ class OrchestratorStore:
                    CAST(schema_meta.value AS INTEGER) + CAST(excluded.value AS INTEGER) AS TEXT)""",
             (conversation_id,),
         )
-        if task_ids:
-            placeholders = ",".join("?" for _ in task_ids)
+        task_filter = "SELECT task_id FROM tasks WHERE conversation_id=?"
+        connection.execute(
+            f"""DELETE FROM model_request_provenance
+                WHERE reservation_id IN (
+                    SELECT reservation_id FROM reservations
+                    WHERE task_id IN ({task_filter})
+                )""",
+            (conversation_id,),
+        )
+        connection.execute(
+            f"""DELETE FROM cloud_extension_inbox WHERE approval_id IN (
+               SELECT approval_id FROM approvals
+               WHERE task_id IN ({task_filter})
+               )""",
+            (conversation_id,),
+        )
+        connection.execute(
+            f"DELETE FROM research_documents "
+            f"WHERE task_id IN ({task_filter})",
+            (conversation_id,),
+        )
+        connection.execute(
+            f"DELETE FROM research_runs WHERE task_id IN ({task_filter})",
+            (conversation_id,),
+        )
+        for table in (
+            "scheduler_task_links",
+            "voice_playback_receipts",
+            "cloud_provider_receipts",
+            "cloud_dispatch_permits",
+            "cloud_cost_reservations",
+            "cloud_presentations",
+            "cloud_approval_bindings",
+            "route_plans",
+            "routing_facts",
+            "task_profiles",
+            "continuation_artifacts",
+            "tool_executions",
+            "capability_reservations",
+            "approvals",
+            "reservations",
+            "task_events",
+            "inbox",
+        ):
             connection.execute(
-                f"""DELETE FROM model_request_provenance
-                    WHERE reservation_id IN (
-                        SELECT reservation_id FROM reservations
-                        WHERE task_id IN ({placeholders})
-                    )""",
-                tuple(task_ids),
+                f"DELETE FROM {table} WHERE task_id IN ({task_filter})",
+                (conversation_id,),
             )
-            connection.execute(
-                f"""DELETE FROM cloud_extension_inbox WHERE approval_id IN (
-                   SELECT approval_id FROM approvals
-                   WHERE task_id IN ({placeholders})
-                   )""",
-                tuple(task_ids),
-            )
-            connection.execute(
-                f"DELETE FROM research_documents "
-                f"WHERE task_id IN ({placeholders})",
-                tuple(task_ids),
-            )
-            connection.execute(
-                f"DELETE FROM research_runs WHERE task_id IN ({placeholders})",
-                tuple(task_ids),
-            )
-            for table in (
-                "voice_playback_receipts",
-                "cloud_provider_receipts",
-                "cloud_dispatch_permits",
-                "cloud_cost_reservations",
-                "cloud_presentations",
-                "cloud_approval_bindings",
-                "route_plans",
-                "routing_facts",
-                "task_profiles",
-                "continuation_artifacts",
-                "tool_executions",
-                "capability_reservations",
-                "approvals",
-                "reservations",
-                "task_events",
-                "inbox",
-            ):
-                connection.execute(
-                    f"DELETE FROM {table} WHERE task_id IN ({placeholders})",
-                    tuple(task_ids),
-                )
         connection.execute(
             "DELETE FROM cloud_extension_outbox WHERE conversation_id=?",
             (conversation_id,),

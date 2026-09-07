@@ -1157,6 +1157,7 @@ class SchedulerStore:
             job_id: str | None = None
             occurrence: str | None = None
             job_revision: int | None = None
+            operation = row["operation"]
             if decision == "deny":
                 connection.execute(
                     "UPDATE scheduler_proposals SET state='DENIED',decided_at=? WHERE proposal_id=?",
@@ -1165,7 +1166,6 @@ class SchedulerStore:
                 result_reason = "denied"
             else:
                 proposal = self._get_content_tx(connection, row["content_record_id"])
-                operation = row["operation"]
                 if operation == "CREATE_JOB":
                     job_id, job_revision, occurrence = self._activate_job_tx(
                         connection, row=row, proposal=proposal, now=selected, cause_event_id=cause_event_id
