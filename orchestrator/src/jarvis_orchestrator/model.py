@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-import json
-import urllib.error
-import urllib.request
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import Any
 
-from .domain import ModelChunk, ModelRequest, ModelUsage, OrchestratorError, canonical_json
+from .domain import ModelChunk, ModelRequest, ModelUsage, OrchestratorError
 from .ports import ModelPort
 from .store import OrchestratorStore
 
@@ -146,112 +143,3 @@ class BudgetedModelPort:
                         reservation_id, request.task_id, request.epoch, None
                     )
 
-
-class LocalInferenceModelPort:
-    """Strict OpenAI Chat Completions adapter for the loopback appliance."""
-
-    FORBIDDEN_FIELDS = frozenset({"seed", "user", "metadata", "store", "service_tier", "max_tokens"})
-
-    def __init__(self, *, base_url: str, bearer_token: str, model_alias: str = "jarvis-local", timeout_seconds: float = 120.0) -> None:
-        self._url = base_url.rstrip("/") + "/chat/completions"
-        self._token = bearer_token
-        self._model_alias = model_alias
-        self._timeout = timeout_seconds
-
-    @staticmethod
-    def validate_payload(payload: Mapping[str, Any], *, reservation_allowance: int) -> None:
-        if set(payload) & LocalInferenceModelPort.FORBIDDEN_FIELDS:
-            raise OrchestratorError("model_payload_forbidden_field", status=500)
-        if payload.get("model") != "jarvis-local":
-            raise OrchestratorError("model_payload_alias", status=500)
-        if payload.get("max_completion_tokens") != reservation_allowance:
-            raise OrchestratorError("model_payload_budget_mismatch", status=500)
-        messages = payload.get("messages")
-        if not isinstance(messages, list) or any(item.get("role") == "developer" for item in messages if isinstance(item, dict)):
-            raise OrchestratorError("model_payload_role", status=500)
-        tools = payload.get("tools")
-        response_format = payload.get("response_format")
-        structured = isinstance(response_format, dict) and response_format.get("type") in {"json_schema", "json_object"}
-        if tools and structured:
-            raise OrchestratorError("model_payload_tools_xor_schema", status=500)
-        if tools:
-            if payload.get("parallel_tool_calls") is not False:
-                raise OrchestratorError("model_payload_parallel_tools", status=500)
-            for tool in tools:
-                if tool.get("function", {}).get("strict") is not True:
-                    raise OrchestratorError("model_payload_non_strict_tool", status=500)
-        if structured and response_format.get("json_schema", {}).get("strict") is not True:
-            raise OrchestratorError("model_payload_non_strict_schema", status=500)
-        options = payload.get("stream_options")
-        if options is not None and (payload.get("stream") is not True or options != {"include_usage": True}):
-            raise OrchestratorError("model_payload_stream_options", status=500)
-
-    def _payload(self, request: ModelRequest) -> dict[str, Any]:
-        messages: list[dict[str, str]] = [{"role": "system", "content": request.system_prompt}]
-        messages.extend(dict(item) for item in request.messages)
-        payload: dict[str, Any] = {
-            "model": self._model_alias,
-            "messages": messages,
-            "max_completion_tokens": request.output_allowance,
-            "stream": request.stream,
-            "temperature": 0,
-            "top_p": 1,
-        }
-        if request.stream:
-            payload["stream_options"] = {"include_usage": True}
-        if request.tools:
-            payload["tools"] = [dict(tool) for tool in request.tools]
-            payload["parallel_tool_calls"] = False
-            payload["tool_choice"] = "auto"
-        elif request.response_format is not None:
-            payload["response_format"] = dict(request.response_format)
-        self.validate_payload(payload, reservation_allowance=request.output_allowance)
-        return payload
-
-    def _request(self, request: ModelRequest) -> list[ModelChunk]:
-        consume_dispatch_reservation()
-        payload = self._payload(request)
-        raw = canonical_json(payload).encode("utf-8")
-        http_request = urllib.request.Request(
-            self._url,
-            data=raw,
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Content-Type": "application/json",
-                "Accept": "text/event-stream" if request.stream else "application/json",
-            },
-        )
-        try:
-            timeout = self._timeout if request.timeout_seconds is None else min(self._timeout, request.timeout_seconds)
-            with urllib.request.urlopen(http_request, timeout=timeout) as response:
-                body = response.read()
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise OrchestratorError("backend_failure", status=503, retryable=True) from exc
-        if not request.stream:
-            parsed = json.loads(body)
-            text = parsed["choices"][0]["message"].get("content") or ""
-            usage = parsed.get("usage") or {}
-            return [ModelChunk(text, ModelUsage(usage.get("completion_tokens"), usage.get("prompt_tokens")))]
-        result: list[ModelChunk] = []
-        for line in body.decode("utf-8", errors="strict").splitlines():
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                continue
-            parsed = json.loads(data)
-            usage_raw = parsed.get("usage")
-            usage = None
-            if isinstance(usage_raw, dict):
-                usage = ModelUsage(usage_raw.get("completion_tokens"), usage_raw.get("prompt_tokens"))
-            choices = parsed.get("choices") or []
-            text = ""
-            if choices:
-                text = choices[0].get("delta", {}).get("content") or ""
-            result.append(ModelChunk(text, usage))
-        return result
-
-    async def stream(self, request: ModelRequest) -> AsyncIterator[ModelChunk]:
-        for chunk in await asyncio.to_thread(self._request, request):
-            yield chunk

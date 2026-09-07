@@ -32,7 +32,6 @@ from .model import (
     BudgetedModelPort,
     DispatchPermit,
     GuardedAsyncTransport,
-    LocalInferenceModelPort,
     _dispatch_reservation,
 )
 from .store import OrchestratorStore
@@ -221,16 +220,30 @@ class _DirectLocalTextStreamPort:
         self._bearer_token = bearer_token
         self._timeout_seconds = timeout_seconds
         self._http_transport = http_transport
-        self._payload_builder = LocalInferenceModelPort(
-            base_url=base_url,
-            bearer_token=bearer_token,
-            timeout_seconds=timeout_seconds,
-        )
+
+    @staticmethod
+    def _payload(request: ModelRequest) -> dict[str, Any]:
+        if request.stream is not True or request.tools or request.response_format is not None:
+            raise OrchestratorError("model_payload_text_stream_required", status=500)
+        if any(message.get("role") == "developer" for message in request.messages):
+            raise OrchestratorError("model_payload_role", status=500)
+        return {
+            "model": "jarvis-local",
+            "messages": [
+                {"role": "system", "content": request.system_prompt},
+                *(dict(message) for message in request.messages),
+            ],
+            "max_completion_tokens": request.output_allowance,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "temperature": 0,
+            "top_p": 1,
+        }
 
     async def stream(self, request: ModelRequest):
         import httpx
 
-        payload = self._payload_builder._payload(request)
+        payload = self._payload(request)
         timeout = self._timeout_seconds
         if request.timeout_seconds is not None:
             timeout = min(timeout, request.timeout_seconds)

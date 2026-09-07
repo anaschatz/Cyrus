@@ -12,8 +12,8 @@ from helpers import StoreCase
 
 from jarvis_orchestrator.common_schema import CommonSchemaError, route_decision_schema, transform_common_schema
 from jarvis_orchestrator.domain import ModelChunk, ModelRequest, ModelUsage, OrchestratorError, TaskState, utc_now
-from jarvis_orchestrator.model import BudgetedModelPort, LocalInferenceModelPort, active_dispatch_reservation
-from jarvis_orchestrator.pydantic_adapter import build_local_pydantic_port
+from jarvis_orchestrator.model import BudgetedModelPort, active_dispatch_reservation
+from jarvis_orchestrator.pydantic_adapter import _DirectLocalTextStreamPort, build_local_pydantic_port
 from jarvis_orchestrator.speech import SpeechSegmenterV1, resolve_locale
 
 
@@ -62,13 +62,13 @@ class ModelBudgetTests(StoreCase, unittest.TestCase):
         self.assertEqual(store.remaining_model_budget(task.task_id, task.epoch), {"requests": 3, "output_tokens": 2045})
 
     def test_raw_http_adapter_fails_without_guard(self) -> None:
-        adapter = LocalInferenceModelPort(base_url="http://127.0.0.1:9/v1", bearer_token="private")
+        adapter = _DirectLocalTextStreamPort(base_url="http://127.0.0.1:9/v1", bearer_token="private", timeout_seconds=1, http_transport=None)
         request = ModelRequest(str(uuid.uuid4()), 1, "final", "system", (), 16, timeout_seconds=0.01)
         with self.assertRaisesRegex(OrchestratorError, "model_dispatch_without_reservation"):
-            adapter._request(request)
+            asyncio.run(anext(adapter.stream(request)))
 
     def test_exact_payload_uses_reserved_max_completion_tokens(self) -> None:
-        adapter = LocalInferenceModelPort(base_url="http://127.0.0.1:9/v1", bearer_token="private")
+        adapter = _DirectLocalTextStreamPort(base_url="http://127.0.0.1:9/v1", bearer_token="private", timeout_seconds=1, http_transport=None)
         request = ModelRequest("task", 1, "final", "system", ({"role": "user", "content": "hi"},), 257)
         payload = adapter._payload(request)
         self.assertEqual(payload["max_completion_tokens"], 257)
