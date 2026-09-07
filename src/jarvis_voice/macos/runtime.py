@@ -11,6 +11,7 @@ import threading
 import time
 from array import array
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 
 from ..audio import resample_audio
@@ -139,168 +140,172 @@ class MacVoiceRuntime:
             journal_paths,
             trusted_boundary=state_boundary,
         )
-        self.config = config
-        self.callbacks: queue.Queue[BackendCallback] = queue.Queue()
-        started_callback = lambda unit: self.callbacks.put_nowait(BackendCallback("started", unit))
-        completed_callback = lambda unit: self.callbacks.put_nowait(BackendCallback("completed", unit))
-        tts_warm_load_ms: float | None = None
-        if config.macos.tts_backend == "greektts15_f1":
-            greek = config.macos.greektts15
-            if greek.worker_python.path is not None:
-                greek_tts = GreekTtsF1SidecarBackend(
-                    config=greek,
-                    on_started=started_callback,
-                    on_completed=completed_callback,
-                )
-            else:
-                candidate = load_digest_bound_greektts_candidate(
-                    greek.approval_manifest_path or "",
-                    greek.approval_manifest_sha256 or "",
-                    greek.repository_root or "",
-                )
-                engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
-                greek_tts = GreekTtsF1Backend(
-                    engine=engine,
-                    playback_factory=IsolatedSoundDevicePcmPlayback,
-                    on_started=started_callback,
-                    on_completed=completed_callback,
-                    warm_on_start=greek.warm_on_start,
-                )
-            self.tts = MacLocaleRoutingTtsBackend(
-                greek_backend=greek_tts,
-                fallback_backend=MacSystemTtsBackend(
-                    voice_mapping=config.macos.system_voices,
-                    on_started=started_callback,
-                    on_completed=completed_callback,
-                ),
-                fallback_locales={"en-US"},
-            )
-            tts_warm_load_ms = self.tts.warm_load_ms
-        elif config.macos.tts_backend == "kokoro_onnx":
-            self.tts = KokoroOnnxTtsBackend(
-                engine=KokoroOnnxCpuEngine(config.macos.kokoro_onnx),
-                fallback_backend=MacSystemTtsBackend(
-                    voice_mapping=config.macos.system_voices,
-                    on_started=started_callback,
-                    on_completed=completed_callback,
-                ),
-                on_started=started_callback,
-                on_completed=completed_callback,
-                warm_on_start=config.macos.kokoro_onnx.warm_on_start,
-            )
-            tts_warm_load_ms = self.tts.warm_load_ms
-        elif config.macos.tts_backend == "pocket_tts":
-            self.tts = PocketTtsBackend(
-                engine=PocketTtsCpuEngine(config.pocket_tts),
-                playback_factory=MacAudioQueueStreamingPlayback,
-                fallback_backend=MacSystemTtsBackend(
-                    voice_mapping=config.macos.system_voices,
-                    on_started=started_callback,
-                    on_completed=completed_callback,
-                ),
-                on_started=started_callback,
-                on_completed=completed_callback,
-                warm_on_start=config.pocket_tts.warm_on_start,
-            )
-            tts_warm_load_ms = self.tts.warm_load_ms
-        else:
+        self.transcription: AsyncTranscriptionCoordinator | None = None
+        with ExitStack() as initialization:
+            self.config = config
+            self.callbacks: queue.Queue[BackendCallback] = queue.Queue()
+            started_callback = lambda unit: self.callbacks.put_nowait(BackendCallback("started", unit))
+            completed_callback = lambda unit: self.callbacks.put_nowait(BackendCallback("completed", unit))
             self.tts = MacSystemTtsBackend(
                 voice_mapping=config.macos.system_voices,
                 on_started=started_callback,
                 on_completed=completed_callback,
             )
-        self.asr = create_macos_asr_backend(config)
-        self.language_policy = MacSessionLanguagePolicy()
-        self.delivery_journal = DeliveryDedupJournal(
-            journal_paths[0],
-            trusted_boundary=state_boundary,
-        )
-        self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
-        self.cloud_journal = CloudApprovalJournal(
-            journal_paths[1],
-            trusted_boundary=state_boundary,
-        )
-        self.cloud_approval = CloudApprovalController(session_id=self.core.session_id, journal=self.cloud_journal)
-        self.action_journal = ActionApprovalJournal(
-            journal_paths[2],
-            trusted_boundary=state_boundary,
-        )
-        self.action_approval = ActionApprovalController(
-            session_id=self.core.session_id,
-            journal=self.action_journal,
-            approval_arbiter=self.cloud_approval.approval_arbiter,
-        )
-        self.scheduler_runtime: SchedulerNativeRuntime | None = None
-        if config.scheduler.enabled:
-            self.scheduler_runtime = SchedulerNativeRuntime.from_config(
-                config.scheduler,
+            initialization.callback(lambda: self.tts.close())
+            tts_warm_load_ms: float | None = None
+            if config.macos.tts_backend == "greektts15_f1":
+                greek = config.macos.greektts15
+                if greek.worker_python.path is not None:
+                    greek_tts = GreekTtsF1SidecarBackend(
+                        config=greek,
+                        on_started=started_callback,
+                        on_completed=completed_callback,
+                    )
+                else:
+                    candidate = load_digest_bound_greektts_candidate(
+                        greek.approval_manifest_path or "",
+                        greek.approval_manifest_sha256 or "",
+                        greek.repository_root or "",
+                    )
+                    engine = MlxGreekTtsStreamingEngine(model_root=greek.model_root or "", candidate=candidate)
+                    greek_tts = GreekTtsF1Backend(
+                        engine=engine,
+                        playback_factory=IsolatedSoundDevicePcmPlayback,
+                        on_started=started_callback,
+                        on_completed=completed_callback,
+                        warm_on_start=greek.warm_on_start,
+                    )
+                try:
+                    self.tts = MacLocaleRoutingTtsBackend(
+                        greek_backend=greek_tts,
+                        fallback_backend=self.tts,
+                        fallback_locales={"en-US"},
+                    )
+                except BaseException:
+                    greek_tts.close()
+                    raise
+                tts_warm_load_ms = self.tts.warm_load_ms
+            elif config.macos.tts_backend == "kokoro_onnx":
+                self.tts = KokoroOnnxTtsBackend(
+                    engine=KokoroOnnxCpuEngine(config.macos.kokoro_onnx),
+                    fallback_backend=self.tts,
+                    on_started=started_callback,
+                    on_completed=completed_callback,
+                    warm_on_start=config.macos.kokoro_onnx.warm_on_start,
+                )
+                tts_warm_load_ms = self.tts.warm_load_ms
+            elif config.macos.tts_backend == "pocket_tts":
+                self.tts = PocketTtsBackend(
+                    engine=PocketTtsCpuEngine(config.pocket_tts),
+                    playback_factory=MacAudioQueueStreamingPlayback,
+                    fallback_backend=self.tts,
+                    on_started=started_callback,
+                    on_completed=completed_callback,
+                    warm_on_start=config.pocket_tts.warm_on_start,
+                )
+                tts_warm_load_ms = self.tts.warm_load_ms
+            self.asr = create_macos_asr_backend(config)
+            initialization.callback(self._close_asr)
+            self.language_policy = MacSessionLanguagePolicy()
+            self.delivery_journal = DeliveryDedupJournal(
+                journal_paths[0],
+                trusted_boundary=state_boundary,
+            )
+            initialization.callback(self.delivery_journal.close)
+            self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
+            self.cloud_journal = CloudApprovalJournal(
+                journal_paths[1],
+                trusted_boundary=state_boundary,
+            )
+            initialization.callback(self.cloud_journal.close)
+            self.cloud_approval = CloudApprovalController(session_id=self.core.session_id, journal=self.cloud_journal)
+            self.action_journal = ActionApprovalJournal(
+                journal_paths[2],
+                trusted_boundary=state_boundary,
+            )
+            initialization.callback(self.action_journal.close)
+            self.action_approval = ActionApprovalController(
                 session_id=self.core.session_id,
+                journal=self.action_journal,
                 approval_arbiter=self.cloud_approval.approval_arbiter,
-                tts=self.tts,
-                reserve_epoch=self.core.state.reserve_output_epoch,
-                runtime_profile_sha256=mac_runtime_profile_fingerprint(config),
             )
-            self.core.configure_scheduler_extension(
-                self.scheduler_runtime.capabilities,
-                self.scheduler_runtime.manifest_sha256,
-                self.scheduler_runtime.callback_qualification_sha256,
+            self.scheduler_runtime: SchedulerNativeRuntime | None = None
+            if config.scheduler.enabled:
+                self.scheduler_runtime = SchedulerNativeRuntime.from_config(
+                    config.scheduler,
+                    session_id=self.core.session_id,
+                    approval_arbiter=self.cloud_approval.approval_arbiter,
+                    tts=self.tts,
+                    reserve_epoch=self.core.state.reserve_output_epoch,
+                    runtime_profile_sha256=mac_runtime_profile_fingerprint(config),
+                )
+                initialization.callback(self.scheduler_runtime.close)
+                self.core.configure_scheduler_extension(
+                    self.scheduler_runtime.capabilities,
+                    self.scheduler_runtime.manifest_sha256,
+                    self.scheduler_runtime.callback_qualification_sha256,
+                )
+            self.transcription = AsyncTranscriptionCoordinator(self.asr)
+            self.vad = SileroOnnxVad(
+                artifact_path=artifact.path,
+                size=artifact.size,
+                sha256=artifact.sha256,
+                threshold=config.vad.threshold,
+                minimum_speech_ms=config.vad.minimum_speech_ms,
+                padding_ms=config.vad.padding_ms,
             )
-        self.transcription = AsyncTranscriptionCoordinator(self.asr)
-        self.vad = SileroOnnxVad(
-            artifact_path=artifact.path,
-            size=artifact.size,
-            sha256=artifact.sha256,
-            threshold=config.vad.threshold,
-            minimum_speech_ms=config.vad.minimum_speech_ms,
-            padding_ms=config.vad.padding_ms,
-        )
-        self.transport = LoopbackWebSocketTransport(
-            config.orchestrator_url,
-            auth_key=voice_auth_key,
-        )
-        self.publisher = PttEventPublisher(
-            capacity=config.ptt_queue_capacity,
-            maximum_hold_seconds=config.maximum_hold_seconds,
-            ptt_vkey=mac_ptt_vkey(config.ptt_key),
-        )
-        self.approval_keys = ApprovalKeyPublisher()
-        self.ptt = MacEventTapPttSource(
-            self.publisher,
-            key=config.ptt_key,
-            approval_publisher=self.approval_keys,
-        )
-        self._ui_activity_frames: queue.Queue[bytes] = queue.Queue(maxsize=1)
-        self.audio = CoreAudioCapture(
-            queue_capacity=config.audio_queue_capacity,
-            maximum_utterance_seconds=config.maximum_utterance_seconds,
-            device=config.audio_input_device,
-            frame_observer=lambda data, rate, timestamp: self._observe_audio_frame(
-                data,
-                rate,
-                timestamp,
-                external_observer=audio_frame_observer,
-            ),
-        )
-        self._running = False
-        self._stop_requested = threading.Event()
-        self._timings_lock = threading.Lock()
-        self.timings: list[dict[str, float | str | int | bool]] = []
-        self._trace_timings = os.environ.get(TIMING_TRACE_ENV) == "1"
-        self._ptt_cycle = 0
-        self._turn_cycles: dict[str, int] = {}
-        self._response_tokens: dict[str, int] = {}
-        self._next_response_token = 1
-        self.reliable = ReliableSubmissionManager(time.monotonic)
-        self._transport_reconnect_event_id: str | None = None
-        self.recovery = MacRecoverySupervisor()
-        try:
-            self.ui_state: VoiceUiStatePublisher | None = VoiceUiStatePublisher()
-        except BackendError:
-            # The UI is observational. A stale/unsafe/unwritable snapshot must
-            # never weaken or take down the authenticated Voice path.
-            self.ui_state = None
-        if tts_warm_load_ms is not None:
-            self._record_timing("tts_warm_ready", load_ms=tts_warm_load_ms)
+            self.transport = LoopbackWebSocketTransport(
+                config.orchestrator_url,
+                auth_key=voice_auth_key,
+            )
+            initialization.callback(self.transport.close)
+            self.publisher = PttEventPublisher(
+                capacity=config.ptt_queue_capacity,
+                maximum_hold_seconds=config.maximum_hold_seconds,
+                ptt_vkey=mac_ptt_vkey(config.ptt_key),
+            )
+            self.approval_keys = ApprovalKeyPublisher()
+            self.ptt = MacEventTapPttSource(
+                self.publisher,
+                key=config.ptt_key,
+                approval_publisher=self.approval_keys,
+            )
+            initialization.callback(self.ptt.stop)
+            self._ui_activity_frames: queue.Queue[bytes] = queue.Queue(maxsize=1)
+            self.audio = CoreAudioCapture(
+                queue_capacity=config.audio_queue_capacity,
+                maximum_utterance_seconds=config.maximum_utterance_seconds,
+                device=config.audio_input_device,
+                frame_observer=lambda data, rate, timestamp: self._observe_audio_frame(
+                    data,
+                    rate,
+                    timestamp,
+                    external_observer=audio_frame_observer,
+                ),
+            )
+            initialization.callback(self.audio.stop)
+            initialization.callback(self.audio.abort_turn)
+            self._running = False
+            self._stop_requested = threading.Event()
+            self._timings_lock = threading.Lock()
+            self.timings: list[dict[str, float | str | int | bool]] = []
+            self._trace_timings = os.environ.get(TIMING_TRACE_ENV) == "1"
+            self._ptt_cycle = 0
+            self._turn_cycles: dict[str, int] = {}
+            self._response_tokens: dict[str, int] = {}
+            self._next_response_token = 1
+            self.reliable = ReliableSubmissionManager(time.monotonic)
+            self._transport_reconnect_event_id: str | None = None
+            self.recovery = MacRecoverySupervisor()
+            try:
+                self.ui_state: VoiceUiStatePublisher | None = VoiceUiStatePublisher()
+            except BackendError:
+                # The UI is observational. A stale/unsafe/unwritable snapshot must
+                # never weaken or take down the authenticated Voice path.
+                self.ui_state = None
+            if tts_warm_load_ms is not None:
+                self._record_timing("tts_warm_ready", load_ms=tts_warm_load_ms)
+            self._cleanup = initialization.pop_all()
 
     def _publish_ui_state(self, state: VoiceUiState) -> None:
         publisher = self.ui_state
@@ -796,17 +801,18 @@ class MacVoiceRuntime:
         self.transcription.cancel_current()
         self.tts.cancel(2**63 - 1, "application_stop")
 
+    def _close_asr(self) -> None:
+        if self.transcription is not None:
+            self.transcription.close()
+        else:
+            close_asr = getattr(self.asr, "close", None)
+            if close_asr is not None:
+                close_asr()
+
     def close(self) -> None:
         self._running = False
         self._stop_requested.set()
-        self._publish_ui_state(VoiceUiState.OFFLINE)
-        self.ptt.stop()
-        self.audio.abort_turn()
-        self.audio.stop()
-        self.transcription.close()
-        self.tts.close()
-        self.transport.close()
-        self.cloud_journal.close()
-        self.action_journal.close()
-        if self.scheduler_runtime is not None:
-            self.scheduler_runtime.close()
+        try:
+            self._publish_ui_state(VoiceUiState.OFFLINE)
+        finally:
+            self._cleanup.close()

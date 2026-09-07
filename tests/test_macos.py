@@ -10,6 +10,7 @@ import tempfile
 import threading
 import unittest
 from array import array
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from jarvis_voice.config import (
     voice_config_from_mapping,
 )
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos import runtime as mac_runtime
 from jarvis_voice.macos.audio_capture import CoreAudioCapture
 from jarvis_voice.macos.doctor import macos_doctor_report
 from jarvis_voice.voice_auth import create_voice_auth_key_file
@@ -864,6 +866,68 @@ class MacDoctorConfigTests(unittest.TestCase):
 
         self.assertEqual(build_parser().parse_args(["doctor-macos", "--config", "voice.json"]).command, "doctor-macos")
         self.assertEqual(build_parser().parse_args(["run-macos", "--config", "voice.json"]).command, "run-macos")
+
+
+class MacRuntimeResourceTests(unittest.TestCase):
+    def test_partial_startup_and_shutdown_failures_release_owned_resources(self) -> None:
+        for failure in ("asr", "CloudApprovalJournal", "SileroOnnxVad", "router", "stop", "interrupt", None):
+            with self.subTest(failure=failure), ExitStack() as patches:
+                config = mock.Mock(ptt_key="F9")
+                config.macos.tts_backend = "greektts15_f1" if failure == "router" else "system_say"
+                config.scheduler.enabled = True
+                objects = {}
+                for name in (
+                    "MacSystemTtsBackend", "GreekTtsF1SidecarBackend", "MacLocaleRoutingTtsBackend",
+                    "DeliveryDedupJournal", "VoiceCore", "CloudApprovalJournal", "CloudApprovalController",
+                    "ActionApprovalJournal", "ActionApprovalController", "SileroOnnxVad",
+                    "LoopbackWebSocketTransport", "MacEventTapPttSource", "CoreAudioCapture",
+                    "VoiceUiStatePublisher", "PttEventPublisher", "ApprovalKeyPublisher",
+                ):
+                    obj = objects[name] = mock.Mock()
+                    failed = name == failure or (failure == "router" and name == "MacLocaleRoutingTtsBackend")
+                    patches.enter_context(mock.patch.object(mac_runtime, name, return_value=obj,
+                                                           side_effect=OSError("synthetic startup failure") if failed else None))
+                for name in (
+                    "configured_voice_auth_key", "default_voice_state_boundary", "prepare_voice_journal_state",
+                    "default_delivery_journal_path", "default_cloud_approval_journal_path",
+                    "default_action_approval_journal_path", "mac_runtime_profile_fingerprint",
+                ):
+                    patches.enter_context(mock.patch.object(mac_runtime, name))
+                scheduler, asr, coordinator = mock.Mock(), mock.Mock(), mock.Mock()
+                coordinator.close.side_effect = asr.close
+                patches.enter_context(mock.patch.object(mac_runtime.SchedulerNativeRuntime, "from_config", return_value=scheduler))
+                patches.enter_context(mock.patch.object(mac_runtime, "create_macos_asr_backend", return_value=asr,
+                                                       side_effect=OSError("synthetic ASR failure") if failure == "asr" else None))
+                patches.enter_context(mock.patch.object(mac_runtime, "AsyncTranscriptionCoordinator", return_value=coordinator))
+                patches.enter_context(mock.patch.object(mac_runtime.sys, "platform", "darwin"))
+                if failure in ("stop", "interrupt"):
+                    objects["MacEventTapPttSource"].stop.side_effect = OSError("synthetic stop failure") if failure == "stop" else KeyboardInterrupt()
+                if failure in (None, "stop", "interrupt"):
+                    instance = mac_runtime.MacVoiceRuntime(config)
+                    if failure is not None:
+                        with self.assertRaises(OSError if failure == "stop" else KeyboardInterrupt):
+                            instance.close()
+                    else:
+                        instance.close()
+                    objects["CoreAudioCapture"].stop.assert_called_once()
+                    objects["LoopbackWebSocketTransport"].close.assert_called_once()
+                else:
+                    with self.assertRaises(OSError):
+                        mac_runtime.MacVoiceRuntime(config)
+                objects["MacSystemTtsBackend"].close.assert_called_once()
+                if failure == "router":
+                    objects["GreekTtsF1SidecarBackend"].close.assert_called_once()
+                if failure not in ("asr", "router"):
+                    asr.close.assert_called_once()
+                    objects["DeliveryDedupJournal"].close.assert_called_once()
+                if failure not in ("asr", "router", "CloudApprovalJournal"):
+                    objects["CloudApprovalJournal"].close.assert_called_once()
+                    objects["ActionApprovalJournal"].close.assert_called_once()
+                    scheduler.close.assert_called_once()
+                    coordinator.close.assert_called_once()
+                if failure in (None, "stop", "interrupt"):
+                    instance.close()
+                    objects["CoreAudioCapture"].stop.assert_called_once()
 
 
 @unittest.skipUnless(sys.platform == "darwin", "native macOS framework smoke required")

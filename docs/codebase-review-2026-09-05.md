@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **285 of 401 code files**, plus **235 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **286 of 401 code files**, plus **235 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **809 tests (794 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **810 tests (795 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2000,3 +2000,20 @@ Approval document checkpoint committed as **03aead4**, with a clean mandatory Po
 Two new regression methods cover four startup phases and four invalid-timeout cases. **Seven baseline failures** reproduce with both the initial fake pipes, `/tmp/cyrus-playback-startup-before.log`, and the final real disposable multiprocessing pipes, `/tmp/cyrus-playback-startup-real-pipes-before.log`. The latter executes the exact HEAD class definition in an isolated test interpreter; it does not overwrite working source. The receive-error case already cleaned up and remains a positive regression. All **35 focused checks pass**, `/tmp/cyrus-playback-startup-after.log`. Full Voice: **809 tests in 8.114 seconds, 794 passed and 15 skipped**, `/tmp/cyrus-full-review-playback-startup-voice.log`. Fatal Ruff and unchanged module boundaries pass.
 
 Ponytail: reuse existing abort, move ownership into try/finally and remove repeated startup abort calls; **four net production lines**, no helper, dependency or extra test file. New tests use real owned pipes and fake processes, not a CoreAudio helper or model. Full-suite native preflight scope is unchanged. All **561 reviewed hashes across 1048 entries** are current; inspection coverage remains **285/401 code, 235/339 tests and 41/308 support**. Failures within abort itself, full IPC frame deadlines and decoder/queue drain behavior remain follow-up checks; this checkpoint does not claim those are resolved. Whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment remain incomplete.
+
+
+### macOS runtime initialization and shutdown ownership
+
+Isolated playback startup checkpoint committed as **4b29278**, with a clean mandatory Ponytail review.
+
+Completed inspection of the entire macOS runtime: backend/journal construction, UI activity and timing paths, transcript retries/reconnect, capture/transcription, native recovery, approval/scheduler routing, callbacks and shutdown. Traced CLI and interactive/native collection callers plus backend/coordinator/journal closure and the existing Windows ownership pattern.
+
+**V339 resolved:** runtime initialization had no cleanup scope. ASR, journal or VAD construction failures leaked earlier TTS/ASR/journal resources; failed Greek router construction also left both backends owned by nobody. The runtime now registers resources with stdlib ExitStack as they are acquired, transfers the stack only after complete initialization, and closes the Greek backend if router ownership transfer fails. One system-TTS construction serves all existing fallback branches.
+
+**V340 resolved:** the sequential close method stopped at the first failing resource, including KeyboardInterrupt, skipping the remaining cleanup. Shutdown now consumes the same ExitStack, so all registered cleanup callbacks are attempted and repeated close does not repeat them. UI offline publication is outside the stack but cannot prevent its closure. Cleanup failures still propagate; this does not claim recovery when a native close operation itself fails.
+
+**V341 resolved:** delivery_journal was never closed by macOS runtime shutdown. It is now explicitly owned by the cleanup stack. ASR cleanup selects the coordinator after it exists and the backend before coordinator construction, avoiding duplicate backend closure.
+
+A new seven-case method in the existing macOS test module produces **seven baseline failures**, `/tmp/cyrus-macos-runtime-resources-before.log`. Cases cover ASR/cloud-journal/VAD/router startup, failing PTT shutdown, interruption and normal shutdown. All **three exact staged-source resource checks pass**, `/tmp/cyrus-macos-runtime-staged-tests.log`. All **57 focused integration checks pass**, `/tmp/cyrus-macos-runtime-integration.log`; the resource/Windows/module-boundary subset also passes, `/tmp/cyrus-macos-runtime-resources-after.log`. Full Voice: **810 tests in 8.897 seconds, 795 passed and 15 skipped**, `/tmp/cyrus-full-review-macos-runtime-resources-voice.log`. Fatal Ruff and unchanged module boundaries pass. New lifecycle tests replace native backends, state preparation, journals and UI publication with fakes; full-suite non-prompting native preflight scope is unchanged.
+
+Ponytail: reuse the existing Windows ExitStack ownership pattern, collapse repeated fallback constructors, and keep regression coverage in the existing macOS test file; **six net production lines**, no new dependency or test file. Coverage is **286/401 code, 235/339 tests and 41/308 support**, with **562 reviewed hashes verified across 1048 entries**. Two pre-existing runtime capture/retry and scheduler-bookkeeping hunks remain outside this checkpoint; the ledger records fully inspected working content. Native recovery/cancellation failure handling, long-lived telemetry retention, leaf playback/decoder follow-ups, broader U05 privacy, compiler qualification binding and the remaining whole-codebase review/final assessment are still incomplete.
