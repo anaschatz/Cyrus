@@ -6031,7 +6031,6 @@ class OrchestratorStore:
         *,
         now: datetime | None = None,
         lease: timedelta = timedelta(seconds=1),
-        exclude_event_ids: Sequence[str] = (),
         limit: int = 128,
     ) -> list[LogicalEvent]:
         selected = now or utc_now()
@@ -6040,19 +6039,17 @@ class OrchestratorStore:
                 "UPDATE outbox SET state='REPLAYABLE',claimed_by=NULL,claim_expires_at=NULL WHERE state='CLAIMED' AND claim_expires_at<=?",
                 (utc_text(selected),),
             )
-            excluded = ""
-            parameters: list[Any] = [conversation_id, utc_text(selected)]
-            if exclude_event_ids:
-                excluded = f" AND event_id NOT IN ({','.join('?' for _ in exclude_event_ids)})"
-                parameters.extend(exclude_event_ids)
-            parameters.append(limit)
             rows = connection.execute(
-                f"""SELECT o.* FROM outbox o JOIN conversations c USING(conversation_id)
+                """SELECT o.* FROM outbox o JOIN conversations c USING(conversation_id)
                     WHERE o.conversation_id=? AND o.state='REPLAYABLE'
                     AND (o.delivery_expires_at IS NULL OR o.delivery_expires_at>?)
-                    AND o.guard_epoch=c.current_epoch AND c.state='ACTIVE'{excluded}
+                    AND o.guard_epoch=c.current_epoch AND c.state='ACTIVE'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM outbox_attempts a WHERE a.event_id=o.event_id
+                        AND a.connection_id=? AND a.completed=1
+                    )
                     ORDER BY o.ordinal LIMIT ?""",
-                tuple(parameters),
+                (conversation_id, utc_text(selected), connection_id, limit),
             ).fetchall()
             claimed: list[sqlite3.Row] = []
             for row in rows:

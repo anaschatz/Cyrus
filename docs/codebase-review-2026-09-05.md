@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **212 of 400 code files**, plus **170 of 307 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **212 of 400 code files**, plus **172 of 308 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1023 tests (1018 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1026 tests (1021 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1030,3 +1030,19 @@ The event-controlled regression produced **two timeout errors** before the fix, 
 Full Orchestrator verification ran **1023 tests in 18.564 seconds: 1018 passed, five skipped**, `/tmp/cyrus-full-review-schedule-admission-deadline.log`. Removed a redundant local uuid import and an unused duplicate task-input read; **16 relevant tests** pass afterward, `/tmp/cyrus-service-ponytail-focused.log`. The isolated staged service version also passes these 16 tests, `/tmp/cyrus-service-staged-tests.log`, preserving the separately recorded earlier readiness offload in the working tree. Fatal Ruff and the unchanged module ceiling pass; service.py has **1974 lines**, below its 1975-line ceiling. No dependency, helper abstraction or schema change was added.
 
 Current coverage: **212/400 code, 170/307 tests and 39/308 support files**, with **421 reviewed hashes verified across 1015 entries**. Whole-codebase review and the final quality assessment remain incomplete. Next scope includes complete gateway/SchedulerStore inspection and the remaining inventory; compiler qualification identity binding and U05 privacy coverage remain open. No push is requested.
+
+
+### Gateway publication failure and bounded replay lookup
+
+Read the complete gateway and traced publication through the shared store and authenticated receive/connection cleanup. Execution-task callback/lifecycle follow-up remains pending before marking the gateway fully reviewed.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V205 | A claim, serialization or send failure ended the detached publisher task while the receive loop and client registration remained active. The connection could accept input without delivering further output. | Report the existing content-free diagnostic and close the WebSocket on publication failure, allowing the receive loop's existing cleanup to detach the client. Cancellation retains its normal propagation. |
+| V206 | Every successfully sent event grew a connection-lifetime set, expanded into one SQL parameter per event on every outbox poll. A long connection eventually exceeded SQLite's variable limit and lost its publisher. | Query the existing completed outbox_attempts ledger by event and connection. Remove the duplicated sent set and exclusion-list API; add a partial index for the completed-delivery lookup. Failed writes remain retryable; a fresh connection still replays delivery. |
+
+The initial two regression methods produced **three timeout errors**, `/tmp/cyrus-gateway-publication-final-before.log`: claim failure, send failure and loss of the next chunk after 40 delivered chunks with SQLite limited to 32 variables. After the fix, claim/send failures close and detach the client with no private exception text in diagnostics, and the 41st chunk is delivered without duplicate earlier chunks. A third method verifies failed-attempt retry, suppression after successful delivery on the same connection and identical replay on a new connection. Tests use real temporary SQLite/service state and an authenticated in-process WebSocket, with no native or model calls.
+
+Full Orchestrator verification ran **1026 tests in 18.451 seconds: 1021 passed, five skipped**, `/tmp/cyrus-full-review-gateway-publication.log`. After removing an overwritten initializer and unreachable publisher return, **43 relevant tests** pass, `/tmp/cyrus-gateway-publication-final-focused.log`. Fatal Ruff and unchanged size ceilings pass. Most gateway diff lines only indent the existing loop under its failure handler; production source is three lines shorter overall, with no dependency or new table. The earlier JSON-decoder fix and its seven-line regression are included in this checkpoint: isolated staged testing without it reproduced 1011 service_error for deeply nested JSON, instead of the required 1002 invalid_json. The complete 384-line authentication test module is now reviewed. Current staged source includes that fix and matches the source covered by the successful full and focused runs.
+
+Current coverage: **212/400 code, 172/308 tests and 39/308 support files**, with **423 reviewed hashes verified across 1016 entries**. Whole-codebase review and final quality assessment remain incomplete. Gateway execution ownership, complete SchedulerStore inspection, the remaining inventory, compiler identity binding and U05 remain open.

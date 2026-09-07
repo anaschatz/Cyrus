@@ -266,7 +266,6 @@ class VoiceGateway:
         session_id: str,
         factory: Any,
         connection_id: str,
-        sent: set[str],
         *,
         cloud_factory: Any | None = None,
         scheduler_factory: Any | None = None,
@@ -277,129 +276,130 @@ class VoiceGateway:
         from jarvis_voice.scheduler_protocol import SCHEDULER_PROTOCOL, SchedulerEnvelope
         from jarvis_voice.action_approval import ACTION_APPROVAL_PROTOCOL, ActionApprovalEnvelope
 
-        while True:
-            if scheduler_factory is not None and self.service.scheduler is not None:
-                self.service.scheduler.promote_next_approval(
-                    session_id, supported_protocols=(SCHEDULER_PROTOCOL,)
+        try:
+            while True:
+                if scheduler_factory is not None and self.service.scheduler is not None:
+                    self.service.scheduler.promote_next_approval(
+                        session_id, supported_protocols=(SCHEDULER_PROTOCOL,)
+                    )
+                if cloud_factory is not None:
+                    self.service.store.claim_cloud_presentation_owner(session_id)
+                if action_factory is not None and self.service.tool_store is not None:
+                    self.service.tool_store.promote_next_action_approval(session_id)
+                conversation = self.service.store.active_conversation()
+                events = (
+                    self.service.store.claim_outbox(
+                        conversation["conversation_id"], connection_id
+                    ) if conversation is not None else []
                 )
-            if cloud_factory is not None:
-                self.service.store.claim_cloud_presentation_owner(session_id)
-            if action_factory is not None and self.service.tool_store is not None:
-                self.service.tool_store.promote_next_action_approval(session_id)
-            conversation = self.service.store.active_conversation()
-            events = (
-                self.service.store.claim_outbox(
-                    conversation["conversation_id"], connection_id, exclude_event_ids=tuple(sent)
-                ) if conversation is not None else []
-            )
-            cloud_events = (
-                self.service.store.claim_cloud_extension_events(conversation["conversation_id"])
-                if cloud_factory is not None and conversation is not None
-                else []
-            )
-            scheduler_events = (
-                self.service.scheduler.claim_outbox(connection_id)
-                if scheduler_factory is not None and self.service.scheduler is not None
-                else []
-            )
-            action_events = (
-                self.service.tool_store.claim_action_extension_events()
-                if action_factory is not None and self.service.tool_store is not None
-                else []
-            )
-            publications = [
-                (event.ordinal, "base", event) for event in events
-            ] + [
-                (int(event["ordinal"]), "cloud", event) for event in cloud_events
-            ] + [
-                (index, "scheduler", event) for index, event in enumerate(scheduler_events)
-            ] + [
-                (int(event["ordinal"]), "action", event) for event in action_events
-            ]
-            publications.sort(key=lambda item: item[0])
-            if not publications:
-                await asyncio.sleep(0.02)
-                continue
-            lock = self._lock(conversation["conversation_id"] if conversation is not None else f"scheduler:{session_id}")
-            for _ordinal, protocol_kind, logical in publications:
-                if protocol_kind == "base":
-                    envelope = Envelope(
-                        type=logical.event_type,
-                        event_id=logical.event_id,
-                        session_id=session_id,
-                        seq=factory.next_seq,
-                        sent_at=logical.original_sent_at,
-                        turn_id=logical.turn_id,
-                        response_id=logical.response_id,
-                        payload=logical.payload,
-                    )
-                elif protocol_kind == "cloud":
-                    envelope = CloudApprovalEnvelope(
-                        protocol=CLOUD_APPROVAL_PROTOCOL,
-                        type=logical["event_type"],
-                        event_id=logical["event_id"],
-                        session_id=session_id,
-                        seq=cloud_factory.next_seq,
-                        sent_at=logical["original_sent_at"],
-                        payload=logical["payload"],
-                    )
-                elif protocol_kind == "action":
-                    envelope = ActionApprovalEnvelope(
-                        protocol=ACTION_APPROVAL_PROTOCOL,
-                        type=logical["event_type"],
-                        event_id=logical["event_id"],
-                        session_id=session_id,
-                        seq=action_factory.next_seq,
-                        sent_at=logical["original_sent_at"],
-                        payload=logical["payload"],
-                    )
-                else:
-                    envelope = SchedulerEnvelope(
-                        protocol=SCHEDULER_PROTOCOL,
-                        type=logical["event_type"],
-                        event_id=logical["event_id"],
-                        session_id=session_id,
-                        seq=scheduler_factory.next_seq,
-                        sent_at=logical["original_sent_at"],
-                        payload=logical["payload"],
-                    )
-                complete = False
-                current = True
-                try:
-                    async with asyncio.timeout(1.0):
-                        async with lock:
-                            current = (
-                                self.service.store.outbox_claim_is_current(logical.event_id, connection_id)
-                                if protocol_kind == "base"
-                                else (
-                                    self.service.store.cloud_extension_is_current(logical["event_id"])
-                                    if protocol_kind == "cloud" else True
-                                )
-                            )
-                            if current:
-                                await websocket.send(envelope.to_json())
-                    if not current:
-                        continue
+                cloud_events = (
+                    self.service.store.claim_cloud_extension_events(conversation["conversation_id"])
+                    if cloud_factory is not None and conversation is not None
+                    else []
+                )
+                scheduler_events = (
+                    self.service.scheduler.claim_outbox(connection_id)
+                    if scheduler_factory is not None and self.service.scheduler is not None
+                    else []
+                )
+                action_events = (
+                    self.service.tool_store.claim_action_extension_events()
+                    if action_factory is not None and self.service.tool_store is not None
+                    else []
+                )
+                publications = [
+                    (event.ordinal, "base", event) for event in events
+                ] + [
+                    (int(event["ordinal"]), "cloud", event) for event in cloud_events
+                ] + [
+                    (index, "scheduler", event) for index, event in enumerate(scheduler_events)
+                ] + [
+                    (int(event["ordinal"]), "action", event) for event in action_events
+                ]
+                publications.sort(key=lambda item: item[0])
+                if not publications:
+                    await asyncio.sleep(0.02)
+                    continue
+                lock = self._lock(conversation["conversation_id"] if conversation is not None else f"scheduler:{session_id}")
+                for _ordinal, protocol_kind, logical in publications:
                     if protocol_kind == "base":
-                        factory.consume_sequence()
-                        sent.add(logical.event_id)
+                        envelope = Envelope(
+                            type=logical.event_type,
+                            event_id=logical.event_id,
+                            session_id=session_id,
+                            seq=factory.next_seq,
+                            sent_at=logical.original_sent_at,
+                            turn_id=logical.turn_id,
+                            response_id=logical.response_id,
+                            payload=logical.payload,
+                        )
                     elif protocol_kind == "cloud":
-                        cloud_factory.consume_sequence()
+                        envelope = CloudApprovalEnvelope(
+                            protocol=CLOUD_APPROVAL_PROTOCOL,
+                            type=logical["event_type"],
+                            event_id=logical["event_id"],
+                            session_id=session_id,
+                            seq=cloud_factory.next_seq,
+                            sent_at=logical["original_sent_at"],
+                            payload=logical["payload"],
+                        )
                     elif protocol_kind == "action":
-                        action_factory.consume_sequence()
+                        envelope = ActionApprovalEnvelope(
+                            protocol=ACTION_APPROVAL_PROTOCOL,
+                            type=logical["event_type"],
+                            event_id=logical["event_id"],
+                            session_id=session_id,
+                            seq=action_factory.next_seq,
+                            sent_at=logical["original_sent_at"],
+                            payload=logical["payload"],
+                        )
                     else:
-                        scheduler_factory.consume_sequence()
-                    complete = True
-                finally:
-                    with suppress(OrchestratorError):
+                        envelope = SchedulerEnvelope(
+                            protocol=SCHEDULER_PROTOCOL,
+                            type=logical["event_type"],
+                            event_id=logical["event_id"],
+                            session_id=session_id,
+                            seq=scheduler_factory.next_seq,
+                            sent_at=logical["original_sent_at"],
+                            payload=logical["payload"],
+                        )
+                    complete = False
+                    try:
+                        async with asyncio.timeout(1.0):
+                            async with lock:
+                                current = (
+                                    self.service.store.outbox_claim_is_current(logical.event_id, connection_id)
+                                    if protocol_kind == "base"
+                                    else (
+                                        self.service.store.cloud_extension_is_current(logical["event_id"])
+                                        if protocol_kind == "cloud" else True
+                                    )
+                                )
+                                if current:
+                                    await websocket.send(envelope.to_json())
+                        if not current:
+                            continue
                         if protocol_kind == "base":
-                            self.service.store.finish_outbox_attempt(logical.event_id, connection_id, complete=complete)
+                            factory.consume_sequence()
                         elif protocol_kind == "cloud":
-                            self.service.store.finish_cloud_extension_write(logical["event_id"], complete=complete)
-                        elif protocol_kind == "action" and self.service.tool_store is not None:
-                            self.service.tool_store.finish_action_extension_write(logical["event_id"], complete=complete)
-                if not complete:
-                    return
+                            cloud_factory.consume_sequence()
+                        elif protocol_kind == "action":
+                            action_factory.consume_sequence()
+                        else:
+                            scheduler_factory.consume_sequence()
+                        complete = True
+                    finally:
+                        with suppress(OrchestratorError):
+                            if protocol_kind == "base":
+                                self.service.store.finish_outbox_attempt(logical.event_id, connection_id, complete=complete)
+                            elif protocol_kind == "cloud":
+                                self.service.store.finish_cloud_extension_write(logical["event_id"], complete=complete)
+                            elif protocol_kind == "action" and self.service.tool_store is not None:
+                                self.service.tool_store.finish_action_extension_write(logical["event_id"], complete=complete)
+        except Exception as exc:
+            self._report_service_error("publication", exc)
+            with suppress(Exception):
+                await websocket.close(code=1011, reason="publication_failed")
 
     async def _cancel_with_publication_fence(self, websocket: Any, writer: asyncio.Task[Any], task_id: str, epoch: int, conversation_id: str) -> None:
         lock = self._lock(conversation_id)
@@ -608,14 +608,12 @@ class VoiceGateway:
                 self.service.store.reset_cloud_extension_replay(
                     active_after_handshake["conversation_id"]
                 )
-            sent: set[str] = set()
             writer = asyncio.create_task(
                 self._publish(
                     websocket,
                     session_id,
                     factory,
                     connection_id,
-                    sent,
                     cloud_factory=cloud_factory,
                     scheduler_factory=scheduler_factory,
                     action_factory=action_factory,
@@ -631,7 +629,7 @@ class VoiceGateway:
             async for raw in websocket:
                 try:
                     preview = json.loads(raw)
-                except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+                except (ValueError, TypeError, RecursionError):
                     await websocket.close(code=1002, reason="invalid_json")
                     break
                 if isinstance(preview, dict) and "protocol" in preview:

@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS outbox_attempts (
     completed INTEGER NOT NULL CHECK(completed IN (0,1)),
     finished_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS completed_outbox_delivery
+ON outbox_attempts(event_id, connection_id) WHERE completed=1;
 CREATE TABLE IF NOT EXISTS reservations (
     reservation_id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(task_id),

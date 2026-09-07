@@ -243,6 +243,13 @@ class VoiceGatewayAuthenticationTests(unittest.TestCase):
         self.assertTrue(service.store.business_accessed)
         self.assertEqual(websocket.closed, [])
 
+    def test_deeply_nested_frame_is_rejected_as_a_protocol_error(self) -> None:
+        websocket = AuthWebSocket(self.hello())
+        with patch.object(AuthWebSocket, "__anext__", side_effect=["[" * 2000 + "0" + "]" * 2000]):
+            service = self.run_gateway(websocket)
+        self.assertEqual(websocket.closed, [(1002, "invalid_json")])
+        self.assertEqual(service.detached, service.attached)
+
     def test_client_cloud_support_does_not_enable_disabled_server_feature(self) -> None:
         websocket = AuthWebSocket(self.hello(extra_capability="jarvis.cloud-approval/1"))
         service = self.run_gateway(
