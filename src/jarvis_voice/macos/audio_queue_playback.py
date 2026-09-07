@@ -8,6 +8,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from contextlib import ExitStack
 from typing import Any, Protocol
 
 from ..errors import BackendError
@@ -240,26 +241,24 @@ class MacAudioQueueStreamingPlayback:
                 subsystem="tts",
             )
         try:
-            queue = self._api.create(sample_rate, self._on_buffer_complete)
-            buffers = [
-                self._api.allocate(queue, self._buffer_bytes)
-                for _ in range(self._buffer_count)
-            ]
+            with ExitStack() as cleanup:
+                queue = self._api.create(sample_rate, self._on_buffer_complete)
+                cleanup.callback(self._api.dispose, queue, immediate=True)
+                buffers = [
+                    self._api.allocate(queue, self._buffer_bytes)
+                    for _ in range(self._buffer_count)
+                ]
+                with self._condition:
+                    if not self._aborted:
+                        self._queue = queue
+                        self._available.extend(buffers)
+                        cleanup.pop_all()
         except Exception as exc:
             raise BackendError(
                 "tts.pocket.playback_open_failed",
                 "Pocket TTS native playback could not be opened",
                 subsystem="tts",
             ) from exc
-        with self._condition:
-            if self._aborted:
-                dispose = True
-            else:
-                self._queue = queue
-                self._available.extend(buffers)
-                dispose = False
-        if dispose:
-            self._api.dispose(queue, immediate=True)
 
     def _raise_callback_error_locked(self) -> None:
         if self._callback_error is not None:

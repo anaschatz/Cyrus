@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
@@ -67,6 +68,60 @@ class MacAudioQueueStreamingPlaybackTests(unittest.TestCase):
             write_timeout_seconds=0.2,
             finish_timeout_seconds=1.0,
         )
+
+    def test_failed_start_disposes_the_created_queue(self) -> None:
+        for error in (OSError("allocation failed"), KeyboardInterrupt()):
+            for position in range(4):
+                api = FakeAudioQueueApi()
+                playback = self.create_playback(api)
+                with self.subTest(error=type(error).__name__, position=position):
+                    with mock.patch.object(api, "allocate", side_effect=[object() for _ in range(position)] + [error]):
+                        with self.assertRaises(BackendError if isinstance(error, Exception) else KeyboardInterrupt):
+                            playback.start(24_000)
+                    playback.abort()
+                    self.assertEqual(api.calls, [("create", None), ("dispose", True)])
+        api = FakeAudioQueueApi()
+        playback = self.create_playback(api)
+        with mock.patch.object(api, "create", side_effect=OSError("create failed")):
+            with self.assertRaisesRegex(BackendError, "playback_open_failed"):
+                playback.start(24_000)
+        playback.abort()
+        self.assertEqual(api.calls, [])
+
+    def test_cancel_during_allocation_disposes_without_publishing_queue(self) -> None:
+        api = FakeAudioQueueApi()
+        playback = self.create_playback(api)
+        entered, resume = threading.Event(), threading.Event()
+        allocate = api.allocate
+        errors = []
+
+        def wait_allocate(queue, size):
+            entered.set()
+            if not resume.wait(1):
+                raise TimeoutError("test allocation was not released")
+            return allocate(queue, size)
+
+        def start():
+            try:
+                playback.start(24_000)
+            except BaseException as error:
+                errors.append(error)
+
+        with mock.patch.object(api, "allocate", side_effect=wait_allocate):
+            worker = threading.Thread(target=start)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                playback.abort()
+            finally:
+                resume.set()
+                worker.join(1)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        playback.write(b"\x00\x00")
+        playback.abort()
+        self.assertEqual(api.calls, [("create", None), ("dispose", True)])
+        self.assertEqual(api.payloads, [])
 
     def test_prebuffers_native_queue_before_starting(self) -> None:
         api = FakeAudioQueueApi()
