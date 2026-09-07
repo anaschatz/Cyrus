@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **231 of 401 code files**, plus **202 of 325 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **244 of 401 code files**, plus **203 of 326 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **743 tests (728 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **745 tests (730 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1638,3 +1638,14 @@ The first five regression methods produce **11 failures before fixes**; the addi
 Full Voice: **743 tests in 7.211 seconds, 728 passed and 15 skipped**. Full Orchestrator: **1106 tests in 20.499 seconds, 1101 passed and five skipped**. Logs: `/tmp/cyrus-full-review-cuda-ownership-{voice,orchestrator}.log`. Fatal Ruff and unchanged module-size checks pass. Ponytail: share final cancellation logic instead of maintaining duplicate termination paths; use native Process.kill/close and existing ownership references. Net production growth is **24 lines**, with no new dependency or schema change.
 
 Coverage is **231/401 code, 202/325 tests and 41/308 support**, with **474 reviewed hashes verified across 1034 entries**. CUDA concurrent cancellation/receive, startup cancellation and result-frame validation remain pending; this checkpoint does not claim full worker lifecycle qualification. Whole-codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
+
+
+### Frozen collector root and entrypoint inspection
+
+CUDA ownership checkpoint committed as **5127c50**, with a clean mandatory Ponytail review. Completed **13 further code-file inspections**: three package initializers, the Windows DLL runtime hook, three application/collector entrypoints, two native packaging specs and four training/preflight CLI wrappers. Matching import targets, script signatures, build paths and ready/exit-status contracts were traced; all 13 files compile. The underlying TTS training/preflight implementations remain pending and were not marked reviewed by association.
+
+**V289 resolved:** the sealed Windows collector used Path("") when frozen _MEIPASS metadata was absent or empty. This silently selected the current directory; a relative root was also accepted. The loader now requires the actual attribute and an absolute existing directory before any DLL load. Existing top-level failure handling still returns exit code 2 without content. Two changed production lines, **zero net growth**, no added helper or dependency.
+
+Two new behavioral tests produce **three failures before the fix**, `/tmp/cyrus-sealed-entry-before.log`. They execute the actual entrypoint with mocked WinDLL/device/collector calls and temporary fake DLL bytes, verify no loads from invalid roots, exact absolute load paths for a valid root, and silence on import failure or extra arguments. All **29 focused collector/packaging tests pass**, `/tmp/cyrus-sealed-entry-after.log`. Full Voice ran **745 tests in 7.256 seconds: 730 passed and 15 skipped**, `/tmp/cyrus-full-review-sealed-entry-voice.log`. Fatal Ruff and unchanged module boundaries pass. The latest complete Orchestrator run remains the preceding ownership checkpoint's **1106 tests (1101 passed, five skipped)**; it was not rerun for this isolated packaging entry change. No native Windows build, DLL, CUDA device, microphone, signing, download or training was invoked.
+
+Coverage is **244/401 code, 203/326 tests and 41/308 support**, with **488 reviewed hashes verified across 1035 entries**. This is source-file inspection, not behavioral/native qualification. CUDA concurrency/frame follow-ups, remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.

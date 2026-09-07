@@ -15,8 +15,8 @@ def _load_sealed_cuda_runtime() -> tuple[object, ...]:
 
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         raise RuntimeError("sealed CUDA collector requires frozen Windows")
-    root = Path(getattr(sys, "_MEIPASS", ""))
-    if not root.is_dir():
+    root = Path(sys._MEIPASS)
+    if not root.is_absolute() or not root.is_dir():
         raise RuntimeError("sealed CUDA collector root is unavailable")
     handles = []
     # Load split cuDNN/CUBLAS libraries before the CTranslate2 extension.  The

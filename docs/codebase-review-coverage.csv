@@ -40,7 +40,7 @@ anamnesis/eval/WRITER_DIAGNOSTIC_V2.md,61,support,pending,,
 anamnesis/eval/WRITER_DIAGNOSTIC_V3.md,79,support,pending,,
 anamnesis/eval/WRITER_DIAGNOSTIC_V4.md,61,support,pending,,
 anamnesis/eval/WRITER_W3_PROTOCOL.md,115,support,pending,,
-anamnesis/eval/__init__.py,1,code,pending,,
+anamnesis/eval/__init__.py,1,code,reviewed,c6c54616afbffb71367fe20886d96653e0ad6d29eba1d63ab4e0f68d7c630a04,Complete one-line package docstring inspection; no executable initialization or exports.
 anamnesis/eval/anamnesis_eval.py,361,code,pending,,
 anamnesis/eval/anamnesis_local_eval.py,969,code,pending,,
 anamnesis/eval/anamnesis_openmemory_eval.py,161,code,pending,,
@@ -149,7 +149,7 @@ anamnesis/results/local_writer_w3_m2_t1_preflight_failure.md,49,support,pending,
 anamnesis/results/local_writer_w3_m2_t1_preflight_failure.provenance.json,97,support,pending,,
 anamnesis/results/local_writer_w3_preflight_failure.md,96,support,pending,,
 anamnesis/results/local_writer_w3_preflight_failure.provenance.json,102,support,pending,,
-anamnesis/src/anamnesis/__init__.py,5,code,pending,,
+anamnesis/src/anamnesis/__init__.py,5,code,reviewed,aa61d1c193e3e8a5fa0ed1489fd04a925460214df2cf1e38e224d9f053237717,"Complete public export inspection; Scenario and ScenarioRun resolve to the previously reviewed schema module, and __all__ matches both imports."
 anamnesis/src/anamnesis/action_canonicalizer.py,136,code,reviewed,e37f9d6b56940e4f95e7d3615df52aa83694193b9381ec26695dab9fa3114d72,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
 anamnesis/src/anamnesis/baselines.py,513,code,pending,,
 anamnesis/src/anamnesis/cli.py,996,code,pending,,
@@ -710,16 +710,16 @@ orchestrator/tests/test_windows_private_file.py,101,tests,reviewed,0c5ab33f301e5
 orchestrator/translation/NOTICE.txt,14,support,pending,,
 orchestrator/translation/translation-build-lock.json,72,support,reviewed,a8af79980eec1f2460586704945f802cf2e4f8ce7e6691b9c77d3579305b5374,"Complete 72-line closed build lock inspected: pinned model/revision/license, nine source artifacts, CPython/package versions, offline conversion parameters and five runtime artifacts. Existing test verifies canonical policy digest and 243579143-byte runtime total. File remains unchanged; no assertion that current host is this qualified builder."
 orchestrator/uv.lock,734,support,pending,,
-packaging/jarvis_voice.spec,88,code,pending,,
-packaging/jarvis_voice_macos.spec,89,code,pending,,
+packaging/jarvis_voice.spec,88,code,reviewed,623344a4638e92e8a070e75ce2c98ec2ba458682e9ccfadf977ba341311c0fdd,"Complete Windows packaging spec read: source paths, collected approved runtime packages, hidden imports, hardening hook, executable/manifest/version paths, windowed onedir and non-admin settings. Entry paths and existing packaging checks agree. No native PyInstaller build or signature qualification."
+packaging/jarvis_voice_macos.spec,89,code,reviewed,eebb5f24416a38f80b2d764fa3674cc1df9a9e15bb4f4b7f4e54caabf9ef0185,"Complete macOS packaging spec read: native platform gate, explicit helper/profile/signing inputs, packaged resources, CPU helper import exclusions, arm64 executable and bundle permissions. Entry paths and existing packaging checks agree. No signed app build or native TCC qualification."
 packaging/macos-entitlements.plist,8,support,pending,,
-packaging/macos_entry.py,29,code,pending,,
-packaging/runtime_hook_harden_dll.py,8,code,pending,,
+packaging/macos_entry.py,29,code,reviewed,033750969d876f9e92cb8801d0fdc8abf9c535982f3ba5570ffac22c4112b035,"Complete entry inspection: external config default, packaged profile application and MacVoiceRuntime.run with its existing finally-close boundary; guarded freeze_support. Traced the macOS spec; no native app launched."
+packaging/runtime_hook_harden_dll.py,8,code,reviewed,c257855c3f0a040349a34dbeac6a261cc4a0613eac4376c8c3082348d2895035,Complete hook inspection with app_paths and Windows hardening callees: frozen library root alone is passed to DLL policy before application imports; both Windows specs register it. No native DLL policy invoked.
 packaging/windows-manifest.xml,22,support,pending,,
 packaging/windows-version-info.txt,27,support,pending,,
 packaging/windows_asr_collector.spec,78,code,reviewed,eb7222af95feb15ed6e306f107e9dfb8367628e9b03fa6c27c6fc65581497cd1,Complete specification inspection; traced validated private CUDA DLL replacement and isolated runner packaging. No native PyInstaller executable was built during this review.
-packaging/windows_asr_collector_entry.py,58,code,pending,,
-packaging/windows_entry.py,14,code,pending,,
+packaging/windows_asr_collector_entry.py,58,code,reviewed,491a8c3357bd8b8f6ad7fac55956081fdf04e9e392a9a09b9534b041decc2a96,Complete sealed entry inspection. V289: missing/empty/relative extraction metadata could load DLLs from CWD. Require the explicit _MEIPASS attribute and an absolute existing root; preserve exit-only failure behavior. Three baseline failures; two new behavioral tests and 29 focused checks pass using mocked DLL/GPU/collector calls only.
+packaging/windows_entry.py,14,code,reviewed,73b4325e5922a38b2820b7e4ac7081325b431fa81beddc7275600682a2948f81,"Complete frozen Windows entry inspection: freeze_support precedes CLI invocation, default tray applies only to empty arguments, import does not launch main. Traced the matching Windows spec; no native executable built."
 packaging/windows_primary_profile_runner.spec,54,code,pending,,
 pyproject.toml,37,support,pending,,
 requirements/chatterbox-pilot-source.txt,3,support,pending,,
@@ -778,7 +778,7 @@ scripts/analyze_greektts15_quality_acoustics.py,46,code,pending,,
 scripts/approve_greektts15_singular_operation_crop.py,51,code,pending,,
 scripts/benchmark_macos_whisper_audio_ctx.py,336,code,pending,,
 scripts/blend_greektts15_adapter.py,44,code,pending,,
-scripts/build_greektts15_phrase_candidates.py,35,code,pending,,
+scripts/build_greektts15_phrase_candidates.py,35,code,reviewed,9ba9607959cf9b0545f4bca04fd75bd483eccef56a55090ba9c1c2b88aaa554f,"Complete CLI inspection: repository source bootstrap, required roots, matching builder signature, typed failure code and ready-to-exit-status mapping. Actual phrase builder remains pending; no training/audio generation executed."
 scripts/build_greektts15_singular_operation_crop.py,36,code,pending,,
 scripts/build_greektts15_word_focus.py,46,code,pending,,
 scripts/build_macos.sh,102,code,pending,,
@@ -798,11 +798,11 @@ scripts/provision_windows_source.ps1,110,code,pending,,
 scripts/qualify_windows.ps1,57,code,pending,,
 scripts/run_chatterbox_v3_pilot.py,96,code,pending,,
 scripts/run_compact_greek_tts_acquisition.py,71,code,pending,,
-scripts/run_compact_greek_tts_preflight.py,35,code,pending,,
+scripts/run_compact_greek_tts_preflight.py,35,code,reviewed,30fd9ffa36fdac38c33a7cc15c88a63491d06f91edd8809b39e30e4fccefd1c5,"Complete CLI inspection and matching preflight function/ready report contract read. Source bootstrap, required storage root and typed-error/exit-status mapping agree. Underlying module review remains pending; no dependency probe, download or model executed."
 scripts/run_fish_s2_pilot.py,76,code,pending,,
 scripts/run_greektts15_pilot.py,131,code,pending,,
 scripts/run_greektts15_sidecar_worker.py,160,code,pending,,
-scripts/run_greektts15_training.py,23,code,pending,,
+scripts/run_greektts15_training.py,23,code,reviewed,c92ba94f032ee5d7b3f7bead4d2fe82e8b475680cd74de0474b283d732426d7a,"Complete 23-line CLI inspection, documented PYTHONPATH invocation and write_training_plan/build_training_plan return contract traced. Valid plan returns ready=True or raises; this script prepares a plan, never starts training. Underlying training implementation remains pending."
 scripts/run_macos_automated_smoke.py,60,code,pending,,
 scripts/run_macos_f1_acoustic_qualification.py,120,code,pending,,
 scripts/run_macos_f1_rtf_qualification.py,148,code,pending,,
@@ -816,7 +816,7 @@ scripts/run_piper_f1_qualification.py,67,code,pending,,
 scripts/run_piper_mps_fit.py,42,code,pending,,
 scripts/run_piper_mps_training.py,71,code,pending,,
 scripts/run_piper_training_handoff.py,68,code,pending,,
-scripts/run_piper_training_readiness.py,35,code,pending,,
+scripts/run_piper_training_readiness.py,35,code,reviewed,a70fcdfa003d84ef0a9b9bc8efbe2c4ddd23a60c5cf3e8c18e19527c4615b217,"Complete CLI inspection and callee signature/host gating traced. Required work root, integer device index, typed failure and ready-based exit code passed consistently. Underlying readiness module remains pending; no GPU inventory query or training executed."
 scripts/run_qualified_macos_inference.py,88,code,pending,,
 scripts/run_supertonic3_pilot.py,77,code,pending,,
 scripts/run_windows_source_beta.ps1,399,code,pending,,
@@ -856,7 +856,7 @@ src/jarvis_voice/errors.py,45,code,reviewed,6858d996f3c099d1c611efdc4084a89eb4e6
 src/jarvis_voice/fakes.py,230,code,reviewed,222f9bf5cd78ddc5bfe5e2f1fd478ec9d59a0acc69578e36cd9240e098f21737,"Complete fake clock/ASR/TTS/orchestrator inspection; deterministic queue, cancellation fence, ACK duplicate identity and script ordering traced against integration tests. Fakes are test adapters, not native qualification."
 src/jarvis_voice/gpu.py,176,code,reviewed,c6c86b947e9bfde16064042cb4c82d2ef781f5fc3dc4c7810030e1767c1512f9,"Complete 176-line source read. Bounded-response NVIDIA CLI parsing, explicit device selection and free-memory-minus-reserve arithmetic traced through validated config, doctor and worker callers. Three fake-inventory tests pass. Device telemetry is trusted driver output; admission remains a point-in-time heuristic, not a cross-process allocation guarantee. No native GPU query performed."
 src/jarvis_voice/lifecycle.py,139,code,reviewed,22709728c4e27f07fc60b2191a854ac1f3b02998695a9e0fae07bdd867620dae,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
-src/jarvis_voice/macos/__init__.py,2,code,pending,,
+src/jarvis_voice/macos/__init__.py,2,code,reviewed,2d35ebf09db047dd2474d192a84e87de89de2a3adff7cb2496e7b73cf4004de1,Complete package docstring inspection; no native initialization on import.
 src/jarvis_voice/macos/asr_selection.py,85,code,pending,,
 src/jarvis_voice/macos/audio_capture.py,123,code,reviewed,e49055913741656e62c21db27f422f528e68e1bba5478e7db1bd826eb40ed7aa,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
 src/jarvis_voice/macos/audio_queue_playback.py,410,code,pending,,
@@ -1016,6 +1016,7 @@ tests/test_scheduler_callback.py,211,tests,reviewed,cb743f6234fc9c7843752064c3c8
 tests/test_scheduler_callback_qualification.py,148,tests,reviewed,4269e3f25cdff1dbb059f94dbd8f3a7065ccb7d60a1b0e210277926568cfa361,"Complete five-test gate module inspected, including final missing-pin cases through all four runtime loaders. Shared bounds, FIFO, malformed/duplicate/nonfinite JSON, capability/scalar validation pass. Qualification producers may omit an input pin; runtime consumers cannot."
 tests/test_scheduler_native.py,669,tests,reviewed,b10755828110c27720d6a359511637d82620e7343e47aeeb45a440fa4422050f,"Complete module and added regressions inspected. V50-V55 cover bounded partial pipe writes, concurrent commands, invalid timeout/receipt, oversized framing, WinRT XML script contract, and retention of 65 callbacks with a bounded drain. Native plus manifest inspection: 23 tests pass; full Voice 702 tests, 15 skips. No live OS notifications."
 tests/test_scheduler_playback.py,420,tests,reviewed,f386fc68b7a378c7e0ae0b6903b08c47f47f8c1a1579f90c10e95d2eca48c4d5,"Complete 420-line test source inspection: fake TTS state/callback/epoch routing, whole-notification cancellation, strict speech/receipt fields, qualified evidence/config bindings, encrypted durable ordering/gap/conflict and interrupted restart recovery. Full Voice suite passes."
+tests/test_sealed_collector_entry.py,81,tests,reviewed,f3be989d0adcc139957a7efe79dd3b7bf36505837b2a8b9b3388c42b8a00f901,"Complete two-method executable entry regression read: absent/empty/relative/None frozen root, valid absolute DLL paths, import failure, extra arguments and content-free exit channel. Three failures before fix; 29 focused checks pass. Temporary fake DLL bytes and mocked WinDLL, device query, freeze_support and collector only."
 tests/test_state.py,132,tests,reviewed,5e0af53fe87ab0b478002d68b79ee084c5b339b25cad67f61292c7a293a9322b,"Complete test source inspection; assertions traced to actual retry, protocol, transport, input/playback or fake-server behavior. Full Voice 681 tests (673 pass, 8 skips)."
 tests/test_supertonic3_pilot.py,128,tests,pending,,
 tests/test_transport.py,282,tests,reviewed,39ce6681848bcf4c0ac364b20a4ae9051cfdac3c66a766ce617da3709be388db,"Complete test source inspection; assertions traced to actual retry, protocol, transport, input/playback or fake-server behavior. Full Voice 681 tests (673 pass, 8 skips)."
