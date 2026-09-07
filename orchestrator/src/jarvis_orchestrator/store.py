@@ -1288,9 +1288,9 @@ class OrchestratorStore:
                       i.task_id AS source_inbox_task_id,
                       i.turn_id AS source_inbox_turn_id
                FROM memory_records_v9_legacy r
-               JOIN tasks t ON t.task_id=r.task_id
-               JOIN canonical_turns ct ON ct.task_id=r.task_id
-               JOIN inbox i ON i.event_id=r.source_event_id
+               LEFT JOIN tasks t ON t.task_id=r.task_id
+               LEFT JOIN canonical_turns ct ON ct.task_id=r.task_id
+               LEFT JOIN inbox i ON i.event_id=r.source_event_id
                WHERE r.principal_id=? ORDER BY r.created_at,r.record_id""",
             (principal_id,),
         ).fetchall()
