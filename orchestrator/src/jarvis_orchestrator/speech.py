@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from .domain import nfc
 
 
-TERMINATORS = frozenset({".", "!", "?", ";", "\u037e", "\u0387", "\u2026"})
+TERMINATORS = frozenset({".", "!", "?", ";", "\u037e", "\u0387", "\u00b7", "\u2026"})
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -45,6 +45,10 @@ def _hard_split(value: str, maximum: int) -> list[str]:
 class SpeechSegmenterV1:
     maximum_characters: int = 240
     _buffer: str = ""
+
+    def __post_init__(self) -> None:
+        if type(self.maximum_characters) is not int or self.maximum_characters < 1:
+            raise ValueError("speech unit limit must be a positive integer")
 
     def feed(self, fragment: str) -> tuple[str, ...]:
         if not fragment:

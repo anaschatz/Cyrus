@@ -115,7 +115,7 @@ def capture_runtime_facts(
 ) -> RuntimeFactsV1:
     """Capture one deterministic timezone-aware fact set for a turn."""
 
-    if not isinstance(observed_at, datetime) or observed_at.tzinfo is None:
+    if not isinstance(observed_at, datetime) or observed_at.utcoffset() is None:
         raise ValueError("runtime observation must be timezone-aware")
     try:
         zone = ZoneInfo(timezone_name)
@@ -287,7 +287,7 @@ def resolve_temporal_query(
 
     if not isinstance(text, str) or not text:
         return None
-    if not isinstance(observed_at, datetime) or observed_at.tzinfo is None:
+    if not isinstance(observed_at, datetime) or observed_at.utcoffset() is None:
         raise ValueError("temporal observation must be timezone-aware")
     phrase = _normalized_phrase(text)
     kind = ""
@@ -307,7 +307,7 @@ def resolve_temporal_query(
         return None
     try:
         local = observed_at.astimezone(ZoneInfo(timezone_name)) + timedelta(days=relation)
-    except (ZoneInfoNotFoundError, ValueError):
+    except (ZoneInfoNotFoundError, ValueError, OverflowError):
         return None
     language = _answer_language(input_language, response_language)
     return TemporalAnswerV1(
@@ -386,7 +386,7 @@ def select_relevant_history(
 ) -> tuple[CanonicalTurnV1, ...]:
     """Select bounded useful history without an embedding or model round trip."""
 
-    if maximum_pairs < 1 or maximum_pairs > MAXIMUM_RELEVANT_HISTORY_PAIRS:
+    if type(maximum_pairs) is not int or not 1 <= maximum_pairs <= MAXIMUM_RELEVANT_HISTORY_PAIRS:
         raise ValueError("relevant history pair limit is invalid")
     candidates = tuple(history)
     if not candidates:
@@ -419,9 +419,9 @@ def select_relevant_history(
         scored.append((score, index))
 
     for _score, index in sorted(scored, reverse=True):
-        selected.add(index)
         if len(selected) >= maximum_pairs:
             break
+        selected.add(index)
     return tuple(candidates[index] for index in sorted(selected))
 
 

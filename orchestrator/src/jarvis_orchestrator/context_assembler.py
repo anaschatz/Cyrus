@@ -110,9 +110,7 @@ def _canonical_json(value: Any) -> str:
 def _freeze(value: Any) -> Any:
     if isinstance(value, dict):
         return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze(item) for item in value)
-    if isinstance(value, tuple):
+    if isinstance(value, (list, tuple)):
         return tuple(_freeze(item) for item in value)
     return value
 
@@ -509,7 +507,6 @@ class ContextAssemblerV1:
         dropped: list[DroppedContextComponentV1] = []
         selected_recalls: list[str] = []
         history_bytes = 0
-        history_pairs = 0
         recall_bytes = 0
 
         if tool_projection is not None:
@@ -553,7 +550,7 @@ class ContextAssemblerV1:
             included.append(IncludedContextComponentV1("tool", delta))
 
         def consider_history(index: int) -> None:
-            nonlocal history_bytes, history_pairs, request_bytes
+            nonlocal history_bytes, request_bytes
             component_id = f"history:{history_source_indices[index]}"
             turn = history_items[index]
             if not isinstance(turn, CanonicalTurnV1):
@@ -570,11 +567,6 @@ class ContextAssemblerV1:
                 and assistant_bytes <= HISTORY_MAX_BYTES
                 else HISTORY_MAX_BYTES + 1
             )
-            if history_pairs >= HISTORY_MAX_PAIRS:
-                dropped.append(
-                    DroppedContextComponentV1(component_id, pair_bytes, "pair_limit")
-                )
-                return
             if history_bytes + pair_bytes > HISTORY_MAX_BYTES:
                 dropped.append(
                     DroppedContextComponentV1(component_id, pair_bytes, "history_limit")
@@ -597,7 +589,6 @@ class ContextAssemblerV1:
                 )
                 return
             selected_history.add(index)
-            history_pairs += 1
             history_bytes += pair_bytes
             request_bytes = candidate_request_bytes
             included.append(IncludedContextComponentV1(component_id, delta))
@@ -615,11 +606,6 @@ class ContextAssemblerV1:
             if item_bytes > RECALL_ITEM_MAX_BYTES:
                 dropped.append(
                     DroppedContextComponentV1(component_id, item_bytes, "item_limit")
-                )
-                continue
-            if len(selected_recalls) >= RECALL_MAX_ITEMS:
-                dropped.append(
-                    DroppedContextComponentV1(component_id, item_bytes, "item_count")
                 )
                 continue
             if recall_bytes + item_bytes > RECALL_TOTAL_MAX_BYTES:
