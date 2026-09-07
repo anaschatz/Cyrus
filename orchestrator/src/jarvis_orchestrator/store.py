@@ -5978,47 +5978,48 @@ class OrchestratorStore:
 
     def expire_deadlines(self, *, now: datetime | None = None) -> int:
         selected = now or utc_now()
-        with self._lock:
-            rows = self._connection.execute(
-                """SELECT * FROM tasks WHERE tombstoned=0
-                   AND state NOT IN ('COMPLETED','CANCELLED','INTERRUPTED','BUDGET_EXHAUSTED','FAILED')""",
+        with self._transaction() as connection:
+            rows = connection.execute(
+                """SELECT t.* FROM tasks t JOIN conversations c USING(conversation_id)
+                   WHERE t.tombstoned=0 AND t.epoch=c.current_epoch AND c.state='ACTIVE'
+                   AND t.state NOT IN ('COMPLETED','CANCELLED','INTERRUPTED','BUDGET_EXHAUSTED','FAILED')""",
             ).fetchall()
-        count = 0
-        for row in rows:
-            absolute = parse_utc(row["absolute_expires_at"]) <= selected
-            state = TaskState(row["state"])
-            disconnected = row["disconnect_expires_at"] is not None and parse_utc(
-                row["disconnect_expires_at"]
-            ) <= selected
-            active_elapsed = float(row["active_elapsed_seconds"])
-            if row["active_started_at"] is not None and state in ACTIVE_STATES:
-                active_elapsed += max(
-                    0.0,
-                    (selected - parse_utc(row["active_started_at"])).total_seconds(),
+            count = 0
+            for row in rows:
+                absolute = parse_utc(row["absolute_expires_at"]) <= selected
+                state = TaskState(row["state"])
+                disconnected = row["disconnect_expires_at"] is not None and parse_utc(
+                    row["disconnect_expires_at"]
+                ) <= selected
+                active_elapsed = float(row["active_elapsed_seconds"])
+                if row["active_started_at"] is not None and state in ACTIVE_STATES:
+                    active_elapsed += max(
+                        0.0,
+                        (selected - parse_utc(row["active_started_at"])).total_seconds(),
+                    )
+                active_exhausted = active_elapsed >= self.active_budget_seconds
+                if not (absolute or disconnected or active_exhausted):
+                    continue
+                if absolute:
+                    reason = ReasonCode.ABSOLUTE_LIFETIME_EXHAUSTED
+                elif active_exhausted:
+                    reason = ReasonCode.ACTIVE_BUDGET_EXHAUSTED
+                else:
+                    reason = (
+                        ReasonCode.APPROVAL_RECONNECT_TIMEOUT
+                        if state == TaskState.DECISION_WAITING_RECONNECT
+                        else ReasonCode.CLIENT_DISCONNECTED
+                    )
+                terminal = (
+                    TaskState.BUDGET_EXHAUSTED
+                    if absolute or active_exhausted
+                    else TaskState.CANCELLED
                 )
-            active_exhausted = active_elapsed >= self.active_budget_seconds
-            if not (absolute or disconnected or active_exhausted):
-                continue
-            if absolute:
-                reason = ReasonCode.ABSOLUTE_LIFETIME_EXHAUSTED
-            elif active_exhausted:
-                reason = ReasonCode.ACTIVE_BUDGET_EXHAUSTED
-            else:
-                reason = (
-                    ReasonCode.APPROVAL_RECONNECT_TIMEOUT
-                    if state == TaskState.DECISION_WAITING_RECONNECT
-                    else ReasonCode.CLIENT_DISCONNECTED
+                self._cancel_task_request_tx(
+                    connection, row["task_id"], row["epoch"], reason,
+                    terminal_state=terminal, now=selected,
                 )
-            terminal = (
-                TaskState.BUDGET_EXHAUSTED
-                if absolute or active_exhausted
-                else TaskState.CANCELLED
-            )
-            try:
-                self.cancel_task(row["task_id"], row["epoch"], reason, terminal_state=terminal, now=selected)
                 count += 1
-            except OrchestratorError:
-                continue
         self.expire_delivery(now=selected)
         self.expire_commands(now=selected)
         return count
