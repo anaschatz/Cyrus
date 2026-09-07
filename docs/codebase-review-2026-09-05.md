@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **300 of 401 code files**, plus **242 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **302 of 401 code files**, plus **242 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **831 tests (816 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **832 tests (817 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2140,3 +2140,14 @@ This checkpoint also includes the previously uncommitted **V05** stop-retry fix 
 Two new test methods reproduce **two errors and two failures**, `/tmp/cyrus-desktop-lifecycle-before.log`. All **15 focused checks pass**, `/tmp/cyrus-desktop-lifecycle-after.log`. Full Voice: **831 tests in 9.708 seconds, 816 passed and 15 skipped**, `/tmp/cyrus-full-review-desktop-lifecycle-voice.log`. Fatal Ruff and unchanged module boundaries pass. These regressions use owned threads, temporary application directories and fake native APIs; full-suite non-prompting preflight scope remains unchanged.
 
 Ponytail: reuse existing lifecycle states, logger and cleanup operations, with no new helper/dependency; **13 net production lines versus HEAD, including two from V05**. Coverage is **300/401 code, 242/340 tests and 41/308 support**, with **583 reviewed hashes verified across 1049 entries**. Uninterruptible native-runtime shutdown, UI publication concurrency/portability and remaining source/support, privacy/compiler-binding and final quality review remain unqualified or unfinished.
+
+
+### Windows/macOS doctor inspection and COM cleanup
+
+Desktop lifecycle/tray cleanup was committed as **a652821**, with a clean mandatory Ponytail review. Completed both doctor implementations (374 Windows/general and 445 macOS lines before this change), re-read the complete configuration/doctor and macOS CPU-smoke tests, and traced CLI exit status, SAPI adapter ownership and the CPU model-reference lifetime. The macOS doctor remains unchanged; inspected paths include selected backend/artifact/dependency checks, native-probe restrictions, TTS fallback checks, authentication redaction and final readiness. Source inspection does not establish native device/model readiness.
+
+**V358 resolved:** the Windows SAPI diagnostic closed its adapter only after successful open and voice enumeration. Dispatch can fail after CoInitialize, and GetVoices can fail or be interrupted, leaving the thread's COM initialization unbalanced. The probe now uses stdlib closing, as the existing SAPI worker already does, so adapter cleanup runs on success, partial startup failure and interruption. Ordinary failures remain the content-free tts.sapi_probe_failed; KeyboardInterrupt still propagates. Failed CoInitialize does not trigger an unmatched CoUninitialize.
+
+One regression method executes the real adapter with fake COM modules and covers success, initialization failure, dispatch failure, enumeration failure and interruption. **Three baseline failures** reproduce, `/tmp/cyrus-doctor-cleanup-before.log`. All **31 focused checks pass**, `/tmp/cyrus-doctor-cleanup-after.log`. Full Voice: **832 tests in 9.481 seconds, 817 passed and 15 skipped**, `/tmp/cyrus-full-review-doctor-cleanup-voice.log`. Fatal Ruff, diff whitespace and unchanged module boundaries pass. New regressions do not access COM, audio, GPU inventory or models; existing full-suite non-prompting CoreGraphics preflight/say-presence scope is unchanged.
+
+Ponytail: **three net production lines**, no helper or dependency. Only the new COM regression/imports are staged from the test file; its older configuration-validation changes remain unstaged. Coverage is **302/401 code, 242/340 tests and 41/308 support**, with **585 reviewed hashes verified across 1049 entries**. These counts refer to inspected working content, including explicitly documented older local fixes, rather than claiming every reviewed change is committed. Native qualification, remaining source/support review, broader privacy/compiler binding and the final whole-codebase quality assessment remain unfinished.

@@ -8,6 +8,7 @@ import struct
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from collections.abc import Callable
+from contextlib import closing
 from typing import Any
 
 from .asr import FasterWhisperCpuBackend
@@ -299,7 +300,9 @@ def doctor_report_config(
             audio = _status("blocked", "audio.wasapi_probe_failed")
         try:
             from .windows.sapi import Win32SapiAdapter
-            adapter = Win32SapiAdapter(); adapter.open(); voices = adapter.voices(); adapter.close()
+            with closing(Win32SapiAdapter()) as adapter:
+                adapter.open()
+                voices = adapter.voices()
             missing = sorted(locale for locale, name in config.sapi_voices.items() if not name or name not in voices)
             sapi = _status("ready" if not missing else "blocked", "tts.sapi_voices_available" if not missing else "tts.configured_voice_missing", installed_voice_count=len(voices), missing_locales=missing)
         except Exception:

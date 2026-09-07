@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import tempfile
+import sys
+from types import SimpleNamespace
+from unittest import mock
 import unittest
 from pathlib import Path
 
@@ -19,6 +22,63 @@ class StaticInventory:
 
 
 class ConfigDoctorTests(unittest.TestCase):
+    def test_sapi_probe_balances_com_on_success_failure_and_interruption(self) -> None:
+        from jarvis_voice import doctor
+        from jarvis_voice.windows import sapi
+
+        config = voice_config_from_mapping({
+            "sapi_voices": {"el-GR": "GreekVoice", "en-US": "EnglishVoice"},
+        })
+        windows = SimpleNamespace(
+            platform="win32", version_info=sys.version_info,
+            getwindowsversion=lambda: SimpleNamespace(build=22000),
+        )
+        for stage in ("success", "initialize", "dispatch", "voices", "interruption"):
+            with self.subTest(stage=stage):
+                pythoncom = mock.Mock()
+                client = mock.Mock()
+                voice = client.Dispatch.return_value
+                collection = voice.GetVoices.return_value
+                collection.Count = 2
+                collection.Item.side_effect = [
+                    mock.Mock(GetDescription=mock.Mock(return_value=name))
+                    for name in config.sapi_voices.values()
+                ]
+                if stage == "initialize":
+                    pythoncom.CoInitialize.side_effect = OSError("private COM detail")
+                elif stage == "dispatch":
+                    client.Dispatch.side_effect = OSError("private COM detail")
+                elif stage in ("voices", "interruption"):
+                    voice.GetVoices.side_effect = (
+                        KeyboardInterrupt() if stage == "interruption"
+                        else OSError("private COM detail")
+                    )
+                with (
+                    mock.patch.object(doctor, "sys", windows),
+                    mock.patch.object(sapi, "sys", windows),
+                    mock.patch.object(doctor, "_dependency", return_value={"status": "blocked"}),
+                    mock.patch("ctypes.windll", mock.Mock(), create=True),
+                    mock.patch.dict(sys.modules, {
+                        "pythoncom": pythoncom,
+                        "win32com": SimpleNamespace(client=client),
+                        "win32com.client": client,
+                        "sounddevice": mock.Mock(),
+                    }),
+                ):
+                    if stage == "interruption":
+                        with self.assertRaises(KeyboardInterrupt):
+                            doctor_report_config(config)
+                    else:
+                        report = doctor_report_config(config)
+                        self.assertEqual(
+                            report["checks"]["sapi"]["code"],
+                            "tts.sapi_voices_available" if stage == "success" else "tts.sapi_probe_failed",
+                        )
+                        self.assertNotIn("private COM detail", json.dumps(report))
+                pythoncom.CoInitialize.assert_called_once_with()
+                self.assertEqual(pythoncom.CoUninitialize.call_count, 0 if stage == "initialize" else 1)
+                voice.Speak.assert_not_called()
+
     def test_only_loopback_websockets_are_allowed(self) -> None:
         for url in ("ws://127.0.0.1:8765", "ws://127.0.0.1:8765/"):
             self.assertTrue(is_loopback_websocket_url(url))
