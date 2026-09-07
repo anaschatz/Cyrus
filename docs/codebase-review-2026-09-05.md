@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **324 of 401 code files**, plus **253 of 340 test files** and **44 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **325 of 401 code files**, plus **254 of 340 test files** and **44 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **870 tests (855 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **872 tests (857 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2352,3 +2352,20 @@ Two new regression methods reproduce **11 baseline failures**, `/tmp/cyrus-piper
 Full Voice: **870 tests in 13.815 seconds, 855 passed and 15 skipped**, `/tmp/cyrus-full-review-piper-worker-voice.log`. Fatal Ruff and whitespace checks pass. New repository regressions use only mock processes/pipes. The separate real-process probe is limited to owned synthetic children, and existing full-suite non-prompting CoreGraphics preflight/say-presence checks remain unchanged. Ponytail reuses one abort cleanup path and contextlib.closing; production code adds **nine net lines**, without dependency or module-ceiling changes.
 
 Coverage remains **324/401 code, 253/340 tests and 44/308 support**, with **621 reviewed hashes verified across 1049 entries**. Piper candidate JSON/hash consistency, IPC/audio bounds and publication/path handling remain follow-ups. The remaining whole-codebase review, privacy/provenance/compiler qualification and final code-quality assessment are still unfinished.
+
+
+### Supertonic settings and generated-audio validation
+
+Piper worker lifecycle is committed as **4d90d78**, with a clean mandatory Ponytail review. Read the complete Supertonic source (595 baseline lines) and tests (128), and traced the previously reviewed CLI's typed numeric arguments and qualification/scoring dispatch. All final code/test changes were read.
+
+**V390 resolved:** the two-sided speed comparison accepted NaN; boolean/fractional step counts and invalid NumPy seeds reached output creation or runtime calls instead of the settings boundary. Qualification now requires integer non-boolean steps in [1,100], numeric non-boolean speed in [0.7,2.0], and a non-boolean integer seed whose last fixture seed still fits NumPy's uint32 range. Existing pinned defaults and model artifacts are unchanged. Invalid values fail before creating output or invoking TTS.
+
+**V391 resolved:** generated duration was converted then used as a divisor without validation. Negative durations yielded negative realtime factors, and infinite durations yielded zero, allowing the performance gate to pass invalid output; zero duration raised ZeroDivisionError. Missing/non-numeric duration and scalar waveform shape could also escape as raw exceptions. Qualification now requires positive finite duration plus a nonempty finite two-dimensional single-channel waveform before saving a sample. Conversion/shape failures produce the existing tts.supertonic3.audio_invalid error. This validates the measurement inputs, not pronunciation or actual synthesis quality.
+
+Two new regression methods reproduce **12 failures and 5 errors (17 baseline failures)**, `/tmp/cyrus-supertonic-boundaries-before.log`. All **11 focused Supertonic/module-boundary checks pass**, `/tmp/cyrus-supertonic-boundaries-after.log`. The positive fake-TTS case generates all twenty records and remains ineligible for production promotion. Tests use synthetic NumPy waveforms, fake model validation/TTS/RSS, stubbed audio writes and patched RNG seeding; no model, ONNX session, synthesis or playback occurs. NumPy remains an optional test dependency.
+
+Full Voice: **872 tests in 12.615 seconds, 857 passed and 15 skipped**, `/tmp/cyrus-full-review-supertonic-boundaries-voice.log`. Fatal Ruff and whitespace checks pass. Existing full-suite non-prompting CoreGraphics preflight/say-presence checks remain unchanged. Ponytail replaces the hashing loop with hashlib.file_digest; the new guards add **nine net production lines**, with no dependency or module-ceiling change.
+
+Coverage is **325/401 code, 254/340 tests and 44/308 support**, with **623 reviewed hashes verified across 1049 entries**. Supertonic follow-ups include runtime/dependency/host preflight enforcement at actual generation, ASR model provenance, parent-directory symlinks, JSON error handling/read consistency, output publication, global network/RNG state and cleanup. The old test named for symlink/hash mismatch only exercises missing artifacts and does not prove those other cases. Scoring ready=True means scoring completed while its separate pronunciation gate may fail; production promotion remains explicitly forbidden. Remaining whole-codebase review, privacy/provenance/compiler qualification and the final quality assessment are unfinished.
+
+The mandatory exact-staged Ponytail hook requested removing the invalid-settings test’s temporary directory and existence assertion because its output-preparation mock already rejects any call. Removed those three lines and reran all 10 Supertonic tests successfully before amending the checkpoint; production code and full-suite results are unchanged.

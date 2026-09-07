@@ -133,11 +133,8 @@ class ModelValidation:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _exact_distribution_version(name: str, expected: str) -> bool:
@@ -331,7 +328,11 @@ def run_supertonic3_quality_qualification(
         raise BackendError(validation.code, "Supertonic model validation failed", subsystem="tts")
     if voice not in VOICE_NAMES:
         raise BackendError("tts.supertonic3.voice_invalid", "Supertonic voice is invalid", subsystem="tts")
-    if total_steps < 1 or total_steps > 100 or speed < 0.7 or speed > 2.0:
+    if (
+        not isinstance(total_steps, int) or isinstance(total_steps, bool) or not 1 <= total_steps <= 100
+        or not isinstance(speed, (int, float)) or isinstance(speed, bool) or not 0.7 <= speed <= 2.0
+        or not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed < 2**32 - len(QUALITY_FIXTURES)
+    ):
         raise BackendError(
             "tts.supertonic3.settings_invalid",
             "Supertonic qualification settings are invalid",
@@ -380,8 +381,16 @@ def run_supertonic3_quality_qualification(
             lang="el",
         )
         inference_seconds = time.perf_counter() - started
-        audio_seconds = float(duration[0])
-        if waveform.shape[0] != 1 or waveform.size == 0 or not bool(np.isfinite(waveform).all()):
+        try:
+            audio_seconds = float(duration[0])
+            valid_audio = (
+                0 < audio_seconds < float("inf")
+                and waveform.ndim == 2 and waveform.shape[0] == 1 and waveform.size > 0
+                and bool(np.isfinite(waveform).all())
+            )
+        except (AttributeError, IndexError, TypeError, ValueError, OverflowError):
+            valid_audio = False
+        if not valid_audio:
             raise BackendError("tts.supertonic3.audio_invalid", "Supertonic returned invalid audio", subsystem="tts")
         path = output / f"{index:02d}-{fixture_id}.wav"
         tts.save_audio(waveform, str(path))

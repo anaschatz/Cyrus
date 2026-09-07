@@ -5,11 +5,13 @@ import socket
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import _bootstrap  # noqa: F401
 
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos import supertonic3_pilot as supertonic
 from jarvis_voice.macos.supertonic3_pilot import (
     DEFAULT_SPEED,
     DEFAULT_TOTAL_STEPS,
@@ -28,6 +30,53 @@ from jarvis_voice.macos.supertonic3_pilot import (
 
 
 class Supertonic3PilotTests(unittest.TestCase):
+    def test_invalid_settings_are_rejected_before_runtime_or_output_creation(self) -> None:
+        settings = (
+            {"speed": float("nan")}, {"speed": True}, {"speed": "1"},
+            {"total_steps": True}, {"total_steps": 1.5},
+            {"seed": -1}, {"seed": True}, {"seed": 1.5},
+            {"seed": 2**32 - len(QUALITY_FIXTURES)},
+        )
+        for options in settings:
+            with self.subTest(options=options), mock.patch.object(supertonic, "validate_supertonic3_model_directory", return_value=SimpleNamespace(ready=True)):
+                with mock.patch.object(supertonic, "_prepare_output_directory", side_effect=AssertionError("invalid settings reached output creation")):
+                    with self.assertRaisesRegex(BackendError, "tts.supertonic3.settings_invalid"):
+                        supertonic.run_supertonic3_quality_qualification("unused", "unused", **options)
+
+    def test_audio_duration_and_shape_must_be_valid_before_saving(self) -> None:
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("NumPy is an optional runtime dependency")
+        valid_wave = np.zeros((1, SAMPLE_RATE), dtype=np.float32)
+        cases = (
+            (valid_wave, [1.0], True),
+            (valid_wave, [-1.0], False), (valid_wave, [0.0], False),
+            (valid_wave, [float("nan")], False), (valid_wave, [float("inf")], False),
+            (valid_wave, [], False), (valid_wave, ["invalid"], False),
+            (np.array(0.0), [1.0], False), (np.zeros(1), [1.0], False),
+        )
+        for waveform, duration, valid in cases:
+            with self.subTest(duration=duration, shape=waveform.shape), tempfile.TemporaryDirectory() as temp:
+                output = Path(temp) / "output"
+                tts = mock.Mock(sample_rate=SAMPLE_RATE, voice_style_names=supertonic.VOICE_NAMES)
+                tts.synthesize.return_value = (waveform, duration)
+                tts.save_audio.side_effect = lambda waveform, path: Path(path).write_bytes(b"synthetic waveform")
+                with (mock.patch.object(supertonic, "validate_supertonic3_model_directory", return_value=SimpleNamespace(ready=True)),
+                      mock.patch.dict("sys.modules", {"supertonic": SimpleNamespace(TTS=mock.Mock(return_value=tts))}),
+                      mock.patch.object(supertonic.resource, "getrusage", return_value=SimpleNamespace(ru_maxrss=1)),
+                      mock.patch.object(np.random, "seed")):
+                    if valid:
+                        report = supertonic.run_supertonic3_quality_qualification("unused", output)
+                        self.assertTrue(report["ready"])
+                        self.assertEqual(tts.save_audio.call_count, len(QUALITY_FIXTURES))
+                        self.assertFalse(report["production_promotion_allowed"])
+                    else:
+                        with self.assertRaisesRegex(BackendError, "tts.supertonic3.audio_invalid"):
+                            supertonic.run_supertonic3_quality_qualification("unused", output)
+                        tts.save_audio.assert_not_called()
+                        self.assertFalse(list(output.iterdir()))
+
     def test_defaults_are_the_qualified_greek_profile(self) -> None:
         self.assertEqual(DEFAULT_VOICE, "F5")
         self.assertEqual(DEFAULT_TOTAL_STEPS, 12)
