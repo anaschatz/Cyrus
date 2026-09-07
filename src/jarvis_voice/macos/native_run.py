@@ -139,7 +139,11 @@ def calibrate_macos_acoustic_threshold(
 
     if sys.platform != "darwin":
         raise BackendError("qualification.native_macos_required", "Acoustic calibration requires macOS", subsystem="qualification")
-    if audio_path not in {"wired", "built_in"} or not 1.0 <= ambient_seconds <= 15.0:
+    if (
+        audio_path not in {"wired", "built_in"}
+        or not 1.0 <= ambient_seconds <= 15.0
+        or not 0.0 < playback_timeout_seconds <= threading.TIMEOUT_MAX
+    ):
         raise BackendError("qualification.native_collector_config_invalid", "Acoustic calibration settings are invalid", subsystem="qualification")
     with ExitStack() as cleanup:
         sampler = AcousticCalibrationSampler()
@@ -247,9 +251,9 @@ def run_macos_acoustic_barge_in_sample(
         raise BackendError("qualification.native_macos_required", "Acoustic barge-in requires macOS", subsystem="qualification")
     if (
         audio_path not in {"wired", "built_in"}
-        or ptt_timeout_seconds <= 0
-        or result_timeout_seconds <= 0
-        or tts_idle_timeout_seconds <= 0
+        or not all(0.0 < value <= threading.TIMEOUT_MAX for value in (
+            ptt_timeout_seconds, result_timeout_seconds, tts_idle_timeout_seconds,
+        ))
         or not isinstance(sample_count, int)
         or isinstance(sample_count, bool)
         or not 1 <= sample_count <= 20
@@ -524,9 +528,9 @@ def run_macos_native_collection(
         raise BackendError("qualification.native_macos_required", "Native collection requires macOS", subsystem="qualification")
     if not threshold_calibrated:
         raise BackendError("qualification.acoustic_calibration_required", "Acoustic threshold calibration is required", subsystem="qualification")
-    if duration_seconds < 1.0 or duration_seconds > 24 * 60 * 60:
+    if not 1.0 <= duration_seconds <= 24 * 60 * 60:
         raise BackendError("qualification.native_duration_invalid", "Native collection duration is invalid", subsystem="qualification")
-    if rss_interval_seconds < 1.0 or rss_interval_seconds > 600.0:
+    if not 1.0 <= rss_interval_seconds <= 600.0:
         raise BackendError("qualification.native_rss_interval_invalid", "RSS interval is invalid", subsystem="qualification")
     if maximum_real_voice_turns is not None and (
         not isinstance(maximum_real_voice_turns, int)
@@ -560,9 +564,11 @@ def run_macos_native_collection(
         cleanup.callback(server.stop)
         runtime = runtime_factory(config, audio_frame_observer=monitor.publish_audio)
         runtime_errors: list[BaseException] = []
+        stop_requested = threading.Event()
         thread: threading.Thread | None = None
 
         def stop_runtime() -> None:
+            stop_requested.set()
             try:
                 runtime.request_stop()
             finally:
@@ -576,6 +582,12 @@ def run_macos_native_collection(
         def run_runtime() -> None:
             try:
                 runtime.run()
+                if not stop_requested.is_set():
+                    raise BackendError(
+                        "qualification.native_runtime_exited",
+                        "Native runtime exited before collection requested shutdown",
+                        subsystem="qualification",
+                    )
             except BaseException as exc:
                 runtime_errors.append(exc)
 

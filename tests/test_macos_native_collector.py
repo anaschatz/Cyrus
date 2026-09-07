@@ -415,6 +415,79 @@ class MacNativeTelemetryCollectorTests(unittest.TestCase):
 
 
 class MacNativeRunTests(unittest.TestCase):
+    def test_invalid_durations_fail_before_native_resources_are_created(self) -> None:
+        config = voice_config_from_mapping({})
+        calls = (
+            (calibrate_macos_acoustic_threshold, {"audio_path": "wired"},
+             ("playback_timeout_seconds",), "qualification.native_collector_config_invalid"),
+            (run_macos_acoustic_barge_in_sample,
+             {"audio_path": "wired", "silence_threshold_dbfs": -40.0},
+             ("ptt_timeout_seconds", "result_timeout_seconds", "tts_idle_timeout_seconds"),
+             "qualification.native_collector_config_invalid"),
+            (run_macos_native_collection,
+             {"audio_path": "wired", "silence_threshold_dbfs": -40.0,
+              "threshold_calibrated": True, "output": "/tmp/unused-native-evidence.json"},
+             ("duration_seconds",), "qualification.native_duration_invalid"),
+            (run_macos_native_collection,
+             {"audio_path": "wired", "silence_threshold_dbfs": -40.0,
+              "threshold_calibrated": True, "output": "/tmp/unused-native-evidence.json"},
+             ("rss_interval_seconds",), "qualification.native_rss_interval_invalid"),
+        )
+        with (
+            mock.patch.object(native_run, "sys", SimpleNamespace(platform="darwin")),
+            mock.patch.object(native_run, "AcousticCalibrationSampler",
+                              side_effect=AssertionError("calibration acquired before validation")),
+            mock.patch.object(native_run, "AcousticSilenceMonitor",
+                              side_effect=AssertionError("monitor acquired before validation")),
+        ):
+            for call, kwargs, fields, code in calls:
+                if call is run_macos_acoustic_barge_in_sample:
+                    kwargs["monitor_factory"] = native_run.AcousticSilenceMonitor
+                for field in fields:
+                    for value in (float("nan"), float("inf"), -float("inf"), 0.0, -1.0,
+                                  threading.TIMEOUT_MAX * 2):
+                        with self.subTest(field=field, value=value), self.assertRaisesRegex(BackendError, code):
+                            call(config, **kwargs, **{field: value})
+
+    def test_native_collection_stops_when_runtime_returns_without_a_stop_request(self) -> None:
+        # Join the owned worker at start to make early return deterministic.
+        class ExitingThread(threading.Thread):
+            def start(self):
+                super().start()
+                self.join(timeout=1.0)
+                if self.is_alive():
+                    raise AssertionError("fake runtime failed to exit")
+
+        runtime = mock.Mock(timing_snapshot=lambda: ())
+        monitor = mock.Mock(take_results=lambda: ())
+        elapsed = [0.0]
+
+        def sleep(seconds):
+            elapsed[0] += seconds
+
+        with (
+            mock.patch.object(native_run, "sys", SimpleNamespace(platform="darwin")),
+            mock.patch.object(native_run, "AcousticSilenceMonitor", return_value=monitor),
+            mock.patch.object(native_run, "mac_runtime_profile_fingerprint", return_value="a" * 64),
+            mock.patch.object(native_run, "configured_voice_auth_key", return_value=object()),
+            mock.patch.object(native_run.threading, "Thread", ExitingThread),
+            mock.patch.object(native_run, "write_report") as write,
+        ):
+            report = run_macos_native_collection(
+                voice_config_from_mapping({}), output="/tmp/unused-native-evidence.json",
+                silence_threshold_dbfs=-40.0, audio_path="wired", threshold_calibrated=True,
+                duration_seconds=1.0, rss_interval_seconds=1.0,
+                runtime_factory=lambda *args, **kwargs: runtime,
+                server_factory=lambda *args: mock.Mock(), rss_probe=lambda: 100_000_000,
+                clock=lambda: elapsed[0], sleeper=sleep,
+            )
+        self.assertEqual(report["collection_stop_reason"], "runtime_failed")
+        self.assertEqual(report["runtime_error_codes"], ["qualification.native_runtime_exited"])
+        self.assertFalse(report["ready"])
+        self.assertEqual(write.call_args.args[1]["counters"]["crashes"], 1)
+        self.assertEqual(write.call_args.args[1]["soak"]["duration_seconds"], 0)
+        runtime.request_stop.assert_called_once_with()
+
     def test_calibration_factory_transfers_or_closes_fallback_ownership(self) -> None:
         base = voice_config_from_mapping({})
         for backend, engine_name, backend_name in (
