@@ -5,6 +5,7 @@ import json
 import sqlite3
 import unittest
 import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import _bootstrap  # noqa: F401
@@ -78,6 +79,32 @@ class GatewayPublicationTests(StoreCase, unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("private", repr(reports))
                 replay = store.claim_outbox(task.conversation_id, "reconnected")
                 self.assertTrue(any(event.event_type == "response.text.delta" for event in replay))
+
+    async def test_old_completion_cannot_untrack_replacement_execution(self):
+        started = asyncio.Event()
+        executions = []
+
+        async def execute(task_id):
+            executions.append(asyncio.current_task())
+            if len(executions) == 1:
+                asyncio.get_running_loop().call_soon(gateway._track_execution, task_id)
+                return
+            started.set()
+            await asyncio.Event().wait()
+
+        gateway = VoiceGateway(SimpleNamespace(execute_task=execute), auth_key=AUTH_KEY)
+        gateway._track_execution("same-task")
+        try:
+            await asyncio.wait_for(started.wait(), 0.5)
+            self.assertIs(gateway._execution_tasks.get("same-task"), executions[1])
+            gateway._cancel_execution("same-task")
+            with self.assertRaises(asyncio.CancelledError):
+                await executions[1]
+            self.assertNotIn("same-task", gateway._execution_tasks)
+        finally:
+            for execution in executions:
+                execution.cancel()
+            await asyncio.gather(*executions, return_exceptions=True)
 
     async def test_only_completed_attempts_suppress_same_connection_replay(self):
         _gateway, store, task, _reports = self.setup_gateway()

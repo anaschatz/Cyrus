@@ -1,6 +1,6 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **212 of 400 code files**, plus **172 of 308 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **213 of 400 code files**, plus **172 of 308 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
 Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1026 tests (1021 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
@@ -1046,3 +1046,16 @@ The initial two regression methods produced **three timeout errors**, `/tmp/cyru
 Full Orchestrator verification ran **1026 tests in 18.451 seconds: 1021 passed, five skipped**, `/tmp/cyrus-full-review-gateway-publication.log`. After removing an overwritten initializer and unreachable publisher return, **43 relevant tests** pass, `/tmp/cyrus-gateway-publication-final-focused.log`. Fatal Ruff and unchanged size ceilings pass. Most gateway diff lines only indent the existing loop under its failure handler; production source is three lines shorter overall, with no dependency or new table. The earlier JSON-decoder fix and its seven-line regression are included in this checkpoint: isolated staged testing without it reproduced 1011 service_error for deeply nested JSON, instead of the required 1002 invalid_json. The complete 384-line authentication test module is now reviewed. Current staged source includes that fix and matches the source covered by the successful full and focused runs.
 
 Current coverage: **212/400 code, 172/308 tests and 39/308 support files**, with **423 reviewed hashes verified across 1016 entries**. Whole-codebase review and final quality assessment remain incomplete. Gateway execution ownership, complete SchedulerStore inspection, the remaining inventory, compiler identity binding and U05 remain open.
+
+
+### Gateway execution identity and completed source inspection
+
+Publication/replay checkpoint committed as **1b4debb**, with the exact staged Ponytail hook reporting no unnecessary complexity. The remaining execution callback follow-up reproduced a separate race.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V207 | A completed task's queued callback unconditionally removed its task_id from the execution table. If a replacement for the same ID had already been scheduled, the old callback removed that live replacement, so cancellation and shutdown could no longer find it. | Remove an execution only when the table still contains the exact completed asyncio Task. |
+
+The original reproduction queued replacement scheduling before the old completion callback and observed **two executions but zero tracked tasks**, `/tmp/cyrus-gateway-execution-race-before.log`. The committed regression exercises that same event-loop ordering, verifies replacement identity, cancels it through the gateway and checks final retirement. **60 relevant tests passed in 1.636 seconds**, `/tmp/cyrus-gateway-execution-ownership-after.log`, covering publication, authenticated handling, control idempotency and runtime supervision. Fatal Ruff and unchanged module-size checks pass. The earlier complete Orchestrator run remains **1026 tests, five skips**; the narrowly scoped callback follow-up was verified with these 60 tests rather than claimed as another full run.
+
+The complete **864-line gateway** is now marked reviewed after source inspection, traced consumers and these regressions. Current coverage: **213/400 code, 172/308 tests and 39/308 support files**, with **424 reviewed hashes verified across 1016 entries**. Whole-codebase review and final quality assessment remain incomplete. Complete SchedulerStore inspection, the remaining source/test/support inventory, compiler qualification identity binding and U05 privacy coverage remain open; native/live qualification is separate.

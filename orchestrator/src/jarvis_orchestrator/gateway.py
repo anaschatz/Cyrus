@@ -238,7 +238,11 @@ class VoiceGateway:
             return
         task = asyncio.create_task(self.service.execute_task(task_id), name=f"jarvis-task-{task_id}")
         self._execution_tasks[task_id] = task
-        task.add_done_callback(lambda completed: self._execution_tasks.pop(task_id, None))
+        def discard_completed(completed: asyncio.Task[Any]) -> None:
+            if self._execution_tasks.get(task_id) is completed:
+                self._execution_tasks.pop(task_id)
+
+        task.add_done_callback(discard_completed)
 
     def _cancel_execution(self, task_id: str) -> None:
         task = self._execution_tasks.get(task_id)
