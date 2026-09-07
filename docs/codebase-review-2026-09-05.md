@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **225 of 400 code files**, plus **189 of 316 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **226 of 400 code files**, plus **191 of 317 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1087 tests (1082 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1089 tests (1084 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1499,3 +1499,19 @@ All **43 focused tests pass**, `/tmp/cyrus-auth-key-after.log`. All **43 exact s
 Ponytail: use the standard exclusive buffered writer instead of a manual write loop and separate descriptor/created/failure state; share the existing Windows ACL policy for both path and handle checks. The complete production diff adds **five lines**, with no new dependency, wire format or key schema. Identity and metadata checks detect observed changes; they do not claim atomic exclusion against arbitrary non-cooperating writers between inspection and pathname operations.
 
 The complete Voice authentication/key implementation and its identified follow-ups are now reviewed. Coverage is **225/400 code, 189/316 tests and 41/308 support files**, with **455 reviewed hashes verified across 1024 entries**. Whole-codebase review and final quality assessment remain incomplete: **175 code, 127 test and 267 support files** remain. U05 and compiler qualification identity binding remain open; source review is not a bug-free or native-qualified claim.
+
+
+### Approval terminal events preserve the current presentation
+
+Previous key-file checkpoint committed as **dbc5144**, with a clean Ponytail hook. Read the complete scheduler/action approval clients and shared arbiter, traced runtime dispatch and compared the cloud controller's existing target check.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V266 | A replayed scheduler decision result for approval A cleared the local presentation for newer approval B. The shared arbiter still held B, but its next F10/F11 press could no longer produce a decision. | Clear the scheduler client's local approval only when its ID matches the result. Preserve duplicate acknowledgements. |
+| V267 | A first-seen late action result or invalidation for A similarly cleared a newer B presentation. | Apply the same approval-ID condition to both action terminal event types, retaining journal result recording and acknowledgements. |
+
+Two regression methods exercise three failing cases with disposable real journals; all three fail before the fix, `/tmp/cyrus-approval-results-before.log`. The initial run also rediscovered four imported fixture tests; the final test imports the fixture module to avoid duplicate discovery. All **14 focused tests pass**, `/tmp/cyrus-approval-results-after.log`. Full Voice ran **730 tests in 6.435 seconds: 715 passed, 15 skipped**; full Orchestrator ran **1089 tests in 19.946 seconds: 1084 passed, five skipped**, `/tmp/cyrus-full-review-approval-results-{voice,orchestrator}.log`. Fatal Ruff and unchanged module-size checks pass. No native action, microphone, provider or user key was exercised.
+
+Ponytail: two local target guards match the shared arbiter's existing close behavior; remove four assignments to an unread arbiter field and one unused scheduler import. **Three fewer production lines**, no new abstraction, dependency or schema. The earlier action JSON-parser change is deliberately outside this commit.
+
+The arbiter and two additional test files are reviewed: **226/400 code, 191/317 tests and 41/308 support**, with **458 reviewed hashes verified across 1025 entries**. Scheduler/action sources remain pending despite complete reading: decision retransmission identity, durable recovery and connection fingerprint retention still need investigation. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding remain open.

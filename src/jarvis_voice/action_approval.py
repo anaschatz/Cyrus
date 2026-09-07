@@ -444,7 +444,8 @@ class ActionApprovalController:
             if event.type == "action.approval.decision_result":
                 self.journal.mark_result(event.payload["decision_event_id"], event.payload["reason_code"])
             self.approval_arbiter.close(protocol=ACTION_APPROVAL_PROTOCOL, approval_id=approval_id)
-            self.requested = None
+            if self.requested is not None and self.requested.payload["approval_id"] == approval_id:
+                self.requested = None
         return replies
 
     def key_down(self, key: str, *, key_counter: int, capture_idle: bool, autorepeat: bool) -> ActionApprovalEnvelope | None:

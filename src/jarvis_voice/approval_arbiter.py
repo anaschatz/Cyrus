@@ -30,7 +30,6 @@ class GlobalApprovalController:
     def __init__(self, journal: object | None = None) -> None:
         self.journal = journal
         self.presentation: LocalPresentation | None = None
-        self._awaiting_both_keys_up = False
         if journal is not None:
             row = journal.load_arbiter_presentation()
             if row is not None:
@@ -66,7 +65,6 @@ class GlobalApprovalController:
         state = LocalApprovalState.ARMED if both_keys_up else LocalApprovalState.STAGED
         self.presentation = LocalPresentation(protocol, approval_id, presentation_id,
                                               requested_event_id, state, key_counter)
-        self._awaiting_both_keys_up = not both_keys_up
         self._persist()
         return state is LocalApprovalState.ARMED
 
@@ -74,7 +72,6 @@ class GlobalApprovalController:
         current = self.presentation
         if current is not None and current.state in {LocalApprovalState.STAGED, LocalApprovalState.ARMED}:
             current.state = LocalApprovalState.DISARMED_CAPTURE
-            self._awaiting_both_keys_up = True
             self._persist()
 
     def capture_ended(self, *, key_counter: int, both_keys_up: bool) -> bool:
@@ -85,7 +82,6 @@ class GlobalApprovalController:
             return False
         current.state = LocalApprovalState.ARMED
         current.arm_counter = key_counter
-        self._awaiting_both_keys_up = False
         self._persist()
         return True
 

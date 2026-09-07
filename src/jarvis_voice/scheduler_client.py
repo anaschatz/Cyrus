@@ -11,7 +11,6 @@ from .approval_arbiter import GlobalApprovalController
 from .errors import ProtocolError
 from .scheduler_journal import SchedulerClientJournal
 from .scheduler_protocol import (
-    CLIENT_SCHEDULER_EVENTS,
     SERVER_SCHEDULER_EVENTS,
     SCHEDULER_PROTOCOL,
     SchedulerEnvelope,
@@ -127,7 +126,8 @@ class SchedulerClientController:
             self.approval_arbiter.close(
                 protocol=SCHEDULER_PROTOCOL, approval_id=event.payload["approval_id"]
             )
-            self.approval = None
+            if self.approval is not None and self.approval.approval_id == event.payload["approval_id"]:
+                self.approval = None
         elif event.type == "scheduler.notification.tombstone":
             self.journal.tombstone(event.payload["notification_id"], event.payload["reason_code"])
         elif event.type == "scheduler.notification.speech":
