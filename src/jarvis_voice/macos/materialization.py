@@ -10,12 +10,13 @@ import shutil
 import tempfile
 import zipfile
 from array import array
-from contextlib import closing
+from contextlib import closing, suppress
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from pathlib import Path
 from typing import Mapping
 
+from ..app_paths import require_external_mutable_path
 from ..asr import FasterWhisperCpuBackend
 from ..backends import AudioChunk
 from ..config import load_voice_config, voice_config_from_mapping
@@ -46,6 +47,17 @@ MINIMUM_FREE_BYTES = 2 * 1024 * 1024 * 1024
 def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _write_new_json(path: str, value: object) -> None:
+    supplied = Path(path).expanduser()
+    output = require_external_mutable_path(supplied.parent) / supplied.name
+    try:
+        with tempfile.TemporaryDirectory(prefix=".materialization-", dir=output.parent) as directory:
+            artifact = write_report(Path(directory) / "artifact.json", value)
+            os.link(artifact, output)
+    except OSError as exc:
+        raise BackendError("materialization.output_write_failed", "Materialization output could not be created", subsystem="materialization") from exc
 
 
 def disk_space_gate(path: str, *, minimum_free_bytes: int = MINIMUM_FREE_BYTES) -> dict[str, object]:
@@ -197,7 +209,7 @@ def lock_wheelhouse(wheelhouse: str, output: str) -> dict[str, object]:
         "top_level": dict(DIRECT_REQUIREMENTS),
         "wheels": items,
     }
-    write_report(output, manifest)
+    _write_new_json(output, manifest)
     return {"ready": True, "code": "materialization.wheelhouse_locked", "wheels": len(items), "network_used": False}
 
 
@@ -217,9 +229,10 @@ def extract_silero_onnx(wheel_path: str, output_directory: str, manifest_output:
             if info.flag_bits & 1 or not 100_000 <= info.file_size <= 16 * 1024 * 1024 or unix_mode & 0o170000 == 0o120000:
                 raise BackendError("materialization.silero_member_invalid", "Silero ONNX member is invalid", subsystem="materialization")
             final = destination / f"silero_vad-{SILERO_VERSION}.onnx"
-            if final.exists():
+            if os.path.lexists(final):
                 raise BackendError("materialization.silero_output_exists", "Silero output already exists", subsystem="materialization")
             temporary: str | None = None
+            published = False
             try:
                 with archive.open(info) as source, tempfile.NamedTemporaryFile(prefix=".silero-", dir=destination, delete=False) as target:
                     temporary = target.name
@@ -239,19 +252,25 @@ def extract_silero_onnx(wheel_path: str, output_directory: str, manifest_output:
                     os.fsync(target.fileno())
                 if size != info.file_size:
                     raise BackendError("materialization.silero_member_invalid", "Silero ONNX extraction was incomplete", subsystem="materialization")
-                Path(temporary).replace(final)
+                os.link(temporary, final)
+                published = True
+                manifest = {
+                    "schema_version": SILERO_MANIFEST_SCHEMA,
+                    "artifact": {"path": str(final), "size": size, "sha256": digest.hexdigest()},
+                    "source": {"package": "silero-vad", "version": SILERO_VERSION, "wheel_sha256": SILERO_WHEEL_SHA256},
+                }
+                _write_new_json(manifest_output, manifest)
             except BaseException:
+                if published:
+                    with suppress(OSError):
+                        if os.path.samestat(os.stat(temporary), final.lstat()):
+                            final.unlink()
+                raise
+            finally:
                 if temporary is not None:
                     Path(temporary).unlink(missing_ok=True)
-                raise
     except (OSError, zipfile.BadZipFile, KeyError) as exc:
         raise BackendError("materialization.silero_extract_failed", "Silero ONNX extraction failed", subsystem="materialization") from exc
-    manifest = {
-        "schema_version": SILERO_MANIFEST_SCHEMA,
-        "artifact": {"path": str(final), "size": size, "sha256": digest.hexdigest()},
-        "source": {"package": "silero-vad", "version": SILERO_VERSION, "wheel_sha256": SILERO_WHEEL_SHA256},
-    }
-    write_report(manifest_output, manifest)
     return {"ready": True, "code": "materialization.silero_extracted", "bytes": size, "network_used": False}
 
 
@@ -308,7 +327,7 @@ def materialize_private_config(
     raw.setdefault("macos", {})["asr_backend"] = "faster_whisper_cpu_smoke"
     raw["macos"]["system_voices"] = {"el-GR": greek_voice, "en-US": english_voice}
     voice_config_from_mapping(raw)
-    write_report(output, raw)
+    _write_new_json(output, raw)
     return {"ready": True, "code": "materialization.private_config_written", "network_used": False}
 
 

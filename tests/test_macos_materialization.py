@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import tempfile
 import unittest
 import zipfile
@@ -14,6 +15,7 @@ from unittest import mock
 
 import _bootstrap  # noqa: F401
 
+from jarvis_voice.macos import materialization
 from jarvis_voice.macos.materialization import (
     DIRECT_REQUIREMENTS,
     SILERO_ONNX_MEMBER,
@@ -59,6 +61,15 @@ class WheelhouseLockTests(unittest.TestCase):
             manifest = root / "wheelhouse.lock.json"
             result = lock_wheelhouse(str(wheelhouse), str(manifest))
             validated = validate_wheelhouse(str(wheelhouse), str(manifest))
+            for target in (manifest, next(wheelhouse.iterdir())):
+                original = target.read_bytes()
+                with self.subTest(target=target.name):
+                    try:
+                        with self.assertRaises(BackendError):
+                            lock_wheelhouse(str(wheelhouse), str(target))
+                        self.assertEqual(target.read_bytes(), original)
+                    finally:
+                        target.write_bytes(original)
             raw = json.loads(manifest.read_text())
         self.assertTrue(result["ready"])
         self.assertEqual(validated["status"], "ready")
@@ -118,6 +129,62 @@ class DiskGateTests(unittest.TestCase):
 
 
 class SileroExtractionTests(unittest.TestCase):
+    def test_publication_preserves_existing_files_and_rolls_back_failed_manifest(self) -> None:
+        for collision in ("existing_model", "dangling_model", "racing_model", "racing_manifest", "manifest_failure", "model_alias", "wheel_alias", "replacement_model"):
+            with self.subTest(collision=collision), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                wheel = root / SILERO_WHEEL_NAME
+                with zipfile.ZipFile(wheel, "w") as archive:
+                    archive.writestr(SILERO_ONNX_MEMBER, b"o" * 100_000)
+                original_wheel = wheel.read_bytes()
+                model = root / "silero_vad-6.2.1.onnx"
+                manifest = root / "manifest.json"
+                if collision == "existing_model":
+                    model.write_bytes(b"existing")
+                elif collision == "dangling_model":
+                    model.symlink_to(root / "missing")
+                elif collision == "model_alias":
+                    manifest = model
+                elif collision == "wheel_alias":
+                    manifest = wheel
+                real_fsync = os.fsync
+                real_report = materialization.write_report
+
+                def flush(descriptor):
+                    real_fsync(descriptor)
+                    if collision == "racing_model" and not model.exists():
+                        model.write_bytes(b"existing")
+                    elif collision == "racing_manifest" and model.exists() and not manifest.exists():
+                        manifest.write_bytes(b"existing")
+
+                def report(path, value):
+                    if collision == "replacement_model":
+                        model.unlink()
+                        model.write_bytes(b"replacement")
+                    if collision in {"manifest_failure", "replacement_model"}:
+                        raise BackendError("qualification.output_write_failed", "private details", subsystem="qualification")
+                    return real_report(path, value)
+
+                with (mock.patch.object(materialization, "SILERO_WHEEL_SHA256", hashlib.sha256(original_wheel).hexdigest()),
+                      mock.patch.object(materialization.os, "fsync", side_effect=flush),
+                      mock.patch.object(materialization, "write_report", side_effect=report)):
+                    with self.assertRaises(BackendError):
+                        extract_silero_onnx(str(wheel), str(root), str(manifest))
+                self.assertEqual(wheel.read_bytes(), original_wheel)
+                if collision in {"existing_model", "racing_model", "replacement_model"}:
+                    self.assertEqual(model.read_bytes(), b"replacement" if collision == "replacement_model" else b"existing")
+                elif collision == "dangling_model":
+                    self.assertTrue(model.is_symlink())
+                    self.assertFalse((root / "missing").exists())
+                else:
+                    self.assertFalse(model.exists())
+                if collision == "racing_manifest":
+                    self.assertEqual(manifest.read_bytes(), b"existing")
+                elif manifest not in {wheel, model}:
+                    self.assertFalse(manifest.exists())
+                self.assertFalse(list(root.glob(".silero-*")))
+                self.assertFalse(list(root.glob(".materialization-*")))
+
     def test_extracts_only_bounded_onnx_and_writes_private_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -132,6 +199,10 @@ class SileroExtractionTests(unittest.TestCase):
             raw = json.loads(manifest.read_text())
             artifact = Path(raw["artifact"]["path"])
             extracted = artifact.read_bytes()
+            self.assertEqual(artifact.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(manifest.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(list(root.glob(".silero-*")))
+            self.assertFalse(list(root.glob(".materialization-*")))
         self.assertTrue(result["ready"])
         self.assertEqual(extracted, onnx)
         self.assertEqual(raw["artifact"]["sha256"], hashlib.sha256(onnx).hexdigest())
@@ -189,7 +260,19 @@ class PrivateConfigTests(unittest.TestCase):
                     english_voice="Samantha",
                     voice_auth_key=str(auth_key),
                 )
-            raw = json.loads(output.read_text())
+                raw = json.loads(output.read_text())
+                for target in (output, base, vad, manifest, auth_key):
+                    original = target.read_bytes()
+                    with self.subTest(target=target.name):
+                        try:
+                            with self.assertRaises(BackendError):
+                                materialize_private_config(
+                                    str(base), "/private/model", str(manifest), str(target),
+                                    greek_voice="Melina", english_voice="Samantha", voice_auth_key=str(auth_key),
+                                )
+                            self.assertEqual(target.read_bytes(), original)
+                        finally:
+                            target.write_bytes(original)
         self.assertTrue(result["ready"])
         self.assertEqual(raw["macos"]["asr_backend"], "faster_whisper_cpu_smoke")
         self.assertEqual(raw["macos"]["system_voices"], {"el-GR": "Melina", "en-US": "Samantha"})
