@@ -14,10 +14,10 @@ import csv
 import http.client
 import json
 import math
+import os
 import socket
 import statistics
 import subprocess
-import sys
 import time
 import unicodedata
 import uuid
@@ -258,7 +258,7 @@ def main() -> int:
             parser.error(f"missing local artifact: {artifact}")
 
     fixtures = _fixtures(args.metadata, args.audio_root, args.sample_count)
-    resampled = {fixture.path.name: _resample(fixture.path, args.ffmpeg) for fixture in fixtures}
+    resampled = {fixture.path: _resample(fixture.path, args.ffmpeg) for fixture in fixtures}
     port = _available_port()
     request_path = "/audio-ctx-bench-" + uuid.uuid4().hex
     server_command = [
@@ -288,10 +288,10 @@ def main() -> int:
         for fixture_index, fixture in enumerate(fixtures):
             order = contexts[fixture_index % len(contexts) :] + contexts[: fixture_index % len(contexts)]
             for context in order:
-                elapsed, text, language = _request(port, request_path, resampled[fixture.path.name], context)
+                elapsed, text, language = _request(port, request_path, resampled[fixture.path], context)
                 word_errors, reference_words, character_errors, reference_characters = _error_counts(fixture.reference, text)
                 record: dict[str, object] = {
-                    "fixture": fixture.path.name,
+                    "fixture": os.path.relpath(fixture.path, args.audio_root),
                     "duration_seconds": round(fixture.duration_seconds, 3),
                     "audio_ctx": context,
                     "latency_seconds": round(elapsed, 3),
