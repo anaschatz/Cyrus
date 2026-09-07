@@ -68,8 +68,15 @@ class VoiceLifecycleController:
             self._status = LifecycleStatus.STARTING
             self._error_code = None
             self._stop_requested.clear()
-            self._thread = threading.Thread(target=self._worker, name="jarvis-voice-runtime", daemon=True)
-            self._thread.start()
+            try:
+                self._thread = threading.Thread(target=self._worker, name="jarvis-voice-runtime", daemon=True)
+                self._thread.start()
+            except Exception:
+                self._thread = None
+                self._status = LifecycleStatus.ERROR
+                self._error_code = "runtime.start_failed"
+                self._record("voice.lifecycle.error", status=LifecycleStatus.ERROR, code=self._error_code)
+                return False
         self._record("voice.lifecycle.start", status=LifecycleStatus.STARTING)
         return True
 
@@ -107,7 +114,9 @@ class VoiceLifecycleController:
 
     def stop(self) -> bool:
         with self._lock:
-            if self._status in {LifecycleStatus.STOPPED, LifecycleStatus.ERROR}:
+            if self._status in {LifecycleStatus.STOPPED, LifecycleStatus.ERROR} and (
+                self._thread is None or not self._thread.is_alive()
+            ):
                 return False
             self._status = LifecycleStatus.STOPPING
             self._stop_requested.set()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
@@ -43,6 +44,55 @@ class BlockingRuntime:
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_stop_can_retry_while_failed_runtime_is_still_alive(self) -> None:
+        runtime = BlockingRuntime()
+
+        def request_stop() -> None:
+            runtime.stop_count += 1
+            if runtime.stop_count == 1:
+                raise OSError("temporary cancellation failure")
+            runtime.release.set()
+
+        runtime.request_stop = request_stop
+        controller = VoiceLifecycleController(lambda: runtime, shutdown_timeout=0.5)
+        controller.start()
+        self.assertTrue(runtime.entered.wait(1))
+        try:
+            self.assertFalse(controller.stop())
+            self.assertEqual(controller.snapshot.error_code, "runtime.stop_failed")
+            self.assertTrue(controller.stop())
+            self.assertEqual(runtime.stop_count, 2)
+            self.assertEqual(controller.snapshot.status, LifecycleStatus.STOPPED)
+        finally:
+            runtime.release.set()
+            thread = controller._thread
+            if thread is not None:
+                thread.join(1)
+
+    def test_thread_start_failure_is_reported_and_can_be_retried(self) -> None:
+        for phase in ("construction", "start"):
+            with self.subTest(phase=phase):
+                runtime = BlockingRuntime()
+                logger = FakeLogger()
+                controller = VoiceLifecycleController(lambda: runtime, logger=logger, shutdown_timeout=0.5)
+                target = "jarvis_voice.lifecycle.threading.Thread" + (".start" if phase == "start" else "")
+                try:
+                    with mock.patch(target, side_effect=RuntimeError("private start failure")):
+                        self.assertFalse(controller.start())
+                    self.assertEqual(controller.snapshot.status, LifecycleStatus.ERROR)
+                    self.assertEqual(controller.snapshot.error_code, "runtime.start_failed")
+                    self.assertIsNone(controller._thread)
+                    self.assertFalse(controller.stop())
+                    self.assertNotIn("private start failure", repr(logger.records))
+                    self.assertTrue(controller.start())
+                    self.assertTrue(runtime.entered.wait(1.0))
+                    self.assertTrue(controller.stop())
+                    self.assertEqual(controller.snapshot.status, LifecycleStatus.STOPPED)
+                finally:
+                    runtime.release.set()
+                    if controller._thread is not None and controller._thread.ident is not None:
+                        controller._thread.join(timeout=1.0)
+
     def test_start_stop_and_shutdown_are_bounded_and_idempotent(self) -> None:
         runtime = BlockingRuntime(); logger = FakeLogger()
         controller = VoiceLifecycleController(lambda: runtime, logger=logger, shutdown_timeout=0.5)

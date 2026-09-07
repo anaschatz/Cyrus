@@ -94,9 +94,11 @@ class VoiceTrayApplication:
 
     def _shutdown_and_close(self) -> None:
         assert self._lifecycle is not None
-        self._lifecycle.shutdown()
-        if self._tray is not None:
-            self._tray.request_close()
+        try:
+            self._lifecycle.shutdown()
+        finally:
+            if self._tray is not None:
+                self._tray.request_close()
 
     def run(self) -> None:
         self.paths.ensure()
@@ -123,5 +125,7 @@ class VoiceTrayApplication:
             self._lifecycle.start()
             self._tray.run()
         finally:
-            self._lifecycle.shutdown()
-            self._single_instance.release()
+            try:
+                self._lifecycle.shutdown()
+            finally:
+                self._single_instance.release()

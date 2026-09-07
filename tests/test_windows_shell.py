@@ -4,10 +4,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
+from jarvis_voice.app_paths import ApplicationPaths
 from jarvis_voice.errors import BackendError
+from jarvis_voice.tray_app import VoiceTrayApplication
 from jarvis_voice.windows.hardening import LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, apply_frozen_dll_policy
 from jarvis_voice.windows.single_instance import ERROR_ALREADY_EXISTS, MUTEX_NAME, SingleInstanceGuard
 from jarvis_voice.windows.tray import TrayCommand, TrayCoordinator
@@ -68,6 +71,33 @@ class WindowsShellTests(unittest.TestCase):
         with self.assertRaisesRegex(BackendError, "application.already_running"):
             SingleInstanceGuard(api=duplicate).acquire()
         self.assertEqual(duplicate.closed, [77])
+
+    def test_tray_shutdown_interruption_does_not_skip_owned_cleanup(self) -> None:
+        for entry in ("run", "exit"):
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as temp:
+                api = FakeMutexApi()
+                guard = SingleInstanceGuard(api=api)
+                paths = ApplicationPaths.from_environment({"LOCALAPPDATA": temp})
+                tray = mock.Mock()
+                lifecycle = mock.Mock()
+                lifecycle.shutdown.side_effect = KeyboardInterrupt()
+                app = VoiceTrayApplication(paths=paths, single_instance=guard,
+                                           tray_factory=lambda **kwargs: tray)
+                try:
+                    with mock.patch("jarvis_voice.tray_app.VoiceLifecycleController", return_value=lifecycle):
+                        with self.assertRaises(KeyboardInterrupt):
+                            if entry == "run":
+                                app.run()
+                            else:
+                                app._lifecycle, app._tray = lifecycle, tray
+                                app._shutdown_and_close()
+                    if entry == "run":
+                        self.assertEqual(api.created, [MUTEX_NAME])
+                        self.assertEqual(api.closed, [77])
+                    else:
+                        tray.request_close.assert_called_once()
+                finally:
+                    guard.release()
 
     def test_dll_hardening_uses_default_dirs_and_does_not_mutate_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

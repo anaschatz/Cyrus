@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **298 of 401 code files**, plus **241 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **300 of 401 code files**, plus **242 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **829 tests (814 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **831 tests (816 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2125,3 +2125,18 @@ The sidecar pipe-write checkpoint was committed as **d3d0a1c**, with a clean man
 Three new methods reproduce **five baseline failures**, `/tmp/cyrus-kokoro-lifecycle-before.log`. All **12 focused integration checks pass**, `/tmp/cyrus-kokoro-lifecycle-after.log`. Full Voice: **829 tests in 9.331 seconds, 814 passed and 15 skipped**, `/tmp/cyrus-full-review-kokoro-lifecycle-voice.log`. Fatal Ruff and unchanged module boundaries pass. New tests use fake native streams, fake engine/fallback/playback and owned event-controlled threads; no ONNX model or audio device is opened. Full-suite non-prompting native preflight scope is unchanged.
 
 Ponytail: existing cleanup/dispatch paths plus stdlib file_digest replacing the manual hash loop; **ten net production lines**, no new dependency/helper. Coverage is **298/401 code, 241/340 tests and 41/308 support**, with **580 reviewed hashes verified across 1049 entries**. Artifact I/O error typing, constructor interruption, fatal-queue behavior and native numerical/cancellation qualification remain follow-ups. Remaining source/support review, broader privacy/compiler binding and the final whole-codebase assessment are unfinished.
+
+
+### Desktop lifecycle recovery, tray cleanup and UI snapshots
+
+Kokoro cleanup/fallback was committed as **f0746da**, with a clean mandatory Ponytail review. Completed the tray composition root and UI-state publisher, re-read lifecycle/controller and shell ownership code, and read their complete current tests. The unchanged UI publisher uses bounded enum/scalar snapshots and private atomic publication; its four existing temporary-file/scalar tests pass. The current publisher caller is the macOS runtime; these checks do not qualify Windows directory-descriptor operations or concurrent/native UI behavior.
+
+**V356 resolved:** a Thread construction/start exception escaped start while status remained STARTING, preventing a retry and sometimes leaving an unstarted thread for stop to join. Ordinary launch failures now leave ERROR with content-free runtime.start_failed, clear the absent worker and return False. The tray remains able to accept a later Start. Regressions cover construction and start failures, safe logging, stop without a worker and successful retry with an owned blocking runtime thread.
+
+**V357 resolved:** tray shutdown exceptions/interruption skipped either requesting window closure or releasing the acquired single-instance handle. Both follow-up operations now run in finally. The real composition root is exercised with a fake tray/lifecycle and the real SingleInstanceGuard backed by a fake mutex API; KeyboardInterrupt remains observable while cleanup occurs. No native Windows API is called.
+
+This checkpoint also includes the previously uncommitted **V05** stop-retry fix and its existing regression. The entire relevant source/test diff was re-read: ERROR must not suppress another stop attempt while the worker remains alive. Other older worktree changes remain separate.
+
+Two new test methods reproduce **two errors and two failures**, `/tmp/cyrus-desktop-lifecycle-before.log`. All **15 focused checks pass**, `/tmp/cyrus-desktop-lifecycle-after.log`. Full Voice: **831 tests in 9.708 seconds, 816 passed and 15 skipped**, `/tmp/cyrus-full-review-desktop-lifecycle-voice.log`. Fatal Ruff and unchanged module boundaries pass. These regressions use owned threads, temporary application directories and fake native APIs; full-suite non-prompting preflight scope remains unchanged.
+
+Ponytail: reuse existing lifecycle states, logger and cleanup operations, with no new helper/dependency; **13 net production lines versus HEAD, including two from V05**. Coverage is **300/401 code, 242/340 tests and 41/308 support**, with **583 reviewed hashes verified across 1049 entries**. Uninterruptible native-runtime shutdown, UI publication concurrency/portability and remaining source/support, privacy/compiler-binding and final quality review remain unqualified or unfinished.
