@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **211 of 400 code files**, plus **169 of 306 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **212 of 400 code files**, plus **170 of 307 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1022 tests (1017 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1023 tests (1018 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1015,3 +1015,18 @@ All **46 focused tests** passed. Full Orchestrator verification ran **1022 tests
 Committed as `0353bfb` with exact staged Ponytail review and the active hook. The hook requested merging two identical research DELETE statements into the existing cleanup loop. Applied in `bf53fa7`, preserving deletion order and removing seven lines; all **10 relevant conversation/research/cloud tests** passed afterward, `/tmp/cyrus-conversation-deletion-ponytail-followup.log`. The final hook found no further complexity. Fatal Ruff, staged whitespace and unchanged module-size limits pass. The main checkpoint reduced production source by four lines and the follow-up by seven more; store.py is now **8544 lines**. No schema migration or dependency was added. Tests use temporary SQLite, synthetic scheduler keys and in-process compilation, with no native notification or actual external request.
 
 Current coverage is **211/400 code, 169/306 tests and 39/308 support files**, with **419 reviewed hashes verified across 1014 entries**. Whole-codebase review and the final quality assessment remain incomplete. Next scope includes the remaining scheduler/service/gateway integration and pending source/test/support inventory, compiler identity binding and U05 privacy coverage. Earlier accumulated changes still need their own logical commits; no push occurred.
+
+
+### Scheduler admission deadline and completed service source inspection
+
+The full service source has now been read, including routing, deterministic responses, research, cloud approval/dispatch, native-tool resumption and terminal error handling. Traced the actual CLI compiler construction and gateway execution/sweep callers. This is source inspection; remaining whole gateway/SchedulerStore review and live qualification are separate.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V204 | Scheduler admission awaited its compiler worker without the task's remaining active or absolute lifetime. The CLI compiler has its own bounded request timeout, but it can outlive the owning task; the gateway sweeper updates durable state without cancelling this wait. | Apply the existing asyncio timeout using the minimum remaining task/model time before compilation. Reject exhausted work before dispatch and let deadline errors reach the existing task termination handler. A late compiler result cannot create an approval. |
+
+The event-controlled regression produced **two timeout errors** before the fix, `/tmp/cyrus-schedule-admission-deadline-before.log`. Both active and absolute deadline cases now return BUDGET_EXHAUSTED promptly, and releasing/joining the compiler worker creates neither a scheduler approval nor a job. These are disposable SQLite and synthetic-key tests; no model or native action runs. Cancelling asyncio.to_thread does not stop the synchronous worker itself: the production compiler retains its own existing bounded HTTP deadline, and its late result is discarded.
+
+Full Orchestrator verification ran **1023 tests in 18.564 seconds: 1018 passed, five skipped**, `/tmp/cyrus-full-review-schedule-admission-deadline.log`. Removed a redundant local uuid import and an unused duplicate task-input read; **16 relevant tests** pass afterward, `/tmp/cyrus-service-ponytail-focused.log`. The isolated staged service version also passes these 16 tests, `/tmp/cyrus-service-staged-tests.log`, preserving the separately recorded earlier readiness offload in the working tree. Fatal Ruff and the unchanged module ceiling pass; service.py has **1974 lines**, below its 1975-line ceiling. No dependency, helper abstraction or schema change was added.
+
+Current coverage: **212/400 code, 170/307 tests and 39/308 support files**, with **421 reviewed hashes verified across 1015 entries**. Whole-codebase review and the final quality assessment remain incomplete. Next scope includes complete gateway/SchedulerStore inspection and the remaining inventory; compiler qualification identity binding and U05 privacy coverage remain open. No push is requested.

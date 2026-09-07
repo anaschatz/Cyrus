@@ -813,8 +813,6 @@ class OrchestratorService:
 
     @staticmethod
     def _deterministic_uuid(namespace: str, *parts: str) -> str:
-        import uuid
-
         digest = bytearray(
             hashlib.sha256(
                 ("jarvis:" + namespace + ":" + ":".join(parts)).encode("utf-8")
@@ -1003,10 +1001,18 @@ class OrchestratorService:
                     "locale": locale,
                 },
             )
+            remaining = min(
+                task.remaining_active_seconds(limit=self.config.active_budget_seconds),
+                task.remaining_absolute_seconds(),
+                self.config.model_timeout_seconds,
+            )
+            if remaining <= 0:
+                raise BudgetExhaustedError()
             try:
-                compiled = await asyncio.to_thread(
-                    self.schedule_compiler.compile, model_input
-                )
+                async with asyncio.timeout(remaining):
+                    compiled = await asyncio.to_thread(
+                        self.schedule_compiler.compile, model_input
+                    )
                 result_kind = str(
                     compiled.proposal.get(
                         "outcome",
@@ -1023,6 +1029,8 @@ class OrchestratorService:
                         api_semantic_sha256=semantic,
                     )
                     return self.store.get_task(task.task_id)
+            except TimeoutError:
+                raise
             except Exception:
                 # Explicit reminder intent must never fall through to a general
                 # model that could falsely claim the side effect occurred.
@@ -1586,7 +1594,6 @@ class OrchestratorService:
             recall = MemoryRecall()
             tool_projection: Mapping[str, Any] | None = None
             if task.state == TaskState.ROUTING:
-                routing_input = self.store.task_input(task_id)
                 if explicit_memory_command is not None:
                     task = self.store.transition(
                         task_id,
