@@ -16,7 +16,7 @@ from time import perf_counter
 from typing import Any, Literal, Protocol, Self, cast
 from urllib.parse import urlsplit
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from pydantic import (
     ConfigDict,
     Field,
@@ -470,6 +470,9 @@ class OpenAIExternalVllmClient:
             api_key=api_key,
             max_retries=0,
             timeout=request_timeout_seconds,
+            http_client=DefaultAsyncHttpxClient(
+                trust_env=False, follow_redirects=False
+            ),
         )
 
     async def complete(self, request: Mapping[str, object]) -> Mapping[str, object]:
