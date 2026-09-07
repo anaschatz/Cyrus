@@ -8467,16 +8467,9 @@ class OrchestratorStore:
                )""",
             (conversation_id,),
         )
-        connection.execute(
-            f"DELETE FROM research_documents "
-            f"WHERE task_id IN ({task_filter})",
-            (conversation_id,),
-        )
-        connection.execute(
-            f"DELETE FROM research_runs WHERE task_id IN ({task_filter})",
-            (conversation_id,),
-        )
         for table in (
+            "research_documents",
+            "research_runs",
             "scheduler_task_links",
             "voice_playback_receipts",
             "cloud_provider_receipts",
