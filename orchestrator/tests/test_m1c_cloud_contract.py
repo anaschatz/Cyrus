@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import tempfile
 import unittest
 import uuid
@@ -696,10 +698,21 @@ class CloudLifecycleE2ETests(unittest.IsolatedAsyncioTestCase):
                 cloud_enabled=True,
                 final_response_output_tokens=256,
             )
+            loop = asyncio.get_running_loop()
+            progress = []
+
+            class Readiness:
+                def ready(self):
+                    completed = threading.Event()
+                    loop.call_soon_threadsafe(completed.set)
+                    progress.append(completed.wait(timeout=0.5))
+                    return True
+
             service = OrchestratorService(
                 config,
                 store,
                 local,
+                inference_control=Readiness(),
                 task_profiler=_Profiler(),
                 cloud_model=cloud,
                 cloud_endpoints=(endpoint,),
@@ -716,6 +729,7 @@ class CloudLifecycleE2ETests(unittest.IsolatedAsyncioTestCase):
             assert admitted is not None
             waiting = await service.execute_task(admitted.task_id)
             self.assertEqual(waiting.state, TaskState.AWAITING_APPROVAL)
+            self.assertEqual(progress, [True], "Readiness must leave the event loop responsive")
             run = store.cloud_run(admitted.task_id)
             assert run is not None
             presentation = store._connection.execute(

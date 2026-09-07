@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import tempfile
@@ -10,6 +11,8 @@ import uuid
 from contextlib import closing
 from pathlib import Path
 from unittest import mock
+
+import httpx
 
 import _bootstrap  # noqa: F401
 from helpers import payload
@@ -41,21 +44,6 @@ class FakeStack:
     @staticmethod
     def deployment_identity() -> dict[str, str]:
         return {"deployment_sha256": "d" * 64}
-
-
-class FakeHttpResponse:
-    def __init__(self, body: bytes, *, status: int = 200) -> None:
-        self.body = body
-        self.status = status
-
-    def __enter__(self) -> "FakeHttpResponse":
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        return None
-
-    def read(self, _maximum: int) -> bytes:
-        return self.body
 
 
 class PhysicalTurnGateTests(unittest.TestCase):
@@ -299,6 +287,7 @@ class PhysicalTurnGateTests(unittest.TestCase):
 
     def test_live_voice_state_parser_is_exact_and_fail_closed(self) -> None:
         config = OrchestratorConfig.load(self.config)
+        client_type = httpx.AsyncClient
         valid = json.dumps(
             {
                 "core_ready": True,
@@ -315,32 +304,70 @@ class PhysicalTurnGateTests(unittest.TestCase):
                 "voice_connection_tracker_id": TRACKER_ONE,
             }
         ).encode("utf-8")
-        with mock.patch(
-            "jarvis_orchestrator.physical_turn_gate.urllib.request.urlopen",
-            return_value=FakeHttpResponse(valid),
-        ) as opener:
+        requests = []
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(200, content=valid)
+
+        with mock.patch("httpx.AsyncClient", side_effect=lambda **kwargs: client_type(
+            transport=httpx.MockTransport(respond), **kwargs
+        )):
             state = _live_voice_state(config)
         self.assertEqual(state, VoiceConnectionState(True, TRACKER_ONE, 7))
-        self.assertTrue(opener.call_args.args[0].full_url.endswith("/v1/beta-session"))
+        self.assertEqual(requests[0].url.path, "/v1/beta-session")
+        self.assertEqual(requests[0].headers["Authorization"], f"Bearer {config.control_bearer_token}")
 
         not_ready = json.loads(valid)
         not_ready["core_ready"] = False
         invalid_tracker = json.loads(valid)
         invalid_tracker["voice_connection_tracker_id"] = "not-a-uuid"
 
-        for response in (
-            FakeHttpResponse(valid, status=503),
-            FakeHttpResponse(b"x" * 4097),
-            FakeHttpResponse(b'{}'),
-            FakeHttpResponse(json.dumps(not_ready).encode("utf-8")),
-            FakeHttpResponse(json.dumps(invalid_tracker).encode("utf-8")),
+        for status, body in (
+            (503, valid), (200, valid + b" " * (4097 - len(valid))), (200, b'{}'),
+            (200, json.dumps(not_ready).encode("utf-8")),
+            (200, json.dumps(invalid_tracker).encode("utf-8")),
+            (200, b'{"core_ready":false,' + valid[1:]),
+            (200, b'[' * 1200 + b'0' + b']' * 1200),
         ):
-            with self.subTest(status=response.status, size=len(response.body)):
-                with mock.patch(
-                    "jarvis_orchestrator.physical_turn_gate.urllib.request.urlopen",
-                    return_value=response,
-                ):
+            with self.subTest(status=status, size=len(body)):
+                with mock.patch("httpx.AsyncClient", side_effect=lambda **kwargs: client_type(
+                    transport=httpx.MockTransport(lambda request: httpx.Response(status, content=body)), **kwargs
+                )):
                     self.assertIsNone(_live_voice_state(config))
+
+    def test_voice_probe_rejects_redirects_and_closes_slow_responses(self) -> None:
+        config = OrchestratorConfig.load(self.config)
+        client_type = httpx.AsyncClient
+        requests = []
+        def redirect(request):
+            requests.append(request)
+            return httpx.Response(302, headers={"Location": "http://127.0.0.1:1/elsewhere"})
+
+        with mock.patch("httpx.AsyncClient", side_effect=lambda **kwargs: client_type(
+            transport=httpx.MockTransport(redirect), **kwargs
+        )) as clients:
+            self.assertIsNone(_live_voice_state(config))
+        self.assertEqual(len(requests), 1)
+        self.assertFalse(clients.call_args.kwargs["trust_env"])
+        self.assertFalse(clients.call_args.kwargs["follow_redirects"])
+
+        class Trickle(httpx.AsyncByteStream):
+            closed = False
+            async def __aiter__(self):
+                while True:
+                    await asyncio.sleep(0.02)
+                    yield b" "
+            async def aclose(self):
+                self.closed = True
+
+        body = Trickle()
+        started = time.monotonic()
+        with mock.patch("httpx.AsyncClient", side_effect=lambda **kwargs: client_type(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=body)), **kwargs
+        )):
+            self.assertIsNone(_live_voice_state(config))
+        self.assertLess(time.monotonic() - started, 2.5)
+        self.assertTrue(body.closed)
 
     def test_timeout_is_content_free_and_fail_closed(self) -> None:
         report = run_macos_physical_turn_gate(
@@ -353,6 +380,14 @@ class PhysicalTurnGateTests(unittest.TestCase):
         self.assertFalse(report["ready"])
         self.assertIn("physical_turn_timeout", report["blockers"])
         self.assertFalse(report["evidence"]["exactly_one_new_turn"])
+
+    def test_invalid_timing_is_rejected_before_configuration_or_probes(self) -> None:
+        for name in ("timeout_seconds", "poll_interval_seconds", "settle_seconds"):
+            for value in (float("nan"), float("inf"), -float("inf"), True, None):
+                with self.subTest(name=name, value=value), mock.patch.object(
+                    OrchestratorConfig, "load", side_effect=AssertionError("unexpected configuration access")
+                ), self.assertRaises(ValueError):
+                    run_macos_physical_turn_gate(self.stack, **{name: value})
 
     def test_read_only_database_paths_are_encoded_without_creating_files(self) -> None:
         for name in ("state#review.sqlite3", "state?review.sqlite3", "state%23review.sqlite3", "βάση.sqlite3"):

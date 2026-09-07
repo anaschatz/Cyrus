@@ -7,11 +7,8 @@ timestamps, durations, and the private-stack deployment digest.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass
@@ -20,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from .config import OrchestratorConfig
+from .domain import OrchestratorError
+from .inference import InferenceControlClient
 from .private_state import assert_private_database
 from .service import (
     BETA_SESSION_SCHEMA_VERSION,
@@ -77,23 +76,14 @@ def _open_read_only(path: Path) -> sqlite3.Connection:
 
 
 def _live_voice_state(config: OrchestratorConfig) -> VoiceConnectionState | None:
-    request = urllib.request.Request(
-        f"http://{config.control_host}:{config.control_port}/v1/beta-session",
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {config.control_bearer_token}",
-            "Host": f"127.0.0.1:{config.control_port}",
-        },
-    )
     try:
-        with urllib.request.urlopen(request, timeout=1.0) as response:
-            raw = response.read(4097)
-        if response.status != 200 or len(raw) > 4096:
-            return None
-        payload = json.loads(raw.decode("utf-8", errors="strict"))
+        payload = InferenceControlClient(
+            f"http://{config.control_host}:{config.control_port}/v1",
+            config.control_bearer_token,
+            timeout_seconds=1.0,
+        )._get("/v1/beta-session", authenticated=True, maximum_bytes=4096)
         if (
-            not isinstance(payload, dict)
-            or set(payload)
+            set(payload)
             != {
                 "core_ready",
                 "effective_capabilities",
@@ -131,7 +121,7 @@ def _live_voice_state(config: OrchestratorConfig) -> VoiceConnectionState | None
             tracker_id=payload["voice_connection_tracker_id"],
             generation=payload["voice_connection_generation"],
         )
-    except (OSError, UnicodeError, ValueError, urllib.error.URLError):
+    except OrchestratorError:
         return None
 
 
@@ -361,7 +351,13 @@ def run_macos_physical_turn_gate(
 ) -> dict[str, Any]:
     """Wait for and verify exactly one admission created after invocation."""
 
-    if timeout_seconds <= 0 or poll_interval_seconds <= 0 or settle_seconds < 0:
+    if (
+        any(isinstance(value, bool) or not isinstance(value, (int, float))
+            for value in (timeout_seconds, poll_interval_seconds, settle_seconds))
+        or not 0 < timeout_seconds < float("inf")
+        or not 0 < poll_interval_seconds < float("inf")
+        or not 0 <= settle_seconds < float("inf")
+    ):
         raise ValueError("physical turn gate timing is invalid")
     config = OrchestratorConfig.load(stack.orchestrator_config_path)
     probe = voice_state or (lambda: _live_voice_state(config))

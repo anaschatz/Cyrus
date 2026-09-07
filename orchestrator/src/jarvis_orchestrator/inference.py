@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import json
-import urllib.error
-import urllib.request
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
+import httpx
+
+from .config import _parse_strict_json
 from .domain import OrchestratorError
+
+
+def parse_inference_json(raw: bytes, *, maximum_bytes: int) -> dict[str, object]:
+    """Reuse the package's strict decoder for bounded control/model JSON objects."""
+    if not raw or len(raw) > maximum_bytes:
+        raise ValueError("inference response size invalid")
+    value = _parse_strict_json(raw)
+    if not isinstance(value, dict):
+        raise ValueError("inference response must be an object")
+    json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,36 +47,52 @@ class InferenceIdentityEndpointUnavailable(RuntimeError):
 
 class InferenceControlClient:
     def __init__(self, base_url: str, bearer_token: str, *, timeout_seconds: float = 2.0) -> None:
-        parsed = urlsplit(base_url)
+        try:
+            parsed = urlsplit(base_url)
+            if (parsed.scheme != "http" or not ipaddress.ip_address(parsed.hostname).is_loopback
+                    or parsed.username is not None or parsed.password is not None
+                    or parsed.port == 0 or parsed.path.rstrip("/") != "/v1"
+                    or parsed.query or parsed.fragment):
+                raise ValueError
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise OrchestratorError("service_unavailable", status=503) from exc
+        if (not isinstance(bearer_token, str) or not bearer_token.isascii()
+                or not 1 <= len(bearer_token) <= 512
+                or any(ord(character) < 32 or ord(character) == 127 for character in bearer_token)
+                or isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float))
+                or not 0 < timeout_seconds < float("inf")):
+            raise OrchestratorError("service_unavailable", status=503)
         self._origin = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
         self._bearer = bearer_token
         self._timeout = min(2.0, timeout_seconds)
 
-    def _get(self, path: str, *, authenticated: bool) -> dict[str, object]:
-        headers = {"Accept": "application/json"}
+    def _get(self, path: str, *, authenticated: bool, maximum_bytes: int = 16 * 1024) -> dict[str, object]:
+        headers = {"Accept": "application/json", "Accept-Encoding": "identity"}
         if authenticated:
             headers["Authorization"] = f"Bearer {self._bearer}"
-        request = urllib.request.Request(self._origin + path, method="GET", headers=headers)
+        async def request_bytes() -> bytes:
+            async with asyncio.timeout(self._timeout):
+                async with httpx.AsyncClient(timeout=self._timeout, trust_env=False, follow_redirects=False) as client:
+                    async with client.stream("GET", self._origin + path, headers=headers) as response:
+                        response.raise_for_status()
+                        if response.status_code != 200 or response.headers.get("content-encoding", "identity").lower() != "identity":
+                            raise OrchestratorError("service_unavailable", status=503, retryable=True)
+                        body = bytearray()
+                        async for chunk in response.aiter_bytes(chunk_size=4096):
+                            body.extend(chunk)
+                            if len(body) > maximum_bytes:
+                                raise OrchestratorError("service_unavailable", status=503, retryable=True)
+                        return bytes(body)
+
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                if response.status != 200:
-                    raise OrchestratorError("service_unavailable", status=503, retryable=True)
-                body = response.read(16 * 1024 + 1)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            return parse_inference_json(asyncio.run(request_bytes()), maximum_bytes=maximum_bytes)
+        except (TimeoutError, httpx.HTTPError, ValueError) as exc:
             raise OrchestratorError("service_unavailable", status=503, retryable=True) from exc
-        if len(body) > 16 * 1024:
-            raise OrchestratorError("service_unavailable", status=503, retryable=True)
-        try:
-            value = json.loads(body.decode("utf-8", errors="strict"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise OrchestratorError("service_unavailable", status=503, retryable=True) from exc
-        if not isinstance(value, dict):
-            raise OrchestratorError("service_unavailable", status=503, retryable=True)
-        return value
 
     def ready(self) -> bool:
         try:
-            return self._get("/readyz", authenticated=False) == {"ready": True}
+            value = self._get("/readyz", authenticated=False)
+            return set(value) == {"ready"} and value["ready"] is True
         except OrchestratorError:
             return False
 
@@ -86,7 +116,7 @@ class InferenceControlClient:
             value = self._get("/jarvis/v1/identity", authenticated=True)
         except OrchestratorError as exc:
             cause = exc.__cause__
-            if isinstance(cause, urllib.error.HTTPError) and cause.code in {404, 405}:
+            if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code in {404, 405}:
                 raise InferenceIdentityEndpointUnavailable from None
             raise
         expected = {

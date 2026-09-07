@@ -1315,7 +1315,7 @@ class OrchestratorService:
         local_ready = True
         if self.inference_control is not None:
             try:
-                local_ready = bool(self.inference_control.ready())
+                local_ready = bool(await asyncio.to_thread(self.inference_control.ready))
             except Exception:
                 local_ready = False
         score = complexity_score(profile)

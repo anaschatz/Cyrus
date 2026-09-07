@@ -1247,3 +1247,23 @@ Cloud routing checkpoint committed as **0d2490e** with no Ponytail findings. Rea
 The regression checks the selected database's distinct marker for reserved-character and Unicode filenames, write rejection and absence of newly created files. Original source produces **two errors and one failure**, `/tmp/cyrus-physical-path-test-before.log`; all **12 physical-turn tests pass** after the fix, `/tmp/cyrus-physical-path-test-after.log`. Fatal Ruff passes. This checkpoint uses disposable SQLite databases and synthetic lifecycle events; no physical microphone/playback or external service was exercised. The preceding full suite ran 1057 tests; it was not repeated for this isolated URI change.
 
 Coverage: **217/400 code, 182/315 tests, 39/308 support**, **438 reviewed hashes verified**. Physical-turn test source is reviewed; verifier source remains pending transport and timing boundary follow-ups despite its complete initial read. Whole-codebase review and final quality assessment remain in progress.
+
+
+### Physical-turn HTTP and timing boundaries; source review completed
+
+The database URI checkpoint committed as **ff31f2f**, with a clean Ponytail hook. Completed the remaining physical-turn verifier boundary checks and re-inspected the entire shared inference control client plus its callers.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V228 | The physical-turn probe used urllib's default redirect/proxy handling and per-read socket timeout. An actual redirect to a second temporary loopback server forwarded the synthetic bearer token; a slow response could outlast the intended total request budget. | Reuse InferenceControlClient, which disables redirects/environment proxies and applies one deadline to headers and body. Keep the physical probe's one-second deadline and 4 KiB ceiling through the shared client's byte-limit argument. |
+| V229 | Deep JSON under the 4 KiB cap raised uncaught RecursionError; duplicate keys could replace a false core_ready value with true and be accepted as valid evidence. | Reuse the existing strict JSON decoder through the common control client. Invalid data produces unavailable evidence rather than an exception or ambiguous ready state. |
+| V230 | NaN/infinite timing values passed initial comparisons, allowing an unbounded wait or later conversion failure; boolean/None values also lacked the declared timing error handling. | Validate numeric types and finite ranges before configuration access, live probes or waiting. Zero settle time remains valid. |
+
+Before fixing, `/tmp/cyrus-physical-http-before.log` shows the accepted redirect and both authenticated requests, accepted duplicate-key payload and deep-JSON RecursionError. After fixing, `/tmp/cyrus-physical-http-after.log` shows a rejected redirect and only the original request. Timing regression: **nine failures and three errors** against the old implementation, `/tmp/cyrus-physical-timing-before.log`. The HTTP tests also verify rejection of a valid JSON object padded beyond 4096 bytes, and closure of a continuously trickling stream within the total deadline. All tokens are synthetic; no external provider, real credential or native audio/action was used.
+
+All **36 focused tests** pass. Full Orchestrator ran **1060 tests in 20.048 seconds: 1055 passed, five skipped**, `/tmp/cyrus-full-review-physical-boundaries.log`. Fatal Ruff and unchanged module-size checks pass. This checkpoint includes the previously reviewed shared-client hardening and its existing tests, plus the required asyncio.to_thread readiness caller and event-loop regression. Its strict-decoder dependency already exists in HEAD. Physical-turn production code shrinks from 518 to 515 lines; no new dependency or HTTP transport abstraction was added.
+
+Coverage: **218/400 code, 182/315 tests and 39/308 support files**, **439 reviewed hashes verified across 1023 entries**. Physical-turn source inspection and identified follow-ups are complete. The full review and final quality assessment remain open: **182 code, 133 test and 269 support files** remain; compiler qualification identity binding and U05 are still unresolved. Reviewed source is not proof of absence of bugs or of live/native qualification.
+
+
+The physical-turn checkpoint's Ponytail hook identified three removable lines: reuse Mock.call_args instead of a capture list in the existing control test, and remove a dict check already guaranteed by the shared JSON decoder. Applied both simplifications; **22 focused tests pass again**, `/tmp/cyrus-physical-ponytail-after.log`. Physical verifier source is now 514 lines. The checkpoint is amended with these changes; coverage counts and behavior are unchanged.
