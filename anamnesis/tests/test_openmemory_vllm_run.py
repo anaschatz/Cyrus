@@ -161,10 +161,32 @@ def test_failed_canary_stops_before_all_scenario_calls(monkeypatch, tmp_path) ->
         report_module._validate_run(raw_path)
 
 
-def test_passing_canary_runs_exactly_one_eight_by_two_matrix(monkeypatch) -> None:
+@pytest.mark.parametrize("corruption", [None, "valid_pass", "decisions", "canary_decision", "canary_semantics", "usage", "case_order", "prompt", "artifact", "accounting"])
+def test_passing_canary_runs_exactly_one_eight_by_two_matrix(monkeypatch, tmp_path, corruption) -> None:
     _patch_runtime(monkeypatch)
     no_action = _response('{"mode":"no_action","actions":[]}')
     FakeClient.queue = [no_action for _ in range(run_module.EXPECTED_CALLS)]
+
+    artifact = run_module.load_openmemory_diagnostic(run_module.DATASET_PATH)
+    cases = {case.id: case for case in artifact.cases}
+
+    def expected_decision(case):
+        actions = [] if case.expected.mode == "no_action" else [{
+            "kind": "reminder", "action_key": case.expected.action_key,
+            "payload": case.expected.payload, "summary": "Synthetic expected action",
+            "evidence_event_ids": list(case.expected.evidence_event_ids),
+        }]
+        return run_module.Decision.model_validate({"actions": actions})
+
+    if corruption == "valid_pass":
+        FakeClient.queue = [no_action]
+        for case in artifact.cases:
+            for arm in ("baseline", "recall"):
+                decision = run_module.Decision() if arm == "baseline" and case.helpful_hit_ids else expected_decision(case)
+                FakeClient.queue.append(_response(json.dumps({
+                    "mode": "emit" if decision.actions else "no_action",
+                    **decision.model_dump(mode="json"),
+                })))
 
     result = asyncio.run(
         run_module.run_openmemory_vllm_v4(
@@ -183,7 +205,46 @@ def test_passing_canary_runs_exactly_one_eight_by_two_matrix(monkeypatch) -> Non
     assert result.setup_usage.input_tokens == 100
     assert result.headline_usage.input_tokens == 1600
     assert result.total_usage.input_tokens == 1700
-    assert not result.passed
+    assert result.passed == (corruption == "valid_pass")
+
+    monkeypatch.setattr(report_module, "_verify_reporting_checkout", lambda *args: "b" * 40)
+    path = tmp_path / "run.json"
+    path.write_text(result.model_dump_json())
+    assert report_module._validate_run(path) == result
+    if corruption in (None, "valid_pass"):
+        return
+    raw = result.model_dump(mode="json")
+    if corruption == "decisions":
+        baseline, recall = {}, {}
+        for call in raw["paired_run"]["calls"]:
+            case = cases[call["case_id"]]
+            decision = run_module.Decision() if call["arm"] == "baseline" and case.helpful_hit_ids else expected_decision(case)
+            call["decision"] = decision.model_dump(mode="json")
+            (baseline if call["arm"] == "baseline" else recall)[case.id] = decision
+        metrics = report_module.score_openmemory_pair(artifact, baseline=baseline, recall=recall)
+        assert metrics.gate_passed
+        raw["paired_run"]["metrics"] = metrics.model_dump(mode="json")
+        raw["passed"] = True
+    elif corruption == "canary_decision":
+        raw["canary"]["decision"] = expected_decision(next(case for case in artifact.cases if case.expected.mode == "emit")).model_dump(mode="json")
+    elif corruption == "canary_semantics":
+        raw["canary"]["semantic_passed"] = False
+    elif corruption == "usage":
+        headline = run_module.Usage(input_tokens=1, uncached_input_tokens=1, output_tokens=1)
+        raw["headline_usage"] = headline.model_dump(mode="json")
+        raw["total_usage"] = result.setup_usage.plus(headline).model_dump(mode="json")
+    elif corruption == "case_order":
+        calls = raw["paired_run"]["calls"]
+        calls[:4] = calls[2:4] + calls[:2]
+    elif corruption == "prompt":
+        raw["paired_run"]["calls"][0]["prompt_sha256"] = "0" * 64
+    elif corruption == "artifact":
+        raw["paired_run"]["artifact_sha256"] = "0" * 64
+    elif corruption == "accounting":
+        raw["paired_run"]["calls"][0]["usage_complete"] = False
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError):
+        report_module._validate_run(path)
 
 
 def test_output_is_confined_to_ignored_v4_run_directory(tmp_path: Path) -> None:

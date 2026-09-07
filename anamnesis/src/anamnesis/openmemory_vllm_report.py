@@ -16,6 +16,7 @@ from anamnesis.openmemory_diagnostic import (
     score_openmemory_pair,
 )
 from anamnesis.openmemory_vllm import (
+    VllmOpenMemoryDecisionModel,
     build_openmemory_vllm_request,
     build_openmemory_vllm_user_envelope,
 )
@@ -26,8 +27,10 @@ from anamnesis.openmemory_vllm_run import (
     REPO_ROOT,
     OpenMemoryVllmV4Run,
     _load_frozen_inputs,
+    _sum_usage,
 )
 from anamnesis.runner import DecisionRequest
+from anamnesis.schema import Decision
 from anamnesis.vllm_runtime import canonical_json_sha256
 
 TITLE = "OpenMemory + vLLM v4 local diagnostic — not a hypothesis test"
@@ -89,6 +92,7 @@ def _validate_run(path: Path) -> OpenMemoryVllmV4Run:
     if result.pin_sha256 != _sha256(PIN_PATH):
         raise ValueError("run pin hash differs from tracked runtime pin")
     expected_requests: list[dict[str, object]] = []
+    expected_calls: list[tuple[str, str, str]] = []
     canary_prompt = build_openmemory_vllm_user_envelope(
         now=preflight.event.at.isoformat(),
         current_event_id=preflight.event.id,
@@ -112,16 +116,19 @@ def _validate_run(path: Path) -> OpenMemoryVllmV4Run:
             prompts = build_openmemory_case_prompts(
                 case, prompt_builder=build_openmemory_vllm_user_envelope
             )
-            for _arm, prompt in zip(("baseline", "recall"), prompts, strict=True):
+            for arm, prompt in zip(("baseline", "recall"), prompts, strict=True):
+                expected_calls.append((case.id, arm, hashlib.sha256(prompt.encode()).hexdigest()))
                 expected_requests.append(
                     build_openmemory_vllm_request(
                         pin, DecisionRequest(event=case.event, prompt=prompt)
                     )
                 )
+        if result.paired_run.artifact_sha256 != result.dataset_canonical_sha256:
+            raise ValueError("paired artifact identity differs from frozen dataset")
+        if [(call.case_id, call.arm, call.prompt_sha256) for call in result.paired_run.calls] != expected_calls:
+            raise ValueError("paired calls differ from frozen prompt order")
         for call in result.paired_run.calls:
             destination = baseline if call.arm == "baseline" else recall
-            if call.case_id in destination:
-                raise ValueError("paired run repeats a case arm")
             destination[call.case_id] = call.decision
         recomputed = score_openmemory_pair(artifact, baseline=baseline, recall=recall)
         if recomputed != result.paired_run.metrics:
@@ -133,16 +140,29 @@ def _validate_run(path: Path) -> OpenMemoryVllmV4Run:
             raise ValueError("raw request differs from frozen reconstruction")
     if result.canary.accepted != result.audits[0].validation.accepted:
         raise ValueError("canary accepted flag differs from first audit")
-    if result.audits[0].raw_completion != result.canary.raw_completion:
-        raise ValueError("canary raw completion differs from first audit")
-    if result.audits[0].usage != result.canary.usage:
-        raise ValueError("canary usage differs from first audit")
-    if result.paired_run is not None:
-        for audit, call in zip(result.audits[1:], result.paired_run.calls, strict=True):
-            if audit.raw_completion != call.raw_completion or audit.usage != call.usage:
-                raise ValueError("paired call differs from its raw audit")
-            if audit.validation.accepted == call.parse_error:
-                raise ValueError("paired parse status differs from its raw audit")
+    if result.canary.prompt_sha256 != hashlib.sha256(canary_prompt.encode()).hexdigest():
+        raise ValueError("canary prompt differs from frozen reconstruction")
+    if result.canary.semantic_passed != (not result.canary.decision.actions):
+        raise ValueError("canary semantic result differs from its decision")
+    if (result.status == "complete") != (result.canary.accepted and result.canary.semantic_passed):
+        raise ValueError("run status differs from canary outcome")
+    calls = result.paired_run.calls if result.paired_run is not None else ()
+    if result.headline_usage != _sum_usage([call.usage for call in calls]):
+        raise ValueError("headline usage differs from paired calls")
+    for audit, record in zip(result.audits, (result.canary, *calls), strict=True):
+        if audit.raw_completion != record.raw_completion or audit.usage != record.usage:
+            raise ValueError("record differs from its raw audit")
+        decision = (
+            VllmOpenMemoryDecisionModel.wire_model.model_validate_json(audit.raw_completion).to_domain()
+            if audit.validation.accepted else Decision()
+        )
+        if record.decision != decision:
+            raise ValueError("recorded decision differs from raw model output")
+    for audit, call in zip(result.audits[1:], calls, strict=True):
+        if audit.validation.accepted == call.parse_error:
+            raise ValueError("paired parse status differs from its raw audit")
+        if call.usage_complete != audit.validation.usage_valid or call.cost_complete != audit.validation.usage_valid:
+            raise ValueError("paired accounting flags differ from raw audit")
     return result
 
 
