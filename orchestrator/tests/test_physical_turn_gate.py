@@ -7,6 +7,7 @@ import threading
 import time
 import unittest
 import uuid
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -24,6 +25,7 @@ from jarvis_orchestrator.domain import (
 from jarvis_orchestrator.physical_turn_gate import (
     VoiceConnectionState,
     _live_voice_state,
+    _open_read_only,
     run_macos_physical_turn_gate,
 )
 from jarvis_orchestrator.store import OrchestratorStore
@@ -351,6 +353,21 @@ class PhysicalTurnGateTests(unittest.TestCase):
         self.assertFalse(report["ready"])
         self.assertIn("physical_turn_timeout", report["blockers"])
         self.assertFalse(report["evidence"]["exactly_one_new_turn"])
+
+    def test_read_only_database_paths_are_encoded_without_creating_files(self) -> None:
+        for name in ("state#review.sqlite3", "state?review.sqlite3", "state%23review.sqlite3", "βάση.sqlite3"):
+            with self.subTest(name=name):
+                path = self.root / name
+                with closing(sqlite3.connect(path, isolation_level=None)) as connection:
+                    connection.execute("CREATE TABLE marker(value)")
+                    connection.execute("INSERT INTO marker VALUES(?)", (name,))
+                path.chmod(0o600)
+                before = set(self.root.iterdir())
+                with closing(_open_read_only(path)) as connection:
+                    self.assertEqual(connection.execute("SELECT value FROM marker").fetchone()[0], name)
+                    with self.assertRaises(sqlite3.OperationalError):
+                        connection.execute("CREATE TABLE forbidden(value)")
+                self.assertEqual(set(self.root.iterdir()), before)
 
     def test_more_than_one_new_admission_fails_closed(self) -> None:
         def admit_twice() -> None:

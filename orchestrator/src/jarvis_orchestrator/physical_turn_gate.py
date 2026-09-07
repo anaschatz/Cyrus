@@ -66,9 +66,9 @@ def _parse_utc(value: Any) -> datetime | None:
 
 
 def _open_read_only(path: Path) -> sqlite3.Connection:
-    assert_private_database(path)
+    path = assert_private_database(path)
     connection = sqlite3.connect(
-        f"file:{path.as_posix()}?mode=ro", uri=True, timeout=0.5
+        path.as_uri() + "?mode=ro", uri=True, timeout=0.5
     )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")

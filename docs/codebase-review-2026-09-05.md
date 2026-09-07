@@ -1236,3 +1236,14 @@ Four new regression methods reproduce **16 failures and 23 errors** against the 
 Ponytail simplification: canonical routing facts now reuse the single recursive asdict result instead of rebuilding each nested candidate. An independent comparison against the saved original source confirms identical canonical route documents/hashes for **64 valid decisions** spanning all eight task kinds and approval/privacy/local-failure/deadline variations. Routing thresholds and policy gates remain unchanged; production source grows by seven lines overall, without dependencies or new abstractions.
 
 Current coverage: **217/400 code, 181/315 tests and 39/308 support files**, with **437 reviewed hashes verified across 1023 entries**. Cloud routing source inspection is complete. The whole-codebase review and final quality assessment remain incomplete: **183 code, 134 test and 269 support files** remain, with compiler qualification identity binding and U05 still open. Reviewed does not mean bug-free.
+
+
+### Physical-turn database URI checkpoint
+
+Cloud routing checkpoint committed as **0d2490e** with no Ponytail findings. Read the complete 518-line physical-turn verifier and its test module.
+
+**V227:** The read-only opener interpolated an unescaped path into a SQLite URI. A path containing `#` or `?` opened/created a truncated sibling filename instead of the validated database; percent escapes could select a different existing database. Reproduced with temporary databases in `/tmp/cyrus-physical-path-before.log`. Reuse the absolute path returned by assert_private_database and Path.as_uri(), preserving the private-file checks and mode=ro. This is a two-line replacement, without a custom encoder.
+
+The regression checks the selected database's distinct marker for reserved-character and Unicode filenames, write rejection and absence of newly created files. Original source produces **two errors and one failure**, `/tmp/cyrus-physical-path-test-before.log`; all **12 physical-turn tests pass** after the fix, `/tmp/cyrus-physical-path-test-after.log`. Fatal Ruff passes. This checkpoint uses disposable SQLite databases and synthetic lifecycle events; no physical microphone/playback or external service was exercised. The preceding full suite ran 1057 tests; it was not repeated for this isolated URI change.
+
+Coverage: **217/400 code, 182/315 tests, 39/308 support**, **438 reviewed hashes verified**. Physical-turn test source is reviewed; verifier source remains pending transport and timing boundary follow-ups despite its complete initial read. Whole-codebase review and final quality assessment remain in progress.
