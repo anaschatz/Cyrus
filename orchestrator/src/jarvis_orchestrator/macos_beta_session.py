@@ -32,7 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol
 
-from .config import OrchestratorConfig
+from .config import OrchestratorConfig, _parse_strict_json
+from .domain import OrchestratorError
 from .inference import (
     InferenceControlClient,
     InferenceIdentityEndpointUnavailable,
@@ -748,25 +749,14 @@ def _orchestrator_ready(context: ProbeContext) -> bool:
 def _voice_liveness_ready(context: ProbeContext) -> bool:
     if context.elapsed_seconds < 0.25 or context.process.poll() is not None:
         return False
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{context.orchestrator.control_port}/v1/beta-session",
-        headers={
-            "Accept": "application/json",
-            "Authorization": (
-                f"Bearer {context.orchestrator.control_bearer_token}"
-            ),
-            "Host": f"127.0.0.1:{context.orchestrator.control_port}",
-        },
-    )
     try:
-        with urllib.request.urlopen(request, timeout=2.0) as response:
-            body = response.read(4 * 1024 + 1)
-        payload = json.loads(body.decode("utf-8", errors="strict"))
+        payload = InferenceControlClient(
+            f"http://127.0.0.1:{context.orchestrator.control_port}/v1",
+            context.orchestrator.control_bearer_token,
+            timeout_seconds=2.0,
+        )._get("/v1/beta-session", authenticated=True, maximum_bytes=4 * 1024)
         return (
-            response.status == 200
-            and len(body) <= 4 * 1024
-            and isinstance(payload, dict)
-            and set(payload)
+            set(payload)
             == {
                 "core_ready",
                 "effective_capabilities",
@@ -798,13 +788,7 @@ def _voice_liveness_ready(context: ProbeContext) -> bool:
                 for value in payload["effective_capabilities"].values()
             )
         )
-    except (
-        OSError,
-        TimeoutError,
-        UnicodeError,
-        ValueError,
-        urllib.error.URLError,
-    ):
+    except OrchestratorError:
         return False
 
 
@@ -953,6 +937,7 @@ def _read_private_at(
 ) -> dict[str, Any] | None:
     flags = (
         os.O_RDONLY
+        | os.O_NONBLOCK
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
@@ -981,7 +966,7 @@ def _read_private_at(
         payload = b"".join(chunks)
         if len(payload) > _MAX_INTERLOCK_BYTES:
             raise OSError(errno.EFBIG, "interlock_too_large")
-        parsed = json.loads(payload.decode("utf-8", errors="strict"))
+        parsed = _parse_strict_json(payload)
         if not isinstance(parsed, dict):
             raise ValueError("interlock_document_invalid")
         return parsed

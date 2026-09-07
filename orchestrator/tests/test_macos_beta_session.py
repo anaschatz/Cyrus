@@ -16,6 +16,8 @@ from types import SimpleNamespace
 from typing import BinaryIO
 from unittest.mock import patch
 
+import httpx
+
 import _bootstrap  # noqa: F401
 
 from jarvis_orchestrator.config import OrchestratorConfig
@@ -1264,6 +1266,45 @@ class MacOSBetaSessionTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "session_recovery_unsafe")
         self.assertTrue(path.exists())
 
+    def test_recovery_rejects_duplicate_interlock_keys(self) -> None:
+        self._leave_incomplete_interlock()
+        path = self.sessions / SESSION_INTERLOCK_FILENAME
+        raw = b'{"spawn_pending":"inference",' + path.read_bytes()[1:]
+        path.write_bytes(raw)
+        recovery = self.dependencies(FakeSpawner(), FakeClock())
+        recovery.process_identity = lambda _pid: None
+        recovery.process_group = lambda _pgid: ()
+        with self.assertRaises(MacOSBetaSessionError) as caught:
+            recover_macos_beta_session(
+                stack_path=self.stack, session_parent=self.sessions, dependencies=recovery,
+            )
+        self.assertEqual(caught.exception.code, "session_recovery_unsafe")
+        self.assertEqual(path.read_bytes(), raw)
+
+    def test_interlock_reader_rejects_fifo_without_waiting_for_a_writer(self) -> None:
+        path = self.sessions / SESSION_INTERLOCK_FILENAME
+        os.mkfifo(path, 0o600)
+        check = """
+import os, sys
+from jarvis_orchestrator.macos_beta_session import _read_private_at
+parent = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY)
+try:
+    try:
+        _read_private_at(parent, sys.argv[2])
+    except OSError:
+        pass
+    else:
+        raise AssertionError("FIFO was accepted")
+finally:
+    os.close(parent)
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", check, str(self.sessions), path.name],
+            timeout=3, capture_output=True, text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue(path.exists())
+
     def test_recovery_refuses_a_remaining_listener(self) -> None:
         self._leave_incomplete_interlock()
         recovery = self.dependencies(
@@ -1421,11 +1462,19 @@ class MacOSBetaSessionTests(unittest.TestCase):
                 "00000000-0000-4000-8000-000000000001"
             ),
         }
-        with patch(
-            "jarvis_orchestrator.macos_beta_session.urllib.request.urlopen",
-            return_value=FakeHttpResponse(canonical(valid)),
-        ):
-            self.assertTrue(_voice_liveness_ready(context))
+        client_type = httpx.AsyncClient
+        def check(body, *, status=200):
+            response = httpx.Response(status, content=body, headers={"location": "http://127.0.0.1:1/redirect"})
+            with patch.object(httpx, "AsyncClient", side_effect=lambda **kwargs: client_type(
+                transport=httpx.MockTransport(lambda request: response), **kwargs,
+            )) as client:
+                result = _voice_liveness_ready(context)
+            self.assertTrue(response.is_closed)
+            self.assertFalse(client.call_args.kwargs["trust_env"])
+            self.assertFalse(client.call_args.kwargs["follow_redirects"])
+            return result
+        self.assertTrue(check(canonical(valid)))
+        self.assertFalse(check(canonical(valid), status=302))
 
         invalid_documents = (
             {**valid, "schema_version": "jarvis-orchestrator-beta-session/1"},
@@ -1437,13 +1486,15 @@ class MacOSBetaSessionTests(unittest.TestCase):
             {**valid, "voice_connection_tracker_id": "not-a-uuid"},
             {**valid, "core_ready": False},
         )
-        for document in invalid_documents:
-            with self.subTest(document=document):
-                with patch(
-                    "jarvis_orchestrator.macos_beta_session.urllib.request.urlopen",
-                    return_value=FakeHttpResponse(canonical(document)),
-                ):
-                    self.assertFalse(_voice_liveness_ready(context))
+        invalid_bodies = [canonical(document) for document in invalid_documents]
+        invalid_bodies += [
+            b'{"core_ready":false,' + canonical(valid)[1:],
+            b'{"x":' + b'[' * 1500 + b'0' + b']' * 1500 + b'}',
+            canonical(valid) + b' ' * 4096,
+        ]
+        for body in invalid_bodies:
+            with self.subTest(body=body[:60]):
+                self.assertFalse(check(body))
 
 
 if __name__ == "__main__":

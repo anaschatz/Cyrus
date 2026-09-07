@@ -2,7 +2,7 @@
 
 Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **221 of 400 code files**, plus **186 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1067 tests (1062 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1069 tests (1064 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1316,3 +1316,22 @@ Three new regression methods produce **11 failures and two errors** against the 
 Fatal Ruff and unchanged module-size checks pass. The worktree supervisor is 1900 lines, within its existing 1900-line limit. Ponytail: one shared stop guard, no new dependency or lifecycle abstraction. Tests use fake probes/clocks/processes, temporary state, and the existing test's own disposable process group; no real microphone, native action, model or external provider was exercised.
 
 Coverage: **221/400 code, 186/315 tests and 41/308 support files**, with **448 reviewed hashes verified across 1023 entries**. The complete session test source is reviewed. Whole-codebase review and final quality assessment remain incomplete: **179 code, 129 test and 267 support files** remain. Session follow-ups include redirect/deadline handling in voice liveness, nonblocking strict interlock reads, listener-to-child ownership before authenticated startup probes, and concurrent recovery/publication ownership. These are investigation items, not fixes or qualified guarantees. Compiler qualification identity binding and U05 also remain open.
+
+
+### macOS session liveness transport and interlock read boundaries
+
+Startup deadline/cancellation checkpoint committed as **c13e17f**, with a clean Ponytail hook. Traced the remaining voice liveness probe and every private interlock-reader caller, including spawn publication, shutdown clearing and explicit recovery.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V239 | Voice liveness used urllib's default redirects/environment proxies and per-read timeout. Two actual temporary loopback servers demonstrate a redirected authenticated request and acceptance of the second server's ready document. | Reuse InferenceControlClient with its two-second total deadline, disabled redirects/proxies and 4 KiB response ceiling. The corrected probe rejects the redirect and sends only the original request. |
+| V240 | Duplicate JSON fields could override a false core_ready value or a pending-spawn interlock field. Deep liveness JSON leaked RecursionError instead of returning unavailable. | Use the shared strict decoder through the control client and directly in the private interlock reader. Ambiguous interlocks remain on disk and recovery returns session_recovery_unsafe. |
+| V241 | Opening an interlock FIFO blocked before the regular-file metadata check, potentially hanging recovery or a session transition indefinitely. | Open with O_NONBLOCK before the existing regular-file/owner/mode/link/size validation. FIFO input is rejected without waiting for a writer. |
+
+The expanded liveness test and two new interlock methods produce **two failures and two errors** against original source, `/tmp/cyrus-beta-io-before.log`; the FIFO reproduction is isolated in a three-second subprocess that is cleaned up on timeout. All **52 focused tests pass**, `/tmp/cyrus-beta-io-after.log`. Full Orchestrator ran **1069 tests in 19.649 seconds: 1064 passed, five skipped**, `/tmp/cyrus-full-review-beta-io.log`. Three checks against the exact staged source/test modules pass, `/tmp/cyrus-beta-io-staged-tests.log`; the FIFO subprocess uses the worktree reader, whose AST is verified identical to the staged reader.
+
+The actual before/after redirect evidence is recorded in `/tmp/cyrus-beta-liveness-redirect-before.log` and `/tmp/cyrus-beta-liveness-redirect-after.log`. Requests use a synthetic token and temporary loopback servers; no live model, external provider, microphone or native action was exercised. Existing shared-client tests cover cancellation/closure of a trickling response under a total deadline. Liveness tests additionally retain the valid schema case and reject outdated/missing/invalid identity fields, oversized responses, duplicate keys and deep JSON.
+
+Fatal Ruff/unused-import and unchanged size checks pass. Ponytail: reuse the existing HTTP client and strict parser, with **15 fewer production lines in the staged diff** and no new dependency. Older process-identity/warmup/readiness-wrapper changes remain outside this commit; the staged urllib imports and FakeHttpResponse remain necessary for those older HEAD callers/tests. Their removal in the working tree belongs with that pending migration.
+
+Coverage remains **221/400 code, 186/315 tests and 41/308 support files**, with **448 reviewed hashes verified across 1023 entries**. The session source remains pending listener-to-child ownership before authenticated probes and interlock concurrency/publication ownership investigation. The full review and final quality assessment remain incomplete; compiler qualification identity binding and U05 are also open.
