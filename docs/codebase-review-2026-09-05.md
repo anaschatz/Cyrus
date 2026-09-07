@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **209 of 400 code files**, plus **161 of 299 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **209 of 400 code files**, plus **162 of 300 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1005 tests (1000 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1008 tests (1003 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -496,7 +496,7 @@ Ponytail: reuse the existing strict JSON parser; consolidate release reading/has
 
 **U04 — RESOLVED for cloud contract numeric admission.** The historical current-tree reproduction returned **-1100** for a negative prompt rate and accepted **True** as a context limit (`/tmp/cyrus-review-cloud-remaining.log`). The following pass rejects both at the shared boundaries, removes registry string coercion and fixes exact arithmetic and provider metric admission. Provider file/HTTP boundary inspection remains pending independently.
 
-**U05 — OPEN: privacy classification beyond its lexicon.** Even after repairing declared Greek stems, the synthetic phrase `Ο κωδικός μου είναι αβγ` is classified **PUBLIC**, because its credential marker is absent from the rules and all unmatched nonempty text defaults to PUBLIC (`/tmp/cyrus-review-cloud-remaining.log`). The local fixture pass must not be presented as comprehensive egress privacy protection. Further privacy-policy work and evidence remain necessary; no real cloud activation was performed by this review.
+**U05 — OPEN: privacy coverage beyond the credential and sensitive-word lexicon.** The original phrase `Ο κωδικός μου είναι αβγ` was classified PUBLIC (`/tmp/cyrus-review-cloud-remaining.log`). V194 below now classifies it and the tested Greek credential variants as SECRET_CREDENTIAL and denies cloud routing. Broader coverage remains unproven: all unmatched nonempty text still defaults to PUBLIC. Passing local fixtures must not be presented as comprehensive egress privacy protection; no real cloud activation was performed by this review.
 
 The overall review and final quality score remain unfinished. Historical partial action/approval recovery, live compiler identity binding, U05 privacy coverage, provider boundary handling and the remaining source/test/support inventory are still open; U04 is resolved in the following pass.
 
@@ -923,3 +923,20 @@ V191-V193 baseline: five methods with temporary compatibility instrumentation pr
 The control checkpoint was committed as `92890ae`. Its Ponytail hook requested deleting the now-unused urllib compatibility mock; removed in `a03f772`, with final HTTPX assertions unconditional and all **21 focused CLI/dependency tests** passing, `/tmp/cyrus-cli-control-ponytail-followup.log`. The final complete suite ran **1005 tests in 17.672 seconds: 1000 passed and five platform/prerequisite skips**, `/tmp/cyrus-full-review-cli-control-client-final.log`. This full run preceded only the test-mock cleanup; runtime code is unchanged since it. Fatal Ruff, staged whitespace checks and the unchanged module-size ratchet pass. The CLI is 1492 lines under its existing 1500-line ceiling; the Pydantic adapter is 916 lines. No dependency or transport framework was added.
 
 Current coverage is **209/400 code, 161/299 tests and 39/308 support files**: **409 reviewed hashes verified across 1007 entries**. All listed commits ran the configured Ponytail hook. No push occurred. Earlier accumulated changes remain uncommitted, including the updated v4 test fixture. Central store/service review, compiler identity binding, U05 privacy coverage and remaining source/test/support files still prevent a final whole-codebase quality assessment.
+
+
+### Greek credential classification and U05 follow-up
+
+Re-read the complete privacy classifier and its prior sensitive-stem regression, and traced the actual combined-egress caller through service.py into the deterministic cloud eligibility gate. The service's endpoint revalidation is conditional on this privacy result. The existing classification policy therefore made the recorded Greek credential phrase eligible for consideration as cloud input.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V194 | Greek password/code inflections, συνθηματικό and ιδιωτικό κλειδί were missing from the credential rule. The combined-egress classifier returned PUBLIC, allowing the cloud gate even with this sensitive text. | Extend the existing credential rule for those terms and noun forms; retain the same normalization and taxonomy. The new routing regression denies cloud even when approval is present. Ordinary κώδικας/ΚΩΔΙΚΑΣ and κωδικοποίηση remain public in the checked cases. |
+
+The three new test methods produced **25 failed subcases** against the original policy, `/tmp/cyrus-greek-credentials-before.log`. They cover eight phrases in ordinary, uppercase and decomposed Unicode forms, three public code/encoding counterexamples and the actual cloud eligibility function. These are authored regressions, not an unseen privacy benchmark. The focused classifier, routing and release suite passed **29 tests**. Full Orchestrator verification passed **1008 tests in 18.533 seconds: 1003 passed, five platform/prerequisite skips**, `/tmp/cyrus-full-review-greek-credential-privacy.log`. Fatal Ruff and the unchanged module-size ratchet pass.
+
+The changed policy identity is `8c25fda844d33cf2706f81489870e8ef7eacc6a07a3b526ce9d0f138706cc2d6`. A disposable release fixture using the previous policy identity `bfbdbc1aec2e49e3213671f04fcd722f8514772c5717aa1afe43565657d0ac1f` is rejected with cloud_privacy_evidence_invalid, `/tmp/cyrus-greek-credentials-policy-binding.log`. Existing qualification evidence therefore cannot authorize this new policy without renewal. No historical fixture matrix, release evidence, user configuration or provider state was rewritten, and no external request was sent.
+
+Committed as `94a18b8` with the previously reviewed V108 Greek sensitive-stem fixes and both regression modules. Exact staged Ponytail review and the active hook found no unnecessary complexity. The fix extends one existing credential pattern; no classifier framework or dependency was introduced. U05 remains open for text outside the finite lexicon and requires broader policy/qualification work before any comprehensive privacy claim.
+
+Coverage is **209/400 code, 162/300 tests and 39/308 support files**, with **410 reviewed hashes verified across 1008 entries**. Whole-store/service review, compiler identity binding and the remaining inventory are still unfinished. No final quality grade or whole-codebase completion is claimed.
