@@ -677,10 +677,8 @@ def _inference_ready(context: ProbeContext) -> bool:
         try:
             identity = client.runtime_identity()
         except InferenceIdentityEndpointUnavailable:
-            # A pre-identity-endpoint appliance is permitted only inside this
-            # foreground supervisor: it exclusively bound a previously-free
-            # port by launching the exact digest-checked runner from the
-            # validated stack and continuously owns/monitors that child.
+            # Only the foreground supervisor permits a legacy appliance:
+            # it checks child listener ownership around every readiness probe.
             return context.process.poll() is None
         expected_manifest, expected_runtime = (
             context.stack.expected_inference_runtime_identity()
@@ -1610,6 +1608,16 @@ class MacOSBetaSession:
             raise MacOSBetaSessionError("session_interlock_failed") from None
         return process
 
+    def _listeners_owned(self) -> bool:
+        for port in REQUIRED_PORTS:
+            process = self._children.get("inference" if port == 8766 else "orchestrator")
+            if process is not None and (
+                process.poll() is not None
+                or self.dependencies.listener_pids(port) != frozenset({process.pid})
+            ):
+                return False
+        return True
+
     def _wait_ready(
         self,
         component: str,
@@ -1625,6 +1633,8 @@ class MacOSBetaSession:
             if process.poll() is not None:
                 raise MacOSBetaSessionError(f"{component}_startup_failed")
             now = self.dependencies.monotonic()
+            if now >= deadline:
+                raise MacOSBetaSessionError(f"{component}_readiness_timeout")
             context = ProbeContext(
                 component=component,
                 stack=stack,
@@ -1633,7 +1643,12 @@ class MacOSBetaSession:
                 elapsed_seconds=max(0.0, now - started),
             )
             try:
-                ready = probe(context)
+                ready = (
+                    self._listeners_owned()
+                    and self.dependencies.monotonic() < deadline
+                    and probe(context)
+                    and self._listeners_owned()
+                )
             except BaseException as exc:
                 if isinstance(exc, KeyboardInterrupt):
                     raise
@@ -1797,9 +1812,10 @@ class MacOSBetaSession:
             for _warmup_index in range(2):
                 self._check_stop()
                 try:
-                    inference_warm = self.dependencies.inference_warmup(
-                        stack,
-                        orchestrator,
+                    inference_warm = (
+                        self._listeners_owned()
+                        and self.dependencies.inference_warmup(stack, orchestrator)
+                        and self._listeners_owned()
                     )
                 except Exception:
                     inference_warm = False

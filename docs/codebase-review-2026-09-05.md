@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **221 of 400 code files**, plus **186 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **222 of 400 code files**, plus **186 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1072 tests (1067 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1075 tests (1070 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1368,3 +1368,21 @@ All **41 session tests pass**, `/tmp/cyrus-beta-writer-after.log`. Full Orchestr
 Ponytail: Python's exclusive buffered binary writer now owns writing and descriptor closure. Removed the custom single-caller write loop, duplicate close/cleanup paths and separate temporary-name state: **25 fewer production lines**, no new dependency. Flush/fsync and parent-directory durability remain. The previous checkpoint's directory lock serializes cooperating session/recovery mutators; identity checks additionally detect replacements observed before publication/cleanup. These checks do not claim atomic protection against arbitrary non-cooperating writers between a stat and a pathname mutation.
 
 Coverage remains **221/400 code, 186/315 tests and 41/308 support files**, with **448 reviewed hashes verified across 1023 entries**. Session source review remains pending listener-to-child ownership before authenticated probes. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding are also open.
+
+
+### macOS listener ownership and completed supervisor source inspection
+
+Interlock-writer checkpoint committed as **586a59a**, with a clean Ponytail hook. Completed the session supervisor's remaining listener-ownership review, including fixed endpoint configuration, the unreaped child-process anchor, legacy identity fallback and the later live-lease ownership validator.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V245 | Startup probed authenticated endpoints and ran warmups before verifying that listeners belonged to the launched children. Unknown/foreign/shared ownership, or ownership lost during a readiness/warmup callback, could advance startup and reach lease activation. The free-port preflight did not prove subsequent ownership. | Share a listener check before and after readiness/warmup calls. Require exact child PID ownership of inference port 8766 and orchestrator ports 8765/8767, matching the existing live-lease contract; skip unavailable/unowned endpoints and reject results after ownership loss. Correct the legacy-fallback comment's unsupported exclusive-bind claim. |
+| V246 | The polling loop started another readiness probe at its deadline; a slow ownership inspection could also exhaust the budget before a new probe was dispatched. | Check the deadline at loop entry and again after ownership inspection, retaining the existing post-probe deadline check. |
+
+The ownership regressions produce **17 failures** against original source, `/tmp/cyrus-beta-listeners-before.log`: all three ports with absent/unknown/foreign/mixed listener sets, plus loss during each of three readiness stages and both warmups. The deadline regressions independently fail before their guards, `/tmp/cyrus-beta-probe-expiry-before.log` and `/tmp/cyrus-beta-inspection-expiry-before.log`. Fixed tests verify no probe to an unowned endpoint, no later startup stage or live-lease activation after ownership loss, and shutdown of the owned fake children. Foreign/unknown remaining listeners retain the existing incomplete-shutdown interlock behavior.
+
+All **65 focused tests pass**, `/tmp/cyrus-beta-listeners-after.log`, including valid startup, reverse shutdown, TIME_WAIT behavior, live-lease and shared HTTP/SSE probes. Full Orchestrator verification of the final source ran **1075 tests in 20.234 seconds: 1070 passed, five skipped**, `/tmp/cyrus-full-review-beta-listeners-final.log`. Five exact staged-source/test checks pass, `/tmp/cyrus-beta-listeners-staged-tests.log`. Fatal Ruff/unused-import and unchanged module-size checks pass; the worktree supervisor is 1888 lines. Ponytail: one small shared listener gate using the existing inspector and fixed port contract, with no dependency or new process abstraction.
+
+A native check opens only its own temporary loopback listener and verifies recognition of its own PID, rejection of a mismatched synthetic identity and rejection after socket close, `/tmp/cyrus-beta-listener-native.log`. No unrelated process was signalled and no live beta session, microphone, model or provider was used. Ownership checks are snapshots around requests, not an atomic OS binding between a TCP connection and a PID; they do not establish cryptographic server authentication or replace separate native/live qualification. Synchronous probes/inspections retain their individual bounded I/O timeouts; the startup deadline rejects late results rather than forcibly interrupting arbitrary injected callbacks.
+
+Coverage: **222/400 code, 186/315 tests and 41/308 support files**, with **449 reviewed hashes verified across 1023 entries**. Complete supervisor source reading and the identified timing, cancellation, private I/O, recovery and listener follow-ups are now reviewed. Older parent-PID/warmup/readiness-wrapper migration remains outside these checkpoint diffs and must still be committed with its own dependency/test changes. The whole-codebase review and final quality assessment remain incomplete: **178 code, 129 test and 267 support files** remain; U05 and compiler qualification identity binding remain open. Reviewed does not mean bug-free or native-qualified.

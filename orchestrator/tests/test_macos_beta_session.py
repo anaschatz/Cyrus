@@ -462,7 +462,7 @@ class MacOSBetaSessionTests(unittest.TestCase):
         orchestrator_ready=lambda _context: True,
         voice_ready=lambda _context: True,
         port_available=lambda _port: True,
-        listener_pids=lambda _port: frozenset(),
+        listener_pids=None,
         preflight_ready=lambda _stack: True,
         activate_live_lease=lambda _stack, _children, _commands: FakeLease(),
         process_identity=None,
@@ -506,10 +506,15 @@ class MacOSBetaSessionTests(unittest.TestCase):
                     )
             return ()
 
+        def owned_listeners(port):
+            component = "inference" if port == 8766 else "orchestrator"
+            process = spawner.processes.get(component)
+            return frozenset({process.pid}) if process and process.poll() is None else frozenset()
+
         return SessionDependencies(
             spawn=spawner,
             port_available=port_available,
-            listener_pids=listener_pids,
+            listener_pids=listener_pids or owned_listeners,
             preflight_ready=preflight_ready,
             inference_ready=inference_ready,
             inference_warmup=inference_warmup,
@@ -635,6 +640,96 @@ class MacOSBetaSessionTests(unittest.TestCase):
             self.assertEqual(current.session_directory.stat().st_mode & 0o777, 0o700)
             for path in spawner.logs.values():
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_readiness_never_probes_unowned_or_unknown_listeners(self) -> None:
+        for port in (8765, 8766, 8767):
+            for ownership in ("empty", "unknown", "foreign", "mixed"):
+                with self.subTest(port=port, ownership=ownership):
+                    spawner, clock = FakeSpawner(), FakeClock()
+                    probes, activations = [], []
+                    def probe(context):
+                        probes.append(context.component)
+                        return True
+                    def activate(*args):
+                        activations.append(True)
+                        current.request_stop()
+                        return FakeLease()
+                    dependencies = self.dependencies(spawner, clock, inference_ready=probe, orchestrator_ready=probe, activate_live_lease=activate)
+                    original_listeners = dependencies.listener_pids
+                    component = "inference" if port == 8766 else "orchestrator"
+                    def listeners(requested_port):
+                        if requested_port != port or component not in spawner.processes:
+                            return original_listeners(requested_port)
+                        return {"empty": frozenset(), "unknown": None, "foreign": frozenset({9999}), "mixed": frozenset({9999, spawner.processes[component].pid})}[ownership]
+                    dependencies.listener_pids = listeners
+                    current = self.session(dependencies)
+                    try:
+                        with self.assertRaises(MacOSBetaSessionError) as caught:
+                            current.run()
+                        expected_error = f"{component}_readiness_timeout" if ownership == "empty" else "session_shutdown_incomplete"
+                        self.assertEqual(caught.exception.code, expected_error)
+                        self.assertNotIn(component, probes)
+                        self.assertEqual(activations, [])
+                        self.assertTrue(all(process.poll() is not None for process in spawner.processes.values()))
+                    finally:
+                        (self.sessions / SESSION_INTERLOCK_FILENAME).unlink(missing_ok=True)
+
+    def test_listener_loss_during_readiness_or_warmup_stops_startup(self) -> None:
+        stages = ("inference", "orchestrator", "voice", "warmup1", "warmup2")
+        for loss_stage in stages:
+            with self.subTest(loss_stage=loss_stage):
+                spawner, clock = FakeSpawner(), FakeClock()
+                events, activations = [], []
+                lost = False
+                def step(stage):
+                    nonlocal lost
+                    events.append(stage)
+                    if stage == loss_stage:
+                        lost = True
+                    return True
+                def activate(*args):
+                    activations.append(True)
+                    current.request_stop()
+                    return FakeLease()
+                dependencies = self.dependencies(
+                    spawner, clock,
+                    inference_ready=lambda context: step(context.component),
+                    orchestrator_ready=lambda context: step(context.component),
+                    voice_ready=lambda context: step(context.component),
+                    inference_warmup=lambda *args: step("warmup1" if "warmup1" not in events else "warmup2"),
+                    activate_live_lease=activate,
+                )
+                original_listeners = dependencies.listener_pids
+                dependencies.listener_pids = lambda port: frozenset({9999}) if lost and port == 8766 else original_listeners(port)
+                current = self.session(dependencies)
+                try:
+                    with self.assertRaises(MacOSBetaSessionError) as caught:
+                        current.run()
+                    self.assertEqual(caught.exception.code, "session_shutdown_incomplete")
+                    self.assertEqual(events, list(stages[:stages.index(loss_stage) + 1]))
+                    self.assertEqual(activations, [])
+                    self.assertTrue(all(process.poll() is not None for process in spawner.processes.values()))
+                finally:
+                    (self.sessions / SESSION_INTERLOCK_FILENAME).unlink(missing_ok=True)
+
+    def test_readiness_does_not_start_another_probe_at_the_deadline(self) -> None:
+        for slow_inspection in (False, True):
+            with self.subTest(slow_inspection=slow_inspection):
+                spawner, clock = FakeSpawner(), FakeClock()
+                probes = []
+                dependencies = self.dependencies(
+                    spawner, clock, inference_ready=lambda context: probes.append(clock.value) or False,
+                )
+                if slow_inspection:
+                    original_listeners = dependencies.listener_pids
+                    def slow_listeners(port):
+                        clock.value = 0.3
+                        return original_listeners(port)
+                    dependencies.listener_pids = slow_listeners
+                with self.assertRaises(MacOSBetaSessionError) as caught:
+                    self.session(dependencies).run()
+                self.assertEqual(caught.exception.code, "inference_readiness_timeout")
+                self.assertEqual(probes, [] if slow_inspection else [0.0, 0.1, 0.2])
 
     def test_readiness_success_at_or_after_deadline_is_rejected(self) -> None:
         for finished_at in (0.3, 0.4):
@@ -1106,7 +1201,6 @@ class MacOSBetaSessionTests(unittest.TestCase):
                 clock,
                 voice_ready=voice_ready,
                 port_available=port_available,
-                listener_pids=lambda _port: frozenset(),
             )
         )
 
