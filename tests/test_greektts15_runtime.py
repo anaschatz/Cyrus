@@ -149,6 +149,47 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         self.assertFalse(context.process.killed)
         self.assertTrue(context.parent.closed)
 
+    def test_isolated_playback_startup_failures_release_owned_resources(self) -> None:
+        for phase in ("factory", "start", "poll", "recv"):
+            with self.subTest(phase=phase):
+                context = self._fake_playback_process_context()
+                context.parent, context.child = runtime.multiprocessing.Pipe(duplex=True)
+                context.child.send_bytes(b"R")
+                create_process = context.Process
+
+                def process_factory(**kwargs):
+                    if phase == "factory":
+                        raise OSError("synthetic process construction failure")
+                    process = create_process(**kwargs)
+                    if phase == "start":
+                        process.start = mock.Mock(side_effect=OSError("synthetic process start failure"))
+                    return process
+
+                context.Process = process_factory
+                if phase in ("poll", "recv"):
+                    operation = "poll" if phase == "poll" else "recv_bytes"
+                    setattr(context.parent, operation, mock.Mock(side_effect=OSError("synthetic IPC failure")))
+                try:
+                    with self.assertRaises((OSError, BackendError)):
+                        IsolatedSoundDevicePcmPlayback(process_context=context)
+                    self.assertTrue(context.child.closed)
+                    self.assertTrue(context.parent.closed)
+                    if context.process is not None:
+                        self.assertFalse(context.process.is_alive())
+                finally:
+                    context.child.close()
+                    context.parent.close()
+
+    def test_isolated_playback_requires_finite_timeouts_before_creating_pipes(self) -> None:
+        for parameter in ("startup_timeout_seconds", "shutdown_timeout_seconds"):
+            for value in (float("nan"), float("inf")):
+                with self.subTest(parameter=parameter, value=value):
+                    context = self._fake_playback_process_context()
+                    with self.assertRaises(ValueError):
+                        playback = IsolatedSoundDevicePcmPlayback(process_context=context, **{parameter: value})
+                        playback.abort()
+                    self.assertIsNone(context.process)
+
     def test_cancelled_generation_is_closed_and_metal_is_synchronized(self) -> None:
         cancelled = threading.Event()
         state = {"closed": False, "synchronized": 0, "cleared": 0}

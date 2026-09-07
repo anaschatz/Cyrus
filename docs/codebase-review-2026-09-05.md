@@ -2,7 +2,7 @@
 
 Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **285 of 401 code files**, plus **235 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **807 tests (792 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **809 tests (794 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1987,3 +1987,16 @@ Playback cleanup checkpoint committed as **19c5d94**, with a clean mandatory Pon
 Extended two existing tests and added one parser test in the same module. Initial regressions produce **four failures and five errors**, `/tmp/cyrus-greektts-manifest-before.log`; the additional oversized-JSON-integer case reproduces **two errors**, `/tmp/cyrus-greektts-json-integer-before.log`. All **36 focused checks pass**, `/tmp/cyrus-greektts-manifest-after.log`. Full Voice: **807 tests in 8.489 seconds, 792 passed and 15 skipped**, `/tmp/cyrus-full-review-greektts-manifest-voice.log`. Fatal Ruff and unchanged module boundaries pass. The first focused command used a nonexistent qualification test-module name; the corrected command above completed successfully.
 
 Ponytail: one read shared by hashing and parsing, existing error boundaries, and stdlib file_digest replacing the manual adapter-hash loop; **eight net production lines**, no dependency or extra test file. Tests use disposable synthetic approval/checkpoint files and controlled file replacement, with no model loading or actual speech. Full-suite native preflight scope is unchanged. All **561 reviewed hashes across 1048 entries** are current; inspection coverage remains **285/401 code, 235/339 tests and 41/308 support**. Adapter loading identity after validation, isolated playback IPC ownership/deadlines and decoder/queue drain behavior remain separate follow-up checks. Whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment remain incomplete.
+
+
+### Isolated GreekTTS playback startup ownership
+
+Approval document checkpoint committed as **03aead4**, with a clean mandatory Ponytail review.
+
+**V337 resolved:** exceptions during process construction/start or the initial IPC poll escaped before resource cleanup. Both pipe endpoints could remain open, and a started helper could remain active. Child-pipe closure now surrounds process setup, and one outer failure boundary invokes existing abort cleanup across startup. Abort tolerates the absence of a constructed process. Initial poll OSError also uses the existing typed startup-failure error; construction/start exceptions retain their original propagation.
+
+**V338 resolved:** NaN and infinite startup/shutdown timeouts passed the positive-only guard. The constructor now requires positive finite values before allocating playback resources. Existing finite timeout values and defaults are unchanged.
+
+Two new regression methods cover four startup phases and four invalid-timeout cases. **Seven baseline failures** reproduce with both the initial fake pipes, `/tmp/cyrus-playback-startup-before.log`, and the final real disposable multiprocessing pipes, `/tmp/cyrus-playback-startup-real-pipes-before.log`. The latter executes the exact HEAD class definition in an isolated test interpreter; it does not overwrite working source. The receive-error case already cleaned up and remains a positive regression. All **35 focused checks pass**, `/tmp/cyrus-playback-startup-after.log`. Full Voice: **809 tests in 8.114 seconds, 794 passed and 15 skipped**, `/tmp/cyrus-full-review-playback-startup-voice.log`. Fatal Ruff and unchanged module boundaries pass.
+
+Ponytail: reuse existing abort, move ownership into try/finally and remove repeated startup abort calls; **four net production lines**, no helper, dependency or extra test file. New tests use real owned pipes and fake processes, not a CoreAudio helper or model. Full-suite native preflight scope is unchanged. All **561 reviewed hashes across 1048 entries** are current; inspection coverage remains **285/401 code, 235/339 tests and 41/308 support**. Failures within abort itself, full IPC frame deadlines and decoder/queue drain behavior remain follow-up checks; this checkpoint does not claim those are resolved. Whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment remain incomplete.

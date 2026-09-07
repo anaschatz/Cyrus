@@ -614,31 +614,35 @@ class IsolatedSoundDevicePcmPlayback:
         startup_timeout_seconds: float = 5.0,
         shutdown_timeout_seconds: float = 10.0,
     ) -> None:
-        if startup_timeout_seconds <= 0 or shutdown_timeout_seconds <= 0:
-            raise ValueError("Playback helper timeouts must be positive")
+        if not all(math.isfinite(value) and value > 0 for value in (startup_timeout_seconds, shutdown_timeout_seconds)):
+            raise ValueError("Playback helper timeouts must be positive and finite")
         context = process_context or multiprocessing.get_context("spawn")
         self._connection, child_connection = context.Pipe(duplex=True)
-        self._process = context.Process(
-            target=_coreaudio_playback_worker,
-            args=(child_connection,),
-            name="jarvis-coreaudio-playback",
-            daemon=True,
-        )
+        self._process = None
         self._aborted = threading.Event()
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
-        self._process.start()
-        child_connection.close()
-        if not self._connection.poll(startup_timeout_seconds):
-            self.abort()
-            raise BackendError("tts.playback_helper_start_timeout", "CoreAudio helper did not start", subsystem="tts")
         try:
-            message = self._connection.recv_bytes()
-        except (EOFError, OSError) as exc:
+            try:
+                self._process = context.Process(
+                    target=_coreaudio_playback_worker,
+                    args=(child_connection,),
+                    name="jarvis-coreaudio-playback",
+                    daemon=True,
+                )
+                self._process.start()
+            finally:
+                child_connection.close()
+            try:
+                if not self._connection.poll(startup_timeout_seconds):
+                    raise BackendError("tts.playback_helper_start_timeout", "CoreAudio helper did not start", subsystem="tts")
+                message = self._connection.recv_bytes()
+            except (EOFError, OSError) as exc:
+                raise BackendError("tts.playback_helper_start_failed", "CoreAudio helper failed to start", subsystem="tts") from exc
+            if message != PLAYBACK_HELPER_READY:
+                raise BackendError("tts.playback_helper_start_failed", "CoreAudio helper failed to start", subsystem="tts")
+        except BaseException:
             self.abort()
-            raise BackendError("tts.playback_helper_start_failed", "CoreAudio helper failed to start", subsystem="tts") from exc
-        if message != PLAYBACK_HELPER_READY:
-            self.abort()
-            raise BackendError("tts.playback_helper_start_failed", "CoreAudio helper failed to start", subsystem="tts")
+            raise
 
     def write(self, chunk: PcmChunk) -> None:
         if chunk.sample_rate != SAMPLE_RATE or chunk.channels != 1 or not chunk.pcm16 or len(chunk.pcm16) % 2:
@@ -677,10 +681,10 @@ class IsolatedSoundDevicePcmPlayback:
         if self._aborted.is_set():
             return
         self._aborted.set()
-        if self._process.is_alive():
+        if self._process is not None and self._process.is_alive():
             self._process.terminate()
             self._process.join(timeout=1.0)
-        if self._process.is_alive():
+        if self._process is not None and self._process.is_alive():
             self._process.kill()
             self._process.join(timeout=1.0)
         self._connection.close()
