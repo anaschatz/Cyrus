@@ -91,12 +91,12 @@ python3.11 scripts/inspect_macos_helper.py \
   --helper "$embedded_scheduler_helper" \
   --output "$repo_root/dist/jarvis-scheduler-helper-artifact.json"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
-/usr/sbin/spctl --assess --type execute --verbose=2 "$app"
 /usr/bin/ditto -c -k --keepParent "$app" "$build_root/JARVIS-Voice.zip"
 /usr/bin/xcrun notarytool submit "$build_root/JARVIS-Voice.zip" \
   --keychain-profile "$JARVIS_MACOS_NOTARY_PROFILE" --wait
 /usr/bin/xcrun stapler staple "$app"
 /usr/bin/xcrun stapler validate "$app"
+/usr/sbin/spctl --assess --type execute --verbose=2 "$app"
 
 print "Signed and notarized app created at: $app"
 print "No model, user config, raw audio, package installation, or network model acquisition was included."

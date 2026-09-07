@@ -21,9 +21,12 @@ export JARVIS_MACOS_NOTARY_PROFILE='jarvis-notary'
 ```
 
 The script fails closed unless the host, Python, PyInstaller and helper
-architecture match the locked profile. It runs the full suite, builds the
-onedir app, verifies hardened-runtime signing, submits the app for notarization
-and staples the accepted ticket. Microphone and Input Monitoring permissions
+architecture match the locked profile. It runs the Voice and Orchestrator test
+suites, builds the onedir app, verifies hardened-runtime signing, submits the app for notarization
+and staples and validates the accepted ticket before assessing the app with
+Gatekeeper. This follows [Apple's notarization workflow](https://developer.apple.com/videos/play/wwdc2019/703/);
+a newly signed app can fail Gatekeeper assessment before it is notarized.
+Microphone and Input Monitoring permissions
 must then be granted to this exact signed bundle identity. Source-interpreter
 TCC grants do not transfer to the app.
 
