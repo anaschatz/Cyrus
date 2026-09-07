@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **295 of 401 code files**, plus **238 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **297 of 401 code files**, plus **240 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **820 tests (805 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **824 tests (809 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2084,3 +2084,18 @@ Curriculum completeness was committed as **5aa4716**, with a clean mandatory Pon
 Extended three existing waveform tests and added two regression methods covering odd-byte/full-frame truncation and both writers with a regular temporary file, a symlink, or an injected replace failure. Matching hashes ensure waveform checks are actually reached. **Nine failures and two errors reproduce before the fixes**, `/tmp/cyrus-training-artifacts-before.log`; all **60 focused checks pass**, `/tmp/cyrus-training-artifacts-after.log`. Full Voice: **820 tests in 9.387 seconds, 805 passed and 15 skipped**, `/tmp/cyrus-full-review-training-artifacts-voice.log`. Fatal Ruff, diff whitespace and unchanged module boundaries pass. Tests use synthetic PCM, disposable files and a fake encoder; no audio device/model is used. Full-suite non-prompting native preflight scope is unchanged.
 
 Ponytail reuses the existing atomic writer, replaces the manual training hash loop with `hashlib.file_digest`, and simplifies the WAV format comparison using the same constants: **one fewer net production line**, leaving training at 2473 lines under its unchanged 2475-line ceiling. Coverage is **295/401 code, 238/340 tests and 41/308 support**, with **574 reviewed hashes verified across 1049 entries**. Malformed training/pilot evidence, numerical/lineage checks, remaining multi-file publication boundaries, native stop/run-loop timing, broader U05 privacy, compiler qualification binding and the whole-codebase final assessment remain unfinished.
+
+
+### GreekTTS sidecar startup and shutdown
+
+Waveform/JSON publication was committed as **48d6fc5**, with a clean mandatory Ponytail review. Completed the full sidecar proxy, actual worker script, existing proxy tests and fake worker fixture, and traced runtime/calibration construction and callback ownership.
+
+**V349 resolved:** failures starting the writer/reader thread escaped after process creation, while a missing pipe terminated the worker without closing its remaining stream. One constructor failure boundary now invokes close after acquiring the process pipes. Cleanup tolerates absent/unstarted threads, and an unready worker is terminated without waiting for an acknowledgment it cannot yet send.
+
+**V350 resolved:** closing accepted additional units and retained pending units after shutdown, leaving is_idle false with no worker able to finish them. Admission now closes under the existing lock before the graceful-close request/wait; final cleanup clears pending/started tracking. Repeated close remains idempotent. The closing flag is distinct from the writer stop event so the writer can still send the graceful-close command.
+
+**V351 resolved:** process-termination errors skipped pipe closure and thread joins. These cleanup steps now run in finally around termination; the termination error still propagates. This guarantees those cleanup attempts, not successful termination when the operating system refuses it.
+
+Four new regression methods cover writer-start/reader-start failures, a missing stdout pipe, close with/without pending units, admission during the acknowledgment wait and a termination error. **Seven baseline failures** reproduce, `/tmp/cyrus-sidecar-lifecycle-before.log`. Tests use owned harmless Python children running the existing fake worker, and explicitly reap them even on the broken baseline. All **13 focused integration checks pass**, `/tmp/cyrus-sidecar-lifecycle-integration.log`. Full Voice: **824 tests in 9.331 seconds, 809 passed and 15 skipped**, `/tmp/cyrus-full-review-sidecar-lifecycle-voice.log`. Fatal Ruff and unchanged module boundaries pass. No real sidecar model, playback helper or speech was run; full-suite non-prompting native preflight scope is unchanged.
+
+Ponytail reuses close, the existing lock/events and stdlib file_digest; removes one unused worker import; adds **seven net production lines** across proxy/worker. The first mandatory hook found one redundant temporary error variable; it was removed and the checkpoint amended after a fresh review. Coverage is **297/401 code, 240/340 tests and 41/308 support**, with **578 reviewed hashes verified across 1049 entries**. Raw-pipe short writes, message/parser/numeric validation, unexpected closure and callback error handling remain follow-up boundaries. Remaining training/native/privacy/compiler-binding review and final whole-codebase quality assessment are unfinished.

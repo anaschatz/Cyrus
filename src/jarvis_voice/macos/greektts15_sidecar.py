@@ -23,11 +23,8 @@ COMMAND_QUEUE_CAPACITY = 32
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def validate_worker_python(artifact: ArtifactConfig) -> Path:
@@ -95,6 +92,7 @@ class GreekTtsF1SidecarBackend:
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
         self._commands: queue.Queue[dict[str, object] | None] = queue.Queue(maxsize=COMMAND_QUEUE_CAPACITY)
         self._lock = threading.RLock()
+        self._closing = False
         self._pending: dict[tuple[str, int, int], SpeechUnit] = {}
         self._started: set[tuple[str, int, int]] = set()
         self._cancelled_through_epoch = 0
@@ -113,35 +111,36 @@ class GreekTtsF1SidecarBackend:
             shell=False,
             start_new_session=True,
         )
-        if self._process.stdin is None or self._process.stdout is None:
-            self._terminate_process()
-            raise BackendError("tts.greektts15.worker_start_failed", "GreekTTS worker pipes are unavailable", subsystem="tts")
         self._stdin: BinaryIO = self._process.stdin
         self._stdout: BinaryIO = self._process.stdout
-        self._writer = threading.Thread(target=self._writer_loop, name="jarvis-greektts-sidecar-writer", daemon=True)
-        self._reader = threading.Thread(target=self._reader_loop, name="jarvis-greektts-sidecar-reader", daemon=True)
-        self._writer.start()
-        self._reader.start()
-        self._publish(
-            {
-                "type": "init",
-                "model_root": config.model_root,
-                "approval_manifest_path": config.approval_manifest_path,
-                "approval_manifest_sha256": config.approval_manifest_sha256,
-                "repository_root": config.repository_root,
-                "warm_on_start": config.warm_on_start,
-                "queue_capacity": queue_capacity,
-                "maximum_text_bytes": maximum_text_bytes,
-            }
-        )
-        if not self._ready.wait(timeout=startup_timeout_seconds) or self._last_error is not None:
-            error = self._last_error or BackendError(
-                "tts.greektts15.worker_start_timeout",
-                "GreekTTS worker did not become ready",
-                subsystem="tts",
+        try:
+            if self._process.stdin is None or self._process.stdout is None:
+                raise BackendError("tts.greektts15.worker_start_failed", "GreekTTS worker pipes are unavailable", subsystem="tts")
+            self._writer = threading.Thread(target=self._writer_loop, name="jarvis-greektts-sidecar-writer", daemon=True)
+            self._reader = threading.Thread(target=self._reader_loop, name="jarvis-greektts-sidecar-reader", daemon=True)
+            self._writer.start()
+            self._reader.start()
+            self._publish(
+                {
+                    "type": "init",
+                    "model_root": config.model_root,
+                    "approval_manifest_path": config.approval_manifest_path,
+                    "approval_manifest_sha256": config.approval_manifest_sha256,
+                    "repository_root": config.repository_root,
+                    "warm_on_start": config.warm_on_start,
+                    "queue_capacity": queue_capacity,
+                    "maximum_text_bytes": maximum_text_bytes,
+                }
             )
+            if not self._ready.wait(timeout=startup_timeout_seconds) or self._last_error is not None:
+                raise self._last_error or BackendError(
+                    "tts.greektts15.worker_start_timeout",
+                    "GreekTTS worker did not become ready",
+                    subsystem="tts",
+                )
+        except BaseException:
             self.close()
-            raise error
+            raise
 
     @staticmethod
     def _identity(unit: SpeechUnit) -> tuple[str, int, int]:
@@ -162,6 +161,8 @@ class GreekTtsF1SidecarBackend:
         with self._lock:
             if self._last_error is not None:
                 raise self._last_error
+            if self._closing:
+                raise BackendError("tts.greektts15.worker_closed", "GreekTTS worker is closed", subsystem="tts")
             if unit.epoch <= self._cancelled_through_epoch:
                 return
             if identity in self._pending:
@@ -343,27 +344,34 @@ class GreekTtsF1SidecarBackend:
             process.wait(timeout=1.0)
 
     def close(self) -> None:
-        if self._stop.is_set():
-            return
+        with self._lock:
+            if self._closing:
+                return
+            self._closing = True
         try:
-            if self._last_error is None and self._process.poll() is None:
+            if self._ready.is_set() and self._last_error is None and self._process.poll() is None:
                 self._publish({"type": "close"})
                 self._closed.wait(timeout=self._shutdown_timeout_seconds)
         except BackendError:
             pass
         finally:
             self._stop.set()
+            with self._lock:
+                self._pending.clear()
+                self._started.clear()
             try:
                 self._commands.put_nowait(None)
             except queue.Full:
                 pass
-            self._terminate_process()
-            for stream in (getattr(self, "_stdin", None), getattr(self, "_stdout", None)):
-                if stream is not None:
-                    try:
-                        stream.close()
-                    except OSError:
-                        pass
-            for thread in (getattr(self, "_writer", None), getattr(self, "_reader", None)):
-                if thread is not None and thread is not threading.current_thread():
-                    thread.join(timeout=1.0)
+            try:
+                self._terminate_process()
+            finally:
+                for stream in (getattr(self, "_stdin", None), getattr(self, "_stdout", None)):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
+                for thread in (getattr(self, "_writer", None), getattr(self, "_reader", None)):
+                    if thread is not None and thread.ident is not None and thread is not threading.current_thread():
+                        thread.join(timeout=1.0)
