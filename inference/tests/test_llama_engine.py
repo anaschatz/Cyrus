@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
+import socket
+import tempfile
 import threading
 import time
 import unittest
@@ -12,6 +15,7 @@ from jarvis_inference.contracts import Capabilities, normalize_request
 from jarvis_inference.engine import EngineProtocolFailure, PreparedPrompt
 from jarvis_inference.gemma4 import GEMMA4_PROMPT_PROFILE
 from jarvis_inference.llama_engine import REQUIRED_FLAGS, LlamaServerEngine
+from jarvis_inference.private_temp import PrivateRuntimeDirectory, PrivateTempFailure
 from jarvis_inference.strict_json import canonical_bytes, parse_body
 from jarvis_inference.windows_process import WindowsProcessFailure
 
@@ -70,6 +74,62 @@ def manifest(prompt_profile=None):
 
 
 class LlamaEngineTests(unittest.TestCase):
+    def test_failed_temp_cleanup_retains_owner_until_a_successful_retry(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve()) as temporary:
+            owner = PrivateRuntimeDirectory(Path(temporary), prefix="cyrus-test-")
+            path = owner.open()
+            engine = LlamaServerEngine(manifest())
+            engine._runtime_temp = owner
+            with patch("jarvis_inference.private_temp.shutil.rmtree", side_effect=PermissionError("busy")):
+                with self.assertRaises(PrivateTempFailure):
+                    engine._close_runtime_temp()
+            self.assertIs(engine._runtime_temp, owner)
+            self.assertEqual(owner.path, path)
+            engine._close_runtime_temp()
+            self.assertIsNone(engine._runtime_temp)
+            self.assertIsNone(owner.path)
+            self.assertFalse(path.exists())
+
+    def test_cancel_interrupts_a_blocked_response_read(self) -> None:
+        for operation in ("cancel", "inject_cancel"):
+            with self.subTest(operation=operation):
+                client, peer = socket.socketpair()
+                peer.sendall(b"HTTP/1.1 200 OK\r\n\r\n")
+                response = http.client.HTTPResponse(client)
+                response.begin()
+                engine = LlamaServerEngine(manifest())
+                engine.process = FakeProcess()
+                engine._active_response = response
+                entered = threading.Event()
+                failures = []
+
+                def read():
+                    entered.set()
+                    try:
+                        response.readline()
+                    except Exception as exc:
+                        failures.append(exc)
+
+                reader = threading.Thread(target=read, daemon=True)
+                canceller = threading.Thread(target=getattr(engine, operation), daemon=True)
+                try:
+                    reader.start()
+                    self.assertTrue(entered.wait(1))
+                    time.sleep(0.02)
+                    canceller.start()
+                    canceller.join(0.5)
+                    self.assertFalse(canceller.is_alive(), "cancel waited for the remote body")
+                    reader.join(0.5)
+                    self.assertFalse(reader.is_alive())
+                    self.assertEqual(failures, [])
+                finally:
+                    peer.close()
+                    reader.join(1)
+                    if canceller.ident is not None:
+                        canceller.join(1)
+                    response.close()
+                    client.close()
+
     def test_spawn_rehashes_and_uses_frozen_flags_and_environment_secret(self) -> None:
         process = FakeProcess()
         with patch("jarvis_inference.llama_engine.verify_artifacts") as verify, \
@@ -171,6 +231,11 @@ class LlamaEngineTests(unittest.TestCase):
         self.assertEqual([(event.kind, event.text, event.finish_reason, event.completion_tokens) for event in events], [
             ("text", "hi", None, None), ("final", "", "stop", 2),
         ])
+        stream = FakeStream()
+        stream.lines = iter([b"data: " + b"[" * 2000 + b"0" + b"]" * 2000 + b"\n"])
+        with patch("jarvis_inference.llama_engine.urllib.request.urlopen", return_value=stream):
+            with self.assertRaises(EngineProtocolFailure):
+                list(engine.generate(prepared, threading.Event(), time.monotonic() + 2))
 
     def test_qualification_metric_is_serial_bound_content_free_and_one_shot(self) -> None:
         request = normalize_request(

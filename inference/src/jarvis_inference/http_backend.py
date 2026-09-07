@@ -39,5 +39,5 @@ class BackendHTTP:
             if raw.startswith(b"\xef\xbb\xbf"):
                 raise ValueError
             return parse_text(raw.decode("utf-8", errors="strict"))
-        except (ApplianceError, UnicodeError, ValueError) as exc:
+        except (ApplianceError, ValueError, RecursionError) as exc:
             raise EngineProtocolFailure("invalid backend JSON") from exc

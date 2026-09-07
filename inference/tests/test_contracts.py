@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from jarvis_inference.contracts import Capabilities, normalize_request, validate_generated_tool
+from jarvis_inference.contracts import Capabilities, normalize_request, validate_generated_tool, validate_structured_content
 from jarvis_inference.errors import ApplianceError
-from jarvis_inference.strict_json import parse_body, parse_text
+from jarvis_inference.strict_json import parse_body
 
 
 OBJECT_SCHEMA = {
@@ -44,6 +44,9 @@ class RequestContractTests(unittest.TestCase):
         }
         request = normalize_request(raw, alias="jarvis-local", capabilities=self.capabilities, context_window=4096)
         self.assertEqual(request.response_format.type, "json_schema")
+        with self.assertRaises(ApplianceError) as caught:
+            validate_structured_content("[" * 2000 + "0" + "]" * 2000, request)
+        self.assertEqual(caught.exception.status, 502)
         for strict in (False, None):
             raw["response_format"]["json_schema"]["strict"] = strict
             with self.assertRaises(ApplianceError):
@@ -67,6 +70,11 @@ class RequestContractTests(unittest.TestCase):
         ]
         request = normalize_request(raw, alias="jarvis-local", capabilities=self.capabilities, context_window=4096)
         self.assertEqual(request.messages[1].tool_calls[0].arguments, '{"city":"Athens"}')
+        for depth in (100, 2000):
+            raw["messages"][1]["tool_calls"][0]["function"]["arguments"] = "[" * depth + "0" + "]" * depth
+            with self.subTest(depth=depth), self.assertRaises(ApplianceError) as caught:
+                normalize_request(raw, alias="jarvis-local", capabilities=self.capabilities, context_window=4096)
+            self.assertEqual((caught.exception.status, caught.exception.code), (400, "invalid_tool_arguments"))
 
     def test_unknown_fields_and_developer_rejected(self) -> None:
         raw = self.base()
@@ -85,6 +93,14 @@ class RequestContractTests(unittest.TestCase):
         raw.update({"max_tokens": 4, "max_completion_tokens": 4})
         with self.assertRaises(ApplianceError):
             normalize_request(raw, alias="jarvis-local", capabilities=self.capabilities, context_window=4096)
+
+    def test_nonstring_roles_are_rejected_as_client_errors(self) -> None:
+        for role in ([], {}, None, True, 1):
+            raw = self.base()
+            raw["messages"][0]["role"] = role
+            with self.subTest(role=role), self.assertRaises(ApplianceError) as caught:
+                normalize_request(raw, alias="jarvis-local", capabilities=self.capabilities, context_window=4096)
+            self.assertEqual(caught.exception.status, 400)
 
     def test_supported_scalar_fields_and_stream_options(self) -> None:
         raw = self.base()
@@ -162,3 +178,6 @@ class RequestContractTests(unittest.TestCase):
         raw["tool_choice"] = "required"
         request = normalize_request(raw, alias="jarvis-local", capabilities=self.capabilities, context_window=4096)
         self.assertEqual(validate_generated_tool("set_value", '{"value":1.50}', request), '{"value":1.5}')
+        with self.assertRaises(ApplianceError) as caught:
+            validate_generated_tool("set_value", "[" * 2000 + "0" + "]" * 2000, request)
+        self.assertEqual(caught.exception.status, 502)

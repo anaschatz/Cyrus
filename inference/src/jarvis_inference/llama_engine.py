@@ -449,7 +449,7 @@ class LlamaServerEngine:
                 data = line[6:]
                 try:
                     event = parse_body(data)
-                except ApplianceError as exc:
+                except (ApplianceError, RecursionError) as exc:
                     raise EngineProtocolFailure("invalid backend SSE JSON") from exc
                 if not isinstance(event, dict) or not isinstance(event.get("content", ""), str):
                     raise EngineProtocolFailure("invalid completion event")
@@ -473,8 +473,8 @@ class LlamaServerEngine:
                     final = event
                     break
         finally:
-            response.close()
             with self._active_lock:
+                response.close()
                 self._active_response = None
         if final is None:
             raise EngineProtocolFailure("backend stream ended without a terminal event")
@@ -488,6 +488,8 @@ class LlamaServerEngine:
         if count != len(accepted_token_ids):
             raise EngineProtocolFailure("backend token count does not match accepted token IDs")
         stop_type = final.get("stop_type")
+        if not isinstance(stop_type, str):
+            raise EngineProtocolFailure("unsupported backend finish reason")
         reason = {"limit": "length", "eos": "stop", "word": "stop"}.get(stop_type)
         if reason is None:
             raise EngineProtocolFailure("unsupported backend finish reason")
@@ -532,7 +534,7 @@ class LlamaServerEngine:
                 return
             try:
                 value = parse_text(combined, nested=True)
-            except ApplianceError as exc:
+            except (ApplianceError, RecursionError) as exc:
                 if prompt.request.tool_choice == "auto" and combined:
                     if qualification_metric is not None:
                         self._publish_qualification_generation_metric(
@@ -577,16 +579,27 @@ class LlamaServerEngine:
             raise EngineProtocolFailure("slot did not become idle after erase")
         self.phase = "idle"
 
-    def cancel(self) -> None:
-        cancellation_deadline = time.monotonic() + IDLE_OR_EXIT_SECONDS
+    def _interrupt_response(self) -> None:
         with self._active_lock:
             response = self._active_response
-        if response is not None:
+            if response is None:
+                return
             try:
-                response.close()
-            except OSError:
+                connection = socket.socket(fileno=response.fileno())
+                try:
+                    connection.shutdown(socket.SHUT_RDWR)
+                finally:
+                    connection.detach()
+            except (OSError, ValueError, AttributeError):
+                # HTTPResponse may already have dropped its file on EOF.
                 pass
-        # Closing the response is cooperative cancellation.  Fail closed if the
+        # The reader owns response.close(); closing its buffered file here can
+        # block on readline's lock. Socket shutdown wakes that reader instead.
+
+    def cancel(self) -> None:
+        cancellation_deadline = time.monotonic() + IDLE_OR_EXIT_SECONDS
+        self._interrupt_response()
+        # Disconnecting the response is cooperative cancellation. Fail closed if the
         # sole slot does not become idle within one second: the old process is
         # then terminated, satisfying the two-second idle-or-exited boundary.
         http = self.http
@@ -614,13 +627,7 @@ class LlamaServerEngine:
             raise EngineFailure("llama-server is unavailable")
         pid = process.pid
         phase = self.phase
-        with self._active_lock:
-            response = self._active_response
-        if response is not None:
-            try:
-                response.close()
-            except OSError:
-                pass
+        self._interrupt_response()
         self.breaker.record_restart()
         self.restart_recorded = True
         self._terminate("cancel")
@@ -725,6 +732,6 @@ class LlamaServerEngine:
         if not self._process_tree_drained:
             return
         owner = self._runtime_temp
-        self._runtime_temp = None
         if owner is not None:
             owner.close()
+        self._runtime_temp = None

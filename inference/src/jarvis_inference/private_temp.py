@@ -201,7 +201,6 @@ class PrivateRuntimeDirectory:
         path = self.path
         if path is None:
             return
-        self.path = None
         validate_private_temp_directory(path)
         try:
             shutil.rmtree(path)
@@ -209,6 +208,7 @@ class PrivateRuntimeDirectory:
             raise PrivateTempFailure(
                 "private temporary directory cleanup failed"
             ) from exc
+        self.path = None
 
     def __enter__(self) -> Path:
         return self.open()

@@ -27,6 +27,7 @@ class MlxWorkerEngine:
         self.breaker = breaker or RestartCircuitBreaker()
         self.process: subprocess.Popen[bytes] | None = None
         self._lock = threading.Lock()
+        self._read_buffer = bytearray()
         self.restart_recorded = False
         self.phase = "stopped"
         self.last_termination_elapsed = 0.0
@@ -54,9 +55,9 @@ class MlxWorkerEngine:
             }
             environment["JARVIS_MLX_MODEL_DIR"] = str(model_dir)
             environment["PYTHONNOUSERSITE"] = "1"
-            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            self._read_buffer.clear()
             self.process = subprocess.Popen(
-                [str(executable), "-I", str(worker)], stdin=subprocess.PIPE,
+                [str(executable), "-I", "-B", str(worker)], stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 env=environment, cwd=str(self.manifest.root), close_fds=True,
             )
@@ -137,18 +138,15 @@ class MlxWorkerEngine:
                 self.phase = "final"
                 count = event.get("completion_tokens")
                 reason = event.get("finish_reason")
-                if type(count) is not int or count < 0 or reason not in {"stop", "length"}:
+                if type(count) is not int or count < 0 or not isinstance(reason, str) or reason not in {"stop", "length"}:
                     raise EngineProtocolFailure("MLX worker did not expose exact token accounting")
                 combined = "".join(parts)
-                for stop in prompt.request.stop:
-                    position = combined.find(stop)
-                    if position >= 0:
-                        combined = combined[:position]
-                        break
+                positions = (combined.find(stop) for stop in prompt.request.stop)
+                combined = combined[:min((position for position in positions if position >= 0), default=len(combined))]
                 if prompt.request.tools:
                     try:
                         value = parse_text(combined, nested=True)
-                    except ApplianceError as exc:
+                    except (ApplianceError, RecursionError) as exc:
                         if prompt.request.tool_choice == "auto" and combined:
                             yield GenerationEvent("text", text=combined)
                             yield GenerationEvent("final", finish_reason=reason, completion_tokens=count)
@@ -243,20 +241,27 @@ class MlxWorkerEngine:
         process = self.process
         if process is None or process.stdout is None:
             raise EngineFailure("MLX worker is unavailable")
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            self._terminate("timeout")
-            raise EngineFailure("MLX worker deadline expired")
-        readable, _, _ = select.select([process.stdout], [], [], remaining)
-        if not readable:
-            self._terminate("timeout")
-            raise EngineFailure("MLX worker deadline expired")
-        raw = process.stdout.readline(BACKEND_EVENT_BYTES + 1)
-        if not raw or len(raw) > BACKEND_EVENT_BYTES:
+        while b"\n" not in self._read_buffer:
+            if len(self._read_buffer) > BACKEND_EVENT_BYTES:
+                raise EngineProtocolFailure("MLX worker emitted no valid bounded event")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                self._terminate("timeout")
+                raise EngineFailure("MLX worker deadline expired")
+            # Read the descriptor directly: buffered readline can block after
+            # select or hide the next complete event from its readiness check.
+            chunk = os.read(process.stdout.fileno(), min(65536, BACKEND_EVENT_BYTES + 1 - len(self._read_buffer)))
+            if not chunk:
+                raise EngineProtocolFailure("MLX worker emitted no valid bounded event")
+            self._read_buffer.extend(chunk)
+        end = self._read_buffer.index(b"\n") + 1
+        raw = bytes(self._read_buffer[:end])
+        del self._read_buffer[:end]
+        if len(raw) > BACKEND_EVENT_BYTES:
             raise EngineProtocolFailure("MLX worker emitted no valid bounded event")
         try:
             value = parse_body(raw.rstrip(b"\r\n"))
-        except ApplianceError as exc:
+        except (ApplianceError, RecursionError) as exc:
             raise EngineProtocolFailure("MLX worker emitted invalid JSON") from exc
         if not isinstance(value, dict):
             raise EngineProtocolFailure("MLX worker event is not an object")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 import math
 from typing import Any
@@ -217,7 +217,10 @@ def _historical_call(raw: Any, index: int, tools: dict[str, ToolDefinition]) -> 
     if not isinstance(name, str) or name not in tools:
         raise invalid("invalid_parameter", "A historical tool call references an undeclared function.", f"messages.{index}.tool_calls.0.function.name")
     arguments = _string(fn["arguments"], f"messages.{index}.tool_calls.0.function.arguments", ARGUMENTS_BYTES)
-    value = parse_text(arguments, nested=True)
+    try:
+        value = parse_text(arguments, nested=True)
+    except RecursionError as exc:
+        raise invalid("invalid_tool_arguments", "Function arguments exceed the nesting limit.") from exc
     if not isinstance(value, dict):
         raise invalid("invalid_tool_arguments", "Function arguments must encode a JSON object.", f"messages.{index}.tool_calls.0.function.arguments")
     validate_instance(value, tools[name].schema)
@@ -238,7 +241,7 @@ def _messages(value: Any, tools: tuple[ToolDefinition, ...]) -> tuple[Message, .
         role = raw["role"]
         if role == "developer":
             raise unsupported(f"messages.{index}.role")
-        if role not in {"system", "user", "assistant", "tool"}:
+        if not isinstance(role, str) or role not in {"system", "user", "assistant", "tool"}:
             raise unsupported(f"messages.{index}.role")
         if unresolved is not None and role != "tool":
             raise invalid("invalid_tool_history", "An unresolved tool call must be followed by its tool result.", f"messages.{index}")
@@ -333,7 +336,7 @@ def normalize_request(raw: dict[str, Any], *, alias: str, capabilities: Capabili
 
 def validate_generated_tool(name: str, arguments: str, request: NormalizedRequest) -> str:
     definitions = {tool.name: tool for tool in request.tools}
-    if name not in definitions:
+    if not isinstance(name, str) or name not in definitions or not isinstance(arguments, str):
         raise backend_error()
     if len(arguments.encode()) > ARGUMENTS_BYTES:
         raise backend_error()
@@ -342,8 +345,8 @@ def validate_generated_tool(name: str, arguments: str, request: NormalizedReques
         if not isinstance(value, dict):
             raise backend_error()
         validate_instance(value, definitions[name].schema)
-    except ApplianceError as exc:
-        if exc.status >= 500:
+    except (ApplianceError, RecursionError) as exc:
+        if isinstance(exc, ApplianceError) and exc.status >= 500:
             raise
         raise backend_error() from exc
     choice = request.tool_choice
@@ -361,8 +364,8 @@ def validate_structured_content(content: str, request: NormalizedRequest) -> str
             raise backend_error()
         if request.response_format.schema is not None:
             validate_instance(value, request.response_format.schema)
-    except ApplianceError as exc:
-        if exc.status >= 500:
+    except (ApplianceError, RecursionError) as exc:
+        if isinstance(exc, ApplianceError) and exc.status >= 500:
             raise
         raise backend_error() from exc
     return canonical_text(value)
