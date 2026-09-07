@@ -10,6 +10,7 @@ import unicodedata
 import uuid
 from array import array
 from collections.abc import Callable
+from concurrent.futures import Future
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from typing import Any, Protocol
@@ -184,14 +185,28 @@ class ProcessCudaWorkerSession:
             connection, process = self._connection, self._process
         if connection is None or process is None:
             raise BackendError("cuda.worker_not_started", "CUDA worker is not started", subsystem="cuda")
+        received: Future[Any] = Future()
+        def receive() -> None:
+            try:
+                if not connection.poll(timeout):
+                    if not process.is_alive():
+                        raise BackendError("cuda.worker_crashed", "CUDA worker exited unexpectedly", subsystem="cuda", retryable=True)
+                    raise BackendError(timeout_code, "CUDA worker timed out", subsystem="cuda", retryable=True)
+                received.set_result(connection.recv())
+            except BaseException as exc:
+                received.set_exception(exc)
+        receiver = threading.Thread(target=receive, name="jarvis-cuda-receive", daemon=True)
         try:
-            if not connection.poll(timeout):
-                if not process.is_alive():
-                    raise BackendError("cuda.worker_crashed", "CUDA worker exited unexpectedly", subsystem="cuda", retryable=True)
-                raise BackendError(timeout_code, "CUDA worker timed out", subsystem="cuda", retryable=True)
-            frame = connection.recv()
-        except (EOFError, OSError, ValueError) as exc:
+            receiver.start()
+            frame = received.result(timeout=timeout)
+        except TimeoutError as exc:
+            self.cancel()
+            raise BackendError(timeout_code, "CUDA worker timed out", subsystem="cuda", retryable=True) from exc
+        except (EOFError, OSError, ValueError, RuntimeError) as exc:
             raise BackendError("cuda.worker_crashed", "CUDA worker connection failed", subsystem="cuda", retryable=True) from exc
+        finally:
+            if receiver.ident is not None:
+                receiver.join(timeout=5)
         if not isinstance(frame, dict) or not isinstance(frame.get("type"), str):
             raise BackendError("cuda.worker_protocol_error", "CUDA worker returned an invalid frame", subsystem="cuda")
         return frame
