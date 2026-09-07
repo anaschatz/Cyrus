@@ -50,14 +50,14 @@ class AsyncTranscriptionCoordinator:
         future = self._future
         if future is None:
             return
-        cancel = getattr(self.backend, "cancel_current", None)
-        if cancel is not None:
-            cancel()
-        future.cancel()
-        self._retired.append(future)
         self._future = None
         self._turn_id = None
         self._started_at = None
+        future.cancel()
+        self._retired.append(future)
+        cancel = getattr(self.backend, "cancel_current", None)
+        if cancel is not None:
+            cancel()
 
     def poll(self) -> TranscriptionOutcome | None:
         self._retired = [future for future in self._retired if not future.done()]
@@ -80,8 +80,10 @@ class AsyncTranscriptionCoordinator:
             return TranscriptionOutcome(turn_id, error=error)
 
     def close(self) -> None:
-        self.cancel_current()
-        self.executor.shutdown(wait=False, cancel_futures=True)
-        close = getattr(self.backend, "close", None)
-        if close is not None:
-            close()
+        try:
+            self.cancel_current()
+        finally:
+            self.executor.shutdown(wait=False, cancel_futures=True)
+            close = getattr(self.backend, "close", None)
+            if close is not None:
+                close()

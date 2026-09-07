@@ -25,12 +25,14 @@ class FallbackAsrBackend:
         self.clock = clock
         self.metrics: list[dict[str, float | int | str]] = []
         self.fallbacks = 0
+        self._cancel_generation = 0
 
     def transcribe(self, audio: object) -> TranscriptResult:
+        generation = self._cancel_generation
         try:
             return self.cuda_backend.transcribe(audio)
         except BackendError as exc:
-            if not self.enabled or exc.code not in self.fallbackable_codes:
+            if generation != self._cancel_generation or not self.enabled or exc.code not in self.fallbackable_codes:
                 raise
             started = self.clock()
             self.fallbacks += 1
@@ -54,6 +56,7 @@ class FallbackAsrBackend:
         receive it, and shutdown always releases both model references.
         """
 
+        self._cancel_generation += 1
         first_failure: BaseException | None = None
         for backend in (self.cuda_backend, self.cpu_backend):
             callback = getattr(backend, method, None)

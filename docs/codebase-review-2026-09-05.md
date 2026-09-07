@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **244 of 401 code files**, plus **203 of 326 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **244 of 401 code files**, plus **204 of 327 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **745 tests (730 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **747 tests (732 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1649,3 +1649,18 @@ CUDA ownership checkpoint committed as **5127c50**, with a clean mandatory Ponyt
 Two new behavioral tests produce **three failures before the fix**, `/tmp/cyrus-sealed-entry-before.log`. They execute the actual entrypoint with mocked WinDLL/device/collector calls and temporary fake DLL bytes, verify no loads from invalid roots, exact absolute load paths for a valid root, and silence on import failure or extra arguments. All **29 focused collector/packaging tests pass**, `/tmp/cyrus-sealed-entry-after.log`. Full Voice ran **745 tests in 7.256 seconds: 730 passed and 15 skipped**, `/tmp/cyrus-full-review-sealed-entry-voice.log`. Fatal Ruff and unchanged module boundaries pass. The latest complete Orchestrator run remains the preceding ownership checkpoint's **1106 tests (1101 passed, five skipped)**; it was not rerun for this isolated packaging entry change. No native Windows build, DLL, CUDA device, microphone, signing, download or training was invoked.
 
 Coverage is **244/401 code, 203/326 tests and 41/308 support**, with **488 reviewed hashes verified across 1035 entries**. This is source-file inspection, not behavioral/native qualification. CUDA concurrency/frame follow-ups, remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
+
+
+### Cancelled CUDA attempts must not initiate a CPU fallback
+
+Entrypoint inspection and sealed-root fix committed as **ce206a6**, with a clean mandatory Ponytail review.
+
+**V290 resolved:** cancelling a CUDA attempt caused its worker to report cuda.worker_crashed, which FallbackAsrBackend treated as a reason to begin CPU inference for the already cancelled turn. This also occurred during close, and the retired job could occupy the single ASR executor before the next turn. A bounded real-thread probe observed one CPU call after cancellation. The fallback decision now compares the attempt's captured cancellation generation with the current one. Both cancel and close advance it before forwarding callbacks, including callbacks that subsequently fail; new turns capture the new generation and retain their configured same-audio fallback. No error code, retry policy, device selection or backend interface changes.
+
+This checkpoint also includes the previously inspected, unstaged AsyncTranscriptionCoordinator fixes: retire and detach a future before invoking backend cancellation, and shut down the executor/close its backend in finally when cancellation raises. The existing regression produces **two failures against the pre-checkpoint HEAD coordinator**, `/tmp/cyrus-coordinator-cancel-head-before.log`. It now passes, preventing a late result from becoming publishable after a failed cancellation callback.
+
+The two new fallback regression methods produce **five failures before the fix**, `/tmp/cyrus-fallback-cancellation-before.log`. They cover cancel/close with successful or failed callbacks, no fallback metrics or CPU call for the old CUDA attempt, and a real coordinator's subsequent turn successfully falling back once. All **43 focused tests pass**, `/tmp/cyrus-fallback-cancellation-after.log`. These are bounded worker threads, mock backends and synthetic audio; no native model, GPU or microphone is used. Work already in CPU inference still depends on that backend's cancellation support; this change prevents the observed post-CUDA cancellation transition, not arbitrary preemption of CPU code.
+
+Full Voice: **747 tests in 7.361 seconds, 732 passed and 15 skipped**. Full Orchestrator: **1106 tests in 20.698 seconds, 1101 passed and five skipped**, `/tmp/cyrus-full-review-fallback-cancellation-{voice,orchestrator}.log`. Fatal Ruff and unchanged module boundaries pass. Ponytail: one integer generation in the existing shared lifecycle path, with no new abstraction or dependency. Net production growth is **five lines**, including the earlier coordinator cleanup change.
+
+Coverage is **244/401 code, 204/327 tests and 41/308 support**, with **489 reviewed hashes verified across 1036 entries**. CUDA process concurrency/frame follow-ups, remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.

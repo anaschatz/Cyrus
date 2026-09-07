@@ -5,6 +5,8 @@ import threading
 import time
 import unittest
 from array import array
+from concurrent.futures import Future
+from unittest.mock import Mock
 
 import _bootstrap  # noqa: F401
 
@@ -162,6 +164,27 @@ class AsrFactoryTests(unittest.TestCase):
                 time.sleep(0.001)
         self.assertTrue(backend.cancelled)
         self.assertIsNone(coordinator.poll())
+
+    def test_failed_cancellation_still_retires_result_and_closes_resources(self) -> None:
+        for operation in ("cancel_current", "close"):
+            with self.subTest(operation=operation):
+                future = Future()
+                future.set_running_or_notify_cancel()
+                executor = Mock()
+                executor.submit.return_value = future
+                backend = Mock()
+                backend.cancel_current.side_effect = BackendError("asr.cancel_failed", "failed", subsystem="asr")
+                coordinator = AsyncTranscriptionCoordinator(backend, executor_factory=lambda: executor)
+                coordinator.submit("turn-old", AudioChunk(array("f", [1]), 16_000))
+                with self.assertRaisesRegex(BackendError, "asr.cancel_failed"):
+                    getattr(coordinator, operation)()
+                self.assertFalse(coordinator.active)
+                future.set_result(RESULT)
+                self.assertIsNone(coordinator.poll())
+                if operation == "cancel_current":
+                    coordinator.close()
+                executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+                backend.close.assert_called_once_with()
 
 
 if __name__ == "__main__":
