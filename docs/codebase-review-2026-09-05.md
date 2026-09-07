@@ -1,6 +1,6 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **281 of 401 code files**, plus **232 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **283 of 401 code files**, plus **233 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
 Updated **2026-09-07**. Latest complete runs: Voice **800 tests (785 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
@@ -1929,3 +1929,14 @@ Artifact writer coordination committed as **0212c18** after the mandatory Ponyta
 Three regression methods produce **four failures before the fixes**, `/tmp/cyrus-router-failures-before.log`. All **seven focused checks pass**, `/tmp/cyrus-router-failures-after.log`. Full Voice: **800 tests in 8.327 seconds, 785 passed and 15 skipped**, `/tmp/cyrus-full-review-router-failures-voice.log`. After merging the regressions into the existing router test module, the same **seven checks pass again**, `/tmp/cyrus-router-ponytail-tests.log`. Fatal Ruff and unchanged module boundaries pass. Tests use fake backends, controlled events and owned worker threads; no native TTS process, audio device, model or user content was used.
 
 Ponytail: extend existing exception/cleanup boundaries and stop the failed worker; **eight net production lines**, no helper, dependency or new test file. Completed router/test inspection brings coverage to **281/401 code, 232/339 tests and 41/308 support**, with **554 reviewed hashes verified across 1048 entries**. Underlying native backend review, remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment remain incomplete.
+
+
+### macOS ASR selection and recovery supervisor inspection
+
+Router failure handling committed as **9815ed4**, with a clean mandatory Ponytail review.
+
+Completed full source inspection of the 85-line ASR-selection module, 71-line recovery supervisor and 356-line CPU-smoke test module. Traced explicit CPU profile replacement and manifest forwarding through CLI/staging/runtime and constructor signatures; traced warm-load timing into runtime startup. Traced recovery polling through native-reopen success/failure and reviewed its two existing regression methods. No new confirmed finding in these two implementation modules and no production changes were needed. The complete runtime, doctor and underlying native backends remain separately pending.
+
+All **15 focused checks pass**, `/tmp/cyrus-macos-selection-recovery-tests.log`: twelve CPU selection/doctor tests, two recovery tests and unchanged module boundaries. Fatal Ruff passes. Tests use fake host/device/model probes, clocks, factories and temporary synthetic auth/artifact files. No native model load, audio permission/device query or hardware recovery was performed. The latest complete Voice result remains **800 tests (785 passed, 15 skipped)** from the preceding checkpoint; no unnecessary full rerun was made for this documentation-only checkpoint.
+
+Ponytail: no new code, helper, dependency or tests. Coverage is **283/401 code, 233/339 tests and 41/308 support**, with **557 reviewed hashes verified across 1048 entries**. Full source inspection of test_macos.py is still pending; only its recovery subset was reviewed here. Remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment are incomplete.
