@@ -285,73 +285,36 @@ class _DirectLocalTextStreamPort:
 
 
 class PydanticAgentModelPort:
-    """Text ModelPort backed by the pinned Pydantic AI Agent runtime."""
+    """Owned SDK client for structured planning and the final text ModelPort."""
 
     def __init__(
         self,
-        agent: Any,
+        http_client: Any,
         budgeted_model: Any,
         store: OrchestratorStore,
         *,
         tools_capable: bool,
         json_schema_capable: bool,
         registered_tools: tuple[str, ...],
-        stream_runtime_factory: Any | None = None,
-        final_stream_port: Any | None = None,
+        final_stream_port: Any,
     ) -> None:
-        self._agent = agent
+        self._http_client = http_client
         self.__budgeted_model = budgeted_model
         self._store = store
         self._tools_capable = tools_capable
         self._json_schema_capable = json_schema_capable
         self._registered_tools = frozenset(registered_tools)
-        self._stream_runtime_factory = stream_runtime_factory
         self._final_stream_port = final_stream_port
 
+    async def aclose(self) -> None:
+        await self._http_client.aclose()
+
     async def stream(self, request: ModelRequest):
-        from pydantic_ai.usage import UsageLimits
-
-        if self._final_stream_port is not None and request.purpose == "final":
-            async with aclosing(self._final_stream_port.stream(request)) as stream:
-                async for chunk in stream:
-                    yield chunk
-            return
-
-        agent = self._agent
-        stream_http_client = None
-        if self._stream_runtime_factory is not None:
-            agent, stream_http_client = self._stream_runtime_factory()
-        history, prompt = canonical_messages_to_pydantic(request.messages)
-        context = PydanticDispatchContext(
-            request.task_id,
-            request.epoch,
-            request.purpose,
-            request.output_allowance,
-            request.timeout_seconds,
-        )
-        token = _pydantic_context.set(context)
-        try:
-            settings = {
-                "max_tokens": request.output_allowance,
-                "temperature": 0,
-                "top_p": 1,
-                "timeout": request.timeout_seconds,
-                "parallel_tool_calls": False,
-            }
-            async with agent.run_stream(
-                prompt,
-                message_history=history,
-                instructions=request.system_prompt,
-                model_settings=settings,
-                usage_limits=UsageLimits(request_limit=1),
-            ) as result:
-                async for text in result.stream_text(delta=True, debounce_by=None):
-                    yield ModelChunk(text)
-                yield ModelChunk("", ModelUsage(output_tokens=result.usage.output_tokens, input_tokens=result.usage.input_tokens))
-        finally:
-            _pydantic_context.reset(token)
-            if stream_http_client is not None:
-                await stream_http_client.aclose()
+        if request.purpose != "final":
+            raise OrchestratorError("model_text_stream_purpose", status=500)
+        async with aclosing(self._final_stream_port.stream(request)) as stream:
+            async for chunk in stream:
+                yield chunk
 
     async def plan(self, request: ModelRequest) -> RouteDecision:
         """Run the strict M1B planner with native schema or a synthetic output tool."""
@@ -886,7 +849,6 @@ def build_local_pydantic_port(
     try:
         import httpx
         from openai import AsyncOpenAI
-        from pydantic_ai import Agent
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.models.wrapper import WrapperModel
         from pydantic_ai.profiles.openai import OpenAIModelProfile
@@ -914,38 +876,25 @@ def build_local_pydantic_port(
     class _RuntimeBudgetedPydanticModel(BudgetedPydanticModel, WrapperModel):
         pass
 
-    def make_runtime() -> tuple[Any, Any, Any]:
-        http_client = httpx.AsyncClient(
-            transport=GuardedAsyncTransport(http_transport),
-            follow_redirects=False,
-            timeout=timeout_seconds,
-            trust_env=False,
-        )
-        client = AsyncOpenAI(
-            api_key=bearer_token,
-            base_url=base_url.rstrip("/") + "/",
-            max_retries=0,
-            timeout=timeout_seconds,
-            http_client=http_client,
-        )
-        raw_model = OpenAIChatModel(
-            "jarvis-local",
-            provider=OpenAIProvider(openai_client=client),
-            profile=profile,
-        )
-        budgeted = _RuntimeBudgetedPydanticModel(raw_model, store, _current_context)
-        agent = Agent(
-            budgeted,
-            output_type=str,
-            retries={"tools": 0, "output": 0},
-        )
-        return agent, budgeted, http_client
-
-    agent, budgeted, _shared_http_client = make_runtime()
-
-    def make_stream_runtime() -> tuple[Any, Any]:
-        stream_agent, _stream_budgeted, stream_http_client = make_runtime()
-        return stream_agent, stream_http_client
+    http_client = httpx.AsyncClient(
+        transport=GuardedAsyncTransport(http_transport),
+        follow_redirects=False,
+        timeout=timeout_seconds,
+        trust_env=False,
+    )
+    client = AsyncOpenAI(
+        api_key=bearer_token,
+        base_url=base_url.rstrip("/") + "/",
+        max_retries=0,
+        timeout=timeout_seconds,
+        http_client=http_client,
+    )
+    raw_model = OpenAIChatModel(
+        "jarvis-local",
+        provider=OpenAIProvider(openai_client=client),
+        profile=profile,
+    )
+    budgeted = _RuntimeBudgetedPydanticModel(raw_model, store, _current_context)
 
     final_stream_port = BudgetedModelPort(
         store,
@@ -957,12 +906,11 @@ def build_local_pydantic_port(
         ),
     )
     return PydanticAgentModelPort(
-        agent,
+        http_client,
         budgeted,
         store,
         tools_capable=tools,
         json_schema_capable=json_schema,
         registered_tools=registered_tools,
-        stream_runtime_factory=make_stream_runtime,
         final_stream_port=final_stream_port,
     )

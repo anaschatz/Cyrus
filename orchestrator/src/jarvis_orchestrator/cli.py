@@ -585,147 +585,147 @@ async def _run_components(
         json_schema=capabilities.json_schema,
         registered_tools=tool_registry.names if tool_registry is not None else (),
     )
-    if config.memory_enabled:
-        from .anamnesis_adapter import AnamnesisMemoryAdapter
-
-        active_memory = AnamnesisMemoryAdapter(store)
-    else:
-        active_memory = None
-    shadow_memory = None
-    if config.memory_shadow_enabled:
-        from .anamnesis_shadow import (
-            AnamnesisShadowAdapter,
-            DeterministicFirstLifecycleWriter,
-            DeterministicLifecycleGateV3,
-            DeterministicOnlyLifecycleWriterV3,
-            LocalLifecycleCompletionClient,
-            LocalStructuredLifecycleWriter,
-        )
-
-        shadow_history = ShadowHistoryReaderFacade(store.memory_shadow_history)
-        if config.memory_shadow_mode == "deterministic_only":
-            shadow_memory = AnamnesisShadowAdapter(
-                shadow_history,
-                DeterministicOnlyLifecycleWriterV3(),
-            )
-        else:
-            if not capabilities.json_schema:
-                raise RuntimeError(
-                    "structured shadow fallback requires JSON Schema capability"
-                )
-            shadow_client = LocalLifecycleCompletionClient(
-                base_url=config.inference_base_url,
-                bearer_token=config.inference_bearer_token,
-                timeout_seconds=config.memory_shadow_timeout_seconds,
-            )
-            shadow_memory = AnamnesisShadowAdapter(
-                shadow_history,
-                DeterministicFirstLifecycleWriter(
-                    LocalStructuredLifecycleWriter(
-                        shadow_client,
-                        model_alias=config.model_alias,
-                    ),
-                    gate=DeterministicLifecycleGateV3(),
-                ),
-            )
-    research_adapter = None
     cloud_adapter = None
-    cloud_endpoints = ()
-    runtime_config = config
-    store.disable_all_endpoint_qualifications()
-    if config.research_enabled:
-        from .research_adapter import LoopbackResearchAdapter
-
-        research_adapter = LoopbackResearchAdapter(
-            base_url=config.research_base_url,
-            bearer_token=config.research_bearer_token,
-            timeout_seconds=config.research_timeout_seconds,
-        )
-        await asyncio.to_thread(
-            research_adapter.qualify,
-            {
-                "contract_version": "research-corpus/1",
-                "model_sha256": config.research_model_sha256,
-                "profile_sha256": config.research_profile_sha256,
-                "qualification_sha256": config.research_qualification_sha256,
-                "language_detector_version": config.research_language_detector_version,
-                "language_detector_sha256": config.research_language_detector_sha256,
-                "authority_registry_version": config.research_authority_registry_version,
-                "browser_qualification_sha256": (
-                    config.research_browser_qualification_sha256
-                    if config.research_browser_fallback
-                    else ""
-                ),
-            },
-        )
-    if config.cloud_enabled:
-        from .cloud_provider import (
-            OpenRouterCloudAdapter,
-            load_endpoint_registry,
-            load_openrouter_secret,
-        )
-        from .cloud_qualification import load_cloud_release_qualification
-
-        candidate_endpoints: tuple[Any, ...] = ()
-        try:
-            assert config.cloud_secret_file is not None
-            assert config.cloud_qualification_file is not None
-            assert config.cloud_release_qualification_file is not None
-            bearer_token = load_openrouter_secret(config.cloud_secret_file)
-            registry = load_endpoint_registry(config.cloud_qualification_file)
-            release = load_cloud_release_qualification(
-                config.cloud_release_qualification_file,
-                expected_sha256=config.cloud_release_qualification_sha256,
-                registry=registry,
-                bearer_token=bearer_token,
-                terra_enabled=config.cloud_terra_enabled,
-            )
-            candidate_endpoints = release.active_endpoints
-            for endpoint in candidate_endpoints:
-                store.register_endpoint_qualification(endpoint, enabled=True)
-            candidate_adapter = OpenRouterCloudAdapter(
-                store,
-                bearer_token=bearer_token,
-                timeout_seconds=config.cloud_timeout_seconds,
-            )
-            try:
-                await asyncio.gather(
-                    *(candidate_adapter.revalidate(endpoint) for endpoint in candidate_endpoints)
-                )
-            except BaseException:
-                startup_cleanup_deadline = supervisor.process_deadline(
-                    RUNTIME_TOTAL_SHUTDOWN_SECONDS
-                )
-                startup_cleanup_deadline.begin()
-                try:
-                    await supervisor.run_bounded_cleanup(
-                        "cloud_startup",
-                        candidate_adapter.aclose,
-                        failure_code="runtime_cloud_startup_cleanup_failed",
-                        timeout_code="runtime_cloud_startup_cleanup_timeout",
-                        timeout_seconds=startup_cleanup_deadline.remaining(),
-                    )
-                finally:
-                    startup_cleanup_deadline.disarm()
-                raise
-            cloud_adapter = candidate_adapter
-            cloud_endpoints = candidate_endpoints
-        except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
-                raise
-            for endpoint in candidate_endpoints:
-                try:
-                    store.quarantine_endpoint(endpoint.qualification_sha256)
-                except Exception:
-                    pass
-            cloud_adapter = None
-            cloud_endpoints = ()
-            runtime_config = replace(
-                config,
-                cloud_enabled=False,
-                cloud_terra_enabled=False,
-            )
     try:
+        if config.memory_enabled:
+            from .anamnesis_adapter import AnamnesisMemoryAdapter
+
+            active_memory = AnamnesisMemoryAdapter(store)
+        else:
+            active_memory = None
+        shadow_memory = None
+        if config.memory_shadow_enabled:
+            from .anamnesis_shadow import (
+                AnamnesisShadowAdapter,
+                DeterministicFirstLifecycleWriter,
+                DeterministicLifecycleGateV3,
+                DeterministicOnlyLifecycleWriterV3,
+                LocalLifecycleCompletionClient,
+                LocalStructuredLifecycleWriter,
+            )
+
+            shadow_history = ShadowHistoryReaderFacade(store.memory_shadow_history)
+            if config.memory_shadow_mode == "deterministic_only":
+                shadow_memory = AnamnesisShadowAdapter(
+                    shadow_history,
+                    DeterministicOnlyLifecycleWriterV3(),
+                )
+            else:
+                if not capabilities.json_schema:
+                    raise RuntimeError(
+                        "structured shadow fallback requires JSON Schema capability"
+                    )
+                shadow_client = LocalLifecycleCompletionClient(
+                    base_url=config.inference_base_url,
+                    bearer_token=config.inference_bearer_token,
+                    timeout_seconds=config.memory_shadow_timeout_seconds,
+                )
+                shadow_memory = AnamnesisShadowAdapter(
+                    shadow_history,
+                    DeterministicFirstLifecycleWriter(
+                        LocalStructuredLifecycleWriter(
+                            shadow_client,
+                            model_alias=config.model_alias,
+                        ),
+                        gate=DeterministicLifecycleGateV3(),
+                    ),
+                )
+        research_adapter = None
+        cloud_endpoints = ()
+        runtime_config = config
+        store.disable_all_endpoint_qualifications()
+        if config.research_enabled:
+            from .research_adapter import LoopbackResearchAdapter
+
+            research_adapter = LoopbackResearchAdapter(
+                base_url=config.research_base_url,
+                bearer_token=config.research_bearer_token,
+                timeout_seconds=config.research_timeout_seconds,
+            )
+            await asyncio.to_thread(
+                research_adapter.qualify,
+                {
+                    "contract_version": "research-corpus/1",
+                    "model_sha256": config.research_model_sha256,
+                    "profile_sha256": config.research_profile_sha256,
+                    "qualification_sha256": config.research_qualification_sha256,
+                    "language_detector_version": config.research_language_detector_version,
+                    "language_detector_sha256": config.research_language_detector_sha256,
+                    "authority_registry_version": config.research_authority_registry_version,
+                    "browser_qualification_sha256": (
+                        config.research_browser_qualification_sha256
+                        if config.research_browser_fallback
+                        else ""
+                    ),
+                },
+            )
+        if config.cloud_enabled:
+            from .cloud_provider import (
+                OpenRouterCloudAdapter,
+                load_endpoint_registry,
+                load_openrouter_secret,
+            )
+            from .cloud_qualification import load_cloud_release_qualification
+
+            candidate_endpoints: tuple[Any, ...] = ()
+            try:
+                assert config.cloud_secret_file is not None
+                assert config.cloud_qualification_file is not None
+                assert config.cloud_release_qualification_file is not None
+                bearer_token = load_openrouter_secret(config.cloud_secret_file)
+                registry = load_endpoint_registry(config.cloud_qualification_file)
+                release = load_cloud_release_qualification(
+                    config.cloud_release_qualification_file,
+                    expected_sha256=config.cloud_release_qualification_sha256,
+                    registry=registry,
+                    bearer_token=bearer_token,
+                    terra_enabled=config.cloud_terra_enabled,
+                )
+                candidate_endpoints = release.active_endpoints
+                for endpoint in candidate_endpoints:
+                    store.register_endpoint_qualification(endpoint, enabled=True)
+                candidate_adapter = OpenRouterCloudAdapter(
+                    store,
+                    bearer_token=bearer_token,
+                    timeout_seconds=config.cloud_timeout_seconds,
+                )
+                try:
+                    await asyncio.gather(
+                        *(candidate_adapter.revalidate(endpoint) for endpoint in candidate_endpoints)
+                    )
+                except BaseException:
+                    startup_cleanup_deadline = supervisor.process_deadline(
+                        RUNTIME_TOTAL_SHUTDOWN_SECONDS
+                    )
+                    startup_cleanup_deadline.begin()
+                    try:
+                        await supervisor.run_bounded_cleanup(
+                            "cloud_startup",
+                            candidate_adapter.aclose,
+                            failure_code="runtime_cloud_startup_cleanup_failed",
+                            timeout_code="runtime_cloud_startup_cleanup_timeout",
+                            timeout_seconds=startup_cleanup_deadline.remaining(),
+                        )
+                    finally:
+                        startup_cleanup_deadline.disarm()
+                    raise
+                cloud_adapter = candidate_adapter
+                cloud_endpoints = candidate_endpoints
+            except BaseException as exc:
+                if isinstance(exc, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
+                    raise
+                for endpoint in candidate_endpoints:
+                    try:
+                        store.quarantine_endpoint(endpoint.qualification_sha256)
+                    except Exception:
+                        pass
+                cloud_adapter = None
+                cloud_endpoints = ()
+                runtime_config = replace(
+                    config,
+                    cloud_enabled=False,
+                    cloud_terra_enabled=False,
+                )
         await _run_servers(
             runtime_config,
             store,
@@ -746,12 +746,21 @@ async def _run_components(
     finally:
         deadline.begin()
         try:
-            if cloud_adapter is not None:
+            try:
+                if cloud_adapter is not None:
+                    await supervisor.run_bounded_cleanup(
+                        "cloud_adapter",
+                        cloud_adapter.aclose,
+                        failure_code="runtime_cloud_shutdown_failed",
+                        timeout_code="runtime_cloud_shutdown_timeout",
+                        timeout_seconds=deadline.remaining(),
+                    )
+            finally:
                 await supervisor.run_bounded_cleanup(
-                    "cloud_adapter",
-                    cloud_adapter.aclose,
-                    failure_code="runtime_cloud_shutdown_failed",
-                    timeout_code="runtime_cloud_shutdown_timeout",
+                    "model",
+                    model.aclose,
+                    failure_code="runtime_model_shutdown_failed",
+                    timeout_code="runtime_model_shutdown_timeout",
                     timeout_seconds=deadline.remaining(),
                 )
         finally:
