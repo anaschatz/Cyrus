@@ -111,7 +111,10 @@ def main(argv: list[str] | None = None) -> int:
         }
         if exc.safe_context:
             report["context"] = dict(exc.safe_context)
-    write_report(args.output.resolve(), report)
+    try:
+        write_report(args.output.resolve(), report)
+    except BackendError as exc:
+        report = {**report, "ready": False, "code": exc.code}
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if report.get("ready") else 2
 

@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import contextlib
+import io
+import json
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
@@ -33,6 +38,36 @@ def _arguments(**overrides):
 
 
 class MacosNativeCollectionScriptTests(unittest.TestCase):
+    def test_unwritable_output_returns_safe_failure_for_all_commands(self) -> None:
+        for command, function in (("calibrate", "calibrate_macos_acoustic_threshold"),
+                                  ("preflight", "macos_native_collection_preflight"),
+                                  ("run", "run_macos_native_collection")):
+            for operation_fails in (False, True):
+                with self.subTest(command=command, operation_fails=operation_fails), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory) / "missing" / "report.json"
+                    args = [command, "--config", "unused.json", "--audio-path", "wired", "--output", str(output)]
+                    if command != "calibrate":
+                        args += ["--silence-threshold-dbfs", "-40"]
+
+                    def operation(*args, **kwargs):
+                        if operation_fails:
+                            raise BackendError("qualification.test_failure", "private failure details", subsystem="qualification")
+                        if command == "run":
+                            MODULE.write_report(kwargs["output"], {"ready": True})
+                        return {"ready": True}
+
+                    stdout = io.StringIO()
+                    with (mock.patch.object(MODULE, "load_voice_config", return_value=voice_config_from_mapping({})),
+                          mock.patch.object(MODULE, function, side_effect=operation), contextlib.redirect_stdout(stdout)):
+                        status = MODULE.main(args)
+                    report = json.loads(stdout.getvalue()[stdout.getvalue().index("{"):])
+                    self.assertEqual(status, 2)
+                    self.assertFalse(report["ready"])
+                    self.assertEqual(report["code"], "qualification.test_failure" if operation_fails else "qualification.output_directory_missing")
+                    self.assertEqual(report["output_error_code"], "qualification.output_directory_missing")
+                    self.assertNotIn("private failure details", stdout.getvalue())
+                    self.assertFalse(output.exists())
+
     def test_no_sidecar_arguments_preserve_config(self) -> None:
         config = voice_config_from_mapping({})
         self.assertIs(MODULE.apply_f1_sidecar_profile(config, _arguments()), config)

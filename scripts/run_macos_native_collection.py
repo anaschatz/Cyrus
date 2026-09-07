@@ -180,7 +180,10 @@ def main(argv: list[str] | None = None) -> int:
             report["context"] = dict(exc.safe_context)
         output = getattr(args, "output", None)
         if output is not None:
-            write_report(output.resolve(), report)
+            try:
+                write_report(output.resolve(), report)
+            except BackendError as output_error:
+                report["output_error_code"] = output_error.code
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if report.get("ready") or report.get("turn_batch_completed") else 2
 
