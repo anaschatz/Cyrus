@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **226 of 400 code files**, plus **192 of 318 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **226 of 400 code files**, plus **193 of 319 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1093 tests (1088 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1096 tests (1091 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1532,3 +1532,20 @@ Four regression methods use disposable real journals and the real ToolStore with
 Migration limitation: old pending rows never recorded their original timestamp, so it cannot be reconstructed reliably from the separate created_at clock. Such rows remain PENDING and unchanged in identity/decision; retry generation raises **action_journal.replay_identity_missing** before allocating a sequence or fabricating a frame. This can stop a client holding a legacy pending decision and requires explicit recovery; no automatic decision deletion, fabricated timestamp or unsafe reapproval was introduced. Acknowledged historical rows do not need retransmission and continue normally. The test verifies repeated reopen and retention, not an automatic legacy recovery workflow.
 
 Ponytail: reuse the event factory and existing journal/state fields, with one required timestamp column and **14 additional production lines**. The earlier JSON-parser change remains outside this commit. Coverage is **226/400 code, 192/318 tests and 41/308 support**, with **459 reviewed hashes verified across 1026 entries**. Action source follow-ups, whole-codebase review and final quality assessment remain incomplete.
+
+
+### Action approval input boundaries and factory sequencing
+
+Durable-retry checkpoint committed as **70f65ac**, with a clean Ponytail hook. Continued the complete action source inspection through client transport and gateway input, journal callers and publication factory sequencing.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V271 | JSON arrays/objects in event type, ACK status, decision, result or reason fields reached set membership and leaked TypeError. | Check string types before shared-set lookups; use direct tuple membership for two-value choices, including the journal decision guard. |
+| V272 | Deep JSON, oversized JSON integers and non-UTF-8 text could escape as RecursionError, ValueError or UnicodeEncodeError. | Normalize JSON resource/format failures and UTF-8 encoding/decoding failures at the bounded parser. This checkpoint includes the earlier uncommitted JSON exception fix. |
+| V273 | Failed event validation consumed a sequence number, causing a gap when the next valid event was sent. | Validate against next_seq before consuming it. Retain consume_sequence for the gateway's existing publication path. |
+
+Three regression methods produce **17 errors and three failures against exact HEAD source**, `/tmp/cyrus-action-parser-before.log`. They cover both unhashable JSON shapes in seven selector positions, recursive/large-integer/Unicode/duplicate-key/invalid/nonfinite inputs, and failed payload/event-ID/timestamp creation followed by a valid round trip. All **24 focused tests pass**, `/tmp/cyrus-action-parser-after.log`. Full Voice ran **730 tests in 6.657 seconds: 715 passed, 15 skipped**; full Orchestrator ran **1096 tests in 20.672 seconds: 1091 passed, five skipped**, `/tmp/cyrus-full-review-action-parser-{voice,orchestrator}.log`. Fatal Ruff and unchanged module-size checks pass. No live native action or user data was exercised.
+
+Ponytail: native membership/type checks and the existing sequence factory, **two additional production lines**, no new helper, dependency or wire schema. Existing valid event round trips and durable retry tests pass. The suspected same-approval replacement-presentation flow was not found: the current ToolStore producer creates one presentation per approval and only changes its owner/requested-event metadata. Direct duplicate decision persistence and connection fingerprint retention still require investigation.
+
+Coverage is **226/400 code, 193/319 tests and 41/308 support**, with **460 reviewed hashes verified across 1027 entries**. Whole-codebase review and the final code-quality assessment remain incomplete.

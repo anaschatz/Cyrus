@@ -143,7 +143,7 @@ class ActionApprovalEnvelope:
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.protocol != ACTION_APPROVAL_PROTOCOL or self.type not in EVENTS:
+        if self.protocol != ACTION_APPROVAL_PROTOCOL or not isinstance(self.type, str) or self.type not in EVENTS:
             raise ProtocolError("protocol.unknown_event", "unknown action approval event")
         object.__setattr__(self, "event_id", _uuid4(self.event_id, "event_id"))
         object.__setattr__(self, "session_id", _uuid4(self.session_id, "session_id"))
@@ -178,33 +178,33 @@ class ActionApprovalEnvelope:
         elif self.type == "action.approval.event_ack":
             _exact(payload, {"acked_event_id", "status"}, self.type)
             _uuid4(payload["acked_event_id"], "acked_event_id")
-            if payload["status"] not in {"applied", "duplicate"}:
+            if payload["status"] not in ("applied", "duplicate"):
                 raise ProtocolError("protocol.invalid_field", "event ACK status is invalid")
         elif self.type == "action.approval.decision":
             _exact(payload, {"approval_id", "presentation_id", "requested_event_id", "approval_binding_sha256", "decision_nonce", "decision"}, self.type)
             for name in ("approval_id", "presentation_id", "requested_event_id", "decision_nonce"):
                 _uuid4(payload[name], name)
             _sha(payload["approval_binding_sha256"], "approval_binding_sha256")
-            if payload["decision"] not in {"approve", "deny"}:
+            if payload["decision"] not in ("approve", "deny"):
                 raise ProtocolError("protocol.invalid_field", "decision is invalid")
         elif self.type == "action.approval.decision_ack":
             _exact(payload, {"decision_event_id", "status"}, self.type)
             _uuid4(payload["decision_event_id"], "decision_event_id")
-            if payload["status"] not in {"accepted", "duplicate"}:
+            if payload["status"] not in ("accepted", "duplicate"):
                 raise ProtocolError("protocol.invalid_field", "decision ACK is invalid")
         elif self.type == "action.approval.decision_result":
             _exact(payload, {"decision_event_id", "approval_id", "presentation_id", "approval_binding_sha256", "result", "reason_code"}, self.type)
             for name in ("decision_event_id", "approval_id", "presentation_id"):
                 _uuid4(payload[name], name)
             _sha(payload["approval_binding_sha256"], "approval_binding_sha256")
-            if payload["result"] not in {"applied", "rejected"} or payload["reason_code"] not in DECISION_REASONS:
+            if payload["result"] not in ("applied", "rejected") or not isinstance(payload["reason_code"], str) or payload["reason_code"] not in DECISION_REASONS:
                 raise ProtocolError("protocol.invalid_field", "decision result is invalid")
         elif self.type == "action.approval.invalidated":
             _exact(payload, {"approval_id", "presentation_id", "approval_binding_sha256", "reason_code"}, self.type)
             _uuid4(payload["approval_id"], "approval_id")
             _uuid4(payload["presentation_id"], "presentation_id")
             _sha(payload["approval_binding_sha256"], "approval_binding_sha256")
-            if payload["reason_code"] not in INVALIDATION_REASONS:
+            if not isinstance(payload["reason_code"], str) or payload["reason_code"] not in INVALIDATION_REASONS:
                 raise ProtocolError("protocol.invalid_field", "invalidation reason is invalid")
 
     def to_dict(self) -> dict[str, Any]:
@@ -220,12 +220,13 @@ class ActionApprovalEnvelope:
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> "ActionApprovalEnvelope":
-        if isinstance(raw, bytes):
-            try:
+        try:
+            if isinstance(raw, bytes):
                 raw = raw.decode("utf-8", errors="strict")
-            except UnicodeDecodeError as exc:
-                raise ProtocolError("protocol.invalid_json", "frame is not UTF-8") from exc
-        if raw.startswith("\ufeff") or len(raw.encode("utf-8")) > MAX_ACTION_APPROVAL_FRAME_BYTES:
+            size = len(raw.encode("utf-8"))
+        except UnicodeError as exc:
+            raise ProtocolError("protocol.invalid_json", "frame is not UTF-8") from exc
+        if raw.startswith("\ufeff") or size > MAX_ACTION_APPROVAL_FRAME_BYTES:
             raise ProtocolError("protocol.frame_too_large", "action approval frame is invalid")
 
         def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -240,7 +241,7 @@ class ActionApprovalEnvelope:
             value = json.loads(raw, object_pairs_hook=pairs, parse_constant=lambda value: (_ for _ in ()).throw(ProtocolError("protocol.invalid_json", value)))
         except ProtocolError:
             raise
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:
             raise ProtocolError("protocol.invalid_json", "invalid JSON") from exc
         if not isinstance(value, Mapping) or set(value) != {"protocol", "type", "event_id", "session_id", "seq", "sent_at", "payload"}:
             raise ProtocolError("protocol.forbidden_field", "action approval envelope fields are not exact")
@@ -261,16 +262,17 @@ class ActionApprovalEventFactory:
         return self._sequence
 
     def create(self, event_type: str, payload: Mapping[str, Any], *, event_id: str | None = None, sent_at: str | None = None) -> ActionApprovalEnvelope:
-        self.consume_sequence()
-        return ActionApprovalEnvelope(
+        event = ActionApprovalEnvelope(
             ACTION_APPROVAL_PROTOCOL,
             event_type,
             event_id or str(uuid.uuid4()),
             self.session_id,
-            self._sequence,
+            self.next_seq,
             sent_at or datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             dict(payload),
         )
+        self.consume_sequence()
+        return event
 
 
 class ActionApprovalJournal:
@@ -349,7 +351,7 @@ class ActionApprovalJournal:
             return True
 
     def persist_decision(self, requested: ActionApprovalEnvelope, decision: str, *, factory: ActionApprovalEventFactory | None = None) -> ActionApprovalEnvelope:
-        if requested.type != "action.approval.requested" or decision not in {"approve", "deny"}:
+        if requested.type != "action.approval.requested" or decision not in ("approve", "deny"):
             raise ProtocolError("protocol.invalid_field", "invalid action decision")
         payload = requested.payload
         payload_value = {
