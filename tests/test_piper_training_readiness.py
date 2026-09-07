@@ -80,6 +80,18 @@ class PiperTrainingReadinessTests(unittest.TestCase):
         self.assertEqual(low_ram["code"], "tts.f1_training.system_ram_insufficient")
         self.assertEqual(low_disk["code"], "tts.f1_training.disk_space_insufficient")
 
+    def test_gpu_inventory_rejects_impossible_or_duplicate_devices(self) -> None:
+        for inventory, device_index in (
+            ("0, GPU, 560.76, 8192, 9000", 0),
+            ("-1, GPU, 560.76, 8192, 7000", -1),
+            ("0, GPU, 560.76, 8192, 7000\n0, GPU, 560.76, 8192, 7000", 0),
+        ):
+            with self.subTest(inventory=inventory):
+                report = self._probe(inventory_runner=lambda command: inventory, device_index=device_index)
+                self.assertEqual(report["code"], "tts.f1_training.gpu_inventory_malformed")
+                self.assertFalse(report["ready"])
+                self.assertFalse(report["lock_profile"]["materialization_allowed"])
+
     def test_gpu_inventory_is_strict(self) -> None:
         report = self._probe(inventory_runner=lambda command: "unexpected,data\n")
         self.assertEqual(report["code"], "tts.f1_training.gpu_inventory_malformed")

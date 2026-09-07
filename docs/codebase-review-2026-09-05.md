@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **276 of 401 code files**, plus **224 of 335 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **277 of 401 code files**, plus **225 of 335 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **781 tests (766 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **784 tests (769 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1837,3 +1837,18 @@ Training argument and preparation checkpoint committed as **a07f892**, with a cl
 One new four-case regression produces **four failures before the fixes**, `/tmp/cyrus-piper-handoff-binding-before.log`. All **19 focused tests pass**, `/tmp/cyrus-piper-handoff-binding-after.log`. Full Voice: **781 tests in 7.930 seconds, 766 passed and 15 skipped**, `/tmp/cyrus-full-review-piper-handoff-binding-voice.log`. Fatal Ruff and unchanged module boundaries pass. Tests use real disposable filesystem operations and synthetic artifact pins only. No actual checkpoint/model load, native training or network transfer was performed.
 
 Ponytail: retain digests in the existing seen table, reuse pinned specs and bundle validation, and avoid rehashing large inputs; **13 net production lines**, no new helper or dependency. Completed source inspection of the handoff module, CLI and test module brings coverage to **276/401 code, 224/335 tests and 41/308 support**, with **541 reviewed hashes verified across 1044 entries**. Readiness validation and handoff I/O failure paths remain follow-up work. Broader U05 privacy, compiler qualification binding, remaining codebase review and the final quality assessment are still incomplete.
+
+
+### Piper malformed input and descriptor cleanup
+
+Transfer binding checkpoint committed as **2cc0986**, with a clean mandatory Ponytail review.
+
+**V313 resolved:** deeply nested JSON escaped the shared reader as RecursionError instead of the existing typed manifest/bundle error. Both public build and verify paths now translate this parser failure through the shared exception boundary.
+
+**V314 resolved:** changing the temporary manifest's permissions before entering its file context left its descriptor open when fchmod failed. The permission change now occurs inside the existing fdopen context, which closes the descriptor on failure; the existing finally removes the temporary pathname. A real descriptor regression verifies both cleanup effects. No new cleanup helper was introduced.
+
+**V315 resolved:** readiness accepted negative GPU indexes, duplicate indexes or free VRAM greater than total VRAM and could report readiness_passed/materialization_allowed. Inventory parsing now checks unique nonnegative indexes and coherent memory bounds, retaining devices in insertion order in a dictionary. Invalid output returns the existing gpu_inventory_malformed code. Native GPU values, driver requirements and admission thresholds remain unchanged.
+
+Three new regression methods produce **four failures and two errors before the fixes**, `/tmp/cyrus-piper-failure-boundaries-before.log`. All **22 focused tests pass**, `/tmp/cyrus-piper-failure-boundaries-after.log`. Full Voice: **784 tests in 8.105 seconds, 769 passed and 15 skipped**, `/tmp/cyrus-full-review-piper-failure-boundaries-voice.log`. Fatal Ruff and unchanged module boundaries pass. Readiness tests inject host/resource/inventory values; handoff tests use disposable files and their own descriptors. No actual nvidia-smi, GPU, model, training, network or private artifact operation occurred.
+
+Ponytail: use the existing file context and JSON exception boundary; replace the inventory list with one dictionary for uniqueness, with **eight net production lines** and no dependency or new helper. Completed readiness source/test inspection and updated handoff hashes bring coverage to **277/401 code, 225/335 tests and 41/308 support**, with **543 reviewed hashes verified across 1044 entries**. The latest full Orchestrator result remains **1106 tests (1101 passed, five skipped)** from its earlier checkpoint. Remaining codebase review, broader U05 privacy, compiler qualification binding and the final quality assessment are still incomplete.

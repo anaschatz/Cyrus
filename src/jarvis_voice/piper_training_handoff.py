@@ -67,7 +67,7 @@ def _read_json(path: Path, *, maximum_bytes: int, code: str) -> Mapping[str, Any
         if size < 2 or size > maximum_bytes:
             raise _error(code, "Piper F1 manifest size is invalid")
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise _error(code, "Piper F1 manifest is invalid") from exc
     if not isinstance(value, Mapping):
         raise _error(code, "Piper F1 manifest must be an object")
@@ -210,9 +210,9 @@ def write_piper_f1_handoff(path: str | Path, manifest: Mapping[str, object]) -> 
     descriptor, temporary_name = tempfile.mkstemp(prefix=".piper-f1-handoff-", dir=destination.parent)
     temporary = Path(temporary_name)
     try:
-        if os.name != "nt":
-            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
+            if os.name != "nt":
+                os.fchmod(stream.fileno(), 0o600)
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())

@@ -68,7 +68,7 @@ def _driver_ready(value: str) -> bool:
 
 
 def _parse_inventory(output: str) -> tuple[TrainingGpu, ...]:
-    devices: list[TrainingGpu] = []
+    devices: dict[int, TrainingGpu] = {}
     try:
         for raw_line in output.splitlines():
             if not raw_line.strip():
@@ -79,12 +79,20 @@ def _parse_inventory(output: str) -> tuple[TrainingGpu, ...]:
             index, name, driver, total, free = fields
             if not name or not driver:
                 raise ValueError("empty field")
-            devices.append(TrainingGpu(int(index), name, driver, int(total), int(free)))
+            device = TrainingGpu(int(index), name, driver, int(total), int(free))
+            if (
+                device.index < 0
+                or device.total_vram_mb <= 0
+                or not 0 <= device.free_vram_mb <= device.total_vram_mb
+                or device.index in devices
+            ):
+                raise ValueError("invalid device fields")
+            devices[device.index] = device
     except ValueError as exc:
         raise _error("tts.f1_training.gpu_inventory_malformed", "NVIDIA inventory is malformed") from exc
     if not devices:
         raise _error("tts.f1_training.gpu_unavailable", "No NVIDIA GPU was reported")
-    return tuple(devices)
+    return tuple(devices.values())
 
 
 def _read_memory_total() -> int:

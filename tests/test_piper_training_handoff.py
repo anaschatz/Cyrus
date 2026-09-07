@@ -138,6 +138,36 @@ class PiperTrainingHandoffTests(unittest.TestCase):
                     with self.assertRaisesRegex(BackendError, error):
                         verify_piper_f1_handoff(root, output)
 
+    def test_nested_manifests_produce_typed_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "bundle-manifest.json"
+            manifest.write_text("[" * 2000 + "0" + "]" * 2000)
+            for operation, arguments, code in (
+                (verify_piper_f1_handoff, (root, manifest), "manifest_invalid"),
+                (build_piper_f1_handoff, (root, root), "bundle_invalid"),
+            ):
+                with self.subTest(code=code), self.assertRaisesRegex(BackendError, code):
+                    operation(*arguments)
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor permissions")
+    def test_failed_permissions_close_descriptor_and_remove_temporary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            descriptor, name = tempfile.mkstemp(dir=root)
+            try:
+                with mock.patch("jarvis_voice.piper_training_handoff.tempfile.mkstemp", return_value=(descriptor, name)), mock.patch("jarvis_voice.piper_training_handoff.os.fchmod", side_effect=OSError("synthetic permissions failure")):
+                    with self.assertRaises(OSError):
+                        write_piper_f1_handoff(root / "handoff.json", {})
+                self.assertEqual(list(root.iterdir()), [])
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+            finally:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
     def test_write_never_overwrites_a_racing_destination(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "handoff.json"
