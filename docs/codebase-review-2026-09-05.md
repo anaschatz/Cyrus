@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **213 of 400 code files**, plus **172 of 308 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **213 of 400 code files**, plus **173 of 309 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1026 tests (1021 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1029 tests (1024 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1059,3 +1059,19 @@ Publication/replay checkpoint committed as **1b4debb**, with the exact staged Po
 The original reproduction queued replacement scheduling before the old completion callback and observed **two executions but zero tracked tasks**, `/tmp/cyrus-gateway-execution-race-before.log`. The committed regression exercises that same event-loop ordering, verifies replacement identity, cancels it through the gateway and checks final retirement. **60 relevant tests passed in 1.636 seconds**, `/tmp/cyrus-gateway-execution-ownership-after.log`, covering publication, authenticated handling, control idempotency and runtime supervision. Fatal Ruff and unchanged module-size checks pass. The earlier complete Orchestrator run remains **1026 tests, five skips**; the narrowly scoped callback follow-up was verified with these 60 tests rather than claimed as another full run.
 
 The complete **864-line gateway** is now marked reviewed after source inspection, traced consumers and these regressions. Current coverage: **213/400 code, 172/308 tests and 39/308 support files**, with **424 reviewed hashes verified across 1016 entries**. Whole-codebase review and final quality assessment remain incomplete. Complete SchedulerStore inspection, the remaining source/test/support inventory, compiler qualification identity binding and U05 privacy coverage remain open; native/live qualification is separate.
+
+
+### Scheduler receipt binding and restart recovery
+
+Gateway execution-identity checkpoint committed as **5e5c863**, with no Ponytail findings. Read the complete SchedulerStore source, then traced delivery receipt production through the Voice controller, gateway forwarding and scheduler recovery. Linked approval expiry, ACK terminal precedence and receipt ordering remain follow-ups before closing the whole-file review.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V208 | A receipt could reuse an attempt_id belonging to a different notification. It could mark the second delivery accepted while overwriting the first delivery's attempt. | Check the existing attempt's notification binding inside the receipt transaction; reject the mismatch and roll back inbox, delivery, attempt and ledger writes. |
+| V209 | A valid STAGED receipt created a CREATED attempt, but a later DISPATCHING receipt updated only the delivery. Restart recovery looked for DISPATCHING attempts and omitted this in-flight attempt. | Advance an existing CREATED attempt to DISPATCHING. Preserve terminal attempts and reuse the current recovery transition to ambiguous/retry-wait. |
+
+The two regressions failed against the saved original source, `/tmp/cyrus-scheduler-receipts-before.log`. They use actual temporary jobs, compiled proposals and validated wire envelopes. The binding test verifies exact rollback across six tables and then successful legitimate receipts. The recovery test verifies ambiguity, retry state, repeat-recovery idempotence and late acceptance on the correct attempt. No native notification or model call occurs.
+
+All **31 focused tests** passed. Full Orchestrator verification ran **1029 tests in 18.318 seconds: 1024 passed, five skipped**, `/tmp/cyrus-full-review-scheduler-receipts.log`. The exact isolated staged SchedulerStore version passed **six focused integration tests**, `/tmp/cyrus-scheduler-receipts-staged-tests.log`, preserving older unrelated unstaged changes. Ponytail removes a redundant content-existence query: the sole activation caller has already loaded/decrypted that row in the same transaction. Fatal Ruff and unchanged module-size checks pass; SchedulerStore remains at its **2475-line ceiling**, with no dependency or schema change.
+
+Current coverage: **213/400 code, 173/309 tests and 39/308 support files**, with **425 reviewed hashes verified across 1017 entries**. Whole-codebase review and final quality assessment remain incomplete. SchedulerStore follow-ups, the remaining inventory, compiler qualification identity binding and U05 privacy coverage remain open.

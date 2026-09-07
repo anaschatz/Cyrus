@@ -1331,11 +1331,6 @@ class SchedulerStore:
         schedule = dict(proposal["schedule"])
         scheduled_at = str(row["first_due_at_utc"])
         occurrence = occurrence_id(job_id, revision, scheduled_at)
-        original_content = connection.execute(
-            "SELECT * FROM scheduler_content WHERE record_id=?", (row["content_record_id"],)
-        ).fetchone()
-        if original_content is None:
-            raise OrchestratorError("scheduler_content_unavailable", status=503)
         # Re-encrypt under the final job/revision AAD; ciphertext is never copied.
         job_content_id = new_uuid4()
         self._put_content_tx(
@@ -2100,6 +2095,8 @@ class SchedulerStore:
             attempt = connection.execute(
                 "SELECT * FROM scheduler_delivery_attempts WHERE attempt_id=?", (attempt_id,)
             ).fetchone()
+            if attempt is not None and attempt["notification_id"] != notification:
+                raise OrchestratorError("binding_mismatch", status=409)
             if attempt is None:
                 ordinal = connection.execute(
                     "SELECT COUNT(*)+1 FROM scheduler_delivery_attempts WHERE notification_id=?",
@@ -2144,6 +2141,11 @@ class SchedulerStore:
                     """UPDATE scheduler_delivery_attempts SET state=?,reason_code=?,observed_at=?
                        WHERE attempt_id=?""",
                     (stage, reason_code, utc_text(selected), attempt_id),
+                )
+            elif stage == "DISPATCHING":
+                connection.execute(
+                    "UPDATE scheduler_delivery_attempts SET state='DISPATCHING' WHERE attempt_id=? AND state='CREATED'",
+                    (attempt_id,),
                 )
             self._ledger_tx(
                 connection,
