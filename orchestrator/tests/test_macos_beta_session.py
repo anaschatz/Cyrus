@@ -548,21 +548,15 @@ class MacOSBetaSessionTests(unittest.TestCase):
     def test_starts_in_dependency_order_and_stops_in_reverse_order(self) -> None:
         spawner = FakeSpawner()
         clock = FakeClock()
-        current: MacOSBetaSession | None = None
         warmups: list[bool] = []
-
-        def voice_ready(_context: object) -> bool:
-            assert current is not None
-            current.request_stop()
-            return True
 
         dependencies = self.dependencies(
             spawner,
             clock,
             inference_warmup=lambda _stack, _orchestrator: warmups.append(True) or True,
-            voice_ready=voice_ready,
         )
         current = self.session(dependencies)
+        clock.on_sleep = current.request_stop
 
         report = current.run().canonical()
 
@@ -639,6 +633,58 @@ class MacOSBetaSessionTests(unittest.TestCase):
             self.assertEqual(current.session_directory.stat().st_mode & 0o777, 0o700)
             for path in spawner.logs.values():
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_readiness_success_at_or_after_deadline_is_rejected(self) -> None:
+        for finished_at in (0.3, 0.4):
+            with self.subTest(finished_at=finished_at):
+                spawner, clock = FakeSpawner(), FakeClock()
+                def late_ready(context):
+                    clock.value = finished_at
+                    return True
+                session = self.session(self.dependencies(spawner, clock, inference_ready=late_ready))
+                clock.on_sleep = session.request_stop
+                with self.assertRaises(MacOSBetaSessionError) as caught:
+                    session.run()
+                self.assertEqual(caught.exception.code, "inference_readiness_timeout")
+                self.assertEqual(list(spawner.processes), ["inference"])
+                self.assertIsNotNone(spawner.processes["inference"].poll())
+                self.assertFalse((self.sessions / SESSION_INTERLOCK_FILENAME).exists())
+
+    def test_stop_during_probe_or_warmup_prevents_the_next_startup_stage(self) -> None:
+        for stop_phase in ("probe", "first_warmup", "second_warmup"):
+            with self.subTest(stop_phase=stop_phase):
+                spawner, clock = FakeSpawner(), FakeClock()
+                warmups = []
+                def probe(context):
+                    if stop_phase == "probe":
+                        session.request_stop()
+                    return True
+                def warmup(stack, config):
+                    warmups.append(True)
+                    if len(warmups) == (1 if stop_phase == "first_warmup" else 2):
+                        session.request_stop()
+                    return True
+                dependencies = self.dependencies(spawner, clock, inference_ready=probe, inference_warmup=warmup)
+                dependencies.activate_live_lease = lambda *args: self.fail("lease started after stop")
+                session = self.session(dependencies)
+                report = session.run()
+                self.assertFalse(report.startup_completed)
+                self.assertEqual(len(warmups), {"probe": 0, "first_warmup": 1, "second_warmup": 2}[stop_phase])
+                self.assertEqual(list(spawner.processes), ["inference"] if stop_phase == "probe" else ["inference", "orchestrator", "voice"])
+                self.assertTrue(all(process.poll() is not None for process in spawner.processes.values()))
+                self.assertFalse((self.sessions / SESSION_INTERLOCK_FILENAME).exists())
+
+    def test_nonfinite_timing_is_rejected_before_stack_validation(self) -> None:
+        for name in ("startup_timeout_seconds", "shutdown_grace_seconds", "kill_timeout_seconds", "poll_interval_seconds"):
+            for value in (float("nan"), float("inf")):
+                with self.subTest(name=name, value=value):
+                    spawner = FakeSpawner()
+                    session = self.session(self.dependencies(spawner, FakeClock()))
+                    setattr(session, name, value)
+                    with patch.object(PrivateStackConfig, "load", side_effect=AssertionError("unexpected load")), self.assertRaises(MacOSBetaSessionError) as caught:
+                        session.run()
+                    self.assertEqual(caught.exception.code, "session_timing_invalid")
+                    self.assertEqual(spawner.events, [])
 
     def test_interlock_is_durable_and_owner_only_before_first_spawn(self) -> None:
         spawner = FakeSpawner()

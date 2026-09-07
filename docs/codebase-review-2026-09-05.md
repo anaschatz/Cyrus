@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **213 of 400 code files**, plus **174 of 310 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **221 of 400 code files**, plus **186 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1031 tests (1026 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1067 tests (1062 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1299,3 +1299,20 @@ The original implementation produces **two failures and one error**, `/tmp/cyrus
 Ponytail: share the existing reader/parser and let the standard library own buffered writing and descriptor closure, **16 fewer production lines**. Frozen model/runtime artifacts, build lock and qualification evidence are unchanged. The script still rejects an existing output path; this change does not add recovery of failed conversion output directories.
 
 Coverage: **221/400 code, 185/315 tests and 41/308 support files**, with **447 reviewed hashes verified across 1023 entries**. Whole-codebase review and final quality assessment remain incomplete: **179 code, 130 test and 267 support files** remain.
+
+
+### macOS session startup timing and cancellation checkpoint
+
+Translation builder checkpoint committed as **6f4b625**, with a clean Ponytail hook. Read the complete 1892-line session supervisor and 1407-line test module before these changes. The source remains pending because listener ownership, liveness transport and interlock I/O/concurrency follow-ups still require investigation.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V236 | A readiness probe returning true at or beyond its deadline was accepted because success preceded timeout validation and the clock value was captured before the probe. | Read the clock after the probe and reject expired results before advancing startup. This rejects late results; it does not interrupt a synchronous probe while it is running. |
+| V237 | A stop requested during a readiness probe could launch the next component; a stop during warmup could run another warmup and activate the live lease. | Share a stop guard at spawn/probe/warmup boundaries, preserving the existing reverse-order shutdown. |
+| V238 | NaN and positive infinity passed timing validation, allowing invalid or unbounded readiness/shutdown budgets. | Require each existing numeric timing setting to be positive and finite before configuration access. |
+
+Three new regression methods produce **11 failures and two errors** against the original implementation, `/tmp/cyrus-beta-deadlines-before.log`. All **36 session tests pass**, `/tmp/cyrus-beta-deadlines-after.log`. Full Orchestrator ran **1067 tests in 19.470 seconds: 1062 passed, five skipped**, `/tmp/cyrus-full-review-beta-deadlines.log`. Four tests also pass against the exact staged supervisor source, `/tmp/cyrus-beta-deadlines-staged-tests.log`, covering all new regressions and successful startup/reverse shutdown. Older unrelated process-identity and probe-transport changes remain outside this commit.
+
+Fatal Ruff and unchanged module-size checks pass. The worktree supervisor is 1900 lines, within its existing 1900-line limit. Ponytail: one shared stop guard, no new dependency or lifecycle abstraction. Tests use fake probes/clocks/processes, temporary state, and the existing test's own disposable process group; no real microphone, native action, model or external provider was exercised.
+
+Coverage: **221/400 code, 186/315 tests and 41/308 support files**, with **448 reviewed hashes verified across 1023 entries**. The complete session test source is reviewed. Whole-codebase review and final quality assessment remain incomplete: **179 code, 129 test and 267 support files** remain. Session follow-ups include redirect/deadline handling in voice liveness, nonblocking strict interlock reads, listener-to-child ownership before authenticated startup probes, and concurrent recovery/publication ownership. These are investigation items, not fixes or qualified guarantees. Compiler qualification identity binding and U05 also remain open.

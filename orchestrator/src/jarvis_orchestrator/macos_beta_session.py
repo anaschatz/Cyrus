@@ -1422,6 +1422,10 @@ class MacOSBetaSession:
         self._stop_reason = reason_code
         self._stop_requested.set()
 
+    def _check_stop(self) -> None:
+        if self._stop_requested.is_set():
+            raise _StopRequested
+
     def _validate_settings(self) -> tuple[PrivateStackConfig, OrchestratorConfig]:
         if self.dependencies.platform != "darwin":
             raise MacOSBetaSessionError("macos_required")
@@ -1431,7 +1435,7 @@ class MacOSBetaSession:
             self.kill_timeout_seconds,
             self.poll_interval_seconds,
         ):
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < float("inf"):
                 raise MacOSBetaSessionError("session_timing_invalid")
         try:
             stack = PrivateStackConfig.load(self.stack_path)
@@ -1603,6 +1607,7 @@ class MacOSBetaSession:
         }
 
     def _spawn(self, component: str, command: tuple[str, ...]) -> ChildProcess:
+        self._check_stop()
         assert self._session_directory is not None
         if self._interlock is None:
             raise MacOSBetaSessionError("session_interlock_failed")
@@ -1642,8 +1647,7 @@ class MacOSBetaSession:
         started = self.dependencies.monotonic()
         deadline = started + self.startup_timeout_seconds
         while True:
-            if self._stop_requested.is_set():
-                raise _StopRequested
+            self._check_stop()
             if process.poll() is not None:
                 raise MacOSBetaSessionError(f"{component}_startup_failed")
             now = self.dependencies.monotonic()
@@ -1660,10 +1664,12 @@ class MacOSBetaSession:
                 if isinstance(exc, KeyboardInterrupt):
                     raise
                 ready = False
-            if ready and process.poll() is None:
-                return
+            self._check_stop()
+            now = self.dependencies.monotonic()
             if now >= deadline:
                 raise MacOSBetaSessionError(f"{component}_readiness_timeout")
+            if ready and process.poll() is None:
+                return
             self.dependencies.sleep(
                 min(self.poll_interval_seconds, max(0.0, deadline - now))
             )
@@ -1815,6 +1821,7 @@ class MacOSBetaSession:
                 orchestrator,
             )
             for _warmup_index in range(2):
+                self._check_stop()
                 try:
                     inference_warm = self.dependencies.inference_warmup(
                         stack,
@@ -1822,6 +1829,7 @@ class MacOSBetaSession:
                     )
                 except Exception:
                     inference_warm = False
+                self._check_stop()
                 if not inference_warm:
                     raise MacOSBetaSessionError("inference_warmup_failed")
             try:
