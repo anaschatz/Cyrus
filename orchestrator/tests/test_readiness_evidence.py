@@ -8,11 +8,12 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import _bootstrap  # noqa: F401
 from cryptography.hazmat.primitives import serialization
@@ -541,6 +542,52 @@ class ReadinessEvidenceTests(unittest.TestCase):
                 expected_identity=_identity(),
                 now=NOW,
             )
+
+    def test_malformed_envelope_enums_fail_before_signature_verification(self) -> None:
+        valid = self.evidence().canonical()
+        path = self.root / "malformed-enum.json"
+        verifier = SimpleNamespace(verify=Mock(side_effect=AssertionError("unexpected verification")))
+        for field in ("evidence_kind", "os_family", "architecture", "runtime_mode"):
+            for invalid in ([], {}):
+                with self.subTest(field=field, invalid=invalid):
+                    document = deepcopy(valid)
+                    target = document if field == "evidence_kind" else document["host_class"]
+                    target[field] = invalid
+                    path.write_bytes(canonical_json_bytes(document))
+                    with self.assertRaises(OperationalError):
+                        verify_readiness_evidence(
+                            path, verifier=verifier, expected_kind=SYNTHETIC_KIND,
+                            expected_identity=_identity(), now=NOW,
+                        )
+                    verifier.verify.assert_not_called()
+
+    def test_malformed_native_enums_fail_before_signing(self) -> None:
+        signer = SimpleNamespace(key_id="fixture", sign=Mock(side_effect=AssertionError("unexpected signing")))
+        for field in ("platform", "runtime_mode", "code", "check_status", "check_code"):
+            for invalid in ([], {}):
+                with self.subTest(field=field, invalid=invalid):
+                    payload = _leaf_payloads()[NATIVE_KIND]
+                    if field.startswith("check_"):
+                        payload["checks"]["acoustic_barge_in"][field.removeprefix("check_")] = invalid
+                    else:
+                        payload[field] = invalid
+                    with self.assertRaisesRegex(OperationalError, "readiness_payload_invalid"):
+                        build_readiness_evidence(
+                            evidence_kind=NATIVE_KIND, payload=payload, identity=_identity(),
+                            database_diagnostics=_healthy_diagnostics(),
+                            qualification=_qualification(NATIVE_KIND), signer=signer, captured_at=NOW,
+                        )
+                    signer.sign.assert_not_called()
+
+    def test_qualification_rejects_nonstring_evidence_kind(self) -> None:
+        binding = _qualification(SYNTHETIC_KIND)
+        for invalid in ([], {}):
+            for action in (
+                lambda: qualification_binding_for_kind(invalid, cohort_id=COHORT_ID, window_started_at=NOW),
+                lambda: binding.validate_for(invalid, binding.window_started_at_utc),
+            ):
+                with self.subTest(invalid=invalid, action=action), self.assertRaises(OperationalError):
+                    action()
 
     def test_aggregate_requires_exact_parent_hash_set(self) -> None:
         parents = {

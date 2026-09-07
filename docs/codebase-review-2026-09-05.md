@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **222 of 400 code files**, plus **186 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **222 of 400 code files**, plus **187 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1075 tests (1070 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1078 tests (1073 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1386,3 +1386,16 @@ All **65 focused tests pass**, `/tmp/cyrus-beta-listeners-after.log`, including 
 A native check opens only its own temporary loopback listener and verifies recognition of its own PID, rejection of a mismatched synthetic identity and rejection after socket close, `/tmp/cyrus-beta-listener-native.log`. No unrelated process was signalled and no live beta session, microphone, model or provider was used. Ownership checks are snapshots around requests, not an atomic OS binding between a TCP connection and a PID; they do not establish cryptographic server authentication or replace separate native/live qualification. Synchronous probes/inspections retain their individual bounded I/O timeouts; the startup deadline rejects late results rather than forcibly interrupting arbitrary injected callbacks.
 
 Coverage: **222/400 code, 186/315 tests and 41/308 support files**, with **449 reviewed hashes verified across 1023 entries**. Complete supervisor source reading and the identified timing, cancellation, private I/O, recovery and listener follow-ups are now reviewed. Older parent-PID/warmup/readiness-wrapper migration remains outside these checkpoint diffs and must still be committed with its own dependency/test changes. The whole-codebase review and final quality assessment remain incomplete: **178 code, 129 test and 267 support files** remain; U05 and compiler qualification identity binding remain open. Reviewed does not mean bug-free or native-qualified.
+
+
+### Readiness evidence enum boundaries
+
+Listener-ownership checkpoint committed as **4e12e80**, with a clean Ponytail hook. Read the complete 2293-line readiness evidence implementation and 1606-line test module, then traced signing/verification callers in the CLI and aggregate gate. Initial source reading is complete; timing and file-publication follow-ups remain under investigation.
+
+**V247:** List/object JSON values in evidence kind, host class and native payload enums reached hash-based membership checks and escaped as TypeError. Qualification kind lookup had the same failure. Malformed evidence could therefore bypass the caller's expected OperationalError handling before signature verification or signing. Use tuples for these small closed string enums and validate qualification membership before dictionary lookup. Reuse the existing native code tuples directly instead of rebuilding sets. EVIDENCE_KINDS has no other repository consumers or set-operation callers.
+
+Three regression methods produce **22 errors** against original source, `/tmp/cyrus-evidence-enums-before.log`. They exercise real canonical malformed evidence files and native payloads, and verify that neither signer nor verifier is called for invalid enums. **49 focused tests ran: 48 passed, one skipped**, `/tmp/cyrus-evidence-enums-after.log`. Full Orchestrator ran **1078 tests in 21.126 seconds: 1073 passed, five skipped**, `/tmp/cyrus-full-review-evidence-enums.log`. Five exact staged-source/test checks pass, `/tmp/cyrus-evidence-enums-staged-tests.log`, including valid signed round-trip and tampered/stale/untrusted-signature rejection.
+
+An independent fixed synthetic key comparison confirms byte-for-byte identical canonical documents, hashes and signatures for all **six leaf kinds and their aggregate**, using `/tmp/cyrus-evidence-canonical-check.py`. Fatal Ruff/unused-import and unchanged module-size checks pass. Ponytail: native tuple membership handles unhashable invalid inputs without a new enum abstraction or repeated exception wrappers; production source grows by one line. Older stable file/hash-reader changes remain outside this commit. All keys, payloads and state are synthetic/temporary; no user signing key or live/native qualification was used.
+
+Coverage: **222/400 code, 187/315 tests and 41/308 support files**, with **450 reviewed hashes verified across 1023 entries**. The complete readiness evidence test module is reviewed. The evidence source remains pending time-value validation, UTC-boundary arithmetic and cohort/evidence publication/cleanup investigation. Whole-codebase review and final quality assessment remain incomplete: **178 code, 128 test and 267 support files** remain. U05 and compiler qualification identity binding remain open.

@@ -72,7 +72,7 @@ LEAF_EVIDENCE_KINDS = (
     SOAK_KIND,
     NATIVE_KIND,
 )
-EVIDENCE_KINDS = frozenset((*LEAF_EVIDENCE_KINDS, AGGREGATE_KIND))
+EVIDENCE_KINDS = (*LEAF_EVIDENCE_KINDS, AGGREGATE_KIND)
 QUALIFICATION_SEQUENCE_BY_KIND = MappingProxyType(
     {
         SYNTHETIC_KIND: 1,
@@ -643,11 +643,11 @@ class HostClassV1:
     runtime_mode: str
 
     def __post_init__(self) -> None:
-        if self.os_family not in {"linux", "macos", "windows"}:
+        if self.os_family not in ("linux", "macos", "windows"):
             raise _error("readiness_identity_invalid")
-        if self.architecture not in {"arm64", "x86_64"}:
+        if self.architecture not in ("arm64", "x86_64"):
             raise _error("readiness_identity_invalid")
-        if self.runtime_mode not in {"source", "signed_package"}:
+        if self.runtime_mode not in ("source", "signed_package"):
             raise _error("readiness_identity_invalid")
 
     def canonical(self) -> dict[str, str]:
@@ -745,7 +745,8 @@ class QualificationBindingV2:
         started = _parse_utc(self.window_started_at_utc)
         expires = _parse_utc(self.window_expires_at_utc)
         if (
-            QUALIFICATION_SEQUENCE_BY_KIND.get(evidence_kind) != self.sequence
+            evidence_kind not in EVIDENCE_KINDS
+            or QUALIFICATION_SEQUENCE_BY_KIND.get(evidence_kind) != self.sequence
             or captured < started
             or captured >= expires
         ):
@@ -1017,12 +1018,12 @@ def _validate_native_payload(payload: Mapping[str, Any]) -> None:
         or payload.get("product_version") != __version__
         or payload.get("protocol_version") != PROTOCOL_VERSION
         or payload.get("voice_auth_protocol") != AUTH_PROTOCOL
-        or payload.get("platform") not in {"macos", "windows"}
-        or payload.get("runtime_mode") not in {"source", "signed_package"}
+        or payload.get("platform") not in ("macos", "windows")
+        or payload.get("runtime_mode") not in ("source", "signed_package")
         or not _is_digest(payload.get("runtime_profile_sha256"))
         or not isinstance(payload.get("ready"), bool)
         or payload.get("code")
-        not in {"qualification.native_ready", "qualification.native_blocked"}
+        not in ("qualification.native_ready", "qualification.native_blocked")
         or payload.get("content_captured") is not False
         or payload.get("network_used") is not False
         or not isinstance(checks, Mapping)
@@ -1034,11 +1035,11 @@ def _validate_native_payload(payload: Mapping[str, Any]) -> None:
         if (
             not isinstance(check, Mapping)
             or set(check) != {"code", "status", *details}
-            or check.get("status") not in {"ready", "blocked"}
+            or check.get("status") not in ("ready", "blocked")
         ):
             raise _error("readiness_payload_invalid")
         codes = _NATIVE_CHECK_CODES[name]
-        expected_codes = {codes[0]} if check["status"] == "ready" else set(codes[1:])
+        expected_codes = codes[:1] if check["status"] == "ready" else codes[1:]
         if check.get("code") not in expected_codes:
             raise _error("readiness_payload_invalid")
     integer_details = {
