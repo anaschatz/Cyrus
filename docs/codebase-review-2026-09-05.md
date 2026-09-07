@@ -1220,3 +1220,19 @@ The six new HTTP regression methods produce **14 failures and one error** agains
 All **58 focused tests** pass. Full Orchestrator verification ran **1053 tests in 18.115 seconds: 1048 passed, five skipped**, `/tmp/cyrus-full-review-control-complete.log`. **23 isolated staged-scheduler tests** also pass, `/tmp/cyrus-control-ledger-staged-tests.log`, preserving unrelated older scheduler edits. This checkpoint includes the earlier control cursor, Unicode-bearer and deep-JSON fixes with their existing security regressions, now fully inspected. Fatal Ruff and unchanged module-size limits pass; control.py is 987 lines and SchedulerStore remains 2475. Shared admission avoids duplicating transfer-encoding guards; no dependency or schema change was added.
 
 Current coverage: **216/400 code, 180/314 tests and 39/308 support files**, with **435 reviewed hashes verified across 1022 entries**. The complete control source and identified boundary follow-ups are now reviewed. Whole-codebase review and final quality assessment remain incomplete: 184 code, 134 test and 269 support files remain, with compiler qualification identity binding and U05 still open. Reviewed does not mean bug-free; native/live qualification remains separate.
+
+
+### Cloud routing schema boundaries and completed source inspection
+
+Control API checkpoint committed as **933e0c3**, with a clean Ponytail hook. Read all 549 lines of cloud_routing.py and traced its profiler input, deterministic selection, stored evidence and approval-denial consumers.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V225 | Routing validation accepted boolean epochs, empty/non-string task identities and falsy non-string candidate digests. Direct profile construction could pass validation with invalid enum values and subsequently fail during scoring or canonicalization. | Validate the declared types at the shared contract boundary, including epoch in the existing numeric checks. Reject invalid values before producing a route plan. |
+| V226 | Malformed mapping inputs, nested domain values, status fields and candidate objects could leak TypeError, AttributeError or plain enum ValueError instead of CloudContractError. | Check container/string types before iteration, membership or length operations; translate enum parsing failures and validate nested candidate instances. |
+
+Four new regression methods reproduce **16 failures and 23 errors** against the original source, `/tmp/cyrus-cloud-routing-before.log`. All **25 focused tests** pass, `/tmp/cyrus-cloud-routing-after.log`. Full Orchestrator ran **1057 tests in 18.622 seconds: 1052 passed, five skipped**, `/tmp/cyrus-full-review-cloud-routing.log`. Fatal Ruff and unchanged module-size checks pass. All requests in existing lifecycle tests use fake clients and temporary storage; no external provider or native qualification was exercised.
+
+Ponytail simplification: canonical routing facts now reuse the single recursive asdict result instead of rebuilding each nested candidate. An independent comparison against the saved original source confirms identical canonical route documents/hashes for **64 valid decisions** spanning all eight task kinds and approval/privacy/local-failure/deadline variations. Routing thresholds and policy gates remain unchanged; production source grows by seven lines overall, without dependencies or new abstractions.
+
+Current coverage: **217/400 code, 181/315 tests and 39/308 support files**, with **437 reviewed hashes verified across 1023 entries**. Cloud routing source inspection is complete. The whole-codebase review and final quality assessment remain incomplete: **183 code, 134 test and 269 support files** remain, with compiler qualification identity binding and U05 still open. Reviewed does not mean bug-free.

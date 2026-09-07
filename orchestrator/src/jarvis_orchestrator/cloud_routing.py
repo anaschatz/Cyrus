@@ -105,35 +105,43 @@ class TaskProfileV1:
             "output_contract",
             "response_language",
         }
-        if set(value) != expected:
+        if not isinstance(value, Mapping) or set(value) != expected:
             raise CloudContractError("task_profile_fields")
         raw_domains = value["domains"]
         if not isinstance(raw_domains, (list, tuple)):
             raise CloudContractError("task_profile_domains")
+        try:
+            task_kind = TaskKind(value["task_kind"])
+            context_scope = ContextScope(value["context_scope"])
+            output_contract = OutputContract(value["output_contract"])
+        except (TypeError, ValueError) as exc:
+            raise CloudContractError("task_profile_enum") from exc
         profile = cls(
-            version=str(value["version"]),
-            task_kind=TaskKind(value["task_kind"]),
+            version=value["version"],
+            task_kind=task_kind,
             reasoning_depth=value["reasoning_depth"],
             constraint_count=value["constraint_count"],
             domains=tuple(raw_domains),
-            context_scope=ContextScope(value["context_scope"]),
-            output_contract=OutputContract(value["output_contract"]),
-            response_language=str(value["response_language"]),
+            context_scope=context_scope,
+            output_contract=output_contract,
+            response_language=value["response_language"],
         )
         return profile.validate()
 
     def validate(self) -> "TaskProfileV1":
         if self.version != "task-profile/1":
             raise CloudContractError("task_profile_version")
+        if not isinstance(self.task_kind, TaskKind) or not isinstance(self.context_scope, ContextScope) or not isinstance(self.output_contract, OutputContract):
+            raise CloudContractError("task_profile_enum")
         if isinstance(self.reasoning_depth, bool) or not isinstance(self.reasoning_depth, int) or not 0 <= self.reasoning_depth <= 3:
             raise CloudContractError("reasoning_depth")
         if isinstance(self.constraint_count, bool) or not isinstance(self.constraint_count, int) or not 0 <= self.constraint_count <= 8:
             raise CloudContractError("constraint_count")
-        if not 1 <= len(self.domains) <= 4 or len(set(self.domains)) != len(self.domains):
+        if not isinstance(self.domains, (list, tuple)) or not 1 <= len(self.domains) <= 4:
             raise CloudContractError("domains")
-        if any(item not in ALLOWED_DOMAINS for item in self.domains):
+        if any(not isinstance(item, str) or item not in ALLOWED_DOMAINS for item in self.domains) or len(set(self.domains)) != len(self.domains):
             raise CloudContractError("domains")
-        if self.response_language not in ALLOWED_LANGUAGES:
+        if not isinstance(self.response_language, str) or self.response_language not in ALLOWED_LANGUAGES:
             raise CloudContractError("response_language")
         return self
 
@@ -220,7 +228,7 @@ class CandidateFactsV1:
             "stable_catalog_sha256",
             "qualification_sha256",
         }
-        if set(value) != expected or not isinstance(value["capabilities"], (list, tuple)):
+        if not isinstance(value, Mapping) or set(value) != expected or not isinstance(value["capabilities"], (list, tuple)):
             raise CloudContractError("candidate_fields")
         return cls(
             alias=value["alias"],
@@ -252,12 +260,13 @@ class CandidateFactsV1:
         if (
             not isinstance(self.alias, str)
             or not self.alias
+            or not isinstance(self.capabilities, (list, tuple))
             or any(not isinstance(item, str) or not item for item in self.capabilities)
             or len(set(self.capabilities)) != len(self.capabilities)
         ):
             raise CloudContractError("candidate_fact")
         for digest in (self.stable_catalog_sha256, self.qualification_sha256):
-            if digest and (len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)):
+            if not isinstance(digest, str) or (digest and (len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest))):
                 raise CloudContractError("candidate_digest")
         return self
 
@@ -315,7 +324,7 @@ class RoutingFactsV1:
             "deepseek",
             "terra",
         }
-        if set(value) != expected:
+        if not isinstance(value, Mapping) or set(value) != expected:
             raise CloudContractError("routing_facts_fields")
         for name in ("local", "deepseek", "terra"):
             if not isinstance(value[name], Mapping):
@@ -347,9 +356,12 @@ class RoutingFactsV1:
         ).validate()
 
     def validate(self) -> "RoutingFactsV1":
-        if self.version != "routing-facts/1" or self.epoch < 0:
+        if self.version != "routing-facts/1":
             raise CloudContractError("routing_facts_version")
+        if not isinstance(self.task_id, str) or not self.task_id:
+            raise CloudContractError("routing_task_id")
         integers = (
+            self.epoch,
             self.estimated_input_tokens,
             self.reserved_output_tokens,
             self.remaining_active_ms,
@@ -370,29 +382,24 @@ class RoutingFactsV1:
         )
         if any(not isinstance(value, bool) for value in booleans):
             raise CloudContractError("routing_boolean_fact")
-        if self.approval_status not in {"absent", "pending", "approved", "denied"}:
+        if not isinstance(self.approval_status, str) or self.approval_status not in {"absent", "pending", "approved", "denied"}:
             raise CloudContractError("approval_status")
-        if self.flow_kind not in {"local", "memory", "research", "tool"}:
+        if not isinstance(self.flow_kind, str) or self.flow_kind not in {"local", "memory", "research", "tool"}:
             raise CloudContractError("flow_kind")
-        if self.local_failure not in {"", "context", "latency", "backend", "structural"}:
+        if not isinstance(self.local_failure, str) or self.local_failure not in {"", "context", "latency", "backend", "structural"}:
             raise CloudContractError("local_failure")
-        if len(self.profile_sha256) != 64 or any(c not in "0123456789abcdef" for c in self.profile_sha256):
+        if not isinstance(self.profile_sha256, str) or len(self.profile_sha256) != 64 or any(c not in "0123456789abcdef" for c in self.profile_sha256):
             raise CloudContractError("profile_sha256")
-        self.local.validate()
-        self.deepseek.validate()
-        self.terra.validate()
+        for candidate in (self.local, self.deepseek, self.terra):
+            if not isinstance(candidate, CandidateFactsV1):
+                raise CloudContractError("routing_candidate")
+            candidate.validate()
         return self
 
     def canonical(self) -> dict[str, Any]:
-        def candidate(item: CandidateFactsV1) -> dict[str, Any]:
-            raw = asdict(item)
-            raw["capabilities"] = list(item.capabilities)
-            return raw
-
         raw = asdict(self)
-        raw["local"] = candidate(self.local)
-        raw["deepseek"] = candidate(self.deepseek)
-        raw["terra"] = candidate(self.terra)
+        for name in ("local", "deepseek", "terra"):
+            raw[name]["capabilities"] = list(raw[name]["capabilities"])
         return raw
 
     @property
