@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **246 of 401 code files**, plus **210 of 331 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **274 of 401 code files**, plus **223 of 335 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **760 tests (745 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **780 tests (765 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1809,3 +1809,18 @@ Export ownership checkpoint committed as **c321628**, with a clean mandatory Pon
 Completed full source review of the materializer, readiness/command generator, their two test modules and the training CLI. All **12 focused tests pass**, `/tmp/cyrus-piper-environment-after.log`. Full Voice: **776 tests in 8.398 seconds, 761 passed and 15 skipped**, `/tmp/cyrus-full-review-piper-environment-voice.log`. Fatal Ruff and unchanged module boundaries pass. Tests use disposable directories, fake compiler/import runners and fake host/MPS probes; no real environment installation, native compilation, training, device query or model load was performed. The latest full Orchestrator result remains **1106 tests (1101 passed, five skipped)** from its earlier checkpoint.
 
 Ponytail: use Path.resolve/is_relative_to instead of lexical path comparison and remove two unused typing imports; **one net production line**, no helper or dependency. Coverage is **273/401 code, 221/334 tests and 41/308 support**, with **535 reviewed hashes verified across 1043 entries**. Remaining codebase inspection, broader U05 privacy, compiler qualification binding and final code-quality assessment are still incomplete.
+
+
+### Piper training argument and preparation boundaries
+
+Environment containment and readiness checkpoint committed as **7ff43df**, with a clean mandatory Ponytail review.
+
+**V308 resolved:** the wrapper recognized only space-separated options. Mixed inline duplicates could bypass checkpoint argument validation and the protected profile accepted appended `--trainer.max_steps=10000`, `--trainer.max_epochs=999` or `--trainer.fast_dev_run=true`. The existing shared argument reader now recognizes both supported spellings and rejects duplicates across them; both checkpoint validators reuse it while preserving their error codes. Forbidden profile options are checked by name before the equals sign. Original arguments still reach the training CLI unchanged.
+
+**V309 resolved:** disabling MOS modified module callbacks before importing or constructing the protected checkpoint callback. Either failure left those defaults changed for the next execution. Preparation now computes callbacks locally and publishes them only after it succeeds, removing three manual partial-rollback assignments. The public runner rejects protected resume before this preparation path.
+
+**V310 resolved:** the validated resume checkpoint could still be loaded with explicit `weights_only=False`, despite its weights-only validation contract. The existing scoped load wrapper now enforces weights-only loading for the validated checkpoint in both warm-start and resume modes. Unrelated load paths keep their original arguments.
+
+Four regression methods produce **nine failures and two errors before the fixes**, `/tmp/cyrus-piper-training-boundaries-before.log`. All **21 focused tests pass**, `/tmp/cyrus-piper-training-boundaries-after.log`. Full Voice: **780 tests in 8.220 seconds, 765 passed and 15 skipped**, `/tmp/cyrus-full-review-piper-training-boundaries-voice.log`. Fatal Ruff and unchanged module boundaries pass. Tests use disposable synthetic checkpoint files and fake Torch, Piper and callback modules; no actual training, model load or native device operation was performed. Native training qualification remains pending.
+
+Ponytail: reuse the existing argument reader and defer callback publication; **zero net production lines**, no new dependency or rollback abstraction. Complete inspection covers the checkpoint module and both test modules. Coverage is **274/401 code, 223/335 tests and 41/308 support**, with **538 reviewed hashes verified across 1044 entries**. The latest full Orchestrator result remains **1106 tests (1101 passed, five skipped)** from its earlier checkpoint. Remaining codebase inspection, broader U05 privacy, compiler qualification binding and the final code-quality assessment are still incomplete.

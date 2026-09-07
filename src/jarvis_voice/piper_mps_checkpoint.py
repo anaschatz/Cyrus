@@ -55,15 +55,15 @@ def validate_piper_mps_checkpoint(
 ) -> Path:
     """Validate the exact checkpoint and its complete weights-only global set."""
 
-    indices = [
-        index for index, value in enumerate(piper_argv) if value == WARM_START_ARGUMENT
-    ]
-    if len(indices) != 1 or indices[0] + 1 >= len(piper_argv):
+    value = _single_value(
+        piper_argv, WARM_START_ARGUMENT, code="tts.f1_mps.checkpoint_argument_invalid"
+    )
+    if value is None:
         raise _error(
             "tts.f1_mps.checkpoint_argument_invalid",
             "Exactly one Piper checkpoint path is required",
         )
-    checkpoint = Path(piper_argv[indices[0] + 1]).expanduser()
+    checkpoint = Path(value).expanduser()
     if (
         not checkpoint.is_absolute()
         or not checkpoint.is_file()
@@ -110,20 +110,16 @@ def validate_piper_mps_resume_checkpoint(
 ) -> Path:
     """Validate a local Lightning `last.ckpt` before weights-only resume."""
 
-    resume_indices = [
-        index for index, value in enumerate(piper_argv) if value == RESUME_ARGUMENT
-    ]
+    resume_value = _single_value(
+        piper_argv, RESUME_ARGUMENT, code="tts.f1_mps.resume_argument_invalid"
+    )
     warm_value = _single_value(piper_argv, WARM_START_ARGUMENT)
-    if (
-        warm_value not in (None, "null")
-        or len(resume_indices) != 1
-        or resume_indices[0] + 1 >= len(piper_argv)
-    ):
+    if warm_value not in (None, "null") or resume_value is None:
         raise _error(
             "tts.f1_mps.resume_argument_invalid",
             "Resume requires exactly one checkpoint and no warm-start",
         )
-    checkpoint = Path(piper_argv[resume_indices[0] + 1]).expanduser()
+    checkpoint = Path(resume_value).expanduser()
     checkpoint_parts_ready = (
         checkpoint.name == "last.ckpt"
         and checkpoint.parent.name == "checkpoints"
@@ -167,16 +163,21 @@ def validate_piper_mps_resume_checkpoint(
     return checkpoint
 
 
-def _single_value(piper_argv: Sequence[str], argument: str) -> str | None:
-    indices = [index for index, value in enumerate(piper_argv) if value == argument]
+def _single_value(
+    piper_argv: Sequence[str], argument: str,
+    *, code: str = "tts.f1_mps.training_argument_invalid",
+) -> str | None:
+    indices = [
+        index for index, value in enumerate(piper_argv)
+        if value.split("=", 1)[0] == argument
+    ]
     if not indices:
         return None
-    if len(indices) != 1 or indices[0] + 1 >= len(piper_argv):
-        raise _error(
-            "tts.f1_mps.training_argument_invalid",
-            "Piper training argument is missing or duplicated",
-        )
-    return piper_argv[indices[0] + 1]
+    index = indices[0]
+    inline = "=" in piper_argv[index]
+    if len(indices) != 1 or (not inline and index + 1 >= len(piper_argv)):
+        raise _error(code, "Piper training argument is missing or duplicated")
+    return piper_argv[index].partition("=")[2] if inline else piper_argv[index + 1]
 
 
 def _protected_f1_arguments(piper_argv: Sequence[str]) -> tuple[bool, list[str]]:
@@ -216,7 +217,7 @@ def _validate_protected_f1_profile(piper_argv: Sequence[str]) -> None:
         "--trainer.max_epochs",
         "--trainer.overfit_batches",
     }
-    if any(value in forbidden for value in piper_argv):
+    if any(value.split("=", 1)[0] in forbidden for value in piper_argv):
         raise _error(
             "tts.f1_mps.protected_profile_invalid",
             "Protected F1 training cannot use an epoch budget",
@@ -280,6 +281,7 @@ def _prepare_piper_main(
 ) -> tuple[object, tuple[object, ...], object | None, dict[str, object]]:
     training_module = importlib.import_module("piper.train.__main__")
     callbacks = tuple(getattr(training_module, "_DEFAULT_CALLBACKS", ()))
+    prepared_callbacks = list(callbacks)
     if _single_value(piper_argv, "--model.mos_metric") == "none":
         monitors = tuple(getattr(callback, "monitor", None) for callback in callbacks)
         if monitors.count("val_mos") != 1 or monitors.count("val_mel") != 1:
@@ -287,7 +289,7 @@ def _prepare_piper_main(
                 "tts.f1_mps.checkpoint_callbacks_invalid",
                 "Pinned Piper checkpoint callback profile changed",
             )
-        training_module._DEFAULT_CALLBACKS = [
+        prepared_callbacks = [
             callback
             for callback in callbacks
             if getattr(callback, "monitor", None) != "val_mos"
@@ -299,7 +301,6 @@ def _prepare_piper_main(
         model_class = getattr(training_module, "VitsModel", None)
         original_on_fit_start = getattr(model_class, "on_fit_start", None)
         if model_class is None or not callable(original_on_fit_start):
-            training_module._DEFAULT_CALLBACKS = list(callbacks)
             raise _error(
                 "tts.f1_mps.resume_hook_invalid",
                 "Pinned Piper resume hook changed",
@@ -326,7 +327,6 @@ def _prepare_piper_main(
             or not callable(original_on_fit_start)
             or not callable(original_on_train_batch_start)
         ):
-            training_module._DEFAULT_CALLBACKS = list(callbacks)
             raise _error(
                 "tts.f1_mps.protected_hook_invalid",
                 "Pinned Piper protected-training hooks changed",
@@ -334,12 +334,11 @@ def _prepare_piper_main(
         checkpoint_module = importlib.import_module("lightning.pytorch.callbacks")
         checkpoint_class = getattr(checkpoint_module, "ModelCheckpoint", None)
         if checkpoint_class is None:
-            training_module._DEFAULT_CALLBACKS = list(callbacks)
             raise _error(
                 "tts.f1_mps.protected_checkpoint_invalid",
                 "Protected F1 checkpoint callback is unavailable",
             )
-        training_module._DEFAULT_CALLBACKS = [
+        prepared_callbacks = [
             checkpoint_class(
                 monitor=None,
                 save_top_k=-1,
@@ -378,6 +377,7 @@ def _prepare_piper_main(
         model_class.configure_optimizers = protected_configure_optimizers
         model_class.on_fit_start = protected_on_fit_start
         model_class.on_train_batch_start = protected_on_train_batch_start
+    training_module._DEFAULT_CALLBACKS = prepared_callbacks
     return training_module, callbacks, model_class, originals
 
 
@@ -419,7 +419,7 @@ def run_piper_mps_fit(piper_argv: Sequence[str]) -> None:
             candidate = Path(os.fspath(source)).expanduser().absolute()
         except TypeError:
             candidate = None
-        if warm_start_mode and candidate == checkpoint.absolute():
+        if candidate == checkpoint.absolute():
             kwargs["weights_only"] = True
         return original_torch_load(source, *args, **kwargs)
 
