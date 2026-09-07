@@ -595,3 +595,59 @@ def test_local_w2_preflight_artifact_binds_fixture_and_log_bytes(
             expected_git_commit=COMMIT,
             expected_pricing_sha256=LOCAL_PRICING_SHA256,
         )
+
+
+@pytest.mark.parametrize("variant", ["", "w2_", "w3_", "w3_m2_"])
+def test_local_preflight_decodes_verified_bytes_after_path_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, variant: str
+) -> None:
+    import anamnesis.local_preflight as preflight
+
+    path = tmp_path / "preflight.eval"
+    write_eval_log(_valid_log(), path, format="eval")
+    content = path.read_bytes()
+    artifact = ArtifactPin(path=str(path), sha256=hashlib.sha256(content).hexdigest())
+    kwargs = {}
+    if variant:
+        version = "w2" if variant == "w2_" else "w3"
+        fixture_path = Path(f"eval/preflight/local_writer_{version}.v1.json")
+        kwargs["fixture_artifact"] = ArtifactPin(
+            path=str(fixture_path),
+            sha256=hashlib.sha256(fixture_path.read_bytes()).hexdigest(),
+        )
+    if variant.startswith("w3"):
+        protocol_path = Path("eval/preflight/local_writer_w3.protocol.v1.json")
+        kwargs["protocol_artifact"] = ArtifactPin(
+            path=str(protocol_path),
+            sha256=hashlib.sha256(protocol_path.read_bytes()).hexdigest(),
+        )
+    read_log = preflight.read_eval_log
+    decoded = []
+
+    def replace_then_decode(source, **options):
+        path.write_bytes(b"replaced after hash verification")
+        log = read_log(source, **options)
+        decoded.append(log)
+        return log
+
+    def check_decoded_log(log, **options):
+        assert log is decoded[0]
+        validate_local_preflight_log(
+            log,
+            expected_git_commit=COMMIT,
+            expected_pricing_sha256=LOCAL_PRICING_SHA256,
+        )
+
+    monkeypatch.setattr(preflight, "read_eval_log", replace_then_decode)
+    # This regression exercises each artifact loader with the same serialized
+    # log. Existing protocol tests cover the distinct W2/W3 semantic validators.
+    monkeypatch.setattr(
+        preflight, f"validate_local_{variant}preflight_log", check_decoded_log
+    )
+    getattr(preflight, f"validate_local_{variant}preflight_artifact")(
+        artifact,
+        expected_git_commit=COMMIT,
+        expected_pricing_sha256=LOCAL_PRICING_SHA256,
+        **kwargs,
+    )
+    assert len(decoded) == 1

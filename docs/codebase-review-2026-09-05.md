@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **352 of 401 code files**, plus **279 of 340 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **355 of 401 code files**, plus **282 of 340 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **879 tests (864 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **749 tests (747 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **879 tests (864 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **753 tests (751 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2550,3 +2550,14 @@ A30-case regression produces actual run_scenario records through InspectDecision
 All **104 focused checks pass**, `/tmp/cyrus-hosted-run-binding-focused.log`. Full Anamnesis: **749 tests, 747 passed and2 expected failures**, `/tmp/cyrus-full-review-hosted-run-binding-anamnesis.log`. Fatal Ruff, whitespace and the repository module-size ratchet pass; hosted CLI remains998 lines. No schema, frozen prompt, manifest, dataset or historical result changed. No live provider, model, native API or measured experiment was executed. This checkpoint adds **93 net production lines**, with one shared per-event parser and no new dependency.
 
 Coverage is **352/401 code, 279/340 tests and48/308 support**, with **679 reviewed hashes verified across1049 entries**. Hosted raw-response-to-prediction consistency is now checked; complete replacement of a log is not authenticated. Full prompt/state replay, independent pricing/provenance, local-provider response binding and output collision/partial publication remain separate concerns. Remaining source/support review, older uncommitted fixes, broader privacy/compiler qualification and final code-quality assessment are unfinished.
+
+
+### Local preflight decoding uses the verified artifact bytes
+
+The hosted checkpoint binding is committed as **930b91f**, with a clean mandatory Ponytail review. Completed full reads of local_experiment (775 lines), local_preflight (944), anamnesis_local_eval (969), and their local-experiment/preflight and oracle-report tests. Traced the artifact validators into the local task factory and smoke/oracle/W1/W2/W3 reporters. The local fixture/protocol loaders independently hash and decode the same bytes against frozen constants.
+
+**A17 resolved:** all four local preflight artifact loaders verified the file hash and then reopened the path in Inspect, so validation could inspect different bytes after replacement. Standard, W2, W3 and W3-M2 loaders now pass BytesIO of the verified bytes, explicit eval format, and attachment resolution. This reuses the same Inspect API as the hosted fix and has **zero net production-line growth**, no new helper or dependency.
+
+One four-variant regression writes a real synthetic Inspect .eval log, replaces the path between hashing and decoding, and uses the actual Inspect decoder plus the existing two-call semantic validator. All **four cases fail before the fix** with the replacement-file decoding error, `/tmp/cyrus-local-preflight-bytes-before.log`. The W2/W3 semantic handlers are substituted in this boundary regression so each artifact loader can consume the same synthetic log; existing protocol-specific semantic and serialized roundtrip tests remain in the focused run. **79 focused checks pass**, `/tmp/cyrus-local-preflight-bytes-focused.log`; full Anamnesis **753 tests: 751 passed and 2 expected failures**, `/tmp/cyrus-full-review-local-preflight-bytes-anamnesis.log`. Fatal Ruff, whitespace and module-size checks pass. No live provider, model, native API or measured experiment was run, and frozen artifacts were not changed.
+
+Coverage is **355/401 code, 282/340 tests and 48/308 support**, with **685 reviewed hashes verified across 1049 entries**. Local preflight's raw response check still binds only model identity, not raw content/token usage; independent replay of oracle state is also absent. Local manifest/pricing input rereads and repeated phase mappings were identified during inspection and remain separate follow-ups. This checkpoint does not establish provider authenticity or native qualification. Remaining source/support review, earlier uncommitted fixes, privacy/compiler qualification and final code-quality assessment remain unfinished.

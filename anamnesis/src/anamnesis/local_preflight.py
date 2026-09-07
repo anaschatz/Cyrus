@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -801,7 +802,7 @@ def validate_local_preflight_artifact(
     if artifact.sha256 != hashlib.sha256(content).hexdigest():
         raise ValueError("local model preflight artifact hash mismatch")
     validate_local_preflight_log(
-        read_eval_log(path, resolve_attachments=True),
+        read_eval_log(BytesIO(content), format="eval", resolve_attachments=True),
         expected_git_commit=expected_git_commit,
         expected_pricing_sha256=expected_pricing_sha256,
         seed=seed,
@@ -833,7 +834,7 @@ def validate_local_w2_preflight_artifact(
     if artifact.sha256 != hashlib.sha256(content).hexdigest():
         raise ValueError("local W2 preflight artifact hash mismatch")
     return validate_local_w2_preflight_log(
-        read_eval_log(path, resolve_attachments=True),
+        read_eval_log(BytesIO(content), format="eval", resolve_attachments=True),
         fixture=fixture,
         expected_git_commit=expected_git_commit,
         expected_pricing_sha256=expected_pricing_sha256,
@@ -875,7 +876,7 @@ def validate_local_w3_preflight_artifact(
     if artifact.sha256 != hashlib.sha256(content).hexdigest():
         raise ValueError("local W3 preflight artifact hash mismatch")
     return validate_local_w3_preflight_log(
-        read_eval_log(path, resolve_attachments=True),
+        read_eval_log(BytesIO(content), format="eval", resolve_attachments=True),
         fixture=fixture,
         expected_git_commit=expected_git_commit,
         expected_pricing_sha256=expected_pricing_sha256,
@@ -911,14 +912,13 @@ def validate_local_w3_m2_preflight_artifact(
         raise ValueError("local W3-M2 fixture artifact mismatch")
     fixture = load_local_w3_preflight_fixture(fixture_path)
     path = Path(artifact.path)
-    if (
-        path.suffix != ".eval"
-        or not path.is_file()
-        or artifact.sha256 != hashlib.sha256(path.read_bytes()).hexdigest()
-    ):
+    if path.suffix != ".eval" or not path.is_file():
+        raise ValueError("local W3-M2 preflight artifact mismatch")
+    content = path.read_bytes()
+    if artifact.sha256 != hashlib.sha256(content).hexdigest():
         raise ValueError("local W3-M2 preflight artifact mismatch")
     return validate_local_w3_m2_preflight_log(
-        read_eval_log(path, resolve_attachments=True),
+        read_eval_log(BytesIO(content), format="eval", resolve_attachments=True),
         fixture=fixture,
         expected_git_commit=expected_git_commit,
         expected_pricing_sha256=expected_pricing_sha256,
