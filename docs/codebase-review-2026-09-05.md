@@ -1,6 +1,6 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **397 of 401 code files**, plus **305 of 347 test files** and **49 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **306 of 347 test files** and **49 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
 Updated **2026-09-08**. Latest complete runs: Voice **890 tests (875 passed, 15 skipped)**; Orchestrator **1111 tests (1106 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
@@ -2735,3 +2735,18 @@ Cloud follow-ups remain open: noncanonical timestamps used in lexical journal ex
 Coverage is **397/401 code, 305/347 tests and 49/308 support**, **751 reviewed entries across 1056 files**. Hashes were refreshed and verified for this checkpoint's source and test; this is not a fresh repository-wide hash scan. The remaining four source modules, other tests/support, earlier uncommitted fixes and final quality assessment are still pending.
 
 Full Orchestrator rerun: **1111 tests, 1106 passed and 5 skipped**, /tmp/cyrus-cloud-boundaries-orchestrator-recheck.log, 24.695 seconds. The first run had one 10-second standalone-import timeout (128.276 seconds overall) while file reads stalled in the iCloud-backed checkout. The isolated failing test then passed unchanged in 7.001 seconds, /tmp/cyrus-cloud-standalone-import-recheck.log; the complete unchanged rerun passed. No test timeout was relaxed.
+
+
+### Completed source inventory inspection; review still in progress — 2026-09-08
+
+Cloud frame/sequence checkpoint **06f06fb** passed the mandatory Ponytail review (Lean already. Ship.) and committed only its four selected files. The exact staged working-byte comparison and post-commit empty index were verified. The older worktree changes remain separate.
+
+Completed the four remaining source reads: the 1492-line Orchestrator CLI and the W1/W2/W3 writer reporters (1046/1201/1335 lines), plus the full 676-line W1 reporter tests. Coverage is now **401/401 code, 306/347 tests and 49/308 support**, with **756 reviewed entries across 1056 inventory files**. These counts mean every inventoried code file has been inspected; they do not establish complete behavioral coverage, bug freedom, native qualification or completion of the overall review. Refreshed hashes cover these five inspected files, not a new all-file hash scan.
+
+The CLI retains explicit shutdown supervision, scoped optional cloud/native authority, authenticated bounded control requests and signed readiness evidence. Its scheduler compiler qualification still lacks a verified mapping from declared compiler/model/runtime/profile/tokenizer hashes to the actual inference process; the identity endpoint currently returns aggregate manifest/runtime digests. A self-consistent pinned qualification document alone is insufficient evidence that the executing artifacts match. That integration issue is unresolved, and no qualification producer or new identity contract has been invented.
+
+The writer reporters validate measured events before opening the gold reference, separate writer candidate gates from final decision diagnostics, and strengthen provenance from W1 through W3. W2/W3 repeat substantial replay/metric/rendering logic, while their deliberately frozen scientific differences must be preserved. Confirmed by source inspection, the shared output guard compares resolved path names but does not reject hard links to inputs/other outputs or nonregular destinations. An in-progress regression exercises all three CLI entrypoints; its Python environment is still hydrating dependency files, so no baseline result or fix is claimed yet. It is outside this documentation checkpoint.
+
+Remaining writer follow-ups include exact metadata scalar types (Python equality accepts bool/integer aliases), bounded stable input snapshots, repeated hash/parse reads, resource limits for recursive leak scans, and atomic publication of the CSV/Markdown/provenance set. W3 rechecks source hashes before first output and again for provenance, but those checks do not create an immutable read snapshot or a multi-file transaction. Existing tests cover meaningful deterministic behavior, alongside some broad stubs and source-string assertions. Historical pins, reports and scoring rules are unchanged.
+
+The overall goal remains unfinished: pending tests/support inspection, confirmed bugs and integration questions, earlier uncommitted fixes, consolidated validation and the final code-quality assessment still require work.
