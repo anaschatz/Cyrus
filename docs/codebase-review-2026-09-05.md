@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **280 of 401 code files**, plus **231 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **281 of 401 code files**, plus **232 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **797 tests (782 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **800 tests (785 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1914,3 +1914,18 @@ POSIX locking was executed on disposable files on this macOS host. Windows nativ
 Ponytail: one context manager around the existing download flow, using stdlib/native APIs and **37 net production lines**, without a new dependency or process-management abstraction. Separate package lock helpers were inspected; importing Orchestrator or Inference would add an undeclared dependency to independently installed Voice. Coverage is **280/401 code, 231/339 tests and 41/308 support**, with **552 reviewed hashes verified across 1048 entries**. Remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment are still incomplete.
 
 Mandatory Ponytail hook follow-up: removed an unused import from the embedded subprocess fixture. All four locking tests pass again, `/tmp/cyrus-download-lock-ponytail-tests.log`; the checkpoint is amended with hooks active.
+
+
+### macOS TTS router failure propagation and cleanup
+
+Artifact writer coordination committed as **0212c18** after the mandatory Ponytail finding was addressed and the amended hook returned clean.
+
+**V325 resolved:** failure in the Greek backend's cancel call prevented cancellation from reaching the fallback backend. A finally clause now guarantees the fallback attempt while preserving exception propagation.
+
+**V326 resolved:** router close set its stop flag and then called cancel before joining/closing resources. A cancellation error or KeyboardInterrupt skipped the cleanup, and a later close returned immediately because that flag was already set. Close now captures the cancellation failure, attempts the worker join and both backend closures, and re-raises the recorded failure afterward. Backend cleanup also runs if the join is interrupted. This guarantees cleanup attempts, not recovery from an underlying native close operation that itself fails.
+
+**V327 resolved:** the worker stored a fatal BackendError and then continued to dispatch queued speech, although the runtime treats last_error as a reason to exit. It now stops after recording that error, with the existing finally clearing the active unit. New enqueue calls still report the stored error.
+
+Three regression methods produce **four failures before the fixes**, `/tmp/cyrus-router-failures-before.log`. All **seven focused checks pass**, `/tmp/cyrus-router-failures-after.log`. Full Voice: **800 tests in 8.327 seconds, 785 passed and 15 skipped**, `/tmp/cyrus-full-review-router-failures-voice.log`. After merging the regressions into the existing router test module, the same **seven checks pass again**, `/tmp/cyrus-router-ponytail-tests.log`. Fatal Ruff and unchanged module boundaries pass. Tests use fake backends, controlled events and owned worker threads; no native TTS process, audio device, model or user content was used.
+
+Ponytail: extend existing exception/cleanup boundaries and stop the failed worker; **eight net production lines**, no helper, dependency or new test file. Completed router/test inspection brings coverage to **281/401 code, 232/339 tests and 41/308 support**, with **554 reviewed hashes verified across 1048 entries**. Underlying native backend review, remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment remain incomplete.

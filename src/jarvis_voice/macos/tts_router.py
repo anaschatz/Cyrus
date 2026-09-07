@@ -86,8 +86,10 @@ class MacLocaleRoutingTtsBackend:
                     retained.append(unit)
             for unit in retained:
                 self._queue.put_nowait(unit)
-        self.greek_backend.cancel(new_epoch, reason)
-        self.fallback_backend.cancel(new_epoch, reason)
+        try:
+            self.greek_backend.cancel(new_epoch, reason)
+        finally:
+            self.fallback_backend.cancel(new_epoch, reason)
 
     @property
     def is_idle(self) -> bool:
@@ -116,15 +118,20 @@ class MacLocaleRoutingTtsBackend:
         if self._stop.is_set():
             return
         self._stop.set()
-        self.cancel(2**63 - 1, "application_close")
-        self._thread.join(timeout=2.0)
-        first_error: Exception | None = None
-        for backend in (self.greek_backend, self.fallback_backend):
-            try:
-                backend.close()
-            except Exception as exc:  # pragma: no cover - defensive native cleanup
-                if first_error is None:
-                    first_error = exc
+        first_error: BaseException | None = None
+        try:
+            self.cancel(2**63 - 1, "application_close")
+        except BaseException as exc:
+            first_error = exc
+        try:
+            self._thread.join(timeout=2.0)
+        finally:
+            for backend in (self.greek_backend, self.fallback_backend):
+                try:
+                    backend.close()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
         if first_error is not None:
             raise first_error
 
@@ -149,6 +156,7 @@ class MacLocaleRoutingTtsBackend:
             except BackendError as exc:
                 with self._lock:
                     self._error = exc
+                return
             finally:
                 with self._lock:
                     if self._active is unit:
