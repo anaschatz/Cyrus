@@ -24,6 +24,7 @@ from jarvis_orchestrator.translation import (
     TRANSLATION_MANIFEST_VERSION,
     TRANSLATION_MODEL_ID,
     TRANSLATION_MODEL_REVISION,
+    TRANSLATION_MAXIMUM_RESPONSE_BYTES,
     TRANSLATION_READY_VERSION,
     TRANSLATION_SENTENCEPIECE_VERSION,
     OpusCTranslate2TranslationPort,
@@ -367,6 +368,47 @@ class TranslationTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "input_translation_unavailable")
         self.assertTrue(process.terminated)
+
+    def test_invalid_worker_frames_are_rejected_and_the_worker_is_discarded(self) -> None:
+        raw = b'[' * 1500 + b'0' + b']' * 1500 + b'\n'
+        ready = canonical_json({"version": TRANSLATION_READY_VERSION, "status": "ready"}).encode()
+        oversized = ready + b" " * (TRANSLATION_MAXIMUM_RESPONSE_BYTES - len(ready)) + b"\n"
+        for startup, frame in ((True, raw), (False, raw), (True, oversized)):
+            with self.subTest(startup=startup, size=len(frame)):
+                process = FakeProcess(lambda request: frame, ready=frame if startup else None)
+                port = self.port(process)
+                with self.assertRaises(ContextAssemblyError) as raised:
+                    asyncio.run(port.start() if startup else port.translate(
+                        task_id="task", epoch=1, items={"current": "Δοκιμή"}
+                    ))
+                self.assertEqual(raised.exception.code,
+                                 "input_translation_unavailable" if startup else "input_translation_invalid")
+                self.assertTrue(process.terminated)
+                self.assertIsNone(port._process)
+
+    def test_unhashable_response_ids_are_rejected_and_the_worker_is_discarded(self) -> None:
+        for identifier in ([], {}):
+            with self.subTest(identifier=identifier):
+                def responder(raw):
+                    request = json.loads(raw)
+                    return (canonical_json({
+                        "version": "jarvis.input-translation-response/1",
+                        "request_id": request["request_id"],
+                        "items": [{"id": identifier, "text": "Ready."}],
+                    }) + "\n").encode()
+                process = FakeProcess(responder)
+                port = self.port(process)
+                with self.assertRaises(ContextAssemblyError) as raised:
+                    asyncio.run(port.translate(task_id="task", epoch=1, items={"current": "Δοκιμή"}))
+                self.assertEqual(raised.exception.code, "input_translation_invalid")
+                self.assertTrue(process.terminated)
+                self.assertIsNone(port._process)
+
+    def test_deep_manifest_has_the_declared_validation_error(self) -> None:
+        raw = b'[' * 1500 + b'0' + b']' * 1500
+        self.manifest_path.write_bytes(raw)
+        with self.assertRaisesRegex(ValueError, "invalid JSON"):
+            load_translation_manifest(self.model_root, self.manifest_path, hashlib.sha256(raw).hexdigest())
 
     def test_port_timeout_stops_worker(self) -> None:
         process = FakeProcess(lambda raw: b"", block=True)

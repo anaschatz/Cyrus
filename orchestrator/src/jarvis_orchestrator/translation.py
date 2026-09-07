@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import os
 import re
 import signal
@@ -17,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+from .config import _parse_strict_json, _unique_object
 from .context_assembler import ContextAssemblyError
 from .domain import canonical_json
 
@@ -53,6 +53,8 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _REVISION = re.compile(r"[0-9a-f]{40}")
 _COMPONENT_ID = re.compile(r"[a-z][a-z0-9_.:-]{0,63}")
 _GREEK = re.compile(r"[\u0370-\u03ff\u1f00-\u1fff]")
+# Preserve the decoder hook imported by the qualified v1 worker.
+_closed_json_object = _unique_object
 
 
 def contains_greek(value: str) -> bool:
@@ -119,15 +121,6 @@ def _read_bounded(path: Path, maximum: int) -> bytes:
     return raw
 
 
-def _closed_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("translation manifest contains duplicate keys")
-        result[key] = value
-    return result
-
-
 def load_translation_manifest(
     model_root: Path,
     manifest_path: Path,
@@ -143,11 +136,8 @@ def load_translation_manifest(
     if hashlib.sha256(raw).hexdigest() != expected_manifest_sha256:
         raise ValueError("translation manifest hash mismatch")
     try:
-        document = json.loads(
-            raw.decode("utf-8"),
-            object_pairs_hook=_closed_json_object,
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        document = _parse_strict_json(raw)
+    except ValueError as exc:
         raise ValueError("translation manifest is invalid JSON") from exc
     required_keys = {
         "version",
@@ -447,13 +437,10 @@ class OpusCTranslate2TranslationPort:
             raise ContextAssemblyError("input_translation_unavailable", status=502)
         try:
             raw = await process.stdout.readline()
-            if not raw.endswith(b"\n"):
-                raise ValueError("unterminated translation ready frame")
-            ready = json.loads(
-                raw.decode("utf-8"),
-                object_pairs_hook=_closed_json_object,
-            )
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            if len(raw) > TRANSLATION_MAXIMUM_RESPONSE_BYTES or not raw.endswith(b"\n"):
+                raise ValueError("invalid translation ready frame")
+            ready = _parse_strict_json(raw)
+        except (OSError, ValueError) as exc:
             raise ContextAssemblyError(
                 "input_translation_unavailable", status=502
             ) from exc
@@ -521,11 +508,8 @@ class OpusCTranslate2TranslationPort:
         ):
             raise ContextAssemblyError("input_translation_invalid", status=502)
         try:
-            response = json.loads(
-                raw.decode("utf-8"),
-                object_pairs_hook=_closed_json_object,
-            )
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            response = _parse_strict_json(raw)
+        except ValueError as exc:
             raise ContextAssemblyError("input_translation_invalid", status=502) from exc
         if (
             not isinstance(response, dict)
@@ -540,7 +524,7 @@ class OpusCTranslate2TranslationPort:
             if not isinstance(item, dict) or set(item) != {"id", "text"}:
                 raise ContextAssemblyError("input_translation_invalid", status=502)
             component_id = item.get("id")
-            if component_id not in normalized or component_id in translated:
+            if not isinstance(component_id, str) or component_id not in normalized or component_id in translated:
                 raise ContextAssemblyError("input_translation_invalid", status=502)
             translated[component_id] = validate_translation_output(item.get("text"))
         if tuple(translated) != tuple(normalized):

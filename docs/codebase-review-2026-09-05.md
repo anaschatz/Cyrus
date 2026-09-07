@@ -1267,3 +1267,20 @@ Coverage: **218/400 code, 182/315 tests and 39/308 support files**, **439 review
 
 
 The physical-turn checkpoint's Ponytail hook identified three removable lines: reuse Mock.call_args instead of a capture list in the existing control test, and remove a dict check already guaranteed by the shared JSON decoder. Applied both simplifications; **22 focused tests pass again**, `/tmp/cyrus-physical-ponytail-after.log`. Physical verifier source is now 514 lines. The checkpoint is amended with these changes; coverage counts and behavior are unchanged.
+
+
+### Translation protocol validation and worker ownership
+
+Physical-turn checkpoint finalized as **14c1cfd**, including both Ponytail simplifications and a clean final hook. Inspected the entire parent translator, qualified worker, input/build/qualification tests and the translation contract.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V231 | Deep JSON in a ready or response frame escaped as RecursionError, bypassing the parent's existing worker-disposal path. Deep manifest JSON also escaped the declared ValueError contract. | Reuse the existing strict JSON decoder for parent-side manifests/readiness/responses, translating parser errors into the established domain errors. The existing cleanup now terminates and clears the worker. |
+| V232 | List/dict component IDs reached dictionary membership checks and raised TypeError, also bypassing worker disposal. | Reject non-string response component IDs before membership checks. |
+| V233 | Readiness frames lacked the explicit response-byte limit enforced for ordinary responses; padded ready objects exceeding the protocol maximum could be accepted. | Check the existing response limit before parsing readiness, alongside the newline check. |
+
+Three regression methods produce **one failure and five errors** against original source, `/tmp/cyrus-translation-boundaries-before.log`. A separate ownership reproduction confirms both deep-frame cases left the fake process unterminated and still owned, `/tmp/cyrus-translation-worker-ownership-before.log`. Fixed cases raise the expected content-free error, terminate the process and clear ownership. All **43 focused translation tests** pass, including positive repeated translation, cancellation/replacement, exact model-call settings, protected spans, build-lock and qualification checks. Full Orchestrator ran **1063 tests in 19.635 seconds: 1058 passed, five skipped**, `/tmp/cyrus-full-review-translation-boundaries.log`. The final compatibility-alias cleanup was followed by another passing 43-test run. Fatal Ruff, unused-import checks on changed Python files and unchanged size limits pass.
+
+Ponytail: replace the duplicate JSON-key decoder and repeated parser plumbing with the existing shared decoder, **16 fewer production lines**. The qualified worker imports the old private hook name, so a direct function alias preserves that interface. Its source, model pack, corpus, conversion policy and historical evidence remain unchanged. A speculative worker cleanup was withdrawn when its exact-hash qualification check correctly failed; the actual bugs are fixed in the parent. The worker's redundant selected.sort() is intentionally retained until a new qualified worker version is produced. No qualification result was rewritten to conceal a mismatch, and no live model/provider or physical-audio run was made. The finite domain rewrite rules and their tests support the documented corpus, not a general claim about Greek translation quality.
+
+Coverage: **220/400 code, 185/315 tests and 40/308 support files**, with **445 reviewed hashes verified across 1023 entries**. Translation parent/worker source inspection and identified protocol follow-ups are complete. Whole-codebase review and final quality assessment remain incomplete: **180 code, 130 test and 268 support files** remain, with compiler qualification identity binding and U05 still open.
