@@ -56,10 +56,6 @@ class VoiceAuthError(RuntimeError):
         self.code = code
 
 
-class _DuplicateKey(ValueError):
-    pass
-
-
 def _now_ms(value: int | None) -> int:
     selected = time.time_ns() // 1_000_000 if value is None else value
     if not isinstance(selected, int) or isinstance(selected, bool) or selected < 0:
@@ -103,7 +99,7 @@ def _pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in items:
         if key in result:
-            raise _DuplicateKey
+            raise ValueError
         result[key] = value
     return result
 
@@ -131,7 +127,7 @@ def _raw_bytes(
     return encoded
 
 
-def _json_object(raw: str | bytes, *, maximum: int = MAX_AUTH_FRAME_BYTES) -> tuple[dict[str, Any], bytes]:
+def _json_object(raw: str | bytes, *, maximum: int = MAX_AUTH_FRAME_BYTES) -> dict[str, Any]:
     encoded = _raw_bytes(raw, maximum=maximum)
     try:
         text = encoded.decode("utf-8", errors="strict")
@@ -142,11 +138,11 @@ def _json_object(raw: str | bytes, *, maximum: int = MAX_AUTH_FRAME_BYTES) -> tu
             object_pairs_hook=_pairs,
             parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
         )
-    except (UnicodeError, json.JSONDecodeError, ValueError, _DuplicateKey):
+    except (ValueError, RecursionError):
         raise VoiceAuthError("voice_auth.frame_invalid") from None
     if not isinstance(value, dict):
         raise VoiceAuthError("voice_auth.frame_invalid")
-    return value, encoded
+    return value
 
 
 def _exact(value: Mapping[str, Any], expected: set[str]) -> None:
@@ -193,14 +189,6 @@ def _framed(value: bytes) -> bytes:
     if len(value) > 2**32 - 1:
         raise VoiceAuthError("voice_auth.frame_too_large")
     return len(value).to_bytes(4, "big") + value
-
-
-def _auth_frame(value: Any) -> bytes:
-    method = getattr(value, "to_bytes", None)
-    if method is None or not callable(method):
-        raise VoiceAuthError("voice_auth.frame_invalid")
-    encoded = method()
-    return _raw_bytes(encoded, maximum=MAX_AUTH_FRAME_BYTES)
 
 
 def _hello_frame(value: str | bytes) -> bytes:
@@ -385,7 +373,7 @@ def parse_server_challenge(
     *,
     now_ms: int | None = None,
 ) -> ServerChallenge:
-    value, _encoded = _json_object(raw)
+    value = _json_object(raw)
     _exact(value, {
         "protocol", "type", "connection_id", "key_version", "issued_at_ms",
         "expires_at_ms", "server_nonce", "server_mac",
@@ -460,7 +448,7 @@ def parse_client_response(
 ) -> ClientResponse:
     challenge_raw = _raw_bytes(challenge_frame, maximum=MAX_AUTH_FRAME_BYTES)
     challenge = parse_server_challenge(challenge_raw, auth_key, now_ms=now_ms)
-    value, _encoded = _json_object(raw)
+    value = _json_object(raw)
     _exact(value, {
         "protocol", "type", "connection_id", "key_version", "server_nonce",
         "client_nonce", "hello_sha256", "client_mac",
@@ -562,7 +550,7 @@ def parse_server_ready(
         response_raw, auth_key, challenge_raw, now_ms=now_ms
     )
     hello = verify_hello_binding(response, hello_frame)
-    value, _encoded = _json_object(raw)
+    value = _json_object(raw)
     _exact(value, {"protocol", "type", "connection_id", "key_version", "transcript_mac"})
     _protocol_and_type(value, _READY_TYPE)
     ready = ServerReady(
@@ -754,20 +742,11 @@ def load_voice_auth_key(path: str | os.PathLike[str]) -> VoiceAuthKey:
         raise VoiceAuthError("voice_auth.key_unavailable") from None
     finally:
         os.close(descriptor)
-    if not encoded or len(encoded) > MAX_KEY_FILE_BYTES:
-        raise VoiceAuthError("voice_auth.key_format_invalid")
     try:
-        text = encoded.decode("utf-8", errors="strict")
-        if text.startswith("\ufeff"):
-            raise ValueError
-        value = json.loads(
-            text,
-            object_pairs_hook=_pairs,
-            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
-        )
-    except (UnicodeError, json.JSONDecodeError, ValueError, _DuplicateKey):
+        value = _json_object(encoded, maximum=MAX_KEY_FILE_BYTES)
+    except VoiceAuthError:
         raise VoiceAuthError("voice_auth.key_format_invalid") from None
-    if not isinstance(value, dict) or set(value) != {
+    if set(value) != {
         "schema_version", "key_version", "key_b64"
     }:
         raise VoiceAuthError("voice_auth.key_format_invalid")

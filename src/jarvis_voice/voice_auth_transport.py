@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from typing import Any, Protocol
 
@@ -38,6 +39,25 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
+def _deadline(timeout_seconds: float) -> float:
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+        raise VoiceAuthError("voice_auth.timeout_invalid")
+    try:
+        deadline = time.monotonic() + timeout_seconds
+    except OverflowError:
+        raise VoiceAuthError("voice_auth.timeout_invalid") from None
+    if timeout_seconds <= 0 or not math.isfinite(deadline):
+        raise VoiceAuthError("voice_auth.timeout_invalid")
+    return deadline
+
+
+async def _auth_io(deadline: float, operation: Any, *args: Any) -> Any:
+    remaining = _remaining(deadline)
+    result = await asyncio.wait_for(operation(*args), timeout=remaining)
+    _remaining(deadline)
+    return result
+
+
 def authenticate_sync_client(
     connection: SyncAuthConnection,
     auth_key: VoiceAuthKey,
@@ -47,14 +67,14 @@ def authenticate_sync_client(
 ) -> None:
     """Authenticate both peers and transmit the exact first Voice hello frame."""
 
-    if timeout_seconds <= 0:
-        raise VoiceAuthError("voice_auth.timeout_invalid")
-    deadline = time.monotonic() + timeout_seconds
+    deadline = _deadline(timeout_seconds)
     try:
         challenge_raw = connection.recv(timeout=_remaining(deadline))
         response = create_client_response(auth_key, challenge_raw, hello_frame)
         response_raw = response.to_json()
+        _remaining(deadline)
         connection.send(response_raw)
+        _remaining(deadline)
         connection.send(hello_frame)
         ready_raw = connection.recv(timeout=_remaining(deadline))
         parse_server_ready(
@@ -64,6 +84,7 @@ def authenticate_sync_client(
             response_raw,
             hello_frame,
         )
+        _remaining(deadline)
     except VoiceAuthError:
         raise
     except TimeoutError:
@@ -81,20 +102,14 @@ async def authenticate_async_client(
 ) -> None:
     """Async equivalent used by operational probes and integration tests."""
 
-    if timeout_seconds <= 0:
-        raise VoiceAuthError("voice_auth.timeout_invalid")
-    deadline = time.monotonic() + timeout_seconds
+    deadline = _deadline(timeout_seconds)
     try:
-        challenge_raw = await asyncio.wait_for(
-            websocket.recv(), timeout=_remaining(deadline)
-        )
+        challenge_raw = await _auth_io(deadline, websocket.recv)
         response = create_client_response(auth_key, challenge_raw, hello_frame)
         response_raw = response.to_json()
-        await asyncio.wait_for(websocket.send(response_raw), timeout=_remaining(deadline))
-        await asyncio.wait_for(websocket.send(hello_frame), timeout=_remaining(deadline))
-        ready_raw = await asyncio.wait_for(
-            websocket.recv(), timeout=_remaining(deadline)
-        )
+        await _auth_io(deadline, websocket.send, response_raw)
+        await _auth_io(deadline, websocket.send, hello_frame)
+        ready_raw = await _auth_io(deadline, websocket.recv)
         parse_server_ready(
             ready_raw,
             auth_key,
@@ -102,9 +117,10 @@ async def authenticate_async_client(
             response_raw,
             hello_frame,
         )
+        _remaining(deadline)
     except VoiceAuthError:
         raise
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         raise VoiceAuthError("voice_auth.timeout") from None
     except Exception:
         raise VoiceAuthError("voice_auth.transport_failed") from None
@@ -119,25 +135,17 @@ async def authenticate_async_server(
 ) -> str | bytes:
     """Authenticate one connection and return its bound raw Voice hello frame."""
 
-    if timeout_seconds <= 0:
-        raise VoiceAuthError("voice_auth.timeout_invalid")
-    deadline = time.monotonic() + timeout_seconds
+    deadline = _deadline(timeout_seconds)
     try:
         challenge = create_server_challenge(
             auth_key,
             connection_id=connection_id,
         )
         challenge_raw = challenge.to_json()
-        await asyncio.wait_for(
-            websocket.send(challenge_raw), timeout=_remaining(deadline)
-        )
-        response_raw = await asyncio.wait_for(
-            websocket.recv(), timeout=_remaining(deadline)
-        )
+        await _auth_io(deadline, websocket.send, challenge_raw)
+        response_raw = await _auth_io(deadline, websocket.recv)
         response = parse_client_response(response_raw, auth_key, challenge_raw)
-        hello_raw = await asyncio.wait_for(
-            websocket.recv(), timeout=_remaining(deadline)
-        )
+        hello_raw = await _auth_io(deadline, websocket.recv)
         verify_hello_binding(response, hello_raw)
         ready = create_server_ready(
             auth_key,
@@ -145,13 +153,11 @@ async def authenticate_async_server(
             response_raw,
             hello_raw,
         )
-        await asyncio.wait_for(
-            websocket.send(ready.to_json()), timeout=_remaining(deadline)
-        )
+        await _auth_io(deadline, websocket.send, ready.to_json())
         return hello_raw
     except VoiceAuthError:
         raise
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         raise VoiceAuthError("voice_auth.timeout") from None
     except Exception:
         raise VoiceAuthError("voice_auth.transport_failed") from None

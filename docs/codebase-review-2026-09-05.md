@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **223 of 400 code files**, plus **187 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **224 of 400 code files**, plus **189 of 316 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1087 tests (1082 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **721 tests (706 passed, 15 skipped)**; Orchestrator **1087 tests (1082 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1455,3 +1455,23 @@ The Windows discrepancy was verified in the pinned [CPython path-stat implementa
 All **67 focused tests complete successfully: 66 passed, one skipped**, `/tmp/cyrus-evidence-readers-after.log`. Full Orchestrator ran **1087 tests in 19.736 seconds: 1082 passed, five skipped**, `/tmp/cyrus-full-review-evidence-readers.log`. The Windows fixture was then made independent of the host's suffix handling and its targeted check passed again. All **36 evidence tests pass against byte-verified exact staged source/test files**, including both subprocess readers, `/tmp/cyrus-evidence-readers-staged-tests.log`. Seven canonical documents/signatures remain identical; fatal Ruff and unchanged module-size checks pass. Stable empty and multi-chunk artifact digests remain correct. No live model, provider, microphone, native action or user key was exercised.
 
 Ponytail: reuse the existing shared snapshots/readers and native O_NONBLOCK flag; **11 additional production lines**, no new dependency or reader abstraction. All readiness evidence source and its identified follow-ups are now reviewed, bringing coverage to **223/400 code, 187/315 tests and 41/308 support files**, with **451 reviewed hashes verified across 1023 entries**. Whole-codebase review and final quality assessment remain incomplete: **177 code, 128 test and 267 support files** remain. U05 and compiler qualification identity binding are still open; reviewed does not mean bug-free or native-qualified.
+
+
+### Voice authentication parsing and transport deadlines
+
+Readiness-reader checkpoint committed as **e754be6**, with a clean Ponytail hook. Read the complete Voice auth protocol/key module, synchronous/asynchronous adapters and auth tests; traced production Voice transport, Orchestrator gateway and operational probe callers.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V256 | A deeply nested JSON frame below the 4 KiB limit leaked RecursionError from all three handshake parsers. | Normalize recursive JSON failures in the shared bounded object parser. Reuse that parser for key JSON while preserving key-format error codes. |
+| V257 | Null/string/boolean/nonfinite/overflowing timeout values either escaped as untyped exceptions or reached transport I/O. | Share typed, positive, finite deadline validation before any I/O. Preserve custom finite timeout durations. |
+| V258 | A valid final frame or server-ready send completing at/after the total monotonic deadline could still report authentication success. | Check the remaining budget after async operations and final client transcript verification. |
+| V259 | Expiry during the response send could still dispatch the sync hello; async calls constructed the next coroutine before checking the expired budget, leaving an unawaited operation. | Check before the next sync send and construct async operations only after validating remaining time. |
+
+The initial four-method boundary run produces **12 failures and 12 errors** against original source, `/tmp/cyrus-auth-boundaries-before.log`, including three recursive-frame errors. An additional late-send method has **two original-source failures**, `/tmp/cyrus-auth-late-send-before.log`. Tests reuse existing synthetic connection/WebSocket/key fixtures and check all three adapter roles, valid handshakes, no I/O for invalid configuration, no late hello dispatch and cancellation of a pending async receive.
+
+All **34 focused tests pass**, `/tmp/cyrus-auth-boundaries-after.log`. Full Voice ran **721 tests in 6.491 seconds: 706 passed, 15 skipped**, `/tmp/cyrus-full-review-voice-auth.log`; full Orchestrator ran **1087 tests in 20.536 seconds: 1082 passed, five skipped**, `/tmp/cyrus-full-review-orchestrator-auth.log`. After removing the redundant duplicate-key exception type and duplicate key-size check, the 34 focused checks passed again. All **34 exact staged checks pass**, `/tmp/cyrus-auth-staged-tests.log`; production and auth-test files were verified byte-identical to the index. Fatal Ruff/unused-import and unchanged module-size checks pass. Three deterministic challenge/response/ready frames and their MACs are byte-identical to the starting source. Tests use disposable keys and fake connections; no microphone, provider, native action or user key was accessed.
+
+Ponytail: reuse one bounded JSON parser, remove its unused encoded return and the unused frame helper, and share deadline validation plus async I/O guards. **15 fewer production lines**, no new dependency. Sync send remains checked at operation boundaries; the current synchronous connection protocol does not allow forcibly preempting a send already in progress. Async cancellation retains asyncio.wait_for behavior. These fixes prevent late success/dispatch and do not claim a hard preemption guarantee for arbitrary blocking callbacks.
+
+The transport adapter and both auth test modules are reviewed. The complete auth/key source has been read but remains pending key-file mutation/FIFO, failure-cleanup and Windows ACL investigation. Coverage is **224/400 code, 189/316 tests and 41/308 support files**, with **454 reviewed hashes verified across 1024 entries**. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding remain open.

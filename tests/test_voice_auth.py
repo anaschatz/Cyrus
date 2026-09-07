@@ -205,6 +205,18 @@ class VoiceAuthHandshakeTests(unittest.TestCase):
             parse_server_challenge(b"{" + b" " * MAX_AUTH_FRAME_BYTES + b"}", KEY, now_ms=NOW_MS)
         self.assertEqual(challenge.key_version, 7)
 
+    def test_deep_json_is_rejected_by_all_handshake_parsers(self) -> None:
+        _, challenge, _, response, _ = self.handshake()
+        malformed = b'{"nested":' + b'[' * 1200 + b'0' + b']' * 1200 + b'}'
+        for parser, arguments in (
+            (parse_server_challenge, (KEY,)),
+            (parse_client_response, (KEY, challenge)),
+            (parse_server_ready, (KEY, challenge, response, HELLO)),
+        ):
+            with self.subTest(parser=parser.__name__):
+                with self.assertRaisesRegex(VoiceAuthError, "voice_auth.frame_invalid"):
+                    parser(malformed, *arguments, now_ms=NOW_MS)
+
     def test_noncanonical_or_wrong_length_base64_is_rejected(self) -> None:
         _challenge, challenge_raw, _response, _response_raw, _ready = self.handshake()
         for value in ("A" * 42, "A" * 42 + "=", "+" + "A" * 42):
