@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **245 of 401 code files**, plus **209 of 330 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **246 of 401 code files**, plus **210 of 331 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **759 tests (744 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **760 tests (745 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1714,3 +1714,16 @@ Full Voice: **759 tests in 7.873 seconds, 744 passed and 15 skipped**. Full Orch
 The CUDA worker source now has a completed source review. Also read the complete active-probe, audio-buffer and VAD modules plus their existing tests; these source modules retain specific cleanup/concurrency/artifact follow-ups and were not marked reviewed merely because tests passed. Coverage is **245/401 code, 209/330 tests and 41/308 support**, with **495 reviewed hashes verified across 1039 entries**. Remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
 
 Ponytail follow-up for the complete-message deadline checkpoint: removed the two-line timer callback wrapper and passed os.write with its arguments directly to threading.Timer. Both deadline regression methods pass again; production behavior and the full-suite results above are unchanged.
+
+
+### Active CUDA probe cleanup and audio handoff follow-up
+
+Complete-message deadline checkpoint committed as **df950a3**, after applying the Ponytail timer simplification and passing the mandatory review again.
+
+**V298 resolved:** backend.close failure skipped the sampler stop signal and join; sampler.start or the initial clock call could also fail before entering cleanup. The sampler start/timing now sit inside the backend cleanup boundary, and a nested finally always signals stop and attempts the existing bounded join. Unstarted threads are not joined. A real-thread reproduction left the sampler alive after close/clock failure and never closed the backend after start/clock failure; its regression has **three failures before the fix**, `/tmp/cyrus-probe-cleanup-before.log`.
+
+All **21 probe/doctor tests pass**, `/tmp/cyrus-probe-cleanup-after.log`. Full Voice: **760 tests in 7.979 seconds, 745 passed and 15 skipped**, `/tmp/cyrus-full-review-probe-cleanup-voice.log`. The last full Orchestrator run remains the preceding deadline checkpoint's **1106 tests (1101 passed, five skipped)**; it was not rerun for this isolated active-probe cleanup. Fatal Ruff and unchanged module boundaries pass. The tests use real bounded sampler threads with fake backend/inventory objects and clean their own resources even before the fix. No CUDA model, GPU inventory command or microphone is invoked. In-flight native inventory queries still have their own timing; this fix guarantees the stop signal and bounded join attempt, not instant native-call preemption. Ponytail: reuse the existing Event/Thread lifecycle with nested finally; **three net production lines**, no dependency.
+
+**V299 — OPEN:** complete audio-buffer and WASAPI/CoreAudio caller inspection found no synchronization across callback copy and turn transitions. A callback paused during copy, followed by abort_turn/begin_turn, appended the cancelled turn's synthetic sample into the next turn. The real-thread probe returns `[7.0]` for the new turn, `/tmp/cyrus-audio-turn-race-probe.log`. This needs a shared buffer handoff fix, not separate behavior in each native adapter.
+
+Coverage is **246/401 code, 210/331 tests and 41/308 support**, with **497 reviewed hashes verified across 1040 entries**. V299, remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.

@@ -59,10 +59,10 @@ def run_active_cuda_probe(
             samples.append(device.free_vram_mb)
 
     sampler = threading.Thread(target=sample_vram, name="jarvis-vram-probe", daemon=True)
-    sampler.start()
-    started = clock()
     empty_transcript = False
     try:
+        sampler.start()
+        started = clock()
         try:
             backend.transcribe(AudioChunk(array("f", [0.0] * 16_000), 16_000))
         except BackendError as exc:
@@ -70,9 +70,12 @@ def run_active_cuda_probe(
                 raise
             empty_transcript = True
     finally:
-        backend.close()
-        stop.set()
-        sampler.join(timeout=2)
+        try:
+            backend.close()
+        finally:
+            stop.set()
+            if sampler.ident is not None:
+                sampler.join(timeout=2)
     values = [int(item["value_mb"]) for item in backend.metrics if "value_mb" in item]
     return {
         "status": "ready",
