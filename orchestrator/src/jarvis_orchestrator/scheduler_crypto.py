@@ -343,9 +343,14 @@ class _MacOSKeychainKeyProvider:
     def _known_versions(self) -> list[int]:
         try:
             raw = self._load_secret("active-version").decode("ascii").strip()
-            return [int(raw)]
-        except (SchedulerKeyNotFound, UnicodeError, ValueError):
+            version = int(raw)
+            if version < 1:
+                raise ValueError("invalid key version")
+            return [version]
+        except SchedulerKeyNotFound:
             return []
+        except (UnicodeError, ValueError) as exc:
+            raise SchedulerKeyUnavailable("macOS scheduler active key version is invalid") from exc
 
     def active_version(self) -> int:
         versions = self._known_versions()
@@ -399,7 +404,7 @@ class _MacOSKeychainKeyProvider:
                 status = self._security.SecItemAdd(add_dictionary, None)
             finally:
                 self._cf.CFRelease(add_dictionary)
-            if status == -25299:  # errSecDuplicateItem
+            if status == -25299 and account == "active-version":  # Only the pointer is mutable.
                 status = self._security.SecItemUpdate(query, additions)
             if status != 0:
                 raise SchedulerKeyUnavailable("macOS Keychain write failed")
