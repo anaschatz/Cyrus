@@ -306,12 +306,17 @@ class ActionApprovalJournal:
                 binding_sha256 TEXT NOT NULL, decision_nonce TEXT NOT NULL,
                 decision TEXT NOT NULL CHECK(decision IN ('approve','deny')),
                 state TEXT NOT NULL CHECK(state IN ('PENDING','ACKED','RESOLVED','INVALIDATED')),
-                created_at REAL NOT NULL, last_sent_at REAL, result_code TEXT
+                created_at REAL NOT NULL, last_sent_at REAL, result_code TEXT, sent_at TEXT
             );
             CREATE UNIQUE INDEX IF NOT EXISTS one_action_decision
             ON action_decisions(approval_id,presentation_id);
             """
             )
+            self._connection.execute("BEGIN IMMEDIATE")
+            if "sent_at" not in {row["name"] for row in self._connection.execute("PRAGMA table_info(action_decisions)")}:
+                self._connection.execute("ALTER TABLE action_decisions ADD COLUMN sent_at TEXT")
+            self._connection.execute("UPDATE action_decisions SET last_sent_at=NULL WHERE state='PENDING'")
+            self._connection.execute("COMMIT")
             prepare_voice_journal_path(
                 self.path,
                 trusted_boundary=trusted_boundary,
@@ -364,9 +369,9 @@ class ActionApprovalJournal:
         )
         with self._lock:
             self._connection.execute(
-                """INSERT INTO action_decisions VALUES(?,?,?,?,?,?,?,'PENDING',?,?,NULL)
+                """INSERT INTO action_decisions VALUES(?,?,?,?,?,?,?,'PENDING',?,?,NULL,?)
                    ON CONFLICT(approval_id,presentation_id) DO NOTHING""",
-                (event.event_id, payload["approval_id"], payload["presentation_id"], requested.event_id, payload["approval_binding_sha256"], payload["decision_nonce"], decision, time.time(), None),
+                (event.event_id, payload["approval_id"], payload["presentation_id"], requested.event_id, payload["approval_binding_sha256"], payload["decision_nonce"], decision, time.time(), None, event.sent_at),
             )
         return event
 
@@ -377,6 +382,14 @@ class ActionApprovalJournal:
     def mark_result(self, decision_event_id: str, reason_code: str) -> None:
         with self._lock:
             self._connection.execute("UPDATE action_decisions SET state='RESOLVED',result_code=? WHERE decision_event_id=?", (reason_code, decision_event_id))
+
+    def mark_invalidated(self, payload: Mapping[str, Any]) -> None:
+        with self._lock:
+            self._connection.execute(
+                """UPDATE action_decisions SET state='INVALIDATED',result_code=?
+                   WHERE approval_id=? AND presentation_id=? AND binding_sha256=? AND state IN ('PENDING','ACKED')""",
+                (payload["reason_code"], payload["approval_id"], payload["presentation_id"], payload["approval_binding_sha256"]),
+            )
 
     def mark_sent(self, decision_event_id: str, *, now: float | None = None) -> None:
         with self._lock:
@@ -443,6 +456,8 @@ class ActionApprovalController:
             approval_id = event.payload["approval_id"]
             if event.type == "action.approval.decision_result":
                 self.journal.mark_result(event.payload["decision_event_id"], event.payload["reason_code"])
+            else:
+                self.journal.mark_invalidated(event.payload)
             self.approval_arbiter.close(protocol=ACTION_APPROVAL_PROTOCOL, approval_id=approval_id)
             if self.requested is not None and self.requested.payload["approval_id"] == approval_id:
                 self.requested = None
@@ -468,17 +483,15 @@ class ActionApprovalController:
         selected = time.monotonic() if now is None else now
         result: list[ActionApprovalEnvelope] = []
         for row in self.journal.pending_decisions():
+            if row["sent_at"] is None:
+                raise ProtocolError("action_journal.replay_identity_missing",
+                                    "pending action decision has no recorded timestamp; explicit recovery is required")
             last = row["last_sent_at"]
             if last is not None and selected - float(last) < 1.0:
                 continue
             result.append(
-                ActionApprovalEnvelope(
-                    ACTION_APPROVAL_PROTOCOL,
+                self.factory.create(
                     "action.approval.decision",
-                    row["decision_event_id"],
-                    self.factory.session_id,
-                    self.factory.consume_sequence(),
-                    datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                     {
                         "approval_id": row["approval_id"],
                         "presentation_id": row["presentation_id"],
@@ -487,6 +500,7 @@ class ActionApprovalController:
                         "decision_nonce": row["decision_nonce"],
                         "decision": row["decision"],
                     },
+                    event_id=row["decision_event_id"], sent_at=row["sent_at"],
                 )
             )
         return result

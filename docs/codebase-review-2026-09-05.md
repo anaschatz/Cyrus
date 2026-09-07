@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **226 of 400 code files**, plus **191 of 317 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **226 of 400 code files**, plus **192 of 318 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1089 tests (1084 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **730 tests (715 passed, 15 skipped)**; Orchestrator **1093 tests (1088 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1515,3 +1515,20 @@ Two regression methods exercise three failing cases with disposable real journal
 Ponytail: two local target guards match the shared arbiter's existing close behavior; remove four assignments to an unread arbiter field and one unused scheduler import. **Three fewer production lines**, no new abstraction, dependency or schema. The earlier action JSON-parser change is deliberately outside this commit.
 
 The arbiter and two additional test files are reviewed: **226/400 code, 191/317 tests and 41/308 support**, with **458 reviewed hashes verified across 1025 entries**. Scheduler/action sources remain pending despite complete reading: decision retransmission identity, durable recovery and connection fingerprint retention still need investigation. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding remain open.
+
+
+### Durable action decision retransmissions
+
+Previous approval-presentation checkpoint committed as **4af62eb**, with a clean Ponytail hook. Traced the action journal through both runtime send loops and the gateway into the real ToolStore inbox.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V268 | Retries preserved event ID but regenerated sent_at, which participates in the semantic digest. A lost ACK caused the real ToolStore to reject the retry as tool.binding_mismatch. | Persist the original timestamp before send and reuse it through the existing event factory, including after restart. Add the nullable column transactionally to existing journals. |
+| V269 | Persisted monotonic send times could belong to an earlier boot and suppress retries until the new clock caught up. | Clear pending send times when opening the journal; preserve the one-second retry interval within the process. |
+| V270 | Action invalidation closed the presentation but left decisions PENDING/ACKED, allowing cancelled decisions to be retransmitted. | Mark only the matching approval/presentation/binding INVALIDATED and retain its reason; resolved decisions and unrelated approvals remain unchanged. |
+
+Four regression methods use disposable real journals and the real ToolStore with synthetic keys. The initial run has **one failure and two errors**, including the server's binding-mismatch rejection, `/tmp/cyrus-action-retries-before.log`; invalidation adds **two failures**, `/tmp/cyrus-action-invalidation-before.log`. All **21 focused tests pass**, `/tmp/cyrus-action-retries-after.log`. Full Voice ran **730 tests in 6.476 seconds: 715 passed, 15 skipped**; full Orchestrator ran **1093 tests in 20.434 seconds: 1088 passed, five skipped**, `/tmp/cyrus-full-review-action-retries-{voice,orchestrator}.log`. After replacing manual retry-envelope assembly with the existing factory, all 21 focused checks passed again. Fatal Ruff and unchanged module-size checks pass. No native execution or user data was exercised.
+
+Migration limitation: old pending rows never recorded their original timestamp, so it cannot be reconstructed reliably from the separate created_at clock. Such rows remain PENDING and unchanged in identity/decision; retry generation raises **action_journal.replay_identity_missing** before allocating a sequence or fabricating a frame. This can stop a client holding a legacy pending decision and requires explicit recovery; no automatic decision deletion, fabricated timestamp or unsafe reapproval was introduced. Acknowledged historical rows do not need retransmission and continue normally. The test verifies repeated reopen and retention, not an automatic legacy recovery workflow.
+
+Ponytail: reuse the event factory and existing journal/state fields, with one required timestamp column and **14 additional production lines**. The earlier JSON-parser change remains outside this commit. Coverage is **226/400 code, 192/318 tests and 41/308 support**, with **459 reviewed hashes verified across 1026 entries**. Action source follow-ups, whole-codebase review and final quality assessment remain incomplete.
