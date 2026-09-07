@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import queue
@@ -116,6 +117,7 @@ class GreekTtsF1SidecarBackend:
         try:
             if self._process.stdin is None or self._process.stdout is None:
                 raise BackendError("tts.greektts15.worker_start_failed", "GreekTTS worker pipes are unavailable", subsystem="tts")
+            self._stdin = io.BufferedWriter(self._stdin)
             self._writer = threading.Thread(target=self._writer_loop, name="jarvis-greektts-sidecar-writer", daemon=True)
             self._reader = threading.Thread(target=self._reader_loop, name="jarvis-greektts-sidecar-reader", daemon=True)
             self._writer.start()

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import io
+import json
 import queue
 import subprocess
 import sys
@@ -8,6 +11,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import _bootstrap  # noqa: F401
@@ -36,6 +40,24 @@ def _config() -> GreekTts15Config:
         warm_on_start=True,
         worker_python=ArtifactConfig(str(python), python.stat().st_size, _sha256(python)),
     )
+
+
+class _ShortWriter(io.RawIOBase):
+    def __init__(self, stream):
+        self.stream = stream
+        self.data = bytearray()
+
+    def writable(self):
+        return True
+
+    def write(self, data):
+        count = self.stream.write(data[:7])
+        self.data.extend(data[:count])
+        return count
+
+    def close(self):
+        self.stream.close()
+        super().close()
 
 
 class GreekTtsF1SidecarTests(unittest.TestCase):
@@ -181,6 +203,77 @@ class GreekTtsF1SidecarTests(unittest.TestCase):
             self.assertFalse(backend._reader.is_alive())
         finally:
             self._reap_owned_worker(backend)
+
+    def test_proxy_delivers_complete_messages_when_raw_pipe_writes_are_short(self) -> None:
+        completed = threading.Event()
+        def factory(*args, **kwargs):
+            process = subprocess.Popen(*args, **kwargs)
+            process.stdin = _ShortWriter(process.stdin)
+            return process
+        backend = GreekTtsF1SidecarBackend.__new__(GreekTtsF1SidecarBackend)
+        text = "Δοκιμή τμηματικών εγγραφών. " * 100
+        try:
+            backend.__init__(config=_config(), worker_script=FIXTURE, process_factory=factory,
+                             startup_timeout_seconds=0.5, on_completed=lambda _: completed.set())
+            backend.enqueue(SpeechUnit("απάντηση", 1, 1, "el-GR", text))
+            self.assertTrue(completed.wait(timeout=2.0))
+            backend.close()
+            messages = [json.loads(line) for line in backend._process.stdin.data.splitlines()]
+            self.assertEqual([message["type"] for message in messages], ["init", "enqueue", "close"])
+            self.assertEqual(messages[1]["text"], text)
+            self.assertIsNone(backend.last_error)
+        finally:
+            self._reap_owned_worker(backend)
+
+    def test_worker_flushes_complete_events_before_reading_next_command(self) -> None:
+        script = FIXTURE.parents[2] / "scripts" / "run_greektts15_sidecar_worker.py"
+        spec = importlib.util.spec_from_file_location("sidecar_worker_write_test", script)
+        worker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(worker)
+        commands = [
+            {"type": "init", "model_root": "/model", "approval_manifest_path": "/approval.json",
+             "approval_manifest_sha256": "a" * 64, "repository_root": "/repository",
+             "warm_on_start": True, "queue_capacity": 16, "maximum_text_bytes": 16384},
+            {"type": "enqueue", "response_id": "απάντηση", "epoch": 1, "unit_index": 1,
+             "locale": "el-GR", "text": "δοκιμή"},
+            {"type": "close"},
+        ]
+        wire = ("\n".join(json.dumps(message, ensure_ascii=False) for message in commands) + "\n").encode()
+        for buffered in (False, True):
+            with self.subTest(buffered=buffered):
+                raw = _ShortWriter(io.BytesIO())
+                output = io.BufferedWriter(raw) if buffered else raw
+                backend = mock.Mock(warm_load_ms=12.5, last_error=None)
+                def factory(**kwargs):
+                    def enqueue(unit):
+                        kwargs["on_started"](unit)
+                        kwargs["on_completed"](unit)
+                    backend.enqueue.side_effect = enqueue
+                    return backend
+                read_message = worker._read_message
+                def read():
+                    if backend.enqueue.called:
+                        self.assertEqual(len(raw.data.splitlines()), 3)
+                    elif backend.close.call_count == 0 and raw.data:
+                        self.assertEqual(json.loads(raw.data), {"type": "ready", "warm_load_ms": 12.5})
+                    return read_message()
+                try:
+                    with (
+                        mock.patch.object(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(wire))),
+                        mock.patch.object(sys, "stdout", SimpleNamespace(buffer=output)),
+                        mock.patch.object(worker, "_read_message", side_effect=read),
+                        mock.patch.object(worker, "load_digest_bound_greektts_candidate"),
+                        mock.patch.object(worker, "MlxGreekTtsStreamingEngine"),
+                        mock.patch.object(worker, "GreekTtsF1Backend", side_effect=factory),
+                        mock.patch.object(worker.threading, "Thread"),
+                    ):
+                        self.assertEqual(worker.main(), 0)
+                    events = [json.loads(line) for line in raw.data.splitlines()]
+                    self.assertEqual([event["type"] for event in events], ["ready", "started", "completed", "closed"])
+                    self.assertEqual(events[1]["response_id"], "απάντηση")
+                    self.assertEqual(backend.enqueue.call_args.args[0].text, "δοκιμή")
+                finally:
+                    output.close()
 
     def test_worker_interpreter_is_digest_bound(self) -> None:
         config = _config()

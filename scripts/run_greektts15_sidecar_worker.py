@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 import threading
@@ -42,6 +43,8 @@ def _read_message() -> dict[str, object] | None:
 
 def main() -> int:
     protocol = sys.stdout.buffer
+    if isinstance(protocol, io.RawIOBase):
+        protocol = io.BufferedWriter(protocol)
     sys.stdout = sys.stderr
     output_lock = threading.Lock()
 

@@ -2,7 +2,7 @@
 
 Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **297 of 401 code files**, plus **240 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **824 tests (809 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **826 tests (811 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2099,3 +2099,14 @@ Waveform/JSON publication was committed as **48d6fc5**, with a clean mandatory P
 Four new regression methods cover writer-start/reader-start failures, a missing stdout pipe, close with/without pending units, admission during the acknowledgment wait and a termination error. **Seven baseline failures** reproduce, `/tmp/cyrus-sidecar-lifecycle-before.log`. Tests use owned harmless Python children running the existing fake worker, and explicitly reap them even on the broken baseline. All **13 focused integration checks pass**, `/tmp/cyrus-sidecar-lifecycle-integration.log`. Full Voice: **824 tests in 9.331 seconds, 809 passed and 15 skipped**, `/tmp/cyrus-full-review-sidecar-lifecycle-voice.log`. Fatal Ruff and unchanged module boundaries pass. No real sidecar model, playback helper or speech was run; full-suite non-prompting native preflight scope is unchanged.
 
 Ponytail reuses close, the existing lock/events and stdlib file_digest; removes one unused worker import; adds **seven net production lines** across proxy/worker. The first mandatory hook found one redundant temporary error variable; it was removed and the checkpoint amended after a fresh review. Coverage is **297/401 code, 240/340 tests and 41/308 support**, with **578 reviewed hashes verified across 1049 entries**. Raw-pipe short writes, message/parser/numeric validation, unexpected closure and callback error handling remain follow-up boundaries. Remaining training/native/privacy/compiler-binding review and final whole-codebase quality assessment are unfinished.
+
+
+### GreekTTS sidecar complete pipe writes
+
+Lifecycle cleanup was committed as **9382544** after the mandatory Ponytail finding was corrected and the amended hook returned clean.
+
+**V352 resolved:** the proxy uses unbuffered Popen pipes and launches its worker with PYTHONUNBUFFERED=1. Both sides ignored the return value of raw write, which can consume only part of a JSONL message; startup then timed out or events became invalid JSON. This behavior is documented by the installed Python 3.11 FileIO.write docstring and the [Python raw/buffered I/O contract](https://docs.python.org/3/library/io.html#io.RawIOBase.write). Both output paths now use stdlib BufferedWriter and retain explicit flush after each message. The worker wraps only raw output, avoiding an additional buffering layer when stdout is already buffered.
+
+Two regression methods restrict raw writes to seven bytes. The proxy test uses an owned fake-worker subprocess and verifies complete init/enqueue/close JSON, including a long Greek text. The worker test executes the real command loop with fake model/backend/monitor dependencies and in-memory raw or already-buffered output, verifying complete ready/callback events before the next input read. **One baseline error and one failure** reproduce, `/tmp/cyrus-sidecar-writes-before.log`. All **15 focused integration checks pass**, `/tmp/cyrus-sidecar-writes-after.log`. Full Voice: **826 tests in 9.509 seconds, 811 passed and 15 skipped**, `/tmp/cyrus-full-review-sidecar-writes-voice.log`. Fatal Ruff and unchanged module boundaries pass. No actual model, playback helper or speech is executed; full-suite native preflight scope is unchanged.
+
+Ponytail: **five production lines**, no custom write loop, new dependency or runtime helper. All **578 reviewed hashes across 1049 entries** are current; coverage remains **297/401 code, 240/340 tests and 41/308 support**. This closes the short-write follow-up; full-message deadlines, parser/numeric validation, unexpected closure and callback error handling remain open, alongside the remaining whole-codebase review and final assessment.
