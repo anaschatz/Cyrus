@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+import sys
 import tempfile
 import unittest
 from importlib.util import find_spec
 from pathlib import Path
+from types import ModuleType
+from unittest.mock import Mock, patch
 
 import _bootstrap  # noqa: F401
 
@@ -56,6 +60,30 @@ class GreekTts15AcousticTests(unittest.TestCase):
                 }
             )
         self.assertTrue(report["ready"])
+
+    @unittest.skipUnless(find_spec("numpy"), "optional numerical dependency")
+    def test_finite_samples_cannot_produce_nonfinite_diagnostics(self):
+        import numpy as np
+
+        rate = 16_000
+        tone = (0.3 * np.sin(2 * np.pi * 180 * np.arange(rate) / rate)).astype(np.float32)
+        sf = ModuleType("soundfile")
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "synthetic.wav"
+            path.write_bytes(b"synthetic audio reader input")
+            with patch.dict(sys.modules, {"soundfile": sf}), np.errstate(over="ignore", invalid="ignore"):
+                sf.read = Mock(return_value=(tone, rate))
+                report = analyze_acoustic_file(path)
+                json.dumps(report, allow_nan=False)
+                self.assertGreater(report["voiced_pitch_pairs"], 0)
+                tail = tone.copy()
+                tail[-150:] = np.tile(np.array([3e38, -3e38], dtype=np.float32), 75)
+                for waveform in (np.full(rate, 1e30, dtype=np.float32), tail):
+                    with self.subTest(tail=waveform is tail):
+                        self.assertTrue(np.isfinite(waveform).all())
+                        sf.read = Mock(return_value=(waveform, rate))
+                        with self.assertRaisesRegex(BackendError, "acoustic_input_invalid"):
+                            analyze_acoustic_file(path)
 
 
 if __name__ == "__main__":

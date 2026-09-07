@@ -88,7 +88,7 @@ def analyze_acoustic_file(audio_path: str | Path) -> dict[str, object]:
 
     difference = np.abs(np.diff(waveform))
     peak = max(float(np.max(np.abs(waveform))), 1e-8)
-    return {
+    result = {
         "duration_seconds": round(waveform.size / sample_rate, 4),
         "sample_rate": int(sample_rate),
         "active_speech_fraction": round(float(np.mean(active)), 6),
@@ -101,6 +101,13 @@ def analyze_acoustic_file(audio_path: str | Path) -> dict[str, object]:
         "voiced_pitch_pairs": pitch_pairs,
         "sample_step_p999_normalized": round(float(np.percentile(difference, 99.9)) / peak, 6),
     }
+    if not all(np.isfinite(value) for value in result.values()):
+        raise BackendError(
+            "tts.greektts15.acoustic_input_invalid",
+            "GreekTTS acoustic waveform produced nonfinite diagnostics",
+            subsystem="tts",
+        )
+    return result
 
 
 def compare_acoustic_sets(

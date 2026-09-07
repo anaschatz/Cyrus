@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -58,7 +59,7 @@ def analyze_adapter_delta(
         ) from exc
     baseline = mx.load(str(baseline_path))
     candidate = mx.load(str(candidate_path))
-    if not isinstance(baseline, dict) or set(baseline) != set(candidate) or len(baseline) != 392:
+    if not isinstance(baseline, dict) or not isinstance(candidate, dict) or set(baseline) != set(candidate) or len(baseline) != 392:
         raise BackendError(
             "tts.greektts15.adapter_analysis_mismatch",
             "GreekTTS adapter analysis tensors do not match",
@@ -82,6 +83,12 @@ def analyze_adapter_delta(
         delta = target - source
         delta_squared = float(mx.sum(delta * delta).item())
         source_squared = float(mx.sum(source * source).item())
+        if not math.isfinite(delta_squared) or not math.isfinite(source_squared):
+            raise BackendError(
+                "tts.greektts15.adapter_analysis_nonfinite",
+                "GreekTTS adapter analysis energies must be finite",
+                subsystem="tts",
+            )
         total_squared += delta_squared
         squared_by_layer[layer] += delta_squared
         squared_by_module[module] += delta_squared
