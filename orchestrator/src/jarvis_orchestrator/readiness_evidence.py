@@ -36,7 +36,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from .operations import OperationalError, ProcessLock
 from .private_state import (
     PrivateStateError,
-    create_or_replace_private_file,
     ensure_private_directory,
 )
 from .windows_private_file import (
@@ -1685,93 +1684,79 @@ def _read_cohort_receipt(path: Path) -> dict[str, Any]:
         raise _error("readiness_cohort_receipt_invalid") from None
 
 
-def _atomic_write_cohort_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
-    encoded = canonical_json_bytes(_closed_cohort_receipt(receipt))
-    if len(encoded) > MAXIMUM_COHORT_RECEIPT_BYTES:
-        raise _error("readiness_cohort_receipt_invalid")
+def _atomic_write_private_document(
+    path: Path, encoded: bytes, *, maximum_bytes: int,
+    failure_code: str, mismatch_code: str,
+) -> None:
     temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
     directory_descriptor = -1
-    try:
-        create_or_replace_private_file(temporary, encoded)
-        if os.name == "nt":  # pragma: no cover - exercised on Windows CI
-            harden_windows_private_path(temporary)
-            validate_windows_private_path(temporary)
-        os.replace(temporary, path)
-        if os.name == "posix":
-            directory_descriptor = os.open(
-                path.parent,
-                os.O_RDONLY
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_DIRECTORY", 0),
-            )
-            os.fsync(directory_descriptor)
-        content = _read_regular_file(
-            path,
-            maximum_bytes=MAXIMUM_COHORT_RECEIPT_BYTES,
-            require_private_state=True,
-        )
-        if content != encoded:
-            raise _error("readiness_cohort_receipt_invalid")
-    except OperationalError:
-        raise
-    except (OSError, PrivateStateError, WindowsPrivateFileError) as exc:
-        raise _error("readiness_cohort_receipt_write_failed") from exc
-    finally:
-        if directory_descriptor >= 0:
-            os.close(directory_descriptor)
-        try:
-            metadata = os.lstat(temporary)
-            if stat.S_ISREG(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
-                os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
-
-
-def _atomic_write_evidence(path: Path, encoded: bytes) -> None:
-    temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
-    directory_descriptor = -1
+    owned = None
     try:
         ensure_private_directory(path.parent, create=True)
         if os.name == "nt":  # pragma: no cover - exercised on Windows CI
             harden_windows_private_path(path.parent)
             validate_windows_private_path(path.parent)
-        create_or_replace_private_file(temporary, encoded)
+        with open(temporary, "xb", opener=lambda name, flags: os.open(
+            name, flags | getattr(os, "O_NOFOLLOW", 0), 0o600,
+        )) as output:
+            owned = os.fstat(output.fileno())
+            if os.name == "posix":
+                os.fchmod(output.fileno(), 0o600)
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+        if not os.path.samestat(owned, os.lstat(temporary)):
+            raise _error(mismatch_code)
         if os.name == "nt":  # pragma: no cover - exercised on Windows CI
             harden_windows_private_path(temporary)
             validate_windows_private_path(temporary)
+        if _read_regular_file(
+            temporary, maximum_bytes=maximum_bytes, require_private_state=True,
+        ) != encoded or not os.path.samestat(owned, os.lstat(temporary)):
+            raise _error(mismatch_code)
         os.replace(temporary, path)
         if os.name == "posix":
             directory_descriptor = os.open(
                 path.parent,
-                os.O_RDONLY
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_DIRECTORY", 0),
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0),
             )
             os.fsync(directory_descriptor)
-        content = _read_regular_file(
-            path,
-            maximum_bytes=MAXIMUM_EVIDENCE_BYTES,
-            require_private_state=True,
-        )
-        if content != encoded:
-            raise _error("readiness_evidence_write_failed")
+        if _read_regular_file(
+            path, maximum_bytes=maximum_bytes, require_private_state=True,
+        ) != encoded:
+            raise _error(mismatch_code)
     except OperationalError:
         raise
     except (OSError, PrivateStateError, WindowsPrivateFileError) as exc:
-        raise _error("readiness_evidence_write_failed") from exc
+        raise _error(failure_code) from exc
     finally:
         if directory_descriptor >= 0:
             os.close(directory_descriptor)
-        try:
-            metadata = os.lstat(temporary)
-            if stat.S_ISREG(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
-                os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
+        if owned is not None:
+            try:
+                if os.path.samestat(owned, os.lstat(temporary)):
+                    os.unlink(temporary)
+            except OSError:
+                pass
+
+
+def _atomic_write_cohort_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
+    encoded = canonical_json_bytes(_closed_cohort_receipt(receipt))
+    if len(encoded) > MAXIMUM_COHORT_RECEIPT_BYTES:
+        raise _error("readiness_cohort_receipt_invalid")
+    _atomic_write_private_document(
+        path, encoded, maximum_bytes=MAXIMUM_COHORT_RECEIPT_BYTES,
+        failure_code="readiness_cohort_receipt_write_failed",
+        mismatch_code="readiness_cohort_receipt_invalid",
+    )
+
+
+def _atomic_write_evidence(path: Path, encoded: bytes) -> None:
+    _atomic_write_private_document(
+        path, encoded, maximum_bytes=MAXIMUM_EVIDENCE_BYTES,
+        failure_code="readiness_evidence_write_failed",
+        mismatch_code="readiness_evidence_write_failed",
+    )
 
 
 def _cohort_receipt_header(evidence: ReadinessEvidenceV2) -> dict[str, str]:

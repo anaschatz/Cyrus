@@ -1417,3 +1417,22 @@ Two regression methods produce **16 errors** against original source, `/tmp/cyru
 Ponytail: one shared UTC validator and reuse of the existing strict object decoder for canonical evidence parsing remove duplicated checks/decoder plumbing: **12 fewer production lines**, no dependency. The common decoder also validates malformed legacy JSON before version rejection; valid evidence representation is unchanged. The source is now 2282 lines. All keys, clocks, files and qualification payloads are synthetic; no user signing key, live model or native qualification was used.
 
 Coverage remains **222/400 code, 187/315 tests and 41/308 support files**, with **450 reviewed hashes verified across 1023 entries**. The evidence source remains pending cohort/evidence publication and cleanup investigation. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding are also open.
+
+
+### Readiness publication ownership checkpoint
+
+UTC clock checkpoint committed as **3182436**, with a clean Ponytail hook. Completed the cohort receipt/evidence writer investigation through exclusive creation, private metadata, content verification, replacement, durability and failure cleanup.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V250 | A temporary-name collision could truncate a preexisting private file and publish it over the destination. | Create the staging file exclusively; reject collisions and preserve the existing temporary and destination files. |
+| V251 | Failure cleanup unlinked any regular file at the temporary pathname, including a replacement the writer did not create. | Record the created file identity and clean up only a matching pathname. |
+| V252 | Replacement or same-inode content changes after staging fsync were published over the prior destination before readback detected them. | Check staging identity and bounded/private content before replacement, retaining destination readback and directory fsync. |
+
+Three regression methods produce **six failures and four errors** against original source, `/tmp/cyrus-evidence-publication-before.log`. They exercise both writer formats with temporary-name collisions, fsync/replace failures, unchanged staging cleanup, replacement preservation and changed content before publication. A fourth method caught an intermediate restrictive-umask regression; the shared exclusive writer retains POSIX fchmod to exact 0600. All fixtures use disposable files and synthetic signing keys.
+
+All **55 focused tests complete successfully: 54 passed, one skipped**, `/tmp/cyrus-evidence-publication-after.log`. Full Orchestrator ran **1084 tests in 19.793 seconds: 1079 passed, five skipped**, `/tmp/cyrus-full-review-evidence-publication.log`. All **33 evidence tests pass against the exact staged source**, `/tmp/cyrus-evidence-publication-staged-tests.log`. Seven canonical documents and their signatures remain byte-identical. Fatal Ruff/unused-import and unchanged module-size checks pass.
+
+Ponytail: consolidate the two real writer formats into one exclusive buffered writer with their existing byte ceilings and error codes, removing **15 production lines** without a new dependency. Identity comparisons detect observed replacements; they do not provide atomic exclusion against arbitrary non-cooperating pathname changes between inspection and mutation. Native Windows ACL/rename qualification remains separate.
+
+Coverage remains **222/400 code, 187/315 tests and 41/308 support files**, with **450 reviewed hashes verified across 1023 entries**. The evidence source's publication investigation is complete; earlier stable file/hash-reader changes remain outside this checkpoint and still need their own verification/commit. Whole-codebase review and final quality assessment remain incomplete; U05 and compiler qualification identity binding are also open.

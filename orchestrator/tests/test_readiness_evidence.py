@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import stat
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -18,6 +19,7 @@ from unittest.mock import Mock, patch
 import _bootstrap  # noqa: F401
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from jarvis_orchestrator import readiness_evidence as evidence_module
 from jarvis_orchestrator.cli import main
 from jarvis_orchestrator.config import OrchestratorConfig
 from jarvis_orchestrator.operations import OperationalError
@@ -1436,6 +1438,98 @@ class ReadinessEvidenceTests(unittest.TestCase):
                 ),
                 final_time_provider=lambda: NOW + timedelta(seconds=1),
             )
+
+    def _publication_writers(self):
+        evidence = self.evidence()
+        receipt = {**evidence_module._cohort_receipt_header(evidence), "slots": {
+            "1": evidence_module._cohort_slot(self.root / "leaf.json", evidence),
+        }}
+        return (
+            ("evidence", lambda path: evidence_module._atomic_write_evidence(path, canonical_json_bytes(evidence.canonical()))),
+            ("receipt", lambda path: evidence_module._atomic_write_cohort_receipt(path, receipt)),
+        )
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes")
+    def test_publication_sets_exact_private_mode_under_restrictive_umask(self) -> None:
+        writers = self._publication_writers()
+        previous = os.umask(0o777)
+        try:
+            for name, write in writers:
+                with self.subTest(name=name):
+                    destination = self.root / name
+                    write(destination)
+                    self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+        finally:
+            os.umask(previous)
+
+    def test_publication_preserves_existing_temporary_file(self) -> None:
+        for name, write in self._publication_writers():
+            with self.subTest(name=name):
+                destination = self.root / name
+                destination.write_bytes(b"previous document")
+                temporary = self.root / f".{name}.{'a' * 32}.tmp"
+                temporary.write_bytes(b"preexisting file")
+                temporary.chmod(0o600)
+                with patch.object(evidence_module.uuid, "uuid4", return_value=SimpleNamespace(hex="a" * 32)):
+                    with self.assertRaises(OperationalError):
+                        write(destination)
+                self.assertEqual(temporary.read_bytes(), b"preexisting file")
+                self.assertEqual(destination.read_bytes(), b"previous document")
+
+    def test_publication_failure_cleans_only_the_owned_temporary_file(self) -> None:
+        for name, write in self._publication_writers():
+            for phase in ("fsync", "replace"):
+                for replace_file in (False, True):
+                    with self.subTest(name=name, phase=phase, replace_file=replace_file):
+                        destination = self.root / name
+                        destination.write_bytes(b"previous document")
+                        temporary = self.root / f".{name}.{'a' * 32}.tmp"
+                        def fail(*args):
+                            if replace_file:
+                                temporary.unlink()
+                                temporary.write_bytes(b"replacement")
+                            raise OSError("simulated publication failure")
+                        try:
+                            with patch.object(evidence_module.uuid, "uuid4", return_value=SimpleNamespace(hex="a" * 32)), patch.object(evidence_module.os, phase, side_effect=fail):
+                                with self.assertRaises(OperationalError):
+                                    write(destination)
+                            self.assertEqual(destination.read_bytes(), b"previous document")
+                            if replace_file:
+                                self.assertEqual(temporary.read_bytes(), b"replacement")
+                            else:
+                                self.assertFalse(temporary.exists())
+                        finally:
+                            temporary.unlink(missing_ok=True)
+
+    def test_publication_rejects_changed_staging_content_before_replacement(self) -> None:
+        for name, write in self._publication_writers():
+            for replace_file in (False, True):
+                with self.subTest(name=name, replace_file=replace_file):
+                    destination = self.root / name
+                    destination.write_bytes(b"previous document")
+                    temporary = self.root / f".{name}.{'a' * 32}.tmp"
+                    original_fsync = os.fsync
+                    changed = False
+                    def change_after_sync(descriptor):
+                        nonlocal changed
+                        original_fsync(descriptor)
+                        if not changed:
+                            changed = True
+                            if replace_file:
+                                temporary.unlink()
+                            temporary.write_bytes(b"changed document")
+                            temporary.chmod(0o600)
+                    try:
+                        with patch.object(evidence_module.uuid, "uuid4", return_value=SimpleNamespace(hex="a" * 32)), patch.object(evidence_module.os, "fsync", side_effect=change_after_sync):
+                            with self.assertRaises(OperationalError):
+                                write(destination)
+                        self.assertEqual(destination.read_bytes(), b"previous document")
+                        if replace_file:
+                            self.assertEqual(temporary.read_bytes(), b"changed document")
+                        else:
+                            self.assertFalse(temporary.exists())
+                    finally:
+                        temporary.unlink(missing_ok=True)
 
     def test_duplicate_leaf_sequence_conflicts_and_exact_retry_recovers(self) -> None:
         state = self.root / "duplicate-leaf-state"
