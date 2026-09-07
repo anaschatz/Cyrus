@@ -151,7 +151,7 @@ class CloudApprovalEnvelope:
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.protocol != CLOUD_APPROVAL_PROTOCOL or self.type not in EXTENSION_EVENTS:
+        if self.protocol != CLOUD_APPROVAL_PROTOCOL or not isinstance(self.type, str) or self.type not in EXTENSION_EVENTS:
             raise ProtocolError("protocol.unknown_event", "unknown cloud approval protocol/event")
         object.__setattr__(self, "event_id", _uuid4(self.event_id, "event_id"))
         object.__setattr__(self, "session_id", _uuid4(self.session_id, "session_id"))
@@ -161,7 +161,11 @@ class CloudApprovalEnvelope:
         if not isinstance(self.payload, Mapping):
             raise ProtocolError("protocol.invalid_field", "payload must be an object")
         object.__setattr__(self, "payload", dict(self.payload))
-        self._validate_payload()
+        try:
+            self._validate_payload()
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ProtocolError("protocol.invalid_field", "invalid cloud approval payload") from exc
+        self.to_json()
 
     def _validate_payload(self) -> None:
         payload = self.payload
@@ -246,7 +250,14 @@ class CloudApprovalEnvelope:
         }
 
     def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        try:
+            raw = json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            size = len(raw.encode("utf-8"))
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ProtocolError("protocol.invalid_json", "extension frame must be finite UTF-8 JSON") from exc
+        if size > MAX_EXTENSION_FRAME_BYTES:
+            raise ProtocolError("protocol.frame_too_large", "extension frame exceeds 16 KiB")
+        return raw
 
     @property
     def semantic_sha256(self) -> str:
@@ -279,7 +290,11 @@ class CloudApprovalEnvelope:
             text = raw
         if text.startswith("\ufeff"):
             raise ProtocolError("protocol.invalid_json", "BOM is forbidden")
-        if len(text.encode("utf-8")) > MAX_EXTENSION_FRAME_BYTES:
+        try:
+            size = len(text.encode("utf-8"))
+        except UnicodeError as exc:
+            raise ProtocolError("protocol.invalid_json", "extension frame is not UTF-8") from exc
+        if size > MAX_EXTENSION_FRAME_BYTES:
             raise ProtocolError("protocol.frame_too_large", "extension frame exceeds 16 KiB")
 
         def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -297,7 +312,7 @@ class CloudApprovalEnvelope:
             value = json.loads(text, object_pairs_hook=object_pairs, parse_constant=constant)
         except ProtocolError:
             raise
-        except (json.JSONDecodeError, UnicodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise ProtocolError("protocol.invalid_json", "invalid extension JSON") from exc
         if not isinstance(value, Mapping):
             raise ProtocolError("protocol.invalid_json", "extension envelope must be an object")
@@ -330,15 +345,11 @@ class CloudApprovalEventFactory:
         event_id: str | None = None,
         sent_at: str | None = None,
     ) -> CloudApprovalEnvelope:
-        self._sequence += 1
-        return CloudApprovalEnvelope(
-            protocol=CLOUD_APPROVAL_PROTOCOL,
-            type=event_type,
+        return self.reconstruct(
+            event_type,
+            payload,
             event_id=event_id or str(uuid.uuid4()),
-            session_id=self.session_id,
-            seq=self._sequence,
             sent_at=sent_at or datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-            payload=dict(payload),
         )
 
     def reconstruct(

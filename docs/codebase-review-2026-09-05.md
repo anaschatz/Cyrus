@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **396 of 401 code files**, plus **304 of 346 test files** and **49 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **397 of 401 code files**, plus **305 of 347 test files** and **49 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-08**. Latest complete runs: Voice **884 tests (869 passed, 15 skipped)**; Orchestrator **1111 tests (1106 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-08**. Latest complete runs: Voice **890 tests (875 passed, 15 skipped)**; Orchestrator **1111 tests (1106 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2718,3 +2718,20 @@ The PowerShell source contains deliberate safeguards: suspended child creation b
 Coverage is **396/401 code, 304/346 tests and 49/308 support**, with **749 reviewed hashes verified across 1055 entries**. The remaining five source modules, support/test inspection, confirmed follow-up fixes, earlier uncommitted checkpoints and the final code-quality assessment remain unfinished.
 
 The mandatory V404/V405 Ponytail review requested removal of a redundant JSON round trip in the scalar regression: those values are already JSON-native. Removed the round trip and its comment; both regression methods pass again. The test-only simplification leaves production behavior and the full-suite result unchanged.
+
+
+### Cloud approval frame validation and sequence preservation — 2026-09-08
+
+The exact Windows handoff type checkpoint is committed as **091abe6** after applying its Ponytail finding. Completed the cloud approval source read and traced the Voice transport/controller and Orchestrator ready/outbox/decoder callers. This checkpoint also includes the previously unstaged one-line deep/oversized JSON error normalization in that same parser, now covered by the new tests.
+
+**V406 resolved:** unhashable event/enum fields escaped as TypeError; raw lone surrogates escaped as UnicodeEncodeError; escaped surrogates and oversized outbound payloads could be accepted as envelopes and fail later during hashing, transmission or peer decoding. The common envelope now guards the event type, normalizes payload/JSON errors and validates finite UTF-8 serialization plus the existing 16-KiB byte bound during construction. The decoder retains its original wire-size check and handles raw Unicode errors. The approach matches the existing scheduler protocol without a new schema dependency or shared abstraction.
+
+**V407 resolved:** create incremented the connection sequence before envelope validation, so a rejected request caused the next valid frame to have a gap. It now delegates to the existing reconstruct path, which validates before consuming the sequence. This removes duplicated constructor logic; total production change is **11 net lines**. Server outbox delivery still consumes its sequence only after a successful send.
+
+Six new regression methods exercise malformed event and enum types, raw/escaped surrogates, both factory paths, a rejected ready payload followed by a valid seq=1 event, exact 16-KiB multibyte UTF-8 round-trip and one-byte overflow, and deep/oversized-integer JSON. Baseline: **7 failures and 9 errors**, with the earlier JSON normalization controls already passing, /tmp/cyrus-cloud-boundaries-before.log. Final focused run: **7 checks pass**, including the unchanged module-size ratchet, /tmp/cyrus-cloud-boundaries-focused.log. Full Voice: **890 tests, 875 passed and 15 skipped**, /tmp/cyrus-cloud-boundaries-voice.log, 55.752 seconds. Fatal Ruff and whitespace checks pass. No cloud provider or native action is invoked by the new regressions.
+
+Cloud follow-ups remain open: noncanonical timestamps used in lexical journal expiry comparisons, journal retention and constructor cleanup, multi-step journal/controller crash atomicity, mutable payloads and unbounded plaintext per-connection fingerprints. Inspecting the complete module does not establish that these are resolved or that live-provider/native behavior is qualified.
+
+Coverage is **397/401 code, 305/347 tests and 49/308 support**, **751 reviewed entries across 1056 files**. Hashes were refreshed and verified for this checkpoint's source and test; this is not a fresh repository-wide hash scan. The remaining four source modules, other tests/support, earlier uncommitted fixes and final quality assessment are still pending.
+
+Full Orchestrator rerun: **1111 tests, 1106 passed and 5 skipped**, /tmp/cyrus-cloud-boundaries-orchestrator-recheck.log, 24.695 seconds. The first run had one 10-second standalone-import timeout (128.276 seconds overall) while file reads stalled in the iCloud-backed checkout. The isolated failing test then passed unchanged in 7.001 seconds, /tmp/cyrus-cloud-standalone-import-recheck.log; the complete unchanged rerun passed. No test timeout was relaxed.
