@@ -161,7 +161,7 @@ anamnesis/src/anamnesis/local_preflight.py,944,code,pending,,
 anamnesis/src/anamnesis/local_report.py,1122,code,pending,,
 anamnesis/src/anamnesis/local_runtime.py,2652,code,pending,,
 anamnesis/src/anamnesis/local_wire.py,532,code,reviewed,6daeb9ae0f0ceebfb5c9667ef46411d27d2637d9f9bc70978b81d2346cbd8a75,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
-anamnesis/src/anamnesis/manifest_cli.py,39,code,pending,,
+anamnesis/src/anamnesis/manifest_cli.py,39,code,reviewed,5b201531ba0f991eaf520805e1a89bd6242071686253cd34a9ac03982ef4d5d9,"Complete 39-line manifest CLI read; installed entrypoint mapping, experiment model validation, frozen-status guard and deterministic model serialization fingerprint traced. Both existing manifest CLI tests pass from the Anamnesis project directory. No manifest or frozen contract changed."
 anamnesis/src/anamnesis/memory.py,1974,code,reviewed,3fba9154119625d9204a0cf72bb9f9d57d6a63bb57a75e16d30ff88ac6111cbd,Complete deterministic memory engine review; A01-A04 fixes verified by 45 tests; redundant empty-date-range return removed; module ratchet passes.
 anamnesis/src/anamnesis/openmemory_diagnostic.py,549,code,pending,,
 anamnesis/src/anamnesis/openmemory_recall.py,788,code,pending,,
@@ -204,7 +204,7 @@ anamnesis/tests/test_local_w3_integration.py,522,tests,reviewed,a83ed78782362c30
 anamnesis/tests/test_local_w3_m2.py,511,tests,pending,,
 anamnesis/tests/test_local_w3_preflight_fixture.py,1053,tests,pending,,
 anamnesis/tests/test_local_wire.py,538,tests,reviewed,bab84ce35139b89f0c02fed6b3cecaf095999af65b0b55084aeea5392fb19be8,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
-anamnesis/tests/test_manifest_cli.py,22,tests,pending,,
+anamnesis/tests/test_manifest_cli.py,22,tests,reviewed,fb78a43e234a6e4f7240a9bf7b4e298a6622d87cf5e69cc006ad4e892f52e3ce,Complete 22-line two-test module read. Both tests pass: default draft template validates and fingerprints; require-frozen rejects the draft. Executed in the Anamnesis directory without changing the template or other frozen artifacts.
 anamnesis/tests/test_memory.py,1539,tests,reviewed,fcb27223d8b5e54302c773469dfd246eca335ca6bdc6b838a4d0bd74e916fc14,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
 anamnesis/tests/test_model_costs.py,30,tests,pending,,
 anamnesis/tests/test_openmemory_diagnostic.py,296,tests,pending,,
@@ -472,7 +472,7 @@ orchestrator/results/live_shadow_probe_v3.2026-08-10.json,50,support,pending,,
 orchestrator/results/local_lifecycle_diagnostic.2026-08-10.json,122,support,pending,,
 orchestrator/results/translation-qualification-m3-v1.json,1,support,pending,,
 orchestrator/scripts/build_translation_pack.py,315,code,reviewed,5089fbac30af94830180446d0fcad47691a0e30f019e856d285f952d7fcc9edc,"Complete 315-line build script inspected: closed pinned build identity/artifacts, converter arguments, Python network audit, output exclusivity, canonical manifest and post-write validation. V234/V235: reuse bounded reader/strict JSON and buffered exclusive 0600 writer with flush/fsync. Two failures/one error before; 39 focused tests pass. No real model conversion or builder/package qualification was run."
-orchestrator/scripts/report_lifecycle_shadow_sessions.py,34,code,pending,,
+orchestrator/scripts/report_lifecycle_shadow_sessions.py,34,code,reviewed,fd5f889c5ef0f142575fc86653678ec2149987ef9a8668f89ccb81698a0b29e7,"Complete 34-line report CLI read; read-only shadow report producer, aggregate output fields and decision values traced. Exit 2 denotes shadow_trial_rejected; incomplete evidence still produces a report rather than claiming qualification. No database or real session was read. Source compiles and fatal Ruff passes; underlying shadow/U05 review retains its separate status."
 orchestrator/scripts/run_deterministic_lifecycle_diagnostic.py,172,code,pending,,
 orchestrator/scripts/run_lifecycle_shadow_natural_eval.py,147,code,pending,,
 orchestrator/scripts/run_lifecycle_shadow_natural_v2_eval.py,175,code,pending,,
@@ -773,27 +773,27 @@ research/src/jarvis_research/runtime_probe.py,325,code,reviewed,4aff973c9230f576
 research/uv.lock,104,support,pending,,
 scripts/aggregate_native_qualification.py,59,code,pending,,
 scripts/analyze_greektts15_acoustics.py,59,code,pending,,
-scripts/analyze_greektts15_adapter_delta.py,37,code,pending,,
-scripts/analyze_greektts15_quality_acoustics.py,46,code,pending,,
-scripts/approve_greektts15_singular_operation_crop.py,51,code,pending,,
+scripts/analyze_greektts15_adapter_delta.py,37,code,reviewed,736554f07950cf018dab9ff78cc5607bc917422fb3a76557d86402ce67c30ac5,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
+scripts/analyze_greektts15_quality_acoustics.py,46,code,reviewed,2b68e7f8a3ff534b5509c05f584cfd81beff610c34124c7096bafe12a970951b,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
+scripts/approve_greektts15_singular_operation_crop.py,51,code,reviewed,73aef1e79b0c0bfa965268310327a8eb775f27a58950f62a8678cf3e7d324d2d,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
 scripts/benchmark_macos_whisper_audio_ctx.py,336,code,pending,,
-scripts/blend_greektts15_adapter.py,44,code,pending,,
+scripts/blend_greektts15_adapter.py,44,code,reviewed,987246df100996d1e19240636bd1936dbd8f81b713c4027c6a7542272da98936,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
 scripts/build_greektts15_phrase_candidates.py,35,code,reviewed,9ba9607959cf9b0545f4bca04fd75bd483eccef56a55090ba9c1c2b88aaa554f,"Complete CLI inspection: repository source bootstrap, required roots, matching builder signature, typed failure code and ready-to-exit-status mapping. Actual phrase builder remains pending; no training/audio generation executed."
-scripts/build_greektts15_singular_operation_crop.py,36,code,pending,,
-scripts/build_greektts15_word_focus.py,46,code,pending,,
+scripts/build_greektts15_singular_operation_crop.py,36,code,reviewed,ab7030991ab6975c78fa2dd217eb192aada55b45b2f3de2487e00d8ed178cbc5,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
+scripts/build_greektts15_word_focus.py,46,code,reviewed,e19783a59f58cfc29469aa7785fe2ab661befe1dfefdfb2daa0907932d9ab729,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
 scripts/build_macos.sh,102,code,pending,,
-scripts/build_macos_profile.py,38,code,pending,,
+scripts/build_macos_profile.py,38,code,reviewed,1e59e137cea1b5831ef1690245a870ba62f4a86f05c7cb499a9b58781235db1f,"Complete 38-line profile writer read with package-profile producer and packaging caller. Canonical JSON, same-directory temporary file, flush/fsync/replace and exception cleanup inspected. A proposed descriptor-leak finding was rejected after real stdlib fdopen failure testing proved it closes the descriptor; the inaccurate injected test and attempted source edit were removed. No production change; source compiles and fatal Ruff passes."
 scripts/build_windows.ps1,334,code,pending,,
 scripts/cache_greektts15_snac.py,52,code,pending,,
-scripts/compose_greektts15_word_branches.py,42,code,pending,,
-scripts/export_piper_mps_checkpoint.py,48,code,pending,,
+scripts/compose_greektts15_word_branches.py,42,code,reviewed,033901b9dd08c55fc24f48fa0b719c83431756ce769fe9fbae4855f795d0ce5e,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
+scripts/export_piper_mps_checkpoint.py,48,code,reviewed,8e2a99e95bec5b35c5d6e88df1dc628a74bc233e9cfed3cb9196a7c338a88d06,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
 scripts/generate_action_host_qualification.py,148,code,reviewed,a8a5a6eb9b291311305810642902b7c7a114278352a3fcb663325c2d7d8c8d5f,"Complete manifest/parser/writer/CLI inspection. V99 bounded shared input; V101 exact JCS artifact bytes accepted by real loader, strict parser reuse and malformed digest/root handling. Native qualification main not executed; signed-helper and permission evidence remain required."
 scripts/inspect_macos_helper.py,91,code,reviewed,95291c46aa149acf34b7be3f3f66eaa24d52f2ae803d423bc1abd529418cc98a,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
 scripts/materialize_macos_cpu.py,119,code,pending,,
 scripts/materialize_orchestrator_config.py,177,code,reviewed,d2cc72b8ed8588ad774dddd938d0e4c7754d0de5595de6e046282f0e28da1fc9,Complete operator script inspected. V141 post-publication cleanup checks the published inode before unlinking; competing replacement is preserved and own-file failure cleanup still works. Merge duplicate exception cleanup while retaining stable error codes. Tests use temporary synthetic keys/configs only; no user configuration is created.
-scripts/materialize_piper_mps_extension.py,49,code,pending,,
+scripts/materialize_piper_mps_extension.py,49,code,reviewed,9d1ed4b479d0550ecfe83bfff050583cd11d1151dd520576c2669aff12b92814,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
 scripts/preflight_windows_source.ps1,281,code,pending,,
-scripts/probe_greektts15_training.py,39,code,pending,,
+scripts/probe_greektts15_training.py,39,code,reviewed,a3fab087aa46ce7c8fc9fdbdd2af3a7a189a7484a298af7e375968c1c5b85685,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
 scripts/provision_windows_source.ps1,110,code,pending,,
 scripts/qualify_windows.ps1,57,code,pending,,
 scripts/run_chatterbox_v3_pilot.py,96,code,pending,,
@@ -813,7 +813,7 @@ scripts/run_macos_native_collection.py,189,code,pending,,
 scripts/run_macos_scheduler_callback_qualification.py,239,code,reviewed,45f15df3ba8eacdfdd4a8fdd8952d82811dd5d246ea0e70c6d53713a15068e6d,"Complete CLI, physical checks, manifest reading/writing and reconnect probe inspected. V57 rejects invalid deadlines, oversized/ambiguous manifests and noninteger sizes using the shared bounded reader; V58 reopens the real encrypted journal and compares action ID/payload/session with guaranteed cleanup; V60 requires four operator observations. Four portable tests use only simulated helper/confirmation and temporary journals. Native physical qualification not executed."
 scripts/run_native_voice_qualification.py,86,code,pending,,
 scripts/run_piper_f1_qualification.py,67,code,pending,,
-scripts/run_piper_mps_fit.py,42,code,pending,,
+scripts/run_piper_mps_fit.py,42,code,reviewed,fa21e9c295638f54b20e454d04d2d1e2df8b510a7a0054531640ed5eb68334ef,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
 scripts/run_piper_mps_training.py,71,code,pending,,
 scripts/run_piper_training_handoff.py,68,code,pending,,
 scripts/run_piper_training_readiness.py,35,code,reviewed,a70fcdfa003d84ef0a9b9bc8efbe2c4ddd23a60c5cf3e8c18e19527c4615b217,"Complete CLI inspection and callee signature/host gating traced. Required work root, integer device index, typed failure and ready-based exit code passed consistently. Underlying readiness module remains pending; no GPU inventory query or training executed."
@@ -823,10 +823,10 @@ scripts/run_windows_source_beta.ps1,399,code,pending,,
 scripts/score_greektts15_candidates.py,95,code,pending,,
 scripts/score_greektts15_pronunciation.py,114,code,pending,,
 scripts/score_greektts15_quality_candidate.py,83,code,pending,,
-scripts/smoke_greektts15_optimizer.py,46,code,pending,,
+scripts/smoke_greektts15_optimizer.py,46,code,reviewed,a4ca1d35932033152db63f0e30db369478b09eae0ac97a4f49cf31df44da8383,"Complete CLI source read; source bootstrap, argument order/keywords, return/exit status and report destination traced to the called implementation. Success and BackendError paths exercised with signature-bound fake training/export functions, among 24 wrapper paths. Source compiles; fatal Ruff passes. Underlying training/model implementation remains separately pending; no training, model, export, native compiler or approval was executed."
 scripts/smoke_orchestrator_memory.py,179,code,pending,,
 scripts/smoke_orchestrator_text.py,189,code,pending,,
-scripts/stage_macos_cpu.py,53,code,pending,,
+scripts/stage_macos_cpu.py,53,code,reviewed,d497be72bf85701b4c026e4ce8cd1deeae1233f798bb0017eddbb80741a4df2a,"Complete 53-line staging CLI read; load/config override, actual staging keyword signature, JSON/file output, BackendError envelope and ready/exit status traced. Existing staging checks are part of 12 passing focused tests. No native staging function invoked through this script; module compiles and fatal Ruff passes."
 scripts/test_windows_source_job.ps1,294,code,pending,,
 scripts/train_greektts15_pilot.py,84,code,pending,,
 scripts/verify_windows_handoff.py,704,code,pending,,
@@ -878,7 +878,7 @@ src/jarvis_voice/macos/language_policy.py,72,code,reviewed,025c009327c04bc678a6b
 src/jarvis_voice/macos/materialization.py,354,code,pending,,
 src/jarvis_voice/macos/native_collector.py,725,code,pending,,
 src/jarvis_voice/macos/native_run.py,663,code,pending,,
-src/jarvis_voice/macos/package_profile.py,130,code,pending,,
+src/jarvis_voice/macos/package_profile.py,130,code,reviewed,3f0949f9716c25390efd271ece619950d276943fa1989c2df9d860eb369c4c64,"Complete 130-line source read: closed profile fields, pinned build runtime, file size/hash, packaged root/helper containment and model-external configuration replacement; entrypoint and builder callers traced. Four existing packaging tests pass with temporary fake helper bytes and patched platform identity. No source change, signing, native executable, bundle build or platform qualification."
 src/jarvis_voice/macos/piper_f1_qualification.py,634,code,pending,,
 src/jarvis_voice/macos/ptt.py,321,code,pending,,
 src/jarvis_voice/macos/recovery.py,71,code,pending,,
@@ -993,7 +993,7 @@ tests/test_macos_language_policy.py,55,tests,reviewed,a73c135d4af3ea325b88928ef6
 tests/test_macos_materialization.py,239,tests,pending,,
 tests/test_macos_native_collection_script.py,97,tests,pending,,
 tests/test_macos_native_collector.py,778,tests,pending,,
-tests/test_macos_packaging.py,100,tests,pending,,
+tests/test_macos_packaging.py,100,tests,reviewed,f6dd8de827bf063045265dc83668e0ae11089e739ffd07e6c6770351aa81bd93,"Complete 100-line four-method test module read: packaged helper binding/external model retention, integrity failure, fake pinned native toolchain and packaging declaration checks. All pass as part of the 12 focused checks. Temporary fake helper bytes only; no native build/signing."
 tests/test_macos_scheduler_callback_qualification.py,161,tests,reviewed,c9c11bd83feae6089e726cab5b80a19b51d471c5b6140ee0bcfd824a1c44adfa,"New complete four-test module inspected: invalid deadline/artifact inputs, actual encrypted journal reopen and payload corruption detection, cleanup, simulated full CLI report accepted by the real loader, and operator rejection preventing output. No native helper or notifications."
 tests/test_macos_staging.py,172,tests,pending,,
 tests/test_macos_tts_router.py,103,tests,pending,,
