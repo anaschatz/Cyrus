@@ -1196,6 +1196,8 @@ def build_word_focus_curriculum_order(
     randomizer = random.Random(TRAINING_SEED)
     randomizer.shuffle(general)
     selected.extend(general[: steps - len(selected)])
+    if len(selected) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Focus curriculum is incomplete", subsystem="tts")
     return selected, {
         "profile": "jarvis-word-focus",
         "targeted_steps": WORD_FOCUS_TARGETED_STEPS,
@@ -1242,6 +1244,8 @@ def build_single_word_focus_curriculum_order(
     randomizer = random.Random(TRAINING_SEED)
     randomizer.shuffle(general)
     selected.extend(general[: steps - targeted_steps])
+    if len(selected) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Focus curriculum is incomplete", subsystem="tts")
     return selected, {
         "profile": profile,
         "targeted_steps": targeted_steps,
@@ -1284,6 +1288,8 @@ def build_importance_focus_curriculum_order(
     randomizer = random.Random(TRAINING_SEED)
     randomizer.shuffle(general)
     selected.extend(general[: steps - len(selected)])
+    if len(selected) != steps:
+        raise BackendError("tts.greektts15.curriculum_invalid", "Focus curriculum is incomplete", subsystem="tts")
     return selected, {
         "profile": "jarvis-importance-focus",
         "targeted_steps": IMPORTANCE_FOCUS_TARGETED_STEPS,
@@ -1739,6 +1745,8 @@ def run_training_pilot(
                 "target_counts": {},
                 "sample_filenames": [],
             }
+        if len(order) < steps:
+            raise BackendError("tts.greektts15.curriculum_invalid", "Training pilot has insufficient samples", subsystem="tts")
         validation_order = sorted(
             range(len(validation)),
             key=lambda index: hashlib.sha256(f"{TRAINING_SEED}:validation:{index}".encode()).digest(),

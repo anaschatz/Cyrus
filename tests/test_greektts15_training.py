@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import tempfile
 import unittest
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import _bootstrap  # noqa: F401
@@ -14,7 +16,10 @@ from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.greektts15_training import (
     ADAPTER_BLEND_FACTORS,
     DATASET_SCHEMA,
-    EXPECTED_ROWS,
+    EXPECTED_LORA_GROUPS,
+    PLAN_SCHEMA,
+    WORD_FOCUS_CROPS,
+    run_training_pilot,
     CACHE_SCHEMA,
     build_training_plan,
     build_pronunciation_curriculum_order,
@@ -200,8 +205,6 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertAlmostEqual(duration, 1.77, places=2)
 
     def test_word_focus_bundle_crops_only_hash_verified_real_audio(self) -> None:
-        from jarvis_voice.macos.greektts15_training import WORD_FOCUS_CROPS
-
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             dataset = root / "dataset"
@@ -286,9 +289,7 @@ class GreekTts15TrainingTests(unittest.TestCase):
                 "text": text,
                 "corpus": "STOMA-F1-word-focus",
             }
-            for label, _, text, *_ in __import__(
-                "jarvis_voice.macos.greektts15_training", fromlist=["WORD_FOCUS_CROPS"]
-            ).WORD_FOCUS_CROPS
+            for label, _, text, *_ in WORD_FOCUS_CROPS
             for filename in (f"word-focus-{label}.wav",)
         ]
         samples.extend(
@@ -330,6 +331,82 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertEqual(order[:10], [0, 1] * 5)
         self.assertEqual(report["general_steps"], 15)
         self.assertTrue(report["unrelated_word_crops_excluded"])
+
+    def test_focus_curricula_require_every_requested_general_step(self) -> None:
+        focus = [
+            {"split": "train", "filename": f"word-focus-{label}.wav", "text": text,
+             "corpus": "STOMA-F1-word-focus"}
+            for label, _, text, *_ in WORD_FOCUS_CROPS
+        ]
+        cases = (
+            (build_word_focus_curriculum_order, (), 10),
+            (build_single_word_focus_curriculum_order, ("jarvis-operation-focus",), 15),
+            (build_single_word_focus_curriculum_order, ("jarvis-state-focus",), 10),
+            (build_importance_focus_curriculum_order, (), 15),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            plan = Path(temp) / "plan.json"
+            for builder, args, minimum in cases:
+                for count in (minimum - 1, minimum, minimum + 1):
+                    with self.subTest(builder=builder.__name__, profile=args, general_samples=count):
+                        general = [
+                            {"split": "train", "filename": f"general-{index}.wav",
+                             "text": "γενικό", "corpus": "F1"}
+                            for index in range(count)
+                        ]
+                        plan.write_text(json.dumps({"schema": PLAN_SCHEMA, "samples": focus + general}))
+                        if count < minimum:
+                            with self.assertRaises(BackendError) as raised:
+                                builder(plan, *args)
+                            self.assertEqual(raised.exception.code, "tts.greektts15.curriculum_invalid")
+                        else:
+                            order, report = builder(plan, *args)
+                            self.assertEqual(len(order), 25)
+                            self.assertEqual(report["general_steps"], minimum)
+                            selected_general = order[-minimum:]
+                            self.assertEqual(len(set(selected_general)), minimum)
+                            self.assertTrue(all(index >= len(focus) for index in selected_general))
+
+    def test_uniform_pilot_rejects_short_plan_before_optimizer_creation(self) -> None:
+        from jarvis_voice.macos import greektts15_training as training
+
+        model = mock.MagicMock()
+        mx, nn = mock.MagicMock(), mock.MagicMock()
+        optimizer = mock.Mock(side_effect=RuntimeError("optimizer boundary reached"))
+        optim = SimpleNamespace(AdamW=optimizer)
+        utils = SimpleNamespace(tree_flatten=lambda _: [(f"lora_{i}", None) for i in range(EXPECTED_LORA_GROUPS)])
+        loader = SimpleNamespace(load=mock.Mock(return_value=(model, object())))
+        trainer = SimpleNamespace(default_loss=mock.Mock(), grad_checkpoint=mock.Mock())
+        adapters = SimpleNamespace(load_adapters=mock.Mock(return_value=model))
+        modules = {
+            "mlx": SimpleNamespace(core=mx, nn=nn, optimizers=optim, utils=utils),
+            "mlx.core": mx, "mlx.nn": nn, "mlx.optimizers": optim, "mlx.utils": utils,
+            "mlx_lm": loader, "mlx_lm.tuner.trainer": trainer, "mlx_lm.tuner.utils": adapters,
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            adapter = root / "mlx-adapter"
+            adapter.mkdir()
+            (adapter / "adapters.safetensors").touch()
+            (adapter / "adapter_config.json").touch()
+            for count in (24, 25, 26):
+                with self.subTest(samples=count), mock.patch.dict(sys.modules, modules), \
+                     mock.patch.object(training, "_validated_gradient_probe", return_value={}), \
+                     mock.patch.object(training, "load_cached_split", return_value=[([1, 2], 1)] * count):
+                    optimizer.reset_mock()
+                    output = root / f"output-{count}"
+                    error = BackendError if count < 25 else RuntimeError
+                    with self.assertRaises(error) as raised:
+                        run_training_pilot(root, root / "plan.json", root / "cache", root / "probe.json",
+                                           output, learning_rate=5e-6)
+                    if count < 25:
+                        self.assertEqual(raised.exception.code, "tts.greektts15.curriculum_invalid")
+                        optimizer.assert_not_called()
+                    else:
+                        self.assertEqual(str(raised.exception), "optimizer boundary reached")
+                        optimizer.assert_called_once()
+                    self.assertFalse((output / "training_manifest.json").exists())
+                    self.assertFalse((output / "adapters.safetensors").exists())
 
     def test_pronunciation_curriculum_balances_real_f1_samples(self) -> None:
         samples = []

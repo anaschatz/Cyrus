@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **292 of 401 code files**, plus **236 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **293 of 401 code files**, plus **237 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **816 tests (801 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **818 tests (803 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2058,3 +2058,16 @@ Ponytail also removes copied training profile/learning-rate/step lists from the 
 A new 117-line script test module exercises actual CLI parsing and real shared size/hash validation with tiny synthetic manifests, fake Whisper/encoder/training implementations and disposable output files. The original scoring paths produce **six baseline failures**, `/tmp/cyrus-greektts-scoring-manifest-before.log`. Valid packs proceed with the expected model identity; same-size corrupt weights are rejected before loader invocation or report creation. Cache/training success and BackendError cases verify argument forwarding, JSON reports and exit 0/2. All **17 focused checks pass**, `/tmp/cyrus-greektts-scoring-manifest-after.log`. Final full Voice: **816 tests in 8.124 seconds, 801 passed and 15 skipped**, `/tmp/cyrus-full-review-greektts-scripts-final-voice.log`. Fatal Ruff and unchanged module boundaries pass. No real model, audio decoding, training or download was performed by these regressions; full-suite non-prompting native preflight scope is unchanged.
 
 Coverage is **292/401 code, 236/340 tests and 41/308 support**, with **569 reviewed hashes verified across 1049 entries**. Large training/scoring-library boundary review, native stop/run-loop timing, broader U05 privacy, compiler qualification binding and the remaining whole-codebase review/final quality assessment are still incomplete.
+
+
+### GreekTTS training curriculum completeness
+
+The five-script checkpoint was committed as **d3318b7**, with a clean mandatory Ponytail review. Completed the full 2466-line training-library source read and the existing 817-line test module: dataset planning, waveform crops, SNAC cache, curricula, gradient/optimizer gates, pilot training, adapter blending/composition and transcript scoring. Traced the changed builders into the pilot and its CLI. Source inspection is not native/model qualification.
+
+**V346 resolved:** word-focus, operation-focus, state-focus and importance-focus curricula could return fewer than 25 entries while reporting their full requested general-step count. The uniform pilot likewise accepted fewer training entries than requested; its loop sliced the available order while the saved manifest used the requested `steps`. The three focus builders now reject incomplete selections, and the shared pilot checks order length before optimizer creation. Valid exact-size and larger datasets preserve the existing selection policy.
+
+Two regression methods reproduce **four baseline failures and one error**, `/tmp/cyrus-training-count-before.log`. They cover four focus profiles with one fewer, exactly enough and one extra general sample, plus uniform pilot datasets of 24/25/26 entries. The pilot test substitutes MLX/model/cache dependencies and stops deliberately at optimizer construction for valid inputs; it does not execute training or claim end-to-end numerical validation. Invalid inputs are rejected before optimizer construction or checkpoint/manifest publication. All **41 focused checks pass**, `/tmp/cyrus-training-count-after.log`. Full Voice: **818 tests in 9.171 seconds, 803 passed and 15 skipped**, `/tmp/cyrus-full-review-training-count-voice.log`. Fatal Ruff and unchanged module boundaries pass. No actual model, GPU training or speech is run by the new regressions; the full-suite non-prompting native preflight scope remains unchanged.
+
+Ponytail: **eight net production lines**, using the existing typed curriculum error and explicit guards without a new abstraction or dependency. Tests reuse the direct WORD_FOCUS_CROPS import instead of dynamic/repeated imports; an existing unused import was removed. The training module remains within its unchanged 2475-line ceiling at 2474 lines.
+
+Coverage is **293/401 code, 237/340 tests and 41/308 support**, with **571 reviewed hashes verified across 1049 entries**. Training artifact publication, malformed evidence, waveform byte completeness and numerical/lineage gates remain follow-up boundaries; this checkpoint does not claim they are resolved. Native stop/run-loop timing, broader U05 privacy, compiler qualification binding, remaining source review and the final quality assessment are still incomplete.
