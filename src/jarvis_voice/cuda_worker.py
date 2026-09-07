@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import sys
 import threading
 import time
 import unicodedata
@@ -54,6 +55,10 @@ def _safe_worker_error(exc: BaseException, phase: str) -> dict[str, object]:
     return {"type": "error", "code": code, "retryable": True}
 
 
+def _finite_metric(value: Any) -> bool:
+    return type(value) in (int, float) and -sys.float_info.max <= value <= sys.float_info.max
+
+
 def _validate_parent_manifest(config: CudaWorkerConfig) -> None:
     validation = validate_model_directory(config.model_directory, config.manifest)
     if not validation.ok:
@@ -71,29 +76,28 @@ def run_cuda_worker(
     """Child entrypoint. All frames are strict dictionaries and never logged."""
 
     try:
-        _validate_parent_manifest(config)  # Deliberate second validation in child.
-        factory = model_factory
-        if factory is None:
-            from faster_whisper import WhisperModel  # type: ignore[import-not-found]
-            factory = WhisperModel
-        started = clock()
-        model = factory(
-            config.model_directory,
-            device="cuda",
-            device_index=config.device_index,
-            compute_type=config.compute_type,
-            local_files_only=True,
-        )
-        connection.send({"type": "ready", "load_duration_seconds": clock() - started})
-    except BaseException as exc:
-        connection.send(_safe_worker_error(exc, "load"))
-        connection.close()
-        return
+        try:
+            _validate_parent_manifest(config)  # Deliberate second validation in child.
+            factory = model_factory
+            if factory is None:
+                from faster_whisper import WhisperModel  # type: ignore[import-not-found]
+                factory = WhisperModel
+            started = clock()
+            model = factory(
+                config.model_directory,
+                device="cuda",
+                device_index=config.device_index,
+                compute_type=config.compute_type,
+                local_files_only=True,
+            )
+            connection.send({"type": "ready", "load_duration_seconds": clock() - started})
+        except BaseException as exc:
+            connection.send(_safe_worker_error(exc, "load"))
+            return
 
-    try:
         while True:
             request = connection.recv()
-            if not isinstance(request, dict) or request.get("type") not in {"transcribe", "shutdown"}:
+            if not isinstance(request, dict) or request.get("type") not in ("transcribe", "shutdown"):
                 connection.send({"type": "error", "code": "cuda.worker_protocol_error", "retryable": False})
                 return
             if request["type"] == "shutdown":
@@ -114,7 +118,7 @@ def run_cuda_worker(
                 or len(audio_bytes) > config.maximum_audio_bytes
                 or len(audio_bytes) % 4
             ):
-                connection.send({"type": "error", "code": "cuda.worker_invalid_audio", "retryable": False})
+                connection.send({"type": "error", "code": "cuda.worker_invalid_audio", "retryable": False, "request_id": request_id})
                 continue
             try:
                 try:
@@ -147,7 +151,7 @@ def run_cuda_worker(
                 error = _safe_worker_error(exc, "transcribe")
                 error["request_id"] = request_id
                 connection.send(error)
-    except (EOFError, BrokenPipeError, OSError):
+    except (EOFError, OSError):
         return
     finally:
         connection.close()
@@ -193,11 +197,15 @@ class ProcessCudaWorkerSession:
         return frame
 
     @staticmethod
-    def _raise_error(frame: dict[str, Any]) -> None:
+    def _raise_error(frame: dict[str, Any], request_id: str | None = None) -> None:
         code = frame.get("code")
-        if not isinstance(code, str):
-            code = "cuda.worker_protocol_error"
-        raise BackendError(code, "CUDA worker failed", subsystem="cuda", retryable=bool(frame.get("retryable", False)))
+        expected = {"type", "code", "retryable"}
+        if request_id is not None:
+            expected.add("request_id")
+        if (set(frame) != expected or frame.get("request_id") != request_id
+                or not isinstance(code, str) or not code or type(frame.get("retryable")) is not bool):
+            raise BackendError("cuda.worker_protocol_error", "CUDA worker returned an invalid error", subsystem="cuda")
+        raise BackendError(code, "CUDA worker failed", subsystem="cuda", retryable=frame["retryable"])
 
     def start(self) -> None:
         try:
@@ -218,7 +226,8 @@ class ProcessCudaWorkerSession:
             frame = self._receive(self.config.worker_start_timeout_seconds, "cuda.worker_start_timeout")
             if frame["type"] == "error":
                 self._raise_error(frame)
-            if frame["type"] != "ready" or not isinstance(frame.get("load_duration_seconds"), (int, float)):
+            if (set(frame) != {"type", "load_duration_seconds"} or frame["type"] != "ready"
+                    or not _finite_metric(frame["load_duration_seconds"]) or frame["load_duration_seconds"] < 0):
                 raise BackendError("cuda.worker_protocol_error", "CUDA worker did not send ready", subsystem="cuda")
             self.metrics.append({"event": "worker_spawn_to_ready", "duration_seconds": self.clock() - started})
             self.metrics.append({"event": "model_load", "duration_seconds": float(frame["load_duration_seconds"])})
@@ -248,22 +257,26 @@ class ProcessCudaWorkerSession:
             self.cancel()
             raise
         if frame["type"] == "error":
-            self._raise_error(frame)
+            self._raise_error(frame, request_id)
         expected = {
             "type", "request_id", "text", "language_code", "language_score",
             "asr_score", "raw_avg_logprob", "inference_duration_seconds",
         }
-        if set(frame) != expected or frame.get("request_id") != request_id:
+        if frame["type"] != "result" or set(frame) != expected or frame.get("request_id") != request_id:
             raise BackendError("cuda.worker_protocol_error", "CUDA worker result did not match the request", subsystem="cuda")
         if not isinstance(frame["text"], str) or not frame["text"]:
             raise BackendError("cuda.worker_protocol_error", "CUDA worker returned invalid text", subsystem="cuda")
+        if not isinstance(frame["language_code"], str) or not frame["language_code"]:
+            raise BackendError("cuda.worker_protocol_error", "CUDA worker returned invalid language", subsystem="cuda")
         numeric = ("language_score", "asr_score", "raw_avg_logprob", "inference_duration_seconds")
-        if any(not isinstance(frame[name], (int, float)) or isinstance(frame[name], bool) for name in numeric):
+        if (any(not _finite_metric(frame[name]) for name in numeric)
+                or not 0 <= frame["language_score"] <= 1 or not 0 <= frame["asr_score"] <= 1
+                or frame["raw_avg_logprob"] > 0 or frame["inference_duration_seconds"] < 0):
             raise BackendError("cuda.worker_protocol_error", "CUDA worker returned invalid metrics", subsystem="cuda")
         self.metrics.append({"event": "cuda_inference", "duration_seconds": float(frame["inference_duration_seconds"])})
         return TranscriptResult(
             unicodedata.normalize("NFC", frame["text"]),
-            LanguageMetadata(str(frame["language_code"]), float(frame["language_score"])),
+            LanguageMetadata(frame["language_code"], float(frame["language_score"])),
             AsrScore(float(frame["asr_score"]), float(frame["raw_avg_logprob"])),
         )
 
@@ -290,7 +303,7 @@ class ProcessCudaWorkerSession:
                 try:
                     connection.send({"type": "shutdown"})
                     frame = self._receive(min(5.0, self.config.worker_start_timeout_seconds), "cuda.worker_shutdown_timeout")
-                    if frame.get("type") != "shutdown.complete":
+                    if frame != {"type": "shutdown.complete"}:
                         raise BackendError("cuda.worker_protocol_error", "CUDA worker shutdown was not acknowledged", subsystem="cuda")
                 except (BackendError, EOFError, OSError):
                     pass

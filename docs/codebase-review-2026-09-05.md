@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **244 of 401 code files**, plus **205 of 328 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **244 of 401 code files**, plus **206 of 329 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **751 tests (736 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **757 tests (742 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1681,3 +1681,21 @@ Four regression methods produce **seven failures and six errors before fixes**, 
 Full Voice: **751 tests in 7.443 seconds, 736 passed and 15 skipped**. Full Orchestrator: **1106 tests in 21.049 seconds, 1101 passed and five skipped**, `/tmp/cyrus-full-review-cuda-concurrency-{voice,orchestrator}.log`. Fatal Ruff and unchanged module-size checks pass. Ponytail: merge the duplicated warm/turn-scoped transcription and finalization flow, retaining the residency-specific close and VRAM measurement. Net production growth is **23 lines**, with no dependency or restart-limit increase. ASR calls remain serialized by AsyncTranscriptionCoordinator; this handles concurrent lifecycle calls, not arbitrary parallel transcriptions on one pipe. The brief process-creation critical section is distinct from potentially long model loading.
 
 Coverage is **244/401 code, 205/328 tests and 41/308 support**, with **490 reviewed hashes verified across 1037 entries**. CUDA frame validation, remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete. Native Windows/CUDA startup and cancellation timing still require their platform qualification.
+
+
+### CUDA frame validation and child cleanup boundaries
+
+Startup/concurrency checkpoint committed as **94eaff1**, with a clean mandatory Ponytail review.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V294 | Ready/result frames accepted nonfinite or out-of-domain metrics; huge integer conversion could leak OverflowError. Extra ready fields, wrong result type and non-string language metadata could pass. | Require exact message shapes and result type, finite native numeric values, bounded probabilities, non-positive raw log probabilities, nonnegative durations and a nonempty language string before metrics/result publication. |
+| V295 | Error frames were not bound to the request and retryability used bool coercion, so malformed/stale fault frames could be interpreted as a retryable current-request error. | Validate exact error fields, request identity, a nonempty string code and real bool retryability. Invalid-audio errors now carry the request ID, preserving their existing classification at the parent. |
+| V296 | An unhashable child message selector raised TypeError instead of a protocol error. A failed initial ready/error send bypassed explicit connection closure. | Use tuple membership for the closed selector set and one outer finally for child connection cleanup, including startup send failure. |
+| V297 — OPEN | Connection.poll bounds readiness only. Once a partial frame header is readable, recv can block past the configured startup/transcription timeout. | Confirmed with a real owned one-way pipe: a length header without its payload kept a 0.02-second receive blocked beyond 0.2 seconds. Closing our writer released it as typed cuda.worker_crashed. The full-frame deadline needs a separate fix. |
+
+The first five regression methods produce **33 failures and nine errors before fixes**, `/tmp/cyrus-cuda-frames-before.log`; the invalid-audio identity regression separately fails once, `/tmp/cyrus-cuda-invalid-audio-id-before.log`. All **57 focused tests pass**, `/tmp/cyrus-cuda-frames-after.log`. Tests cover malformed and valid frames, startup/result numerics, preserved OOM and invalid-audio errors, child selectors and failed sends, using fake models/processes/connections. The separate real-pipe deadline probe is recorded in `/tmp/cyrus-cuda-partial-frame-probe.log`; it uses no child process, model or GPU.
+
+Full Voice: **757 tests in 7.289 seconds, 742 passed and 15 skipped**. Full Orchestrator: **1106 tests in 21.165 seconds, 1101 passed and five skipped**, `/tmp/cyrus-full-review-cuda-frames-{voice,orchestrator}.log`. Fatal Ruff and unchanged module boundaries pass. Ponytail: reuse one small finite-metric predicate bounded by sys.float_info, remove coercions and share child cleanup. Net production growth is **13 lines**, with no dependency or valid success-frame format change. These checks do not replace native Windows/CUDA qualification.
+
+Coverage is **244/401 code, 206/329 tests and 41/308 support**, with **491 reviewed hashes verified across 1038 entries**. V297, remaining codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
