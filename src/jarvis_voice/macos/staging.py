@@ -40,11 +40,8 @@ class CompletedProbe(Protocol):
 
 
 def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def probe_python(
@@ -73,7 +70,7 @@ def probe_python(
             shell=False,
         )
         raw = json.loads(completed.stdout) if completed.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, TypeError):
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, RecursionError):
         raw = None
     if not isinstance(raw, Mapping) or set(raw) != {"platform", "machine", "macos", "version", "bits"}:
         return _status("blocked", "staging.python_probe_failed")
@@ -126,7 +123,7 @@ def validate_wheelhouse(wheelhouse: str | None, manifest_path: str | None) -> di
         if manifest_file.stat().st_size > 1_048_576:
             return _status("blocked", "staging.wheelhouse_manifest_invalid", wheels_checked=0)
         raw = json.loads(manifest_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError, RecursionError):
         return _status("blocked", "staging.wheelhouse_manifest_unreadable", wheels_checked=0)
     if (
         not isinstance(raw, Mapping)

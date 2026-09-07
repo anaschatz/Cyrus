@@ -107,10 +107,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except BackendError as exc:
         report = {"ready": False, "error": exc.to_log_record(), "network_used": False}
         if report_output:
-            write_report(report_output, report)
-        else:
-            print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
-        return 2
+            try:
+                write_report(report_output, report)
+            except BackendError as output_exc:
+                report["output_error_code"] = output_exc.code
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if report.get("ready") else 2
 

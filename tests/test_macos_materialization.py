@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import importlib.util
+import io
 import json
 import tempfile
 import unittest
@@ -27,6 +30,13 @@ from jarvis_voice.macos.staging import validate_wheelhouse
 from jarvis_voice.errors import BackendError
 from jarvis_voice.manifest import LARGE_V3_TURBO_MODEL_MANIFEST, ManifestValidationResult
 from jarvis_voice.voice_auth import create_voice_auth_key_file
+
+
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "materialize_macos_cpu.py"
+SPEC = importlib.util.spec_from_file_location("materialize_macos_cpu", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+SCRIPT_MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(SCRIPT_MODULE)
 
 
 def fake_wheel(directory: Path, name: str, version: str) -> Path:
@@ -129,6 +139,22 @@ class SileroExtractionTests(unittest.TestCase):
 
 
 class PrivateConfigTests(unittest.TestCase):
+    def test_malformed_json_inputs_raise_safe_backend_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base, manifest, output = (Path(temp) / name for name in ("base.json", "vad.json", "voice.json"))
+            for malformed in (b"\xff", b"[" * 2000 + b"]" * 2000, b"1" * 5000):
+                for invalid in (base, manifest):
+                    with self.subTest(payload=malformed[:8], input=invalid.name):
+                        base.write_bytes(b"{}")
+                        manifest.write_bytes(b"{}")
+                        invalid.write_bytes(malformed)
+                        with self.assertRaisesRegex(BackendError, "materialization.config_input_unreadable"):
+                            materialize_private_config(
+                                str(base), "/unused", str(manifest), str(output),
+                                greek_voice="unused", english_voice="unused", voice_auth_key="unused",
+                            )
+                        self.assertFalse(output.exists())
+
     def test_materializes_explicit_model_vad_and_installed_voices(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -218,21 +244,73 @@ class BackendProbeTests(unittest.TestCase):
             ),
             audio_input_device=None,
         )
-        fake_asr = mock.Mock()
-        fake_vad = mock.Mock()
-        fake_vad.trim.return_value = SimpleNamespace(speech_detected=False)
-        sounddevice = SimpleNamespace(query_devices=lambda device, kind: {"max_input_channels": 1})
-        with (
-            mock.patch("jarvis_voice.macos.materialization.load_voice_config", return_value=fake_config),
-            mock.patch("jarvis_voice.macos.materialization.FasterWhisperCpuBackend", return_value=fake_asr),
-            mock.patch("jarvis_voice.macos.materialization.SileroOnnxVad", return_value=fake_vad),
-            mock.patch.dict("sys.modules", {"sounddevice": sounddevice}),
-        ):
-            report = probe_local_backends("/config", "/model")
-        self.assertTrue(report["ready"])
-        self.assertFalse(report["microphone_opened"])
-        fake_asr.load.assert_called_once_with()
-        self.assertEqual(len(fake_vad.trim.call_args.args[0].samples), 512)
+        for failure in (None, "manifest", "vad_init", "load", "trim", "query", "interrupt"):
+            with self.subTest(failure=failure):
+                fake_asr = mock.Mock()
+                fake_vad = mock.Mock()
+                fake_vad.trim.return_value = SimpleNamespace(speech_detected=False)
+                query = mock.Mock(return_value={"max_input_channels": 1})
+                error = (KeyboardInterrupt() if failure == "interrupt" else
+                         BackendError("materialization.test_failure", "private details", subsystem="materialization"))
+                if failure == "load":
+                    fake_asr.load.side_effect = error
+                if failure in {"trim", "interrupt"}:
+                    fake_vad.trim.side_effect = error
+                if failure == "query":
+                    query.side_effect = error
+                fake_config.vad.artifact.path = None if failure == "manifest" else "/vad"
+                with (
+                    mock.patch("jarvis_voice.macos.materialization.load_voice_config", return_value=fake_config),
+                    mock.patch("jarvis_voice.macos.materialization.FasterWhisperCpuBackend", return_value=fake_asr),
+                    mock.patch("jarvis_voice.macos.materialization.SileroOnnxVad", return_value=fake_vad,
+                               side_effect=error if failure == "vad_init" else None),
+                    mock.patch.dict("sys.modules", {"sounddevice": SimpleNamespace(query_devices=query)}),
+                ):
+                    if failure:
+                        with self.assertRaises(KeyboardInterrupt if failure == "interrupt" else BackendError) as caught:
+                            probe_local_backends("/config", "/model")
+                        if failure not in {"manifest", "query"}:
+                            self.assertIs(caught.exception, error)
+                        elif failure == "query":
+                            self.assertEqual(caught.exception.code, "materialization.audio_probe_failed")
+                    else:
+                        report = probe_local_backends("/config", "/model")
+                        self.assertTrue(report["ready"])
+                        self.assertFalse(report["microphone_opened"])
+                        fake_asr.load.assert_called_once_with()
+                        self.assertEqual(len(fake_vad.trim.call_args.args[0].samples), 512)
+                fake_asr.close.assert_called_once_with()
+
+
+class MaterializationCliTests(unittest.TestCase):
+    def test_report_failures_always_print_safe_json(self) -> None:
+        commands = (
+            ("probe-backends", ["--config", "unused", "--model-dir", "unused"], "probe_local_backends"),
+            ("disk-gate", ["--path", "unused"], "disk_space_gate"),
+            ("blocked-summary", ["--python-version", "3.11.9", "--wheels-locked", "1", "--silero-bytes", "1", "--available-mib", "1"], "blocked_materialization_summary"),
+            ("complete-summary", ["--python-version", "3.11.9", "--wheels-locked", "1", "--silero-bytes", "1"], "completed_materialization_summary"),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            for command, arguments, operation in commands:
+                for operation_fails, output_exists in ((False, False), (True, False), (True, True)):
+                    with self.subTest(command=command, operation_fails=operation_fails, output_exists=output_exists):
+                        output = Path(temp) / ("report.json" if output_exists else "missing/report.json")
+                        failure = BackendError("materialization.test_failure", "private details", subsystem="materialization")
+                        stdout = io.StringIO()
+                        with (mock.patch.object(SCRIPT_MODULE, operation, return_value={"ready": True},
+                                                side_effect=failure if operation_fails else None),
+                              contextlib.redirect_stdout(stdout)):
+                            status = SCRIPT_MODULE.main([command, *arguments, "--output", str(output)])
+                        report = json.loads(stdout.getvalue())
+                        self.assertEqual(status, 2)
+                        self.assertFalse(report["ready"])
+                        self.assertEqual(report["error"]["code"], "materialization.test_failure" if operation_fails else "qualification.output_directory_missing")
+                        if output_exists:
+                            self.assertEqual(json.loads(output.read_text()), report)
+                        else:
+                            self.assertEqual(report["output_error_code"], "qualification.output_directory_missing")
+                            self.assertFalse(output.exists())
+                        self.assertNotIn("private", stdout.getvalue())
 
 
 if __name__ == "__main__":

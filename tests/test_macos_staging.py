@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
@@ -76,6 +77,27 @@ class PythonProbeTests(unittest.TestCase):
 
 
 class WheelhouseTests(unittest.TestCase):
+    def test_malformed_manifest_and_python_json_are_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            wheelhouse, manifest = write_wheelhouse(root)
+            executable = root / "python"
+            executable.write_bytes(b"fake")
+            executable.chmod(0o700)
+            for payload in (b"\xff", b"[" * 2000 + b"]" * 2000, b"1" * 5000):
+                with self.subTest(payload=payload[:8], boundary="manifest"):
+                    manifest.write_bytes(payload)
+                    result = validate_wheelhouse(str(wheelhouse), str(manifest))
+                    self.assertEqual(result["code"], "staging.wheelhouse_manifest_unreadable")
+                with self.subTest(payload=payload[:8], boundary="python"):
+                    runner = mock.Mock()
+                    try:
+                        runner.return_value = SimpleNamespace(returncode=0, stdout=payload.decode("utf-8"))
+                    except UnicodeDecodeError as exc:
+                        runner.side_effect = exc
+                    result = probe_python(str(executable), runner=runner)
+                    self.assertEqual(result["code"], "staging.python_probe_failed")
+
     def test_hash_locked_wheelhouse_and_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             wheelhouse, manifest = write_wheelhouse(Path(temp))

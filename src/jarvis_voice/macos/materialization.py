@@ -10,10 +10,11 @@ import shutil
 import tempfile
 import zipfile
 from array import array
+from contextlib import closing
 from email.parser import BytesParser
 from email.policy import default as email_policy
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 from ..asr import FasterWhisperCpuBackend
 from ..backends import AudioChunk
@@ -43,11 +44,8 @@ MINIMUM_FREE_BYTES = 2 * 1024 * 1024 * 1024
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def disk_space_gate(path: str, *, minimum_free_bytes: int = MINIMUM_FREE_BYTES) -> dict[str, object]:
@@ -270,7 +268,7 @@ def materialize_private_config(
     try:
         raw = json.loads(Path(base_config).read_text(encoding="utf-8"))
         vad_raw = json.loads(Path(vad_manifest).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise BackendError("materialization.config_input_unreadable", "Configuration input is unreadable", subsystem="materialization") from exc
     if (
         not isinstance(raw, dict)
@@ -316,39 +314,39 @@ def materialize_private_config(
 
 def probe_local_backends(config_path: str, model_directory: str) -> dict[str, object]:
     config = load_voice_config(config_path)
-    asr = FasterWhisperCpuBackend(
+    with closing(FasterWhisperCpuBackend(
         model_directory,
         compute_type=config.asr.cpu_compute_type,
         manifest=model_manifest_for_profile(config.asr.model_profile),
-    )
-    artifact = config.vad.artifact
-    if not artifact.path or artifact.size is None or not artifact.sha256:
-        raise BackendError("vad.artifact_manifest_required", "VAD manifest is required", subsystem="materialization")
-    vad = SileroOnnxVad(
-        artifact_path=artifact.path,
-        size=artifact.size,
-        sha256=artifact.sha256,
-        threshold=config.vad.threshold,
-        minimum_speech_ms=config.vad.minimum_speech_ms,
-        padding_ms=config.vad.padding_ms,
-    )
-    asr.load()
-    result = vad.trim(AudioChunk(array("f", [0.0] * 512), 16_000))
-    try:
-        import sounddevice as sd  # type: ignore[import-not-found]
+    )) as asr:
+        artifact = config.vad.artifact
+        if not artifact.path or artifact.size is None or not artifact.sha256:
+            raise BackendError("vad.artifact_manifest_required", "VAD manifest is required", subsystem="materialization")
+        vad = SileroOnnxVad(
+            artifact_path=artifact.path,
+            size=artifact.size,
+            sha256=artifact.sha256,
+            threshold=config.vad.threshold,
+            minimum_speech_ms=config.vad.minimum_speech_ms,
+            padding_ms=config.vad.padding_ms,
+        )
+        asr.load()
+        result = vad.trim(AudioChunk(array("f", [0.0] * 512), 16_000))
+        try:
+            import sounddevice as sd  # type: ignore[import-not-found]
 
-        device = sd.query_devices(config.audio_input_device, "input")
-        audio_ready = int(device.get("max_input_channels", 0)) >= 1
-    except Exception as exc:
-        raise BackendError("materialization.audio_probe_failed", "CoreAudio input query failed", subsystem="materialization") from exc
-    return {
-        "ready": audio_ready and not result.speech_detected,
-        "code": "materialization.local_backends_loaded" if audio_ready and not result.speech_detected else "materialization.local_backend_probe_failed",
-        "asr_model_loaded": True,
-        "vad_session_loaded": True,
-        "synthetic_silence_only": True,
-        "microphone_opened": False,
-        "runtime_started": False,
-        "network_used": False,
-        "content_captured": False,
-    }
+            device = sd.query_devices(config.audio_input_device, "input")
+            audio_ready = int(device.get("max_input_channels", 0)) >= 1
+        except Exception as exc:
+            raise BackendError("materialization.audio_probe_failed", "CoreAudio input query failed", subsystem="materialization") from exc
+        return {
+            "ready": audio_ready and not result.speech_detected,
+            "code": "materialization.local_backends_loaded" if audio_ready and not result.speech_detected else "materialization.local_backend_probe_failed",
+            "asr_model_loaded": True,
+            "vad_session_loaded": True,
+            "synthetic_silence_only": True,
+            "microphone_opened": False,
+            "runtime_started": False,
+            "network_used": False,
+            "content_captured": False,
+        }
