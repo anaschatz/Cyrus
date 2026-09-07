@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **293 of 401 code files**, plus **237 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **295 of 401 code files**, plus **238 of 340 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **818 tests (803 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **820 tests (805 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2071,3 +2071,16 @@ Two regression methods reproduce **four baseline failures and one error**, `/tmp
 Ponytail: **eight net production lines**, using the existing typed curriculum error and explicit guards without a new abstraction or dependency. Tests reuse the direct WORD_FOCUS_CROPS import instead of dynamic/repeated imports; an existing unused import was removed. The training module remains within its unchanged 2475-line ceiling at 2474 lines.
 
 Coverage is **293/401 code, 237/340 tests and 41/308 support**, with **571 reviewed hashes verified across 1049 entries**. Training artifact publication, malformed evidence, waveform byte completeness and numerical/lineage gates remain follow-up boundaries; this checkpoint does not claim they are resolved. Native stop/run-loop timing, broader U05 privacy, compiler qualification binding, remaining source review and the final quality assessment are still incomplete.
+
+
+### GreekTTS waveform completeness and JSON publication
+
+Curriculum completeness was committed as **5aa4716**, with a clean mandatory Ponytail review. Also completed the full unchanged 1132-line pilot implementation, its 346-line test module and the 131-line pilot CLI: pinned artifact/schema preflight, acquisition, adapter remapping, JSON publication, offline guards, token decoding and qualification reports. Traced the shared writer and training preparation callers. No model acquisition, conversion or synthesis was executed.
+
+**V347 resolved:** dataset planning trusted WAV frame counts without reading the declared PCM payload. Singular/word crop extraction and phrase assembly also accepted short reads, so even a matching source digest could produce truncated audio and incorrect crop-duration evidence. All four paths now verify the expected byte count before accepting the waveform or publishing a ready manifest. Dataset duration is checked before the full PCM read, retaining the existing 16-second allocation bound. Crop checks cover the requested range; they do not claim validation of unused source audio beyond that range.
+
+**V348 resolved:** SNAC cache and training-plan writers reused a fixed `.json.tmp` pathname. A pre-existing file was overwritten and consumed, a symlink redirected writes into its target, and replacement failure left a partial file. Both now reuse the existing pilot `_atomic_json` helper, which creates its own unique private temporary file and atomically replaces the destination with cleanup on failure. No new helper or dependency was introduced. Cache JSON becomes indented/sorted, while payload semantics and validation remain unchanged; the existing resume test passes. This is atomic file publication, not a claim of fsync-based crash durability or multi-file transactions.
+
+Extended three existing waveform tests and added two regression methods covering odd-byte/full-frame truncation and both writers with a regular temporary file, a symlink, or an injected replace failure. Matching hashes ensure waveform checks are actually reached. **Nine failures and two errors reproduce before the fixes**, `/tmp/cyrus-training-artifacts-before.log`; all **60 focused checks pass**, `/tmp/cyrus-training-artifacts-after.log`. Full Voice: **820 tests in 9.387 seconds, 805 passed and 15 skipped**, `/tmp/cyrus-full-review-training-artifacts-voice.log`. Fatal Ruff, diff whitespace and unchanged module boundaries pass. Tests use synthetic PCM, disposable files and a fake encoder; no audio device/model is used. Full-suite non-prompting native preflight scope is unchanged.
+
+Ponytail reuses the existing atomic writer, replaces the manual training hash loop with `hashlib.file_digest`, and simplifies the WAV format comparison using the same constants: **one fewer net production line**, leaving training at 2473 lines under its unchanged 2475-line ceiling. Coverage is **295/401 code, 238/340 tests and 41/308 support**, with **574 reviewed hashes verified across 1049 entries**. Malformed training/pilot evidence, numerical/lineage checks, remaining multi-file publication boundaries, native stop/run-loop timing, broader U05 privacy, compiler qualification binding and the whole-codebase final assessment remain unfinished.

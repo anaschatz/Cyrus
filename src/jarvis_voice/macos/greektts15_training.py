@@ -29,6 +29,7 @@ from jarvis_voice.macos.greektts15_pilot import (
     END_OF_TEXT,
     START_OF_HUMAN,
     START_OF_SPEECH,
+    _atomic_json,
 )
 
 
@@ -282,6 +283,8 @@ def build_singular_operation_crop(
             raise BackendError("tts.greektts15.singular_crop_bounds_invalid", "Singular crop bounds are invalid", subsystem="tts")
         reader.setpos(start_frame)
         frames = reader.readframes(end_frame - start_frame)
+        if len(frames) != (end_frame - start_frame) * EXPECTED_SAMPLE_WIDTH:
+            raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 waveform is truncated", subsystem="tts")
     audio_root = output / "audio"
     audio_root.mkdir(mode=0o700, parents=True)
     destination = audio_root / "word-focus-leitourgei.wav"
@@ -438,11 +441,7 @@ def build_word_focus_bundle(
         ):
             raise BackendError("tts.greektts15.word_focus_source_invalid", "Word-focus source is invalid", subsystem="tts")
         with wave.open(str(source), "rb") as reader:
-            if (
-                reader.getnchannels() != EXPECTED_CHANNELS
-                or reader.getsampwidth() != EXPECTED_SAMPLE_WIDTH
-                or reader.getframerate() != EXPECTED_SAMPLE_RATE
-            ):
+            if (reader.getnchannels(), reader.getsampwidth(), reader.getframerate()) != (EXPECTED_CHANNELS, EXPECTED_SAMPLE_WIDTH, EXPECTED_SAMPLE_RATE):
                 raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 waveform format is invalid", subsystem="tts")
             total_frames = reader.getnframes()
             crop_start = max(0.0, word_start - WORD_FOCUS_PADDING_SECONDS)
@@ -453,6 +452,8 @@ def build_word_focus_bundle(
                 raise BackendError("tts.greektts15.word_focus_bounds_invalid", "Word-focus bounds are invalid", subsystem="tts")
             reader.setpos(start_frame)
             frames = reader.readframes(end_frame - start_frame)
+            if len(frames) != (end_frame - start_frame) * EXPECTED_SAMPLE_WIDTH:
+                raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 waveform is truncated", subsystem="tts")
         filename = f"word-focus-{label}.wav"
         destination = audio_output / filename
         with wave.open(str(destination), "wb") as writer:
@@ -577,8 +578,11 @@ def build_f1_phrase_candidates(
         with wave.open(str(path), "rb") as reader:
             if (reader.getnchannels(), reader.getsampwidth(), reader.getframerate()) != (1, 2, EXPECTED_SAMPLE_RATE):
                 raise BackendError("tts.greektts15.phrase_source_invalid", "Approved word crop format changed", subsystem="tts")
+            frames = reader.readframes(reader.getnframes())
+            if len(frames) != reader.getnframes() * EXPECTED_SAMPLE_WIDTH:
+                raise BackendError("tts.greektts15.phrase_source_invalid", "Approved word crop is truncated", subsystem="tts")
             values = array("h")
-            values.frombytes(reader.readframes(reader.getnframes()))
+            values.frombytes(frames)
         trim = round((WORD_FOCUS_PADDING_SECONDS - PHRASE_EDGE_PADDING_SECONDS) * EXPECTED_SAMPLE_RATE)
         if len(values) <= trim * 2:
             raise BackendError("tts.greektts15.phrase_source_invalid", "Approved word crop is too short", subsystem="tts")
@@ -2071,11 +2075,8 @@ def compose_disjoint_adapter_branches(
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _cache_payload_is_valid(payload: object, sample: dict[str, object], signature: dict[str, object]) -> bool:
@@ -2163,9 +2164,7 @@ def cache_snac_samples(
             }
             if not _cache_payload_is_valid(payload, sample, encoder.signature):
                 raise BackendError("tts.greektts15.cache_tokens_invalid", "SNAC encoder returned invalid tokens", subsystem="tts")
-            temporary = destination.with_suffix(".json.tmp")
-            temporary.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
-            temporary.replace(destination)
+            _atomic_json(destination, payload)
             encoded += 1
         token_count += len(tokens)
     return {
@@ -2421,10 +2420,12 @@ def build_training_plan(dataset_root: str | Path, *, verify_audio_hashes: bool =
                 ):
                     raise BackendError("tts.greektts15.dataset_audio_format_invalid", "F1 WAV format is invalid", subsystem="tts")
                 duration = wav.getnframes() / wav.getframerate()
+                if not 1.5 <= duration <= 16.0:
+                    raise BackendError("tts.greektts15.dataset_duration_invalid", "F1 sample duration is outside the safe bound", subsystem="tts")
+                if len(wav.readframes(wav.getnframes())) != wav.getnframes() * EXPECTED_SAMPLE_WIDTH:
+                    raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 waveform is truncated", subsystem="tts")
         except (OSError, wave.Error) as exc:
             raise BackendError("tts.greektts15.dataset_audio_invalid", "F1 WAV is unreadable", subsystem="tts") from exc
-        if not 1.5 <= duration <= 16.0:
-            raise BackendError("tts.greektts15.dataset_duration_invalid", "F1 sample duration is outside the safe bound", subsystem="tts")
         text, changed = normalize_transcript(source_text)
         samples.append(
             PlannedSample(filename, text, splits[filename], _corpus(filename), round(duration, 6), digest, changed)
@@ -2468,7 +2469,5 @@ def write_training_plan(dataset_root: str | Path, output_path: str | Path) -> di
     if not destination.is_absolute() or destination.is_symlink():
         raise BackendError("tts.greektts15.plan_path_invalid", "Training plan path is invalid", subsystem="tts")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(json.dumps(plan, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(destination)
+    _atomic_json(destination, plan)
     return plan

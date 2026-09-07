@@ -22,6 +22,7 @@ from jarvis_voice.macos.greektts15_training import (
     run_training_pilot,
     CACHE_SCHEMA,
     build_training_plan,
+    write_training_plan,
     build_pronunciation_curriculum_order,
     build_lexical_curriculum_order,
     build_exact_core_curriculum_order,
@@ -91,6 +92,14 @@ class GreekTts15TrainingTests(unittest.TestCase):
             output = root / "crop"
             report = build_singular_operation_crop(plan.resolve(), dataset.resolve(), output.resolve())
             manifest = json.loads((output / "singular-operation-crop-manifest.json").read_text())
+            source.write_bytes(source.read_bytes()[:44 + 4 * 44_100 * 2 + 1])
+            damaged_plan = json.loads(plan.read_text())
+            damaged_plan["samples"][0]["audio_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+            plan.write_text(json.dumps(damaged_plan))
+            with self.assertRaises(BackendError) as raised:
+                build_singular_operation_crop(plan, dataset, root / "truncated-crop")
+            self.assertEqual(raised.exception.code, "tts.greektts15.dataset_audio_invalid")
+            self.assertFalse((root / "truncated-crop" / "singular-operation-crop-manifest.json").exists())
         self.assertTrue(report["ready"])
         self.assertTrue(manifest["review_only"])
         self.assertFalse(manifest["training_allowed"])
@@ -198,6 +207,16 @@ class GreekTts15TrainingTests(unittest.TestCase):
             report = build_f1_phrase_candidates(focus.resolve(), output.resolve())
             with wave.open(str(output / report["samples"][0]["filename"]), "rb") as stream:
                 duration = stream.getnframes() / stream.getframerate()
+            damaged = audio / names[0]
+            damaged.write_bytes(damaged.read_bytes()[:-2])
+            samples[0]["audio_sha256"] = hashlib.sha256(damaged.read_bytes()).hexdigest()
+            (focus / "word-focus-manifest.json").write_text(
+                json.dumps({"schema": "jarvis.voice.greektts15-word-focus/1", "ready": True, "samples": samples})
+            )
+            with self.assertRaises(BackendError) as raised:
+                build_f1_phrase_candidates(focus, root / "truncated-phrases")
+            self.assertEqual(raised.exception.code, "tts.greektts15.phrase_source_invalid")
+            self.assertFalse((root / "truncated-phrases" / "phrase-candidates-manifest.json").exists())
         self.assertTrue(report["ready"])
         self.assertTrue(report["review_only"])
         self.assertFalse(report["training_allowed"])
@@ -234,6 +253,14 @@ class GreekTts15TrainingTests(unittest.TestCase):
             output = root / "focus"
             report = build_word_focus_bundle(plan.resolve(), dataset.resolve(), output.resolve())
             manifest = json.loads((output / "word-focus-manifest.json").read_text(encoding="utf-8"))
+            damaged = audio / samples[0]["filename"]
+            damaged.write_bytes(damaged.read_bytes()[:44 + 4 * 44_100 * 2 + 1])
+            samples[0]["audio_sha256"] = hashlib.sha256(damaged.read_bytes()).hexdigest()
+            plan.write_text(json.dumps({"schema": PLAN_SCHEMA, "samples": samples}))
+            with self.assertRaises(BackendError) as raised:
+                build_word_focus_bundle(plan, dataset, root / "truncated-focus")
+            self.assertEqual(raised.exception.code, "tts.greektts15.dataset_audio_invalid")
+            self.assertFalse((root / "truncated-focus" / "word-focus-manifest.json").exists())
         self.assertTrue(report["ready"])
         self.assertEqual(len(manifest["samples"]), len(WORD_FOCUS_CROPS))
         self.assertTrue(all(sample["corpus"] == "STOMA-F1-word-focus" for sample in manifest["samples"]))
@@ -845,6 +872,68 @@ class GreekTts15TrainingTests(unittest.TestCase):
         self.assertEqual(first["split"]["counts"], {"train": 16, "validation": 2, "control": 2})
         self.assertFalse(first["training_policy"]["merge_into_quantized_base"])
         self.assertTrue(first["training_policy"]["owned_greektts_token_collator"])
+
+    def test_plan_rejects_truncated_pcm_with_matching_manifest_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = self._bundle(Path(temp))
+            target = next((root / "audio").iterdir())
+            original = target.read_bytes()
+            manifest_path = root / "bundle-manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            for missing_bytes in (1, 2):
+                with self.subTest(missing_bytes=missing_bytes):
+                    target.write_bytes(original[:-missing_bytes])
+                    manifest["audio_sha256"][target.name] = hashlib.sha256(target.read_bytes()).hexdigest()
+                    manifest_path.write_text(json.dumps(manifest))
+                    with mock.patch("jarvis_voice.macos.greektts15_training.EXPECTED_ROWS", 20):
+                        with self.assertRaises(BackendError) as raised:
+                            build_training_plan(root)
+                    self.assertEqual(raised.exception.code, "tts.greektts15.dataset_audio_invalid")
+
+    def test_training_json_writers_own_their_temporary_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            dataset = self._bundle(root / "dataset")
+            with mock.patch("jarvis_voice.macos.greektts15_training.EXPECTED_ROWS", 20):
+                plan = build_training_plan(dataset)
+                plan_path = root / "input-plan.json"
+                plan_path.write_text(json.dumps(plan))
+                for kind in ("plan", "cache"):
+                    for case in ("regular", "symlink", "replace_failure"):
+                        with self.subTest(kind=kind, case=case):
+                            output = root / f"{kind}-{case}"
+                            output.mkdir()
+                            destination = output / ("plan.json" if kind == "plan" else
+                                                    f"{Path(plan['samples'][0]['filename']).stem}.json")
+                            temporary = destination.with_suffix(".json.tmp")
+                            sentinel = output / "unrelated"
+                            sentinel.write_bytes(b"preserve me")
+                            destination.write_text('{"old": true}\n')
+                            if case == "regular":
+                                temporary.write_bytes(b"preserve temporary")
+                            elif case == "symlink":
+                                temporary.symlink_to(sentinel)
+                            def publish():
+                                if kind == "plan":
+                                    return write_training_plan(dataset, destination)
+                                return cache_snac_samples(plan_path, dataset, output, self._FakeEncoder(), limit=1)
+                            if case == "replace_failure":
+                                with mock.patch("os.replace", side_effect=OSError("replace failed")):
+                                    with self.assertRaises(OSError):
+                                        publish()
+                                self.assertEqual(json.loads(destination.read_text()), {"old": True})
+                                self.assertEqual(set(output.iterdir()), {destination, sentinel})
+                            else:
+                                self.assertTrue(publish()["ready"])
+                                self.assertEqual(sentinel.read_bytes(), b"preserve me")
+                                if case == "regular":
+                                    self.assertEqual(temporary.read_bytes(), b"preserve temporary")
+                                else:
+                                    self.assertTrue(temporary.is_symlink())
+                                payload = json.loads(destination.read_text())
+                                self.assertEqual(payload["schema"], PLAN_SCHEMA if kind == "plan" else CACHE_SCHEMA)
+                                self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+                                self.assertEqual(set(output.iterdir()), {destination, temporary, sentinel})
 
     def test_hash_mismatch_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
