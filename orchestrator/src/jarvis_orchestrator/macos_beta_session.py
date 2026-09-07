@@ -856,6 +856,18 @@ def _open_private_session_parent(path: Path) -> int:
         raise
 
 
+def _lock_private_session_parent(path: Path) -> int:
+    import fcntl
+
+    descriptor = _open_private_session_parent(path)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
 def _write_all(descriptor: int, payload: bytes) -> None:
     offset = 0
     while offset < len(payload):
@@ -1097,7 +1109,7 @@ class _DurableSessionInterlock:
         stack: PrivateStackConfig,
         inspect_process: ProcessIdentityInspector,
     ) -> _DurableSessionInterlock:
-        descriptor = _open_private_session_parent(parent)
+        descriptor = _lock_private_session_parent(parent)
         try:
             supervisor = inspect_process(os.getpid())
             if (
@@ -1275,9 +1287,11 @@ def recover_macos_beta_session(
     except Exception:
         raise MacOSBetaSessionError("private_stack_invalid") from None
     try:
-        parent_descriptor = _open_private_session_parent(
+        parent_descriptor = _lock_private_session_parent(
             Path(session_parent).expanduser()
         )
+    except BlockingIOError:
+        raise MacOSBetaSessionError("session_recovery_unsafe") from None
     except Exception:
         raise MacOSBetaSessionError("session_parent_invalid") from None
     try:

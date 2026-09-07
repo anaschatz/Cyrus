@@ -1305,6 +1305,44 @@ finally:
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertTrue(path.exists())
 
+    def test_recovery_and_new_sessions_cannot_overlap_interlock_ownership(self) -> None:
+        from jarvis_orchestrator import macos_beta_session as module
+
+        self._leave_incomplete_interlock()
+        recovery = self.dependencies(FakeSpawner(), FakeClock())
+        recovery.process_identity = lambda _pid: None
+        recovery.process_group = lambda _pgid: ()
+        def recover():
+            return recover_macos_beta_session(
+                stack_path=self.stack, session_parent=self.sessions, dependencies=recovery,
+            )
+        original_read = module._read_private_at
+        def read_with_competing_recovery(parent, name):
+            value = original_read(parent, name)
+            with patch.object(module, "_read_private_at", original_read):
+                with self.assertRaises(MacOSBetaSessionError) as caught:
+                    recover()
+            self.assertEqual(caught.exception.code, "session_recovery_unsafe")
+            return value
+        with patch.object(module, "_read_private_at", side_effect=read_with_competing_recovery):
+            self.assertTrue(recover().recovered)
+
+        interlock = module._DurableSessionInterlock.create(
+            self.sessions, PrivateStackConfig.load(self.stack),
+            self.dependencies(FakeSpawner(), FakeClock()).process_identity,
+        )
+        path = self.sessions / SESSION_INTERLOCK_FILENAME
+        raw = path.read_bytes()
+        try:
+            with self.assertRaises(MacOSBetaSessionError) as caught:
+                recover()
+            self.assertEqual(caught.exception.code, "session_recovery_unsafe")
+            self.assertEqual(path.read_bytes(), raw)
+        finally:
+            interlock.close()
+        self.assertTrue(recover().recovered)
+        self.assertFalse(path.exists())
+
     def test_recovery_refuses_a_remaining_listener(self) -> None:
         self._leave_incomplete_interlock()
         recovery = self.dependencies(

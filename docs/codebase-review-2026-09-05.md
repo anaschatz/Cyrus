@@ -2,7 +2,7 @@
 
 Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **221 of 400 code files**, plus **186 of 315 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1069 tests (1064 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1070 tests (1065 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1335,3 +1335,18 @@ The actual before/after redirect evidence is recorded in `/tmp/cyrus-beta-livene
 Fatal Ruff/unused-import and unchanged size checks pass. Ponytail: reuse the existing HTTP client and strict parser, with **15 fewer production lines in the staged diff** and no new dependency. Older process-identity/warmup/readiness-wrapper changes remain outside this commit; the staged urllib imports and FakeHttpResponse remain necessary for those older HEAD callers/tests. Their removal in the working tree belongs with that pending migration.
 
 Coverage remains **221/400 code, 186/315 tests and 41/308 support files**, with **448 reviewed hashes verified across 1023 entries**. The session source remains pending listener-to-child ownership before authenticated probes and interlock concurrency/publication ownership investigation. The full review and final quality assessment remain incomplete; compiler qualification identity binding and U05 are also open.
+
+
+### macOS interlock recovery concurrency checkpoint
+
+Liveness/private-reader checkpoint committed as **4bb5ee3**, with a clean Ponytail hook. Continued the interlock ownership review through every parent-directory open/close, publication, recovery and shutdown path.
+
+**V242:** Two recoverers could both read the same stale interlock. After one removed it and a new session published its interlock, the older recoverer could unlink the new file using its previously read document. A deterministic interleaving of actual recovery and interlock creation reproduces this: both report success and the new interlock disappears, `/tmp/cyrus-beta-recovery-race-before.log`.
+
+Use nonblocking fcntl.flock on the existing validated parent-directory descriptor. Session creation holds the exclusive lock until interlock close; recovery holds the same lock through its absence checks and removal. Descriptor close releases the lock, including error paths; no persistent lock file or custom lock service is added. A competing recovery returns session_recovery_unsafe. This is cooperative process exclusion for these supervisor/recovery callers; separate file-replacement/cleanup ownership remains under review.
+
+The new regression fails against the original source, `/tmp/cyrus-beta-lock-before.log`, and verifies that nested competing recovery is rejected, a newly published session interlock survives an attempted recovery, and recovery works after ownership is released. All **39 session tests pass**, `/tmp/cyrus-beta-lock-after.log`. A separate native subprocess test confirms the lock is unavailable while the parent owns it and available after close, `/tmp/cyrus-beta-lock-native.log`. These checks use temporary private directories and synthetic process identities; they do not start a live beta session or signal unrelated processes.
+
+Full Orchestrator ran **1070 tests in 21.099 seconds: 1065 passed, five skipped**, `/tmp/cyrus-full-review-beta-lock.log`. Four exact staged-source/test checks pass, `/tmp/cyrus-beta-lock-staged-tests.log`, covering the race, successful recovery/startup and incomplete-shutdown relaunch protection. Fatal Ruff/unused-import and unchanged module-size checks pass; the worktree supervisor is 1897 lines against its existing 1900-line limit. Ponytail: one shared native lock acquisition with existing descriptor lifetime/cleanup, no new dependency.
+
+Coverage remains **221/400 code, 186/315 tests and 41/308 support files**, with **448 reviewed hashes verified across 1023 entries**. Whole-codebase review and final quality assessment remain incomplete. Session source remains pending listener-to-child ownership before authenticated probes and file-publication/failure-cleanup ownership checks. U05 and compiler qualification identity binding remain open.
