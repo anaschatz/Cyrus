@@ -220,14 +220,11 @@ class OpenMemoryMainClientAdapter:
                     "OpenMemory upstream get returned a different record"
                 )
             item = dict(hit)
-            for content_key in ("content", "text", "memory"):
-                item.pop(content_key, None)
+            for key in ("content", "text", "memory", "metadata", "meta"):
+                item.pop(key, None)
             item["content"] = _content(row, operation="upstream get")
             item["user_id"] = row.get("user_id")
-            if "metadata" in row:
-                item["metadata"] = row["metadata"]
-            elif "meta" in row:
-                item["metadata"] = row["meta"]
+            item["metadata"] = _scope_metadata(row, "upstream get")
             hydrated.append(item)
         return hydrated
 
@@ -520,7 +517,7 @@ def _scope_metadata(item: Mapping[str, Any], operation: str) -> Mapping[str, Any
     if isinstance(value, str):
         try:
             value = json.loads(value)
-        except json.JSONDecodeError as error:
+        except (ValueError, RecursionError) as error:
             raise RecallProtocolError(
                 f"OpenMemory {operation} scope metadata is invalid JSON"
             ) from error
@@ -726,10 +723,10 @@ def _content(item: Mapping[str, Any], *, operation: str) -> str:
     if not isinstance(value, str):
         raise RecallProtocolError(f"OpenMemory {operation} returned non-string content")
     try:
-        return _nonblank(value, "content")
+        return _bounded_nonblank(value, "content", _MAX_CONTENT_BYTES)
     except (TypeError, ValueError) as error:
         raise RecallProtocolError(
-            f"OpenMemory {operation} returned blank content"
+            f"OpenMemory {operation} returned invalid content"
         ) from error
 
 
@@ -744,7 +741,7 @@ def _recall_match(value: object) -> RecallMatch:
     score = item[score_keys[0]]
     if isinstance(score, bool) or not isinstance(score, (int, float)):
         raise RecallProtocolError("OpenMemory search score must be numeric")
-    if not math.isfinite(float(score)) or not 0 <= float(score) <= 1:
+    if not 0 <= score <= 1:
         raise RecallProtocolError("OpenMemory search score must be finite in [0, 1]")
     try:
         return RecallMatch(

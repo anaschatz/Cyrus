@@ -467,7 +467,11 @@ def test_namespace_and_user_form_the_provider_partition() -> None:
     ]
 
 
-@pytest.mark.parametrize("score", [-0.1, 1.1, math.nan, math.inf, True, "0.8"])
+@pytest.mark.parametrize("score", [
+    -0.1, 1.1, math.nan, math.inf, True, "0.8",
+    pytest.param(10**1000, id="huge-positive"),
+    pytest.param(-(10**1000), id="huge-negative"),
+])
 def test_search_rejects_invalid_scores(score: object) -> None:
     client = FakeOpenMemoryClient()
     client.search_response = [_valid_row(score=score)]
@@ -632,7 +636,11 @@ def test_main_adapter_rejects_hydrated_search_id_mismatch() -> None:
     ]
 
 
-def test_main_adapter_binds_search_content_to_the_hydrated_row() -> None:
+@pytest.mark.parametrize("row_metadata", ["meta", "metadata", "missing", "both"])
+@pytest.mark.parametrize("hit_metadata", ["meta", "metadata"])
+def test_main_adapter_binds_search_content_to_the_hydrated_row(
+    row_metadata: str, hit_metadata: str,
+) -> None:
     class ForgedSearchContentMemory(FakeUpstreamMainMemory):
         def search(
             self,
@@ -647,12 +655,19 @@ def test_main_adapter_binds_search_content_to_the_hydrated_row() -> None:
                     {
                         "id": "om-1",
                         "content": "forged cross-record content",
+                        hit_metadata: _scope_metadata(),
                         "score": 0.5,
                     }
                 )
             ]
 
     upstream = ForgedSearchContentMemory()
+    row = _valid_row()
+    del row["metadata"]
+    for key in ("meta", "metadata"):
+        if row_metadata in (key, "both"):
+            row[key] = _scope_metadata()
+    upstream.row = SqliteRowLike(row)
     adapter = OpenMemoryMainClientAdapter(
         upstream,
         upstream_revision="a" * 40,
@@ -665,9 +680,12 @@ def test_main_adapter_binds_search_content_to_the_hydrated_row() -> None:
         client=adapter,
     )
 
-    result = asyncio.run(index.search("memory", limit=3))
-
-    assert result.matches[0].content == "stored memory"
+    if row_metadata in ("missing", "both"):
+        with pytest.raises(RecallProtocolError, match="scope metadata"):
+            asyncio.run(index.search("memory", limit=3))
+    else:
+        result = asyncio.run(index.search("memory", limit=3))
+        assert result.matches[0].content == "stored memory"
 
 
 def test_main_adapter_rejects_over_limit_before_hydrating_hits() -> None:
@@ -821,3 +839,24 @@ def test_recall_remains_explicitly_non_authoritative_and_store_independent() -> 
     assert store.events == ()
     assert store.current_facts == ()
     assert store.current_intents == ()
+
+
+@pytest.mark.parametrize("operation", ["get", "search"])
+@pytest.mark.parametrize("field,value", [
+    pytest.param("metadata", "[" * 10000 + "0" + "]" * 10000, id="deep-json"),
+    pytest.param("metadata", '{"n":' + "1" * 5000 + "}", id="huge-json-integer"),
+    pytest.param("content", "x" * (16 * 1024 + 1), id="oversize-content"),
+    pytest.param("content", "\ud800", id="invalid-unicode"),
+])
+def test_provider_data_errors_stay_inside_protocol_boundary(
+    operation: str, field: str, value: str,
+) -> None:
+    client = FakeOpenMemoryClient()
+    index = OpenMemoryRecallIndex(namespace=_NAMESPACE, user_id=_USER_ID, client=client)
+    handle = asyncio.run(index.add("memory"))
+    row = _valid_row()
+    row[field] = value
+    client.get_response = row
+    client.search_response = [row]
+    with pytest.raises(RecallProtocolError):
+        asyncio.run(index.get(handle) if operation == "get" else index.search("memory"))

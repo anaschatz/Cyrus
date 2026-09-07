@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **339 of 401 code files**, plus **268 of 340 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **342 of 401 code files**, plus **271 of 340 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **879 tests (864 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **687 tests (685 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **879 tests (864 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **704 tests (702 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2498,3 +2498,18 @@ Expanded the existing complete17-call fake-run regression into10 parameter cases
 No measured experiment, local model, live provider, OpenMemory service, GPU or native audio was used. Fake model/probe clients and synthetic reports exercise the actual producer/validator paths; frozen prompt/schema hashes, datasets, runtime pins and historical results remain unchanged. Ponytail reuses the existing wire decoder and usage sum, consolidates record comparisons and removes redundant validation, for **20 net production lines** and no new dependency or validator framework.
 
 Coverage is **339/401 code, 268/340 tests and48/308 support**, with **655 reviewed hashes verified across1049 entries**. The complete adapter read leaves follow-ups around malformed/deep JSON boundaries, HTTP probe status/shape checks, runtime package-name uniqueness, artifact verification caching and operator-declared versus live-attested fields. Reporter audit attestation/per-call score/latency consistency, same-byte validation/provenance and output publication remain separate concerns; this checkpoint does not claim every audit field independently authenticated. V4 client startup cleanup, remaining source/support review, privacy/provenance/compiler qualification and the final quality assessment remain unfinished.
+
+
+### OpenMemory hydrated scope and provider error boundaries
+
+The raw-decision reporter checkpoint is committed as **91242f9**, with a clean mandatory Ponytail review. Completed full reads of the recall facade/adapter (788 baseline), recall strategy (189), baseline strategies (513), and their three complete test modules. Traced hydration into shared scope validation, public get/search output models and the strategy's caller-owned search-only snapshots. All final source/test changes were inspected.
+
+**A11 resolved:** search-hit metadata could supply missing scope metadata in the hydrated record, while stale hit aliases could reject a valid hydrated record and a row with both aliases could be silently accepted. The adapter now strips both hit metadata aliases and uses the existing exact-one-alias scope parser on the hydrated row. Both content and scope therefore come from the record returned by get. Eight combinations cover valid meta/metadata rows, missing/ambiguous row metadata and both hit aliases; five combinations fail before the fix.
+
+**A12 resolved:** huge numeric scores raised OverflowError before range rejection; deeply nested/large-integer metadata JSON escaped as RecursionError/ValueError; oversized or unencodable get content escaped as Pydantic ValidationError. The existing boundaries now compare numeric scores before float conversion, translate JSON parser failures, and reuse the existing bounded-content validator before constructing output models. Eight distinct error cases fail before the fixes. This keeps the existing 16KiB content cap and frozen schemas unchanged.
+
+The two baseline logs reproduce **13 distinct failures**, `/tmp/cyrus-openmemory-recall-boundary-before.log` and `/tmp/cyrus-openmemory-recall-deep-before.log`. All **76 focused recall/strategy/baseline checks pass**, `/tmp/cyrus-openmemory-recall-boundary-after.log`. Full Anamnesis completes with **704 tests: 702 passed and 2 expected failures**, `/tmp/cyrus-full-review-openmemory-recall-boundary-anamnesis.log`; successful process exit and progress markers verify counts under double-quiet pytest. Fatal Ruff and whitespace checks pass. Fake clients and synthetic malformed rows only; no live OpenMemory/provider/model, native audio or measured experiment was run.
+
+Ponytail reuses shared validators, removes the adapter's competing metadata branches and redundant float conversions, for **3 fewer production lines** and no new dependency. Coverage is **342/401 code, 271/340 tests and48/308 support**, with **661 reviewed hashes verified across1049 entries**.
+
+Limits: source inspection does not independently verify locality declarations or live upstream behavior. Delete scope/lifecycle, provider normalization, reset failure state, malformed embeddings, snapshot traversal/hash framing and unused vector-candidate text remain follow-ups. The snapshot lifecycle is explicitly caller-owned. Frozen prompts, datasets, schemas, runtime pins and historical results remain unchanged. Broader source/support review, privacy/provenance/compiler qualification, older uncommitted fixes and final code-quality assessment remain unfinished.
