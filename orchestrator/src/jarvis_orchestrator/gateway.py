@@ -371,14 +371,14 @@ class VoiceGateway:
                     try:
                         async with asyncio.timeout(1.0):
                             async with lock:
-                                current = (
-                                    self.service.store.outbox_claim_is_current(logical.event_id, connection_id)
-                                    if protocol_kind == "base"
-                                    else (
-                                        self.service.store.cloud_extension_is_current(logical["event_id"])
-                                        if protocol_kind == "cloud" else True
-                                    )
-                                )
+                                if protocol_kind == "base":
+                                    current = self.service.store.outbox_claim_is_current(logical.event_id, connection_id)
+                                elif protocol_kind == "cloud":
+                                    current = self.service.store.cloud_extension_is_current(logical["event_id"])
+                                elif protocol_kind == "scheduler":
+                                    current = self.service.scheduler.outbox_claim_is_current(logical["event_id"], connection_id)
+                                else:
+                                    current = True
                                 if current:
                                     await websocket.send(envelope.to_json())
                         if not current:

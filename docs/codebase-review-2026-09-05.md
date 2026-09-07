@@ -1103,3 +1103,18 @@ Linked-expiry checkpoint committed as **17f16c3**, with no Ponytail findings. A 
 The new regression covers live, revoked, explicitly expired and deadline-expired-before-sweep events, including repeated ACKs. It failed in **three cases** against original source, `/tmp/cyrus-scheduler-ack-regression-before.log`. The fixed live path still emits speech exactly once; other paths preserve the outbox state and emit none. **34 relevant tests** pass, `/tmp/cyrus-scheduler-ack-after.log`; **eight isolated staged-source integration tests** pass, `/tmp/cyrus-scheduler-ack-staged-tests.log`. Fatal Ruff passes. The production change replaces one condition, keeping the 2465-line source size and existing transaction. No native speech or notification occurred.
 
 The most recent complete Orchestrator run remains **1031 tests, five skipped**; this subsequent condition change was checked with the focused tests above. Coverage remains **213/400 code, 174/310 tests and 39/308 support files**, with **426 reviewed hashes verified across 1018 entries**. Whole-codebase review and final quality assessment remain incomplete. Scheduler publication revalidation and receipt ordering, remaining inventory, compiler identity binding and U05 remain open.
+
+
+### Scheduler publication revalidation
+
+Late-ACK checkpoint committed as **00acfa2**, with no Ponytail findings. Tracing the publication lock exposed a separate stale-snapshot path: scheduler events were claimed before waiting for the lock, but only base/cloud events were revalidated before sending.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V212 | An event revoked or expired while the publisher waited could still be sent. The same applied when its lease expired or another connection acquired it. | Check the scheduler outbox's live state, exact owner, lease deadline and event deadline inside the existing publication lock immediately before send. Skip stale snapshots without consuming a wire sequence. |
+
+The regression runs the real publisher against temporary SQLite state and a compiled approval. It holds the publication lock, waits for the actual claim, changes state/time/ownership and then resumes publication. Five cases cover normal delivery, revocation, lease expiry, reassignment and event expiry with a still-valid lease. Original source fails in **four cases**, `/tmp/cyrus-scheduler-publication-final-before.log`; fixed source delivers the live event only, preserves skipped-event sequence numbers and keeps the connection open. No native notification or model call occurs.
+
+All **36 focused tests** pass. Full Orchestrator verification ran **1033 tests in 18.210 seconds: 1028 passed, five skipped**, `/tmp/cyrus-full-review-scheduler-publication.log`. Fatal Ruff and the unchanged module-size checks pass; SchedulerStore is **2473 lines**, below its existing 2475-line ceiling. The fix adds one eight-line database predicate and uses the existing publication fence, without a new dependency or schema change.
+
+Current coverage: **213/400 code, 175/311 tests and 39/308 support files**, with **427 reviewed hashes verified across 1019 entries**. Whole-codebase review and final quality assessment remain incomplete. Action-approval publication/cancellation, scheduler receipt ordering, remaining inventory, compiler identity binding and U05 remain open. Reviewed source is not a guarantee of no further bugs; native/live qualification remains separate.

@@ -2311,6 +2311,14 @@ class SchedulerStore:
                 )
             return result
 
+    def outbox_claim_is_current(self, event_id: str, owner: str) -> bool:
+        with self._lock:
+            return self._connection.execute(
+                """SELECT 1 FROM scheduler_outbox WHERE event_id=? AND state='LEASED'
+                   AND lease_owner=? AND min(expires_at,lease_expires_at)>?""",
+                (event_id, owner, utc_text(utc_now())),
+            ).fetchone() is not None
+
     def mark_owner_disconnected(self, owner_session_id: str, *, now: datetime | None = None) -> bool:
         selected = now or utc_now()
         with self._transaction() as connection:
