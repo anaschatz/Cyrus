@@ -54,13 +54,13 @@ def _rule(pattern: str) -> re.Pattern[str]:
 
 
 _RULES: tuple[tuple[PrivacyClass, re.Pattern[str]], ...] = (
-    (PrivacyClass.SECRET_CREDENTIAL, _rule(r"\b(?:api[_ -]?key|secret|password|passwd|bearer|private[_ -]?key|otp|pin)\b|\bsk-[a-z0-9_-]{8,}\b")),
-    (PrivacyClass.SENSITIVE_FINANCIAL, _rule(r"\b(?:iban|swift|credit card|debit card|bank account|τραπεζ|πιστωτικ|χρεωστικ)\b|\b\d{13,19}\b")),
-    (PrivacyClass.SENSITIVE_HEALTH, _rule(r"\b(?:diagnosis|disease|medication|patient|therapy|health record|διάγνωση|ασθεν|φάρμακ|θεραπε)\b")),
-    (PrivacyClass.SENSITIVE_LEGAL, _rule(r"\b(?:lawsuit|criminal|attorney-client|legal case|δικογραφ|ποινικ|δικηγορ)\b")),
-    (PrivacyClass.BIOMETRIC, _rule(r"\b(?:fingerprint|faceprint|retina|biometric|δακτυλικ|βιομετρ)\b")),
-    (PrivacyClass.SENSITIVE_INTIMATE_OR_MINOR, _rule(r"\b(?:sexual|intimate|minor child|underage|ανήλικ|σεξουαλ)\b")),
-    (PrivacyClass.SENSITIVE_IDENTITY, _rule(r"\b(?:passport|social security|national id|tax id|αφμ|αμκα|ταυτότητ|διαβατήρ)\b")),
+    (PrivacyClass.SECRET_CREDENTIAL, _rule(r"\b(?:api[_ -]?key|secret|password|passwd|bearer|private[_ -]?key|otp|pin|κωδικ(?:[οό]σ?|ο[υύ]σ?|ο[ιί]|[ωώ]ν)|συνθηματικ\w*|ιδιωτικ\w* κλειδ\w*)\b|\bsk-[a-z0-9_-]{8,}\b")),
+    (PrivacyClass.SENSITIVE_FINANCIAL, _rule(r"\b(?:iban|swift|credit card|debit card|bank account|τραπεζ\w*|πιστωτικ\w*|χρεωστικ\w*)\b|\b\d{13,19}\b")),
+    (PrivacyClass.SENSITIVE_HEALTH, _rule(r"\b(?:diagnosis|disease|medication|patient|therapy|health record|διάγνωση|ασθεν\w*|φάρμακ\w*|θεραπε\w*)\b")),
+    (PrivacyClass.SENSITIVE_LEGAL, _rule(r"\b(?:lawsuit|criminal|attorney-client|legal case|δικογραφ\w*|ποινικ\w*|δικηγορ\w*)\b")),
+    (PrivacyClass.BIOMETRIC, _rule(r"\b(?:fingerprint|faceprint|retina|biometric|δακτυλικ\w*|βιομετρ\w*)\b")),
+    (PrivacyClass.SENSITIVE_INTIMATE_OR_MINOR, _rule(r"\b(?:sexual|intimate|minor child|underage|ανήλικ\w*|σεξουαλ\w*)\b")),
+    (PrivacyClass.SENSITIVE_IDENTITY, _rule(r"\b(?:passport|social security|national id|tax id|αφμ|αμκα|ταυτότητ\w*|διαβατήρ\w*)\b")),
     (PrivacyClass.SENSITIVE_CONTACT_LOCATION, _rule(r"\b(?:home address|postal address|phone number|gps|διεύθυνση κατοικίας|τηλέφωνο|τοποθεσία)\b|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b")),
 )
 
