@@ -272,7 +272,10 @@ def verify_piper_f1_handoff(transfer_root: str | Path, manifest_path: str | Path
     totals = manifest.get("totals")
     if not isinstance(raw_files, list) or not isinstance(totals, Mapping):
         raise _error("tts.f1_handoff.manifest_incompatible", "Handoff file table is invalid")
-    seen: set[str] = set()
+    checkpoint_specs = {
+        f"checkpoint/{spec.relative_path}": spec for spec in PIPER_CHECKPOINT_ARTIFACTS
+    }
+    seen: dict[str, str] = {}
     total_bytes = 0
     for raw_item in raw_files:
         if not isinstance(raw_item, Mapping) or set(raw_item) != {"path", "size", "sha256"}:
@@ -280,7 +283,6 @@ def verify_piper_f1_handoff(transfer_root: str | Path, manifest_path: str | Path
         relative = _safe_relative(raw_item.get("path"))
         if relative in seen:
             raise _error("tts.f1_handoff.manifest_incompatible", "Handoff file entry is duplicated")
-        seen.add(relative)
         expected_size = raw_item.get("size")
         expected_digest = raw_item.get("sha256")
         if (
@@ -290,6 +292,10 @@ def verify_piper_f1_handoff(transfer_root: str | Path, manifest_path: str | Path
             or not _digest(expected_digest)
         ):
             raise _error("tts.f1_handoff.manifest_incompatible", "Handoff file metadata is invalid")
+        seen[relative] = expected_digest
+        spec = checkpoint_specs.get(relative)
+        if spec is not None and (expected_size != spec.size or expected_digest != spec.sha256):
+            raise _error("tts.f1_handoff.checkpoint_hash_mismatch", "Piper warm-start hash mismatch")
         path = (root / relative).resolve(strict=False)
         if root not in path.parents:
             raise _error("tts.f1_handoff.path_invalid", "Handoff path escapes transfer root")
@@ -300,20 +306,27 @@ def verify_piper_f1_handoff(transfer_root: str | Path, manifest_path: str | Path
     expected_paths = {
         "f1-training-data/bundle-manifest.json",
         "f1-training-data/metadata.csv",
-        *{
-            f"checkpoint/{spec.relative_path}"
-            for spec in PIPER_CHECKPOINT_ARTIFACTS
-        },
+        *checkpoint_specs,
     }
     audio_paths = {
         value
         for value in seen
         if value.startswith("f1-training-data/audio/") and value.endswith(".wav")
     }
-    if len(audio_paths) != STOMA_SPEAKER_CLIPS or seen != expected_paths | audio_paths:
+    if len(audio_paths) != STOMA_SPEAKER_CLIPS or set(seen) != expected_paths | audio_paths:
         raise _error("tts.f1_handoff.manifest_incompatible", "Handoff file set is invalid")
     if totals.get("files") != len(raw_files) or totals.get("bytes") != total_bytes:
         raise _error("tts.f1_handoff.manifest_incompatible", "Handoff totals are invalid")
+    bundle, audio_names = _validated_bundle(root / "f1-training-data")
+    if seen["f1-training-data/metadata.csv"] != bundle["metadata_sha256"]:
+        raise _error("tts.f1_handoff.metadata_hash_mismatch", "F1 metadata hash mismatch")
+    if audio_paths != {f"f1-training-data/audio/{name}" for name in audio_names}:
+        raise _error("tts.f1_handoff.audio_set_mismatch", "F1 audio file set is incomplete")
+    if any(
+        seen[f"f1-training-data/audio/{name}"] != bundle["audio_sha256"][name]
+        for name in audio_names
+    ):
+        raise _error("tts.f1_handoff.audio_hash_mismatch", "F1 audio hash mismatch")
     return {
         "ready": True,
         "code": "tts.f1_handoff.verified",

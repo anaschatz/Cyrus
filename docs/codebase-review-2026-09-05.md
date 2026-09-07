@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **274 of 401 code files**, plus **223 of 335 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **276 of 401 code files**, plus **224 of 335 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **780 tests (765 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **781 tests (766 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1824,3 +1824,16 @@ Environment containment and readiness checkpoint committed as **7ff43df**, with 
 Four regression methods produce **nine failures and two errors before the fixes**, `/tmp/cyrus-piper-training-boundaries-before.log`. All **21 focused tests pass**, `/tmp/cyrus-piper-training-boundaries-after.log`. Full Voice: **780 tests in 8.220 seconds, 765 passed and 15 skipped**, `/tmp/cyrus-full-review-piper-training-boundaries-voice.log`. Fatal Ruff and unchanged module boundaries pass. Tests use disposable synthetic checkpoint files and fake Torch, Piper and callback modules; no actual training, model load or native device operation was performed. Native training qualification remains pending.
 
 Ponytail: reuse the existing argument reader and defer callback publication; **zero net production lines**, no new dependency or rollback abstraction. Complete inspection covers the checkpoint module and both test modules. Coverage is **274/401 code, 223/335 tests and 41/308 support**, with **538 reviewed hashes verified across 1044 entries**. The latest full Orchestrator result remains **1106 tests (1101 passed, five skipped)** from its earlier checkpoint. Remaining codebase inspection, broader U05 privacy, compiler qualification binding and the final code-quality assessment are still incomplete.
+
+
+### Piper transfer manifest binding
+
+Training argument and preparation checkpoint committed as **a07f892**, with a clean mandatory Ponytail review.
+
+**V311 resolved:** transfer verification compared checkpoint bytes only with the supplied handoff manifest. Changing a checkpoint and updating its handoff size/hash/totals still reported verified, even though it no longer matched the repository's pinned artifact. The verifier now compares each checkpoint entry with the pinned size and digest before accepting it.
+
+**V312 resolved:** the verifier did not validate the transferred bundle manifest or bind its metadata/audio table to the handoff. Changed metadata, audio, or bundle revision could pass after updating the corresponding outer hash. The verifier now reuses the existing bundle validator and compares its metadata digest, exact audio names and audio digests with the already-verified file table. This establishes consistency with the local bundle and pinned checkpoint; it is not independent authentication of all dataset contents.
+
+One new four-case regression produces **four failures before the fixes**, `/tmp/cyrus-piper-handoff-binding-before.log`. All **19 focused tests pass**, `/tmp/cyrus-piper-handoff-binding-after.log`. Full Voice: **781 tests in 7.930 seconds, 766 passed and 15 skipped**, `/tmp/cyrus-full-review-piper-handoff-binding-voice.log`. Fatal Ruff and unchanged module boundaries pass. Tests use real disposable filesystem operations and synthetic artifact pins only. No actual checkpoint/model load, native training or network transfer was performed.
+
+Ponytail: retain digests in the existing seen table, reuse pinned specs and bundle validation, and avoid rehashing large inputs; **13 net production lines**, no new helper or dependency. Completed source inspection of the handoff module, CLI and test module brings coverage to **276/401 code, 224/335 tests and 41/308 support**, with **541 reviewed hashes verified across 1044 entries**. Readiness validation and handoff I/O failure paths remain follow-up work. Broader U05 privacy, compiler qualification binding, remaining codebase review and the final quality assessment are still incomplete.

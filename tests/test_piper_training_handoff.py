@@ -110,6 +110,34 @@ class PiperTrainingHandoffTests(unittest.TestCase):
             with self.patches(specs), self.assertRaisesRegex(BackendError, "audio_set_mismatch"):
                 build_piper_f1_handoff(data, artifacts)
 
+    def test_verify_rejects_self_consistent_transfer_with_wrong_pins_or_bundle(self) -> None:
+        for relative, error in (
+            ("checkpoint/el/model/model.ckpt", "checkpoint_hash_mismatch"),
+            ("f1-training-data/metadata.csv", "metadata_hash_mismatch"),
+            ("f1-training-data/audio/Greek-F1-A.wav", "audio_hash_mismatch"),
+            ("f1-training-data/bundle-manifest.json", "bundle_incompatible"),
+        ):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                data, artifacts, specs = self.fixture(root)
+                with self.patches(specs):
+                    manifest = build_piper_f1_handoff(data, artifacts)
+                    shutil.move(artifacts / "checkpoint", root / "checkpoint")
+                    changed = root / relative
+                    if relative.endswith("bundle-manifest.json"):
+                        bundle = json.loads(changed.read_text())
+                        bundle["dataset_revision"] = "wrong-revision"
+                        changed.write_text(json.dumps(bundle))
+                    else:
+                        changed.write_bytes(b"altered")
+                    item = next(item for item in manifest["files"] if item["path"] == relative)
+                    item.update(size=changed.stat().st_size, sha256=digest(changed.read_bytes()))
+                    manifest["totals"]["bytes"] = sum(item["size"] for item in manifest["files"])
+                    output = root / "handoff.json"
+                    write_piper_f1_handoff(output, manifest)
+                    with self.assertRaisesRegex(BackendError, error):
+                        verify_piper_f1_handoff(root, output)
+
     def test_write_never_overwrites_a_racing_destination(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "handoff.json"
