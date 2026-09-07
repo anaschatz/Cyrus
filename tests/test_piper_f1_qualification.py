@@ -5,9 +5,12 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
+from jarvis_voice.errors import BackendError
+from jarvis_voice.macos import piper_f1_qualification as piper_qualification
 from jarvis_voice.macos.compact_greek_tts_pilot import (
     MAX_EXPORTED_MODEL_BYTES,
     MAX_RUNTIME_RSS_BYTES,
@@ -83,6 +86,85 @@ class _FakeSink:
 
     def close(self) -> None:
         pass
+
+
+class ProcessPiperSessionTests(unittest.TestCase):
+    def test_failed_startup_closes_both_pipe_ends_and_process(self) -> None:
+        for failure in ("constructor", "start", "started", "timeout", "error", "invalid", "interrupt"):
+            with self.subTest(failure=failure):
+                parent, child = mock.Mock(), mock.Mock()
+                parent.poll.return_value = failure != "timeout"
+                parent.recv.return_value = {"type": "error" if failure == "error" else "done"}
+                process = mock.Mock(pid=None)
+                process.is_alive.return_value = False
+                error = KeyboardInterrupt() if failure == "interrupt" else OSError("private startup failure")
+
+                def start():
+                    if failure == "start":
+                        raise error
+                    process.pid = 123
+                    process.is_alive.return_value = True
+                    if failure == "started":
+                        raise error
+
+                process.start.side_effect = start
+                process.terminate.side_effect = lambda: setattr(process.is_alive, "return_value", False)
+                if failure == "interrupt":
+                    parent.poll.side_effect = error
+                context = mock.Mock()
+                context.Pipe.return_value = (parent, child)
+                context.Process.return_value = process
+                if failure == "constructor":
+                    context.Process.side_effect = error
+                expected = KeyboardInterrupt if failure == "interrupt" else OSError if failure in {"constructor", "start", "started"} else BackendError
+                with mock.patch.object(piper_qualification.multiprocessing, "get_context", return_value=context):
+                    with self.assertRaises(expected):
+                        piper_qualification.ProcessPiperSession(Path("unused.onnx"), Path("unused.json"))
+                child.close.assert_called_once_with()
+                parent.close.assert_called_once_with()
+                self.assertFalse(process.is_alive())
+                if failure != "constructor":
+                    process.close.assert_called_once_with()
+
+    def test_close_kills_stubborn_worker_and_retries_failed_stop(self) -> None:
+        for failure in (None, "kill_error", "still_alive", "send_error"):
+            with self.subTest(failure=failure):
+                parent, child = mock.Mock(), mock.Mock()
+                parent.poll.return_value = True
+                parent.recv.return_value = {"type": "loaded", "rss_bytes": 17}
+                process = mock.Mock(pid=123)
+                process.is_alive.return_value = True
+
+                def kill():
+                    if process.kill.call_count == 1:
+                        if failure == "kill_error":
+                            raise OSError("private stop failure")
+                        if failure == "still_alive":
+                            return
+                    process.is_alive.return_value = False
+
+                process.kill.side_effect = kill
+                context = mock.Mock()
+                context.Pipe.return_value = (parent, child)
+                context.Process.return_value = process
+                if failure == "send_error":
+                    parent.send.side_effect = BrokenPipeError()
+                with mock.patch.object(piper_qualification.multiprocessing, "get_context", return_value=context):
+                    session = piper_qualification.ProcessPiperSession(Path("unused.onnx"), Path("unused.json"))
+                if failure in {"kill_error", "still_alive"}:
+                    with self.assertRaisesRegex(BackendError, "tts.piper_f1.worker_stop_failed"):
+                        session.close()
+                    parent.close.assert_called_once_with()
+                    process.close.assert_not_called()
+                    with self.assertRaisesRegex(BackendError, "tts.piper_f1.worker_stopped"):
+                        next(session.stream("unused"))
+                session.close()
+                session.close()
+                self.assertFalse(process.is_alive())
+                self.assertEqual(process.kill.call_count, 2 if failure in {"kill_error", "still_alive"} else 1)
+                process.close.assert_called_once_with()
+                child.close.assert_called_once_with()
+                self.assertEqual(session.peak_rss_bytes, 17)
 
 
 class PiperF1QualificationTests(unittest.TestCase):

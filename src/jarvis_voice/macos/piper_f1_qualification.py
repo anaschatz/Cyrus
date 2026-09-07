@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import wave
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator, Protocol
@@ -323,21 +323,25 @@ class ProcessPiperSession:
         context = multiprocessing.get_context("spawn")
         parent, child = context.Pipe(duplex=True)
         self._connection = parent
-        self._process = context.Process(
-            target=_worker_main,
-            args=(child, str(model), str(config)),
-            name="jarvis-piper-f1-qualification",
-            daemon=True,
-        )
+        self._process = None
         self._peak_rss_bytes = 0
         self._closed = False
-        self._process.start()
-        child.close()
-        message = self._receive(WORKER_START_TIMEOUT_SECONDS)
-        if message.get("type") != "loaded":
+        try:
+            with closing(child):
+                self._process = context.Process(
+                    target=_worker_main,
+                    args=(child, str(model), str(config)),
+                    name="jarvis-piper-f1-qualification",
+                    daemon=True,
+                )
+                self._process.start()
+            message = self._receive(WORKER_START_TIMEOUT_SECONDS)
+            if message.get("type") != "loaded":
+                raise _error("tts.piper_f1.runtime_load_failed", "Piper F1 worker failed to load")
+            self._update_rss(message)
+        except BaseException:
             self.abort()
-            raise _error("tts.piper_f1.runtime_load_failed", "Piper F1 worker failed to load")
-        self._update_rss(message)
+            raise
 
     @property
     def peak_rss_bytes(self) -> int:
@@ -362,7 +366,7 @@ class ProcessPiperSession:
         return message
 
     def stream(self, text: str) -> Iterator[PcmChunk]:
-        if self._closed or not self._process.is_alive():
+        if self._closed or self._process is None or not self._process.is_alive():
             raise _error("tts.piper_f1.worker_stopped", "Piper F1 worker is unavailable")
         self._connection.send({"type": "synthesize", "text": text})
         while True:
@@ -385,30 +389,35 @@ class ProcessPiperSession:
 
     def abort(self) -> float:
         started = time.perf_counter()
-        if self._process.is_alive():
-            self._process.terminate()
-            self._process.join(timeout=1.0)
-            if self._process.is_alive():
-                self._process.kill()
-                self._process.join(timeout=1.0)
-        self._closed = True
-        self._connection.close()
+        try:
+            process = self._process
+            if process is not None:
+                if process.pid is not None and process.is_alive():
+                    process.terminate()
+                    process.join(timeout=1.0)
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=1.0)
+                    if process.is_alive():
+                        raise _error("tts.piper_f1.worker_stop_failed", "Piper F1 worker did not stop")
+                process.close()
+                self._process = None
+        except (OSError, ValueError) as exc:
+            raise _error("tts.piper_f1.worker_stop_failed", "Piper F1 worker could not be stopped") from exc
+        finally:
+            self._closed = True
+            self._connection.close()
         return (time.perf_counter() - started) * 1000.0
 
     def close(self) -> None:
-        if self._closed:
-            return
         try:
-            if self._process.is_alive():
+            if not self._closed and self._process is not None and self._process.is_alive():
                 self._connection.send({"type": "close"})
                 self._process.join(timeout=2.0)
         except (BrokenPipeError, EOFError, OSError):
             pass
-        if self._process.is_alive():
-            self._process.terminate()
-            self._process.join(timeout=1.0)
-        self._closed = True
-        self._connection.close()
+        finally:
+            self.abort()
 
 
 class SoundDevicePlaybackSink:
