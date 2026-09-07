@@ -378,7 +378,7 @@ class VoiceGateway:
                                 elif protocol_kind == "scheduler":
                                     current = self.service.scheduler.outbox_claim_is_current(logical["event_id"], connection_id)
                                 else:
-                                    current = True
+                                    current = self.service.store.action_extension_is_current(logical["event_id"])
                                 if current:
                                     await websocket.send(envelope.to_json())
                         if not current:

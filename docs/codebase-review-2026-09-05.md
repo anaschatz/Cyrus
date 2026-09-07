@@ -1118,3 +1118,19 @@ The regression runs the real publisher against temporary SQLite state and a comp
 All **36 focused tests** pass. Full Orchestrator verification ran **1033 tests in 18.210 seconds: 1028 passed, five skipped**, `/tmp/cyrus-full-review-scheduler-publication.log`. Fatal Ruff and the unchanged module-size checks pass; SchedulerStore is **2473 lines**, below its existing 2475-line ceiling. The fix adds one eight-line database predicate and uses the existing publication fence, without a new dependency or schema change.
 
 Current coverage: **213/400 code, 175/311 tests and 39/308 support files**, with **427 reviewed hashes verified across 1019 entries**. Whole-codebase review and final quality assessment remain incomplete. Action-approval publication/cancellation, scheduler receipt ordering, remaining inventory, compiler identity binding and U05 remain open. Reviewed source is not a guarantee of no further bugs; native/live qualification remains separate.
+
+
+### Action approval cancellation and publication
+
+Scheduler publication checkpoint committed as **8f391b7**, with no Ponytail findings. Traced the sibling action flow through run creation, presentation, transport decision, shared task cancellation/expiry and gateway publication.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V213 | Shared task cancellation cancelled the approval and execution but left the action presentation and request outbox active. A cancelled request could remain replayable. | In the same cancellation transaction, invalidate unfinished action presentations and pending/sent approval requests. Preserve resolved presentations and decision receipts. |
+| V214 | The publisher sent its action-request snapshot without rechecking state after waiting for the publication lock. Cancellation, a completed decision or approval expiry could occur before send. | Revalidate outbox state and, for requests, pending approval status and its deadline inside the existing lock. Skipped requests consume no action sequence. Decision acknowledgements/results remain deliverable until acknowledged. |
+
+The two original-source regression methods fail in **six cases**, `/tmp/cyrus-action-publication-final-before.log`. Cancellation tests cover a presentation before promotion and requests in PENDING/SENT states. An abort trigger verifies that failed retirement rolls back task state and conversation epoch together; retry retires the presentation and removes replay. Publisher tests hold the actual gateway lock while cancelling, deciding or expiring the claimed request, with a live positive control. A third test creates a validated transport decision, cancels its resumed task and proves both decision receipts survive cancellation and the original approval deadline, then cease publication after ACK. All fixtures use temporary SQLite and synthetic keys, with no native action or model call.
+
+All **19 focused tests** pass. Full Orchestrator verification ran **1036 tests in 18.407 seconds: 1031 passed, five skipped**, `/tmp/cyrus-full-review-action-publication.log`. Fatal Ruff and unchanged size checks pass. The shared store grows by 22 lines to **8563**, below its existing 8575-line ceiling; the gateway changes one expression. No dependency, table or schema migration was added.
+
+Current coverage: **213/400 code, 176/312 tests and 39/308 support files**, with **428 reviewed hashes verified across 1020 entries**. Whole-codebase review and final quality assessment remain incomplete. Complete ToolStore/transport lifecycle review, scheduler receipt ordering, remaining inventory, compiler qualification identity binding and U05 remain open. Native/live qualification remains separate.

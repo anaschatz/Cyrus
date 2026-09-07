@@ -4878,6 +4878,18 @@ class OrchestratorStore:
                ) AND state IN ('WAITING_FOR_CHANNEL','PRESENTING','PRESENTED','DECIDING','WAITING_FOR_OWNER')""",
             (utc_text(now), row["task_id"], row["epoch"]),
         )
+        connection.execute(
+            """UPDATE action_approval_presentations SET state='INVALIDATED'
+               WHERE approval_id IN (SELECT approval_id FROM approvals WHERE task_id=? AND epoch=?)
+               AND state IN ('PENDING','PRESENTED','DECIDING')""",
+            (row["task_id"], row["epoch"]),
+        )
+        connection.execute(
+            """UPDATE action_approval_outbox SET state='INVALIDATED'
+               WHERE approval_id IN (SELECT approval_id FROM approvals WHERE task_id=? AND epoch=?)
+               AND event_type='action.approval.requested' AND state IN ('PENDING','SENT')""",
+            (row["task_id"], row["epoch"]),
+        )
         scheduler_links = connection.execute(
             """SELECT l.proposal_id,p.approval_id FROM scheduler_task_links l
                JOIN scheduler_proposals p USING(proposal_id)
@@ -7956,6 +7968,16 @@ class OrchestratorStore:
                     (utc_text(selected), event_id),
                 )
             return changed
+
+    def action_extension_is_current(self, event_id: str) -> bool:
+        with self._lock:
+            return self._connection.execute(
+                """SELECT 1 FROM action_approval_outbox o JOIN approvals a USING(approval_id)
+                   WHERE o.event_id=? AND o.state IN ('PENDING','SENT')
+                   AND (o.event_type!='action.approval.requested'
+                        OR (a.status='PENDING' AND a.expires_at>?))""",
+                (event_id, utc_text(utc_now())),
+            ).fetchone() is not None
 
     def cloud_extension_is_current(self, event_id: str) -> bool:
         with self._lock:
