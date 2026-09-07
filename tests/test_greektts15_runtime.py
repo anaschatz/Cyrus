@@ -460,6 +460,16 @@ class GreekTts15RuntimeTests(unittest.TestCase):
                 "production_promotion_allowed": False,
             }))
             candidate = load_approved_greektts_candidate(manifest.resolve(), root.resolve())
+            approved = manifest.read_text()
+            for name, value in (("temperature", float("nan")), ("top_p", float("inf")), ("repetition_penalty", float("-inf")), ("temperature", 10**400)):
+                with self.subTest(sampling=name, value=value):
+                    document = json.loads(approved)
+                    document["model"]["sampling"][name] = value
+                    manifest.write_text(json.dumps(document))
+                    with self.assertRaises(BackendError) as invalid:
+                        load_approved_greektts_candidate(manifest.resolve(), root.resolve())
+                    self.assertEqual(invalid.exception.code, "tts.greektts15.approval_manifest_invalid")
+            manifest.write_text(approved)
             adapter.write_bytes(b"changed")
             with self.assertRaises(BackendError) as raised:
                 load_approved_greektts_candidate(manifest.resolve(), root.resolve())
@@ -503,11 +513,42 @@ class GreekTts15RuntimeTests(unittest.TestCase):
             }))
             digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
             candidate = load_digest_bound_greektts_candidate(manifest.resolve(), digest, root.resolve())
+            changed = json.loads(manifest.read_text())
+            changed["model"]["sampling"]["temperature"] = 0.8
+            open_file, reads = Path.open, []
+
+            def replace_on_second_read(path, mode="r", *args, **kwargs):
+                if path == manifest.resolve() and "r" in mode:
+                    reads.append(path)
+                    if len(reads) == 2:
+                        with open_file(path, "w") as output:
+                            json.dump(changed, output)
+                return open_file(path, mode, *args, **kwargs)
+
+            with mock.patch.object(Path, "open", replace_on_second_read):
+                bound = load_digest_bound_greektts_candidate(manifest.resolve(), digest, root.resolve())
+            self.assertEqual(bound.temperature, candidate.temperature)
             manifest.write_text(manifest.read_text() + "\n")
             with self.assertRaises(BackendError) as raised:
                 load_digest_bound_greektts_candidate(manifest.resolve(), digest, root.resolve())
         self.assertEqual(candidate.checkpoint_sha256, hashlib.sha256(b"approved").hexdigest())
         self.assertEqual(raised.exception.code, "tts.greektts15.approval_manifest_changed")
+
+    def test_invalid_manifest_encoding_and_nesting_are_typed_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            manifest = root / "approved.json"
+            for content in (b"\xff", b"[" * 1100 + b"0" + b"]" * 1100, b"{\"value\":" + b"1" * 5000 + b"}"):
+                manifest.write_bytes(content)
+                digest = hashlib.sha256(content).hexdigest()
+                for bound in (False, True):
+                    with self.subTest(content=content[:8], digest_bound=bound):
+                        with self.assertRaises(BackendError) as raised:
+                            if bound:
+                                load_digest_bound_greektts_candidate(manifest, digest, root)
+                            else:
+                                load_approved_greektts_candidate(manifest, root)
+                        self.assertEqual(raised.exception.code, "tts.greektts15.approval_manifest_invalid")
 
     def test_sentence_units_are_ordered_and_complete_only_after_playback(self) -> None:
         engine = FakeEngine()

@@ -2,7 +2,7 @@
 
 Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **285 of 401 code files**, plus **235 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **806 tests (791 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **807 tests (792 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1972,3 +1972,18 @@ System-TTS checkpoint committed as **52f5d79**, with a clean mandatory Ponytail 
 Four new methods in the existing runtime test module produce **seven failures before the fixes**, `/tmp/cyrus-greektts-cleanup-before.log`. All **39 focused checks pass**, `/tmp/cyrus-greektts-cleanup-after.log`. Full Voice: **806 tests in 8.404 seconds, 791 passed and 15 skipped**, `/tmp/cyrus-full-review-greektts-cleanup-voice.log`. Fatal Ruff and unchanged module boundaries pass. New regressions use fake native streams, fake playback/engine implementations and owned threads; no actual model, audio playback or capture was performed. Full Voice retains the existing non-prompting permission preflight described above.
 
 Ponytail: extend existing cleanup and fatal-error boundaries, **14 net production lines**, no helper, dependency or additional test file. Complete runtime/test source inspection and caller tracing bring coverage to **285/401 code, 235/339 tests and 41/308 support**, with **561 reviewed hashes verified across 1048 entries**. Approval parsing/digest binding, isolated playback IPC ownership/deadlines and decoder/queue drain behavior remain follow-up checks; source inspection does not imply those boundaries are qualified. Remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment are incomplete.
+
+
+### GreekTTS approval document binding and parsing
+
+Playback cleanup checkpoint committed as **19c5d94**, with a clean mandatory Ponytail review.
+
+**V334 resolved:** the digest-bound loader hashed the approval file and then reopened it for JSON parsing. Replacing the file between those reads allowed unpinned sampling content to reach the candidate. A real temporary-file regression changes temperature from 0.4 to 0.8 on the second open and demonstrates acceptance before the fix. The shared loader now reads once, checks the supplied digest against those bytes and decodes those same bytes. Existing callers and digest-mismatch error codes are preserved.
+
+**V335 resolved:** invalid UTF-8, excessive JSON nesting and the Python integer-digit limit escaped as untyped exceptions. The shared parser now maps ValueError (including Unicode/JSON decode errors) and RecursionError into the existing approval_manifest_invalid error. Both direct and digest-bound entry points are covered.
+
+**V336 resolved:** sampling accepted NaN/infinities, while integers too large for float conversion escaped as OverflowError. Conversion and finite checks now happen before checkpoint loading and return the existing typed approval error. This validates numeric representation without changing finite approved sampling values or introducing new model settings.
+
+Extended two existing tests and added one parser test in the same module. Initial regressions produce **four failures and five errors**, `/tmp/cyrus-greektts-manifest-before.log`; the additional oversized-JSON-integer case reproduces **two errors**, `/tmp/cyrus-greektts-json-integer-before.log`. All **36 focused checks pass**, `/tmp/cyrus-greektts-manifest-after.log`. Full Voice: **807 tests in 8.489 seconds, 792 passed and 15 skipped**, `/tmp/cyrus-full-review-greektts-manifest-voice.log`. Fatal Ruff and unchanged module boundaries pass. The first focused command used a nonexistent qualification test-module name; the corrected command above completed successfully.
+
+Ponytail: one read shared by hashing and parsing, existing error boundaries, and stdlib file_digest replacing the manual adapter-hash loop; **eight net production lines**, no dependency or extra test file. Tests use disposable synthetic approval/checkpoint files and controlled file replacement, with no model loading or actual speech. Full-suite native preflight scope is unchanged. All **561 reviewed hashes across 1048 entries** are current; inspection coverage remains **285/401 code, 235/339 tests and 41/308 support**. Adapter loading identity after validation, isolated playback IPC ownership/deadlines and decoder/queue drain behavior remain separate follow-up checks. Whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment remain incomplete.

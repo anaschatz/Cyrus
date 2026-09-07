@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import math
 import multiprocessing
 import os
 import queue
@@ -51,11 +52,8 @@ PLAYBACK_HELPER_ERROR = b"E"
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +68,8 @@ class ApprovedGreekTtsCandidate:
 def load_approved_greektts_candidate(
     manifest_path: str | Path,
     repository_root: str | Path,
+    *,
+    expected_manifest_sha256: str | None = None,
 ) -> ApprovedGreekTtsCandidate:
     """Load the human-approved candidate and bind it to the exact local adapter."""
 
@@ -85,8 +85,11 @@ def load_approved_greektts_candidate(
     ):
         raise BackendError("tts.greektts15.approval_manifest_invalid", "Approved voice manifest path is invalid", subsystem="tts")
     try:
-        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        content = manifest_file.read_bytes()
+        if expected_manifest_sha256 is not None and hashlib.sha256(content).hexdigest() != expected_manifest_sha256:
+            raise BackendError("tts.greektts15.approval_manifest_changed", "Approved voice manifest changed", subsystem="tts")
+        manifest = json.loads(content.decode("utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
         raise BackendError("tts.greektts15.approval_manifest_invalid", "Approved voice manifest is unreadable", subsystem="tts") from exc
     if not isinstance(manifest, dict):
         raise BackendError("tts.greektts15.approval_manifest_invalid", "Approved voice manifest is invalid", subsystem="tts")
@@ -111,6 +114,12 @@ def load_approved_greektts_candidate(
         )
     ):
         raise BackendError("tts.greektts15.approval_manifest_invalid", "Approved voice manifest is invalid", subsystem="tts")
+    try:
+        sampling = {name: float(value) for name, value in sampling.items()}
+        if not all(math.isfinite(value) for value in sampling.values()):
+            raise ValueError("Non-finite sampling value")
+    except (OverflowError, ValueError) as exc:
+        raise BackendError("tts.greektts15.approval_manifest_invalid", "Approved voice sampling is invalid", subsystem="tts") from exc
     unresolved_checkpoint = root / relative
     if unresolved_checkpoint.is_symlink():
         raise BackendError("tts.greektts15.approved_checkpoint_invalid", "Approved F1 checkpoint changed", subsystem="tts")
@@ -134,9 +143,9 @@ def load_approved_greektts_candidate(
     return ApprovedGreekTtsCandidate(
         checkpoint_directory=checkpoint,
         checkpoint_sha256=checkpoint_hash,
-        temperature=float(sampling["temperature"]),
-        top_p=float(sampling["top_p"]),
-        repetition_penalty=float(sampling["repetition_penalty"]),
+        temperature=sampling["temperature"],
+        top_p=sampling["top_p"],
+        repetition_penalty=sampling["repetition_penalty"],
     )
 
 
@@ -153,10 +162,9 @@ def load_digest_bound_greektts_candidate(
         or manifest.is_symlink()
         or not manifest.is_file()
         or re.fullmatch(r"[0-9a-f]{64}", expected_manifest_sha256) is None
-        or _sha256(manifest) != expected_manifest_sha256
     ):
         raise BackendError("tts.greektts15.approval_manifest_changed", "Approved voice manifest changed", subsystem="tts")
-    return load_approved_greektts_candidate(manifest, repository_root)
+    return load_approved_greektts_candidate(manifest, repository_root, expected_manifest_sha256=expected_manifest_sha256)
 
 
 @dataclass(frozen=True, slots=True)
