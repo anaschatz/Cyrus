@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **379 of 401 code files**, plus **297 of 344 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **380 of 401 code files**, plus **298 of 344 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **879 tests (864 passed, 15 skipped)**; Orchestrator **1111 tests (1106 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **880 tests (865 passed, 15 skipped)**; Orchestrator **1111 tests (1106 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Anamnesis **871 tests (869 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2656,3 +2656,18 @@ The new three-test regression has eight subcases: direct POST/DELETE controls, e
 Completed full source reads of the Windows collector metrics, native probes and 902-line input contract. The collector itself and its tests remain pending. Follow-ups include strict treatment of unknown GPU throttle strings, subprocess output bounds before capture, JSON exception normalization, filesystem races and corpus-validator input rereads; final input revalidation must be assessed in the collector flow. No native GPU/power command, model, audio capture or Windows API was executed during these reads.
 
 Coverage is **379/401 code, 297/344 tests and 48/308 support**, with **724 reviewed hashes verified across 1053 entries**. V400 closes the CRUD control proxy/redirect issue; local Ollama transport, bounded responses/deadlines, config/evidence rereads, broader privacy/compiler qualification, remaining file inspection, earlier uncommitted fixes and the final quality assessment remain open.
+
+
+### Windows ASR collector and unknown GPU throttle states
+
+The live CRUD transport checkpoint is committed as **f7227cd**. Its mandatory Ponytail review suggested removing the regression's global-opener reset. That finding is intentionally accepted without deletion: if production regresses to urlopen, resetting the cached global opener ensures the test actually exercises the configured proxy and is independent of prior tests. The production opener itself does not use global state.
+
+Completed the full 838-line Windows ASR collector and original 577-line test module. Traced GPU observations into both NativePowerProbe's identity/zero-throttle gate and the overlap monitor/final collector gate. The synthetic tests cover the complete 305-turn run, baseline quality and forced CPU fallback quality, overlaps, stale/duplicate results, latency and content-free exclusive report output. Native qualification remains separate.
+
+**V401 resolved:** NativeGpuProbe counted only fields equal to Active, silently treating every other string as Not Active. Blank, N/A, [N/A], Unsupported or Unknown in any of the four queried throttle fields could therefore be reported as zero throttling. It now accepts only explicit Active/Not Active states, retaining whitespace/case normalization, then counts active states. Unavailable measurement fails with the existing gpu_probe_invalid code, so it cannot establish the mandatory zero-throttle evidence. This adds **3 net production lines** and no dependency/helper.
+
+The new single regression test exercises all **20 invalid field/value combinations**; all fail baseline, `/tmp/cyrus-asr-throttle-before.log`. Existing valid inactive and active observations remain covered. All **9 focused checks pass** (eight collector tests and the unchanged module-size ratchet), `/tmp/cyrus-asr-throttle-focused.log`. Full Voice: **880 tests, 865 passed and 15 skipped**, `/tmp/cyrus-full-review-asr-throttle-voice.log`, 13.652 seconds. Fatal Ruff and whitespace checks pass; two unused test imports were removed. The new tests inject command output and use no native GPU/power command, model, audio capture or provider.
+
+Collector follow-ups remain: HTTP timeout is per socket operation rather than a whole-response deadline; SSE event sequencing and deep-JSON normalization are incomplete; backend ownership begins before residency/coordinator validation; an early coexistence failure can leave daemon gateway work active until its own request ends; native subprocess capture is bounded after capture. Input/path races and corpus reopens identified in the contract remain relevant despite final revalidation. Clean language/WER metrics are measured separately from coexistence latency, as specified; no extra quality claim is made for coexistence.
+
+Coverage is **380/401 code, 298/344 tests and 48/308 support**, with **726 reviewed hashes verified across 1053 entries**. Remaining file inspection, confirmed follow-up fixes, broader privacy/compiler qualification, earlier uncommitted changes and the final code-quality assessment remain unfinished.

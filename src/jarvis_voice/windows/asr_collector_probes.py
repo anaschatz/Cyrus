@@ -123,7 +123,10 @@ class NativeGpuProbe:
                 f"applications_graphics_mhz={application_graphics};"
                 f"applications_memory_mhz={application_memory}"
             )
-            reasons = sum(item.strip().casefold() == "active" for item in row[6:])
+            states = [item.strip().casefold() for item in row[6:]]
+            if any(state not in {"active", "not active"} for state in states):
+                raise ValueError
+            reasons = states.count("active")
         except (TypeError, ValueError, csv.Error) as exc:
             raise CollectorFailure("gpu_probe_invalid") from exc
         if free < 0 or not driver or not math.isfinite(power) or power <= 0:

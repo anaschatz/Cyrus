@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import os
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -479,6 +477,22 @@ class WindowsAsrCollectorTests(unittest.TestCase):
                 ),
                 0,
             )
+
+    def test_unknown_throttle_state_cannot_be_reported_as_inactive(self) -> None:
+        for position in range(6, 10):
+            for unknown in ("", "N/A", "[N/A]", "Unsupported", "Unknown"):
+                with self.subTest(position=position, unknown=unknown):
+                    fields = [
+                        "0", "4096", "test-driver", "360", "2500", "14000",
+                        "Not Active", "Not Active", "Not Active", "Not Active",
+                    ]
+                    fields[position] = unknown
+                    gpu = NativeGpuProbe(
+                        Path("/trusted/System32/nvidia-smi.exe"),
+                        runner=lambda _arguments: ",".join(fields) + "\n",
+                    )
+                    with self.assertRaisesRegex(CollectorFailure, "gpu_probe_invalid"):
+                        gpu.observe(0)
 
     def test_default_collector_inventory_uses_the_validated_absolute_probe(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
