@@ -2955,7 +2955,7 @@ class OrchestratorStore:
         route: Mapping[str, Any],
         *,
         now: datetime | None = None,
-    ) -> bool:
+    ) -> dict[str, Any]:
         """Persist the validated planner decision before any capability work."""
 
         selected = now or utc_now()
@@ -3213,7 +3213,7 @@ class OrchestratorStore:
         *,
         query_sha256: str,
         now: datetime | None = None,
-    ) -> dict[str, Any]:
+    ) -> bool:
         """Reserve the one recall attempt for a routing task."""
 
         selected = now or utc_now()

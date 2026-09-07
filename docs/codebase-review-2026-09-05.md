@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **209 of 400 code files**, plus **163 of 301 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **209 of 400 code files**, plus **165 of 303 test files** and **39 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1013 tests (1008 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **716 tests (701 passed, 15 skipped)**; Orchestrator **1015 tests (1010 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -956,3 +956,22 @@ The five regression methods produced **seven failures and two errors** against s
 Committed as `ab98168` with exact staged Ponytail review and the active pre-commit hook. The hook suggested removing a test-only Connection subclass; closure is now checked by SQLite's actual ProgrammingError on further use. Applied in `37a0313`, with all five tests passing again, `/tmp/cyrus-store-transactions-ponytail-followup.log`; its hook found no further complexity. Runtime source is unchanged since the full run. The production store is **13 lines shorter**, now 8541 lines, with no schema change or added dependency. No push occurred.
 
 Current coverage is **209/400 code, 163/301 tests and 39/308 support files**, with **411 reviewed hashes verified across 1009 entries**. Whole-store/service review, compiler qualification identity binding, U05 privacy coverage and the remaining inventory are still unfinished. No final code-quality grade or claim of a completed whole-codebase review is made.
+
+
+### Legacy memory source preservation and recall connection cleanup
+
+Continued the central store source read through line 5050, including complete memory migration, encryption projection, explicit command and CRUD paths, followed by conversation admission and cancellation. The remaining store source and integration checks remain pending; this does not mark the whole file reviewed. Both new regression modules are fully inspected.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V197 | Inner joins omitted legacy memory records whose task, canonical turn or inbox source was missing. Migration then dropped the legacy tables and reported success with a false zero source count. A missing canonical turn required no foreign-key violation. | Use LEFT JOIN for the three source bindings so every selected legacy record reaches the existing binding validator. Reject invalid sources before key bootstrap or a committed migration operation, preserving the original data. |
+
+The baseline regression produced **three failed subcases**, `/tmp/cyrus-memory-migration-sources-before.log`. A separate real SQLite reproduction had one legacy record and **zero foreign-key violations** before migration; afterward the legacy table was gone, encrypted count was zero and the migration audit falsely reported zero source records, `/tmp/cyrus-memory-migration-data-loss-before.log`. Missing task/inbox fixtures model legacy damage from a writer without FK enforcement. The fixed cases preserve the original record and LEGACY_PENDING state, commit no operation, and make no key-provider call.
+
+All **38 focused tests** passed. Full Orchestrator verification ran **1014 tests in 17.403 seconds: 1009 passed, five skipped**, `/tmp/cyrus-full-review-memory-migration-sources.log`. The three-word SQL change and regression were committed as `633559d`; exact staged Ponytail review and the configured hook found no complexity. No schema, encryption format or migration artifact identity was changed.
+
+**V195 follow-up:** the separate read-only recall connection had the same ownership gap before its existing try/finally. An authorizer denial of either query_only or busy_timeout left it open. Move connection setup into that guard and let close remove its progress handler. The new regression checks both setup failures, query failure and successful nonempty recall using real temporary SQLite connections; baseline had two failing subcases, `/tmp/cyrus-memory-recall-connection-before.log`. All **39 focused tests** passed, and full Orchestrator verification ran **1015 tests in 18.028 seconds: 1010 passed, five skipped**, `/tmp/cyrus-full-review-memory-recall-connection.log`. Committed as `d429b1a` with exact staged Ponytail review and active hook; no findings. Fatal Ruff and unchanged size limits pass.
+
+The subsequent source inspection also corrected two reversed return annotations: persist_planner_route returns a dictionary, while begin_memory_recall returns a boolean. All callers were traced; this changes no execution behavior. Runtime behavior is unchanged since the latest full suite. Store source is now **8540 lines**, fourteen fewer than before the SQLite ownership checkpoint. Existing constructors, synthetic providers and stdlib error injection were reused; no dependency, generic migration validator or connection wrapper was added. No user database, actual OS key provider or external service was accessed, and no push occurred.
+
+Current coverage is **209/400 code, 165/303 tests and 39/308 support files**, with **413 reviewed hashes verified across 1011 entries**. Full-store/service inspection, compiler qualification identity binding, U05 privacy coverage and the remaining inventory still prevent a final whole-codebase quality assessment.
