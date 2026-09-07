@@ -346,10 +346,12 @@ class KokoroOnnxTtsBackend:
             cancelled.set()
         try:
             self.engine.cancel()
-            if playback is not None:
-                playback.abort()
         finally:
-            self.fallback_backend.cancel(new_epoch, reason)
+            try:
+                if playback is not None:
+                    playback.abort()
+            finally:
+                self.fallback_backend.cancel(new_epoch, reason)
 
     @property
     def is_idle(self) -> bool:

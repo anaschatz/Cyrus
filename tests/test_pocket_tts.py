@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -17,6 +18,7 @@ from jarvis_voice.backends import SpeechUnit
 from jarvis_voice.config import ArtifactConfig, voice_config_from_mapping
 from jarvis_voice.errors import BackendError
 from jarvis_voice.macos.doctor import macos_doctor_report
+from jarvis_voice.macos.kokoro_onnx import KokoroOnnxTtsBackend
 from jarvis_voice.macos.native_collector import mac_runtime_profile_fingerprint
 from jarvis_voice.pocket_tts import (
     PocketAudioChunk,
@@ -275,6 +277,57 @@ class PocketTtsConfigTests(unittest.TestCase):
 
 
 class PocketTtsBackendTests(unittest.TestCase):
+    def test_cancel_attempts_every_backend_after_failure(self) -> None:
+        for backend_type in (PocketTtsBackend, KokoroOnnxTtsBackend):
+            for failing in ("engine", "playback", "fallback"):
+                for error in (OSError("cancel failed"), KeyboardInterrupt()):
+                    with self.subTest(backend=backend_type.__name__, failing=failing, error=type(error).__name__):
+                        engine, playback, fallback = FakeEngine(), FakePlayback(), FakeFallback()
+                        backend = backend_type(engine=engine, fallback_backend=fallback, warm_on_start=False)
+                        cancelled = threading.Event()
+                        with backend._lock:
+                            backend._playback = playback
+                            backend._active_cancel = cancelled
+                        calls = []
+                        try:
+                            with ExitStack() as patches:
+                                for name, target, method in (("engine", engine, "cancel"), ("playback", playback, "abort"), ("fallback", fallback, "cancel")):
+                                    def call(*args, operation=name):
+                                        calls.append(operation)
+                                        if operation == failing:
+                                            raise error
+                                    patches.enter_context(mock.patch.object(target, method, side_effect=call))
+                                with self.assertRaises(type(error)):
+                                    backend.cancel(1, "test")
+                                self.assertTrue(cancelled.is_set())
+                                self.assertEqual(calls, ["engine", "playback", "fallback"])
+                        finally:
+                            backend.close()
+
+    def test_close_attempts_join_and_fallback_close_after_failure(self) -> None:
+        for failing in ("cancel", "join", "fallback"):
+            for error in (OSError("close failed"), KeyboardInterrupt()):
+                with self.subTest(failing=failing, error=type(error).__name__):
+                    backend = PocketTtsBackend(engine=FakeEngine(), fallback_backend=FakeFallback(), warm_on_start=False)
+                    calls = []
+                    try:
+                        with ExitStack() as patches:
+                            for name, target, method in (("cancel", backend, "cancel"), ("join", backend._thread, "join"), ("fallback", backend.fallback_backend, "close")):
+                                def call(*args, operation=name, **kwargs):
+                                    calls.append(operation)
+                                    if operation == failing:
+                                        raise error
+                                patches.enter_context(mock.patch.object(target, method, side_effect=call))
+                            with self.assertRaises(type(error)):
+                                backend.close()
+                            self.assertTrue(backend._stop.is_set())
+                            self.assertEqual(calls, ["cancel", "join", "fallback"])
+                    finally:
+                        backend._stop.set()
+                        backend._thread.join(1)
+                        backend.fallback_backend.close()
+                    self.assertFalse(backend._thread.is_alive())
+
     def test_default_warm_timeout_covers_qualified_cold_load_budget(self) -> None:
         parameter = inspect.signature(PocketTtsBackend).parameters[
             "warm_timeout_seconds"

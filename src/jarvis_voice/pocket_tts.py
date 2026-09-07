@@ -29,11 +29,8 @@ PRIMARY_LOCALES = frozenset({"en-US"})
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def validate_pocket_tts_artifact(artifact: ArtifactConfig, name: str) -> Path:
@@ -548,10 +545,14 @@ class PocketTtsBackend:
             playback = self._playback
         if cancelled is not None:
             cancelled.set()
-        self.engine.cancel()
-        if playback is not None:
-            playback.abort()
-        self.fallback_backend.cancel(new_epoch, reason)
+        try:
+            self.engine.cancel()
+        finally:
+            try:
+                if playback is not None:
+                    playback.abort()
+            finally:
+                self.fallback_backend.cancel(new_epoch, reason)
 
     @property
     def is_idle(self) -> bool:
@@ -578,9 +579,13 @@ class PocketTtsBackend:
         if self._stop.is_set():
             return
         self._stop.set()
-        self.cancel(2**63 - 1, "application_close")
-        self._thread.join(timeout=2.0)
-        self.fallback_backend.close()
+        try:
+            self.cancel(2**63 - 1, "application_close")
+        finally:
+            try:
+                self._thread.join(timeout=2.0)
+            finally:
+                self.fallback_backend.close()
 
     def _is_stale(self, unit: SpeechUnit, cancelled: threading.Event) -> bool:
         with self._lock:

@@ -2,7 +2,7 @@
 
 Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **332 of 401 code files**, plus **259 of 340 test files** and **48 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **877 tests (862 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **879 tests (864 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2436,3 +2436,20 @@ Two new regression methods reproduce **eight baseline failures**, `/tmp/cyrus-au
 Ponytail replaces manual disposal branching with the standard-library ownership context, making production code **one net line shorter**, with no dependency or module-ceiling change. Coverage is **332/401 code, 259/340 tests and 48/308 support**, with **639 reviewed hashes verified across 1049 entries**.
 
 The full read also identifies follow-ups that this startup fix does not resolve: AudioQueueDispose currently releases its callback registration even on failure; finish/abort detach ownership before successful disposal, and retry behavior needs examination alongside the Pocket worker retiring playback. Constructor/sample-rate numeric bounds, callback/native ABI and physical cancellation still require their appropriate checks. Pocket engine artifact I/O and temporary-config failure cleanup, cancellation/close cleanup failures, worker fatal-error handling, fallback/short-stream callback races and SoundDevice writer lifecycle remain follow-ups. The remaining whole-codebase review, broader privacy/provenance/compiler qualification and final code-quality assessment remain unfinished.
+
+
+### Pocket/Kokoro cleanup continues after cancellation failures
+
+The AudioQueue startup checkpoint is committed as **a1378a3**, with a clean mandatory Ponytail review. Rechecked the already-read Pocket backend's cancel/close paths and Kokoro's corresponding implementation, including actual runtime factory and cancellation callers. All final source/test changes were read.
+
+**V397 resolved:** Pocket cancellation could skip playback abort and fallback cancellation after an engine cancellation error; a playback abort error also skipped fallback cancellation. Kokoro already protected fallback cancellation, but still skipped playback abort after an engine cancellation error or interruption. Both now use nested finally blocks so all three cleanup operations are attempted. The active cancellation event is set first and existing epoch filtering is unchanged. Errors continue to propagate; if multiple cleanup operations fail, normal Python exception chaining retains the earlier context. These checks guarantee cleanup dispatch, not success of an operating-system operation that itself fails.
+
+**V398 resolved:** Pocket close set the stop event and then called cancel, join and fallback close sequentially. A cancellation error skipped worker join and fallback closure; a join error skipped fallback closure. The existing shutdown steps now run through finally blocks, preserving the two-second join bound. This does not force-stop an uninterruptible native model call or redesign repeated-close/failed-native-disposal ownership.
+
+Two new regression methods exercise **18 injected-failure cases** and produce **10 baseline failures**, `/tmp/cyrus-pocket-cleanup-before.log`. They inject OSError/KeyboardInterrupt into each cancellation stage for Pocket and Kokoro and each shutdown stage for Pocket, verify every later operation is attempted and the error propagates, and confirm the cancellation/stop flag. The tests instantiate real idle backend workers with fake engines/fallbacks/playback; all owned workers are stopped and joined after mocks are removed. They do not synthesize audio or call native playback.
+
+All **33 focused Pocket/Kokoro/AudioQueue/module-boundary checks pass**, `/tmp/cyrus-pocket-cleanup-after.log`. Full Voice: **879 tests in 13.994 seconds, 864 passed and 15 skipped**, `/tmp/cyrus-full-review-pocket-cleanup-voice.log`. Fatal Ruff and whitespace checks pass. Existing full-suite non-prompting CoreGraphics permission preflight and say-presence checks remain unchanged. Ponytail reuses direct finally cleanup at the existing callers and replaces Pocket's file-hash loop with hashlib.file_digest. Production code adds **7 net lines** across two modules, with no new dependency or module-ceiling change.
+
+Also read the installed macOS15.1 SDK AudioQueue.h documentation for dispose/stop: synchronous stop may deliver pending callbacks, while disposal owns queue buffers and documents no further callbacks after return except when called from a callback/listener. No native calls were made. Error-return semantics, callback retention and failed-disposal retry require care before changing ownership; the documented lifetime must not be replaced by assumptions from a fake API.
+
+Coverage remains **332/401 code, 259/340 tests and 48/308 support**, with **639 reviewed hashes verified across 1049 entries**. Pocket artifact/config cleanup, SoundDevice writer lifecycle, worker fatal handling and callback/epoch races, AudioQueue native lifetime qualification and the remaining whole-codebase review remain open. Broader privacy/provenance/compiler qualification and the final code-quality assessment are unfinished.
