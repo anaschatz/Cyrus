@@ -10,11 +10,13 @@ import unittest
 from array import array
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import _bootstrap  # noqa: F401
 
 from jarvis_voice.backends import SpeechUnit
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos import greektts15_runtime as runtime
 from jarvis_voice.macos.greektts15_runtime import (
     GreekTtsF1Backend,
     IsolatedSoundDevicePcmPlayback,
@@ -372,6 +374,69 @@ class GreekTts15RuntimeTests(unittest.TestCase):
         playback.write(PcmChunk(b"\x01\x00" * 1_000))
         playback.finish()
         self.assertEqual([len(value) for value in module.stream.writes], [960, 960, 80])
+
+    def test_native_stream_errors_still_close_the_stream(self) -> None:
+        for operation in ("start", "stop", "abort"):
+            with self.subTest(operation=operation):
+                stream = SimpleNamespace(start=mock.Mock(), stop=mock.Mock(), abort=mock.Mock(), close=mock.Mock())
+                getattr(stream, operation).side_effect = OSError("synthetic stream failure")
+                module = SimpleNamespace(CoreAudioSettings=lambda **kwargs: kwargs, RawOutputStream=lambda **kwargs: stream)
+                with self.assertRaises(OSError):
+                    playback = SoundDevicePcmPlayback(module)
+                    if operation == "stop":
+                        playback.finish()
+                    elif operation == "abort":
+                        playback.abort()
+                stream.close.assert_called_once()
+
+    def test_helper_closes_connection_even_when_playback_abort_fails(self) -> None:
+        playback = SimpleNamespace(abort=mock.Mock(side_effect=OSError("synthetic abort failure")))
+        connection = SimpleNamespace(send_bytes=mock.Mock(), recv_bytes=mock.Mock(side_effect=EOFError), close=mock.Mock())
+        with mock.patch.object(runtime, "SoundDevicePcmPlayback", return_value=playback):
+            with self.assertRaises(OSError):
+                runtime._coreaudio_playback_worker(connection)
+        connection.close.assert_called_once()
+
+    def test_backend_close_joins_worker_when_playback_abort_fails(self) -> None:
+        engine, playback = FakeEngine(), FakePlayback()
+        backend = GreekTtsF1Backend(engine=engine, playback_factory=lambda: playback)
+        try:
+            backend.enqueue(SpeechUnit("r", 1, 1, "el-GR", "fixture"))
+            self.assertTrue(engine.first_chunk.wait(1))
+            with mock.patch.object(playback, "abort", side_effect=OSError("synthetic abort failure")), mock.patch.object(backend._thread, "join", wraps=backend._thread.join) as join:
+                with self.assertRaises(OSError):
+                    backend.close()
+                join.assert_called_once_with(timeout=2.0)
+            self.assertFalse(backend._thread.is_alive())
+        finally:
+            backend.close()
+
+    def test_fatal_generation_or_playback_setup_stops_queue_admission(self) -> None:
+        for phase in ("generation", "playback"):
+            with self.subTest(phase=phase):
+                release, units = threading.Event(), []
+                def stream(unit, cancelled):
+                    units.append(unit)
+                    if not release.wait(1):
+                        raise OSError("test did not release engine")
+                    if phase == "generation":
+                        raise OSError("synthetic generation failure")
+                    yield PcmChunk(b"\0\0")
+                engine = SimpleNamespace(stream=stream, cancel=release.set)
+                backend = GreekTtsF1Backend(engine=engine, playback_factory=mock.Mock(side_effect=OSError("synthetic playback setup failure")))
+                try:
+                    backend.enqueue(SpeechUnit("r", 1, 1, "el-GR", "first"))
+                    backend.enqueue(SpeechUnit("r", 1, 2, "el-GR", "second"))
+                    release.set()
+                    backend._thread.join(timeout=0.2)
+                    self.assertEqual(len(units), 1)
+                    self.assertEqual(backend.last_error.code, "tts.greektts15.runtime_failed")
+                    with self.assertRaises(BackendError) as raised:
+                        backend.enqueue(SpeechUnit("r", 1, 3, "el-GR", "third"))
+                    self.assertIs(raised.exception, backend.last_error)
+                finally:
+                    release.set()
+                    backend.close()
 
     def test_approved_manifest_is_bound_to_exact_adapter_hash(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

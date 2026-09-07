@@ -520,7 +520,11 @@ class SoundDevicePcmPlayback:
             latency="low",
             extra_settings=settings,
         )
-        self._stream.start()
+        try:
+            self._stream.start()
+        except BaseException:
+            self._stream.close()
+            raise
 
     def write(self, chunk: PcmChunk) -> None:
         if chunk.sample_rate != SAMPLE_RATE or chunk.channels != 1 or not chunk.pcm16 or len(chunk.pcm16) % 2:
@@ -541,8 +545,10 @@ class SoundDevicePcmPlayback:
             if self._closed:
                 return
             self._closed = True
-            self._stream.stop()
-            self._stream.close()
+            try:
+                self._stream.stop()
+            finally:
+                self._stream.close()
 
     def abort(self) -> None:
         self._abort_requested.set()
@@ -550,8 +556,10 @@ class SoundDevicePcmPlayback:
             if self._closed:
                 return
             self._closed = True
-            self._stream.abort()
-            self._stream.close()
+            try:
+                self._stream.abort()
+            finally:
+                self._stream.close()
 
 
 def _coreaudio_playback_worker(connection: object) -> None:
@@ -581,9 +589,11 @@ def _coreaudio_playback_worker(connection: object) -> None:
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
-        if playback is not None:
-            playback.abort()
-        connection.close()
+        try:
+            if playback is not None:
+                playback.abort()
+        finally:
+            connection.close()
 
 
 class IsolatedSoundDevicePcmPlayback:
@@ -716,6 +726,8 @@ class GreekTtsF1Backend:
         if size == 0 or size > self.maximum_text_bytes or unit.locale != "el-GR":
             raise BackendError("tts.unit_invalid", "GreekTTS speech unit is invalid", subsystem="tts")
         with self._lock:
+            if self._error is not None:
+                raise self._error
             if unit.epoch <= self._cancelled_through_epoch:
                 return
             try:
@@ -768,8 +780,10 @@ class GreekTtsF1Backend:
 
     def close(self) -> None:
         self._stop.set()
-        self.cancel(2**63 - 1, "application_close")
-        self._thread.join(timeout=2.0)
+        try:
+            self.cancel(2**63 - 1, "application_close")
+        finally:
+            self._thread.join(timeout=2.0)
 
     def _is_stale(self, unit: SpeechUnit, cancelled: threading.Event) -> bool:
         with self._lock:
@@ -827,7 +841,7 @@ class GreekTtsF1Backend:
                 self._warm_ready.set()
                 return
             self._warm_ready.set()
-        while not self._stop.is_set():
+        while not self._stop.is_set() and self._error is None:
             try:
                 unit = self._queue.get(timeout=0.02)
             except queue.Empty:

@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **284 of 401 code files**, plus **234 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **285 of 401 code files**, plus **235 of 339 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **802 tests (787 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **806 tests (791 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1955,3 +1955,20 @@ Two new methods in the existing test module produce **four failures before the f
 Full-suite scope clarification: the pre-existing NativeMacSmokeTests include a non-prompting CoreGraphics permission preflight and an executable-presence check on macOS. These read-only checks are not live audio/TCC-event-loop qualification. Earlier statements about fake-only regression paths must not be read as excluding these existing checks from full Voice runs.
 
 Ponytail: use the existing worker/error/cleanup boundaries, **seven net production lines**, remove two unused test imports and keep regressions in the existing test file. Completed system-TTS source and complete macOS test-module inspection bring coverage to **284/401 code, 234/339 tests and 41/308 support**, with **559 reviewed hashes verified across 1048 entries**. Remaining native implementation review, whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment are incomplete.
+
+
+### GreekTTS playback cleanup and fatal queue failures
+
+System-TTS checkpoint committed as **52f5d79**, with a clean mandatory Ponytail review.
+
+**V330 resolved:** native stream start, stop or abort errors skipped stream closure. Startup now closes on failure; finish and abort attempt close in finally. This guarantees cleanup attempts, not recovery from failure of native close itself.
+
+**V331 resolved:** the CoreAudio helper skipped its IPC connection close when playback abort raised during shutdown. Connection closure now runs in finally around playback cleanup.
+
+**V332 resolved:** backend close skipped joining its worker when playback cancellation raised. The existing bounded join now runs in finally.
+
+**V333 resolved:** fatal generation or playback-setup errors were recorded, but the worker continued dispatching queued speech and accepted more units. The worker now stops after a recorded fatal error and enqueue returns that same error. Cancellation-related late exceptions retain their existing suppression behavior.
+
+Four new methods in the existing runtime test module produce **seven failures before the fixes**, `/tmp/cyrus-greektts-cleanup-before.log`. All **39 focused checks pass**, `/tmp/cyrus-greektts-cleanup-after.log`. Full Voice: **806 tests in 8.404 seconds, 791 passed and 15 skipped**, `/tmp/cyrus-full-review-greektts-cleanup-voice.log`. Fatal Ruff and unchanged module boundaries pass. New regressions use fake native streams, fake playback/engine implementations and owned threads; no actual model, audio playback or capture was performed. Full Voice retains the existing non-prompting permission preflight described above.
+
+Ponytail: extend existing cleanup and fatal-error boundaries, **14 net production lines**, no helper, dependency or additional test file. Complete runtime/test source inspection and caller tracing bring coverage to **285/401 code, 235/339 tests and 41/308 support**, with **561 reviewed hashes verified across 1048 entries**. Approval parsing/digest binding, isolated playback IPC ownership/deadlines and decoder/queue drain behavior remain follow-up checks; source inspection does not imply those boundaries are qualified. Remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final quality assessment are incomplete.
