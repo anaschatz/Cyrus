@@ -4,7 +4,6 @@ import asyncio
 import io
 import json
 import unittest
-import urllib.error
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
@@ -37,23 +36,6 @@ class CliControlClientTests(unittest.TestCase):
         responses, requests, clients = [], [], []
         media = headers if headers is not None else {"content-type": "application/json"}
 
-        class LegacyResponse(io.BytesIO):
-            def __init__(self):
-                super().__init__(body)
-                self.status = status
-
-        legacy_response = LegacyResponse()
-
-        def legacy(request, **kwargs):
-            requests.append(request)
-            if failure:
-                raise urllib.error.URLError("synthetic private diagnostic")
-            if status >= 400:
-                raise urllib.error.HTTPError(
-                    request.full_url, status, "error", media, legacy_response
-                )
-            return legacy_response
-
         def respond(request):
             requests.append(request)
             if failure:
@@ -75,10 +57,7 @@ class CliControlClientTests(unittest.TestCase):
                 clients.append(kwargs)
                 super().__init__(transport=httpx.MockTransport(respond), **kwargs)
 
-        with (
-            patch("urllib.request.urlopen", side_effect=legacy),
-            patch.object(httpx, "AsyncClient", Client),
-        ):
+        with patch.object(httpx, "AsyncClient", Client):
             if main:
                 output = io.StringIO()
                 with (
@@ -100,7 +79,7 @@ class CliControlClientTests(unittest.TestCase):
                     epoch=7,
                     key="synthetic-key",
                 )
-        return result, responses, requests, clients, legacy_response
+        return result, responses, requests, clients
 
     def test_valid_json_and_empty_responses_keep_status_and_request_headers(self):
         for body, status in (
@@ -108,21 +87,14 @@ class CliControlClientTests(unittest.TestCase):
             (b"", 204),
             (b'{"error":{"code":"stale_epoch"}}', 409),
         ):
-            result, responses, requests, clients, legacy = self.exchange(
-                body, status=status
-            )
+            result, responses, requests, clients = self.exchange(body, status=status)
             self.assertEqual(result, (status, json.loads(body) if body else None))
             self.assertEqual(len(requests), 1)
-            if clients:
-                self.assertFalse(clients[0]["trust_env"])
-                self.assertFalse(clients[0]["follow_redirects"])
-                self.assertTrue(responses[0].is_closed)
-                self.assertEqual(requests[0].headers["if-match-epoch"], "7")
-                self.assertEqual(
-                    requests[0].headers["idempotency-key"], "synthetic-key"
-                )
-            else:
-                self.assertTrue(legacy.closed)
+            self.assertFalse(clients[0]["trust_env"])
+            self.assertFalse(clients[0]["follow_redirects"])
+            self.assertTrue(responses[0].is_closed)
+            self.assertEqual(requests[0].headers["if-match-epoch"], "7")
+            self.assertEqual(requests[0].headers["idempotency-key"], "synthetic-key")
 
     def test_wrong_media_redirects_and_malformed_json_fail_closed(self):
         for body, status, headers in (
