@@ -432,3 +432,205 @@ def test_strict_run_loader_rejects_raw_jsonl() -> None:
             scenarios_path=Path("eval/scenarios/dev.jsonl"),
             scenario_ids=[],
         )
+
+
+@pytest.mark.parametrize(
+    "system,tamper",
+    [
+        (system, tamper)
+        for system in ("no_memory", "anamnesis")
+        for tamper in [
+            "none",
+            "action",
+            "parse-failure",
+            "predictions",
+            "stored-output",
+            "checkpoint-output",
+            "prompt-hash",
+            "parse-flag",
+            "missing-event",
+            "extra-event",
+            "event-order",
+            "warmup-content",
+            "warmup-prompt",
+            "checkpoint-usage",
+            "compiler-output",
+            "compiler-delta",
+        ]
+        if system == "anamnesis" or not tamper.startswith("compiler-")
+    ],
+)
+def test_hosted_loader_binds_producer_run_to_model_events(
+    system: str,
+    tamper: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    from inspect_ai.log import EvalStats
+    from inspect_ai.model import ModelOutput
+    from anamnesis.baselines import AnamnesisMemoryStrategy, NoPersistentMemory
+    from anamnesis.inspect_adapter import (
+        InspectDecisionModel,
+        InspectMemoryCompiler,
+        _run_hosted_model_warmup,
+    )
+    from anamnesis.runner import run_scenario
+    from anamnesis.wire import DecisionWire, PayloadWire
+    from test_preflight import MODEL, _model_event, _valid_preflight_log
+
+    scenario = load_scenarios("eval/scenarios/smoke.jsonl")[0]
+    action_json = json.dumps(
+        {
+            "actions": [
+                {
+                    "kind": "reminder",
+                    "action_key": scenario.events[0].id,
+                    "payload": dict(
+                        dict.fromkeys(PayloadWire.model_fields),
+                        subject="send assignment",
+                    ),
+                    "summary": "Send assignment",
+                    "evidence_event_ids": [scenario.events[0].id],
+                }
+            ]
+        }
+    )
+    events = []
+
+    async def generate(state, *, response_schema, **kwargs):
+        completion = '{"actions":[]}'
+        if response_schema.name == "anamnesis_memory_delta":
+            completion = json.dumps(
+                dict.fromkeys(
+                    (
+                        "fact_assertions",
+                        "intent_creates",
+                        "intent_updates",
+                        "intent_cancellations",
+                    ),
+                    [],
+                )
+            )
+        elif events and tamper in ("action", "parse-failure"):
+            completion = action_json if tamper == "action" else "invalid JSON"
+        event = _model_event(state.messages[0].content, response_schema, completion)
+        events.append(event)
+        state.output = event.output
+        return state
+
+    monkeypatch.setattr(
+        "anamnesis.inspect_adapter.get_model",
+        lambda: SimpleNamespace(
+            api=SimpleNamespace(
+                client=SimpleNamespace(base_url="https://api.openai.com/v1")
+            ),
+        ),
+    )
+    manifest = ExperimentManifest.model_validate_json(TEMPLATE.read_bytes())
+    manifest.model.snapshot = MODEL
+    manifest_hash = hashlib.sha256(TEMPLATE.read_bytes()).hexdigest()
+
+    async def produce():
+        model = InspectDecisionModel(SimpleNamespace(model=MODEL), generate)
+        warmup = await _run_hosted_model_warmup(model)
+        strategy = (
+            AnamnesisMemoryStrategy(InspectMemoryCompiler(model))
+            if system == "anamnesis"
+            else NoPersistentMemory()
+        )
+        return await run_scenario(
+            scenario=scenario,
+            strategy=strategy,
+            model=model,
+            seed=101,
+            manifest_sha256=manifest_hash,
+            hosted_warmup=warmup,
+            setup_latency_ms=warmup.latency_ms,
+        )
+
+    run = asyncio.run(produce())
+    raw_run = run.model_dump(mode="json")
+    checkpoint = raw_run["checkpoints"][0]
+    if tamper == "predictions":
+        raw_run["predictions"] = [
+            dict(
+                DecisionWire.model_validate_json(action_json)
+                .to_domain()
+                .actions[0]
+                .model_dump(),
+                emitted_at=checkpoint["at"],
+                decision_event_id=checkpoint["event_id"],
+            )
+        ]
+    elif tamper == "checkpoint-output":
+        checkpoint["raw_decision_output"] = action_json
+    elif tamper == "prompt-hash":
+        checkpoint["rendered_context_sha256"] = "f" * 64
+    elif tamper == "parse-flag":
+        checkpoint["decision_parse_error"] = True
+        raw_run["decision_parse_errors"] = raw_run["parse_errors"] = 1
+    elif tamper == "missing-event":
+        events.pop()
+    elif tamper == "extra-event":
+        events.append(events[-1])
+    elif tamper == "event-order":
+        events[1], events[2] = events[2], events[1]
+    elif tamper == "warmup-content":
+        raw_run["hosted_warmup"]["raw_completion"] = action_json
+    elif tamper == "warmup-prompt":
+        events[0].input[0].content = "different warmup"
+        events[0].call.request["messages"][0]["content"] = "different warmup"
+    elif tamper == "checkpoint-usage":
+        events[-1].output.usage.input_tokens += 1
+        events[-1].output.usage.total_tokens += 1
+        events[-1].call.response["usage"]["prompt_tokens"] += 1
+        events[-1].call.response["usage"]["total_tokens"] += 1
+    elif tamper == "compiler-output":
+        checkpoint["raw_compiler_output"] = "invalid JSON"
+    elif tamper == "compiler-delta":
+        checkpoint["memory_delta_json"] = "invalid JSON"
+    run = ScenarioRun.model_validate(raw_run)
+    log = _valid_preflight_log()
+    sample = log.samples[0]
+    sample.id = run.scenario_id
+    sample.events = events
+    sample.store = {"anamnesis.scenario_run": run.model_dump(mode="json")}
+    sample.output = ModelOutput.from_content(
+        model=MODEL,
+        content=run.model_dump_json(),
+    )
+    if tamper == "stored-output":
+        sample.output.completion = run.model_copy(
+            update={"prompt_sha256": "f" * 64}
+        ).model_dump_json()
+    usage = run.usage.plus(run.hosted_warmup.usage)
+    log.stats = EvalStats(
+        model_usage={
+            MODEL: ModelUsage(
+                input_tokens=usage.uncached_input_tokens,
+                output_tokens=usage.output_tokens,
+                total_cost=usage.cost_usd,
+            )
+        }
+    )
+
+    def read_log(path, *, resolve_attachments=False):
+        assert resolve_attachments is True
+        return log
+
+    monkeypatch.setattr("anamnesis.cli.read_eval_log", read_log)
+    monkeypatch.setattr(
+        "anamnesis.cli._validate_system_log_metadata", lambda *a, **k: (system, 1)
+    )
+    kwargs = dict(
+        manifest=manifest,
+        manifest_path=TEMPLATE,
+        mode="baseline",
+        scenarios_path=Path("eval/scenarios/smoke.jsonl"),
+        scenario_ids=[scenario.id],
+    )
+    if tamper in ("none", "action", "parse-failure"):
+        assert _load_strict_eval_runs([Path("synthetic.eval")], **kwargs) == [run]
+    else:
+        with pytest.raises(ValueError):
+            _load_strict_eval_runs([Path("synthetic.eval")], **kwargs)

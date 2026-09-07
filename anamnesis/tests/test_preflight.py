@@ -315,10 +315,14 @@ def test_preflight_artifact_binds_bytes_and_pricing(
         path=str(pricing_path),
         sha256=hashlib.sha256(pricing_path.read_bytes()).hexdigest(),
     )
-    monkeypatch.setattr(
-        "anamnesis.preflight.read_eval_log",
-        lambda _: _valid_preflight_log(),
-    )
+    def read_verified_log(source, *, resolve_attachments=False, format="auto"):
+        assert resolve_attachments is True
+        assert format == "eval"
+        preflight_path.write_bytes(b"replaced after verification")
+        assert source.read() == b"pinned Inspect log bytes"
+        return _valid_preflight_log()
+
+    monkeypatch.setattr("anamnesis.preflight.read_eval_log", read_verified_log)
 
     validate_model_preflight_artifact(
         preflight,

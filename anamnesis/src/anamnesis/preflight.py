@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+from io import BytesIO
 from pathlib import Path
 
 from inspect_ai.event import ModelEvent
@@ -13,15 +14,17 @@ from inspect_ai.log import EvalLog, read_eval_log
 from inspect_ai.model import ChatMessageUser, ModelCost, ModelUsage, ResponseSchema
 from inspect_ai.model._openai import chat_choices_from_openai, model_output_from_openai
 from openai.types.chat import ChatCompletion
+from pydantic import ValidationError
 
 from anamnesis.experiment import ArtifactPin, ModelProviderArgs
 from anamnesis.inspect_adapter import (
     ModelPreflightResult,
     _decision_schema,
     _memory_delta_schema,
+    _usage_from_output,
 )
 from anamnesis.prompts import build_decision_prompt, build_memory_compiler_prompt
-from anamnesis.schema import ObservableEvent
+from anamnesis.schema import ObservableEvent, PredictedAction, ScenarioRun, Usage
 from anamnesis.wire import DecisionWire, MemoryDeltaWire
 
 MODEL_PREFLIGHT_TASK_VERSION = "0.3"
@@ -278,6 +281,94 @@ def _validate_openai_chat_completion_log(
         )
 
 
+def _validate_hosted_run_events(log: EvalLog, runs: list[ScenarioRun]) -> None:
+    """Bind validated raw events to the runner output and checkpoint records."""
+
+    for index, (sample, run) in enumerate(zip(log.samples or [], runs, strict=True)):
+        if (
+            sample.output is None
+            or ScenarioRun.model_validate_json(sample.output.completion) != run
+        ):
+            raise ValueError("sample output and stored ScenarioRun differ")
+        events = [event for event in sample.events if isinstance(event, ModelEvent)]
+        if len(events) != sum(1 + item.compiler_called for item in run.checkpoints) + (
+            index == 0
+        ):
+            raise ValueError("hosted sample ModelEvent count differs from checkpoints")
+        pending = iter(events)
+
+        def parse_event(kind: str, raw: str | None, usage: Usage, prompt_hash=None):
+            event = next(pending)
+            if event.config.response_schema.name != f"anamnesis_{kind}":
+                raise ValueError(
+                    "hosted ModelEvent schema/order differs from checkpoint"
+                )
+            if (
+                event.output.completion != raw
+                or _usage_from_output(event.output) != usage
+            ):
+                raise ValueError(
+                    "hosted ModelEvent output/usage differs from checkpoint"
+                )
+            if (
+                prompt_hash is not None
+                and hashlib.sha256(event.input[0].content.encode()).hexdigest()
+                != prompt_hash
+            ):
+                raise ValueError("hosted ModelEvent prompt differs from checkpoint")
+            wire = MemoryDeltaWire if kind == "memory_delta" else DecisionWire
+            try:
+                return wire.model_validate_json(event.output.completion).to_domain()
+            except ValidationError:
+                return None
+
+        if index == 0:
+            warmup = run.hosted_warmup
+            if warmup is None:
+                raise ValueError("hosted run is missing warmup attestation")
+            decision = parse_event(
+                "decision",
+                warmup.raw_completion,
+                warmup.usage,
+                warmup.prompt_sha256,
+            )
+            if decision is None or decision.actions:
+                raise ValueError("hosted warmup raw decision is invalid")
+        predictions = []
+        for checkpoint in run.checkpoints:
+            if checkpoint.compiler_called:
+                delta = parse_event(
+                    "memory_delta",
+                    checkpoint.raw_compiler_output,
+                    checkpoint.compiler_usage,
+                )
+                if (delta is None) != checkpoint.compiler_parse_error or (
+                    delta.model_dump_json() if delta is not None else None
+                ) != checkpoint.memory_delta_json:
+                    raise ValueError(
+                        "compiler parse status/delta differs from raw output"
+                    )
+            decision = parse_event(
+                "decision",
+                checkpoint.raw_decision_output,
+                checkpoint.decision_usage,
+                checkpoint.rendered_context_sha256,
+            )
+            if (decision is None) != checkpoint.decision_parse_error:
+                raise ValueError("decision parse status differs from raw output")
+            if decision is not None:
+                predictions.extend(
+                    PredictedAction(
+                        **action.model_dump(),
+                        emitted_at=checkpoint.at,
+                        decision_event_id=checkpoint.event_id,
+                    )
+                    for action in decision.actions
+                )
+        if predictions != run.predictions:
+            raise ValueError("ScenarioRun predictions differ from raw decision outputs")
+
+
 def _require_exact_user_prompt(model_event: ModelEvent, expected: str) -> None:
     if len(model_event.input) != 1 or not isinstance(
         model_event.input[0], ChatMessageUser
@@ -467,10 +558,10 @@ def validate_model_preflight_artifact(
 ) -> None:
     """Verify the pinned bytes and semantics of a compatibility `.eval`."""
 
-    _verified_artifact_bytes("model.preflight", preflight)
+    content = _verified_artifact_bytes("model.preflight", preflight)
     model_cost = _configured_model_cost(pricing, model_name)
     validate_model_preflight_log(
-        read_eval_log(Path(preflight.path)),
+        read_eval_log(BytesIO(content), format="eval", resolve_attachments=True),
         model_name=model_name,
         pricing=model_cost,
     )

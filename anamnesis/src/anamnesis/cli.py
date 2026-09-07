@@ -24,6 +24,7 @@ from anamnesis.io import (
     require_preregistered_final_dataset,
 )
 from anamnesis.preflight import (
+    _validate_hosted_run_events,
     _validate_openai_chat_completion_log,
     validate_model_preflight_artifact,
 )
@@ -490,7 +491,7 @@ def _load_strict_eval_runs(
     for path in paths:
         if path.suffix != ".eval":
             raise ValueError("strict reports accept only Inspect .eval logs")
-        log = read_eval_log(path)
+        log = read_eval_log(path, resolve_attachments=True)
         system, repetition = _validate_system_log_metadata(
             _inspect_log_metadata(log),
             manifest=manifest,
@@ -507,6 +508,7 @@ def _load_strict_eval_runs(
             seed=manifest.execution.seeds[repetition - 1],
         )
         _validate_hosted_warmup_attestation(log, log_runs)
+        _validate_hosted_run_events(log, log_runs)
         for run in log_runs:
             if (
                 run.system != system
