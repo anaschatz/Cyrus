@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **319 of 401 code files**, plus **252 of 340 test files** and **44 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **324 of 401 code files**, plus **253 of 340 test files** and **44 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **867 tests (852 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **868 tests (853 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2322,3 +2322,18 @@ The operator guide now lists all seven commands, explains new-file publication a
 Coverage is **319/401 code, 252/340 tests and 44/308 support**, with **615 reviewed hashes verified across 1049 entries**. Materialization wheel compatibility/identity and ZIP error classification, staging schema/next-action semantics, other remaining source/support files, broader privacy/provenance/compiler qualification and the final code-quality assessment remain unfinished.
 
 The mandatory exact-staged Ponytail hook requested reusing the existing private-config mock context for the collision loop. Removed the duplicate four-line context header and reran all 12 materialization tests successfully before amending this checkpoint. Production code and full-suite results are unchanged.
+
+
+### Piper cancellation qualification must observe a working, stopped writer
+
+The materialization publication checkpoint is committed as **dc33006**, after the mandatory Ponytail simplification and clean amendment review. Read the complete Piper F1 qualification source (634 baseline lines), its complete tests (181), and all four Chatterbox/Fish/Supertonic/Piper pilot CLI files. Traced the qualification caller and report fields; all final changed code/tests were read.
+
+**V387 resolved:** the Piper cancellation worker swallowed every playback-write exception and ignored a writer still alive after join. A sink that failed before cancellation, or stayed blocked beyond the join timeout, could therefore pass the automated cancellation gate based solely on abort() return latency. The gate now records a write failure observed before abort is requested (and any fatal BaseException), records whether the writer stopped at the join deadline, and requires both conditions along with the latency bound. Expected ordinary exceptions released by abort remain allowed. The stop result is captured before sink.close can release a stuck writer. The existing requirement for physical audio qualification and ready_for_promotion=False remain intact: this is still an abort-return proxy, not an acoustic silence measurement.
+
+One new regression method reproduces **two baseline failures**, `/tmp/cyrus-piper-cancellation-before.log`. It exercises a failed writer, a writer released only by close after the join timeout, and the expected abort-induced exception. All threads are released/joined by the test; synthetic model/config/WAV files and fake sessions/sinks are used. All **7 focused Piper/module-boundary checks pass**, `/tmp/cyrus-piper-cancellation-after.log`. Full Voice: **868 tests in 13.172 seconds, 853 passed and 15 skipped**, `/tmp/cyrus-full-review-piper-cancellation-voice.log`. Fatal Ruff and whitespace checks pass. No Piper/ONNX loading, synthesis, actual playback or device queries occur in the regression. Existing full-suite non-prompting CoreGraphics preflight and say-presence checks remain unchanged.
+
+Ponytail replaces the file-hash loop with hashlib.file_digest and removes the unused MIB import. Together with the cancellation gate, production code adds **three net lines**. No new dependency or module ceiling is introduced.
+
+Also ran **28 fake success/failure CLI dispatch checks** across all commands in scripts/run_chatterbox_v3_pilot.py, run_fish_s2_pilot.py, run_supertonic3_pilot.py and run_piper_f1_qualification.py, `/tmp/cyrus-pilot-cli-review.py` and `/tmp/cyrus-pilot-cli-review.log`. Backend functions and report writers were patched; these checks perform no acquisition, installation, model loading, native playback or external calls. The first three CLIs already contain report-write errors inside their typed boundary and required no change. Piper's CLI resolves paths before source symlink guards; this remains a follow-up, not a safety claim from dispatch tests.
+
+Coverage is **324/401 code, 253/340 tests and 44/308 support**, with **621 reviewed hashes verified across 1049 entries**. Piper follow-ups include candidate JSON/hash-read consistency, worker startup/failed-stop ownership, IPC/response and audio bounds, partial WAV/report publication, and caller path resolution. Chatterbox/Fish/Supertonic backend source review remains separate and unfinished. Broader source/support coverage, privacy/provenance/compiler qualification and the final quality assessment are still in progress.

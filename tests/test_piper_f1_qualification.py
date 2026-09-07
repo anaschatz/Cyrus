@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -85,6 +86,50 @@ class _FakeSink:
 
 
 class PiperF1QualificationTests(unittest.TestCase):
+    def test_cancel_gate_rejects_failed_or_unstopped_writer(self) -> None:
+        for behavior in ("write_failed", "writer_stuck", "abort_releases_writer"):
+            with self.subTest(behavior=behavior), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                candidate = root / "candidate"
+                candidate.mkdir()
+                _candidate(candidate)
+                release = threading.Event()
+
+                class Sink(_FakeSink):
+                    writer = None
+
+                    def write(self, pcm16):
+                        Sink.writer = threading.current_thread()
+                        if behavior == "write_failed":
+                            raise OSError("private playback failure")
+                        release.wait(timeout=5)
+                        if behavior == "abort_releases_writer":
+                            raise OSError("expected PortAudio abort")
+
+                    def abort(self):
+                        super().abort()
+                        if behavior == "abort_releases_writer":
+                            release.set()
+
+                    def close(self):
+                        release.set()
+
+                session = _FakeSession(candidate / MODEL_NAME, candidate / CONFIG_NAME)
+                try:
+                    report = run_piper_f1_qualification(
+                        candidate, root / "output", session_factory=lambda *args: session,
+                        playback_sink_factory=Sink,
+                    )
+                    self.assertEqual(report["gates"]["cancellation"], behavior == "abort_releases_writer")
+                    self.assertEqual(report["automated_pass"], behavior == "abort_releases_writer")
+                    self.assertFalse(report["ready_for_promotion"])
+                    self.assertTrue(session.closed)
+                finally:
+                    release.set()
+                    if Sink.writer is not None:
+                        Sink.writer.join(timeout=1)
+                        self.assertFalse(Sink.writer.is_alive())
+
     def test_missing_candidate_is_a_read_only_not_ready_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

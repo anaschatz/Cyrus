@@ -30,7 +30,6 @@ from .compact_greek_tts_pilot import (
     MAX_EXPORTED_MODEL_BYTES,
     MAX_RUNTIME_RSS_BYTES,
     MAX_WARM_FIRST_AUDIO_MS,
-    MIB,
     PIPER_TARGET_SAMPLE_RATE,
     PIPER_VERSION,
 )
@@ -60,11 +59,8 @@ def _error(code: str, message: str) -> BackendError:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(MIB), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _piper_runtime_ready() -> bool:
@@ -549,14 +545,17 @@ def run_piper_f1_qualification(
                 raise _error("tts.piper_f1.audio_missing", "Piper F1 produced no cancellation audio") from exc
             sink = playback_sink_factory()
             writer_started = threading.Event()
+            abort_requested = threading.Event()
+            writer_failed = False
 
             def write_first_chunk() -> None:
+                nonlocal writer_failed
                 writer_started.set()
                 try:
                     sink.write(first.pcm16)
-                except BaseException:
+                except BaseException as exc:
                     # PortAudio may release a blocked writer by raising after abort.
-                    pass
+                    writer_failed = not abort_requested.is_set() or not isinstance(exc, Exception)
 
             try:
                 sink.open(first)
@@ -566,10 +565,12 @@ def run_piper_f1_qualification(
                     raise _error("tts.piper_f1.playback_start_failed", "Playback did not start")
                 # Leave enough audio queued for abort() to exercise an active stream.
                 time.sleep(0.05)
+                abort_requested.set()
                 cancel_started = time.perf_counter()
                 sink.abort()
                 cancel_ms = (time.perf_counter() - cancel_started) * 1000.0
                 writer.join(timeout=1.0)
+                writer_stopped = not writer.is_alive()
             finally:
                 sink.close()
             worker_stop_ms = session.abort()
@@ -579,7 +580,9 @@ def run_piper_f1_qualification(
                 "cancel_to_silence_ms": round(cancel_ms, 3),
                 "worker_stop_ms": round(worker_stop_ms, 3),
                 "pre_abort_playback_ms": 50,
-                "passed": cancel_ms <= MAX_CANCEL_TO_SILENCE_MS,
+                "playback_write_failed": writer_failed,
+                "playback_writer_stopped": writer_stopped,
+                "passed": cancel_ms <= MAX_CANCEL_TO_SILENCE_MS and not writer_failed and writer_stopped,
                 "physical_audio_hardware_validation_required": True,
             }
     finally:
