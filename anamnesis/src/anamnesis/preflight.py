@@ -11,7 +11,13 @@ from pathlib import Path
 
 from inspect_ai.event import ModelEvent
 from inspect_ai.log import EvalLog, read_eval_log
-from inspect_ai.model import ChatMessageUser, ModelCost, ModelUsage, ResponseSchema
+from inspect_ai.model import (
+    ChatMessageUser,
+    ModelCost,
+    ModelOutput,
+    ModelUsage,
+    ResponseSchema,
+)
 from inspect_ai.model._openai import chat_choices_from_openai, model_output_from_openai
 from openai.types.chat import ChatCompletion
 from pydantic import ValidationError
@@ -233,6 +239,10 @@ def _validate_openai_chat_completion_event(
     response = call.response
     if not isinstance(response, dict) or response.get("model") != service_model:
         raise ValueError("raw response model differs from the dated snapshot")
+    _validate_chat_completion_output(response, model_event.output)
+
+
+def _validate_chat_completion_output(response: object, output: ModelOutput) -> None:
     try:
         completion = ChatCompletion.model_validate(response)
         decoded = model_output_from_openai(
@@ -242,13 +252,13 @@ def _validate_openai_chat_completion_event(
         raise ValueError("raw response is not a valid chat completion") from error
     if len(completion.choices) != 1:
         raise ValueError("raw response must contain exactly one choice")
-    if decoded.completion != model_event.output.completion:
+    if decoded.completion != output.completion:
         raise ValueError("raw response content differs from the model event")
     if (
         decoded.usage is None
-        or model_event.output.usage is None
+        or output.usage is None
         or decoded.usage.model_dump(exclude={"total_cost"})
-        != model_event.output.usage.model_dump(exclude={"total_cost"})
+        != output.usage.model_dump(exclude={"total_cost"})
     ):
         raise ValueError("raw response usage differs from the model event")
 

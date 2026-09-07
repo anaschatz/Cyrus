@@ -79,6 +79,8 @@ from anamnesis.writer_report_w3 import (
     _w3_candidate_key,
 )
 
+from tests.test_local_preflight import _chat_response
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = ROOT / "eval" / "preflight" / "local_writer_w3.v1.json"
 TEMPLATE_PATH = ROOT / "eval" / "local_writer_w3_experiment_manifest.template.json"
@@ -272,7 +274,7 @@ def _serialized_model_event(prompt: str, schema, completion: str) -> ModelEvent:
         ),
         call=ModelCall(
             request=request,
-            response={"model": LOCAL_OLLAMA_SERVICE_MODEL},
+            response=_chat_response(LOCAL_OLLAMA_SERVICE_MODEL, completion),
         ),
         cache=None,
         error=None,

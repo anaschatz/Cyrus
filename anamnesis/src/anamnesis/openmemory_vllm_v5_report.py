@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from anamnesis.openmemory_vllm import (
+    VllmOpenMemoryAlignedDecisionModel,
     build_openmemory_vllm_aligned_request,
     build_openmemory_vllm_user_envelope,
 )
@@ -22,6 +23,7 @@ from anamnesis.openmemory_vllm_v5 import (
     _semantic_passed,
 )
 from anamnesis.runner import DecisionRequest
+from anamnesis.schema import Decision
 from anamnesis.vllm_runtime import canonical_json_sha256
 
 TITLE = "OpenMemory + vLLM v5 schema compatibility — diagnostic only"
@@ -61,6 +63,14 @@ def validate_run(path: Path) -> OpenMemoryVllmV5Run:
             raise ValueError("v5 raw completion differs from audit")
         if observed.audit.usage != observed.usage:
             raise ValueError("v5 usage differs from audit")
+        decision = (
+            VllmOpenMemoryAlignedDecisionModel.wire_model.model_validate_json(
+                observed.raw_completion
+            ).to_domain()
+            if observed.audit.validation.accepted else Decision()
+        )
+        if observed.decision != decision:
+            raise ValueError("v5 decision differs from raw completion")
         if observed.semantic_passed != _semantic_passed(expected, observed.decision):
             raise ValueError("v5 semantic projection differs")
     return result

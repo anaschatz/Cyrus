@@ -125,7 +125,12 @@ def test_v5_semantic_projection_checks_cardinality_key_evidence_and_subject() ->
     assert not v5._semantic_passed(emit, wrong_key)
 
 
-def test_v5_runner_executes_exactly_two_aligned_calls(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize(
+    "tamper", ["request_hash", "raw_no_action", "raw_invalid", "decision_payload"]
+)
+def test_v5_runner_executes_exactly_two_aligned_calls(
+    monkeypatch, tmp_path, tamper
+) -> None:
     _patch_runtime(monkeypatch)
     FakeClient.queue = [
         _response(json.dumps({"mode": "emit", "actions": [_emit_action()]})),
@@ -155,9 +160,24 @@ def test_v5_runner_executes_exactly_two_aligned_calls(monkeypatch, tmp_path) -> 
     assert report.validate_run(raw_path) == result
 
     tampered = json.loads(raw_path.read_text(encoding="utf-8"))
-    tampered["cases"][0]["audit"]["request_sha256"] = "0" * 64
+    first = tampered["cases"][0]
+    expected = "decision differs from raw completion"
+    if tamper == "request_hash":
+        first["audit"]["request_sha256"] = "0" * 64
+        expected = "raw request"
+    elif tamper == "decision_payload":
+        first["decision"]["actions"][0]["payload"]["subject"] = "a different subject"
+    else:
+        completion = (
+            '{"mode":"no_action","actions":[]}'
+            if tamper == "raw_no_action"
+            else "invalid JSON"
+        )
+        first["raw_completion"] = first["audit"]["raw_completion"] = completion
+        if tamper == "raw_invalid":
+            expected = "Invalid JSON"
     raw_path.write_text(json.dumps(tampered), encoding="utf-8")
-    with pytest.raises(ValueError, match="raw request"):
+    with pytest.raises(ValueError, match=expected):
         report.validate_run(raw_path)
 
 
@@ -183,6 +203,10 @@ def test_v5_runner_records_schema_rejection_without_retry(
     assert result.cases[0].audit.validation.error_stage == "wire"
     assert len(FakeClient.requests) == 2
     assert FakeProbe.calls == 2
+    raw_path = tmp_path / "rejected.json"
+    raw_path.write_text(result.model_dump_json(), encoding="utf-8")
+    monkeypatch.setattr(report, "_verify_source_commit", lambda *args: None)
+    assert report.validate_run(raw_path) == result
 
 
 def test_v5_output_is_confined(tmp_path: Path) -> None:

@@ -74,6 +74,8 @@ from anamnesis.scoring import aggregate_results, score_scenario
 
 TEMPLATE = Path("eval/local_experiment_manifest.template.json")
 SCENARIOS_PATH = Path("eval/scenarios/smoke.jsonl")
+from tests.test_local_preflight import _chat_response
+
 GIT_COMMIT = "a" * 40
 MANIFEST_SHA256 = "b" * 64
 PREFLIGHT_COMPILER_COMPLETION = json.dumps(
@@ -203,7 +205,9 @@ def _model_event(prompt: str, schema, completion: str) -> ModelEvent:
         ),
         call=ModelCall(
             request=request,
-            response={"model": LOCAL_OLLAMA_SERVICE_MODEL},
+            response=_chat_response(
+                LOCAL_OLLAMA_SERVICE_MODEL, completion, input_tokens=10, output_tokens=2
+            ),
         ),
         cache=None,
         error=None,

@@ -90,6 +90,29 @@ def _compiler_completion() -> str:
     )
 
 
+def _chat_response(
+    model: str, completion: str, *, input_tokens: int = 100, output_tokens: int = 10
+) -> dict:
+    return {
+        "id": "chatcmpl-local-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": completion},
+            }
+        ],
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        },
+    }
+
+
 def _model_event(prompt: str, schema, completion: str) -> ModelEvent:
     usage = ModelUsage(
         input_tokens=100,
@@ -131,7 +154,7 @@ def _model_event(prompt: str, schema, completion: str) -> ModelEvent:
         ),
         call=ModelCall(
             request=request,
-            response={"model": LOCAL_OLLAMA_SERVICE_MODEL},
+            response=_chat_response(LOCAL_OLLAMA_SERVICE_MODEL, completion),
         ),
         cache=None,
         error=None,
@@ -447,6 +470,10 @@ def test_local_preflight_log_rejects_drift(tamper: str, expected: str) -> None:
         completion["intent_creates"][0]["trigger"]["at"] = "2026-01-05T09:00:00Z"
         log.samples[0].events[0].output.completion = json.dumps(completion)
 
+    if tamper in {"early_action", "wrong_time"}:
+        event = log.samples[0].events[1 if tamper == "early_action" else 0]
+        event.call.response["choices"][0]["message"]["content"] = event.output.completion
+
     with pytest.raises(ValueError, match=expected):
         validate_local_preflight_log(
             log,
@@ -651,3 +678,78 @@ def test_local_preflight_decodes_verified_bytes_after_path_replacement(
         **kwargs,
     )
     assert len(decoded) == 1
+
+
+@pytest.mark.parametrize("service_model", ["qwen3:4b-instruct", "qwen3.5:9b-q4_K_M"])
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "none",
+        "reasoning",
+        "cached",
+        "parse_failure",
+        "raw_content",
+        "event_content",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "missing_usage",
+        "missing_choice",
+        "extra_choice",
+        "malformed_choice",
+    ],
+)
+def test_local_raw_response_matches_decoded_content_and_usage(service_model, tamper):
+    from anamnesis.local_preflight import _validate_local_model_event
+
+    model = f"ollama/{service_model}"
+    schema = _local_decision_schema(model)
+    prompt = "A synthetic local decision checkpoint."
+    completion = (
+        "invalid JSON"
+        if tamper == "parse_failure"
+        else '{"mode":"no_action","actions":[]}'
+    )
+    event = _model_event(prompt, schema, completion)
+    event.model = model
+    event.output.model = service_model
+    event.call.request["model"] = service_model
+    response = event.call.response
+    response["model"] = service_model
+    if tamper == "reasoning":
+        response["choices"][0]["message"]["reasoning_content"] = "Synthetic reasoning."
+    elif tamper == "cached":
+        response["usage"]["prompt_tokens_details"] = {"cached_tokens": 20}
+        event.output.usage.input_tokens = 80
+        event.output.usage.input_tokens_cache_read = 20
+    elif tamper == "raw_content":
+        response["choices"][0]["message"]["content"] = "different raw content"
+    elif tamper == "event_content":
+        event.output.completion = "different recorded content"
+    elif tamper in {"input_tokens", "output_tokens", "total_tokens"}:
+        key = {
+            "input_tokens": "prompt_tokens",
+            "output_tokens": "completion_tokens",
+            "total_tokens": "total_tokens",
+        }[tamper]
+        response["usage"][key] += 1
+    elif tamper == "missing_usage":
+        response.pop("usage")
+    elif tamper == "missing_choice":
+        response["choices"] = []
+    elif tamper == "extra_choice":
+        response["choices"].append(response["choices"][0])
+    elif tamper == "malformed_choice":
+        response["choices"] = [{}]
+    kwargs = dict(
+        prompt=prompt,
+        schema=schema,
+        seed=101,
+        expected_model=model,
+        expected_service_model=service_model,
+    )
+    if tamper in {"none", "reasoning", "cached", "parse_failure"}:
+        _validate_local_model_event(event, **kwargs)
+    else:
+        with pytest.raises(ValueError, match="raw response"):
+            _validate_local_model_event(event, **kwargs)

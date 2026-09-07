@@ -66,6 +66,7 @@ from anamnesis.local_wire import (
     build_local_memory_compiler_prompt,
 )
 from anamnesis.memory import CompilerCall
+from anamnesis.preflight import _validate_chat_completion_output
 from anamnesis.schema import ObservableEvent, Usage
 
 LOCAL_PREFLIGHT_SAMPLE_ID = "local-model-preflight-v0"
@@ -189,6 +190,7 @@ def _validate_local_model_event(
         expected_service_model,
     }:
         raise ValueError("raw local response model differs from the pin")
+    _validate_chat_completion_output(response, event.output)
 
 
 def validate_local_preflight_log(

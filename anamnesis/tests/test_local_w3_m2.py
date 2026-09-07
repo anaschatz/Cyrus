@@ -70,6 +70,8 @@ from anamnesis.local_runtime import (
 from anamnesis.runner import DecisionCall, DecisionRequest
 from anamnesis.schema import Decision, Usage
 
+from tests.test_local_preflight import _chat_response
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -234,12 +236,13 @@ def _m2_event(
             usage=ModelUsage(
                 input_tokens=100,
                 output_tokens=10,
+                total_tokens=110,
                 total_cost=0.0,
             ),
         ),
         call=ModelCall(
             request=request,
-            response={"model": LOCAL_W3_M2_OLLAMA_SERVICE_MODEL},
+            response=_chat_response(LOCAL_W3_M2_OLLAMA_SERVICE_MODEL, completion),
         ),
         cache=None,
         error=None,
