@@ -66,21 +66,29 @@ async def run(url: str, voice_auth_key: Path) -> dict[str, object]:
             )
             await websocket.send(transcript.to_json())
             response_id = None
-            while True:
-                event = Envelope.from_json(
-                    await asyncio.wait_for(websocket.recv(), timeout=180)
-                )
-                event_counts[event.type] = event_counts.get(event.type, 0) + 1
-                if event.type == "server.error":
-                    raise RuntimeError(
-                        f"shadow probe server error: {event.payload['code']}"
-                    )
-                if event.response_id is not None:
-                    response_id = event.response_id
-                if event.type == "response.speech.done":
-                    break
-            if response_id is None:
-                raise RuntimeError("shadow probe response identity is missing")
+            accepted = False
+            async with asyncio.timeout(180):
+                while True:
+                    event = Envelope.from_json(await websocket.recv())
+                    event_counts[event.type] = event_counts.get(event.type, 0) + 1
+                    if event.type == "server.error":
+                        raise RuntimeError("shadow probe server error")
+                    if event.type == "server.ack":
+                        if event.payload["acked_event_id"] == transcript.event_id:
+                            accepted = event.payload["status"] == "accepted"
+                        continue
+                    if event.turn_id != transcript.turn_id:
+                        continue
+                    if event.type == "response.started" and response_id is None:
+                        response_id = event.response_id
+                    if response_id is None or event.response_id != response_id:
+                        continue
+                    if event.type == "response.cancelled":
+                        raise RuntimeError("shadow probe response was cancelled")
+                    if event.type == "response.speech.done":
+                        break
+            if not accepted:
+                raise RuntimeError("shadow probe turn was not accepted")
             await websocket.send(
                 factory.create(
                     "playback.completed",
