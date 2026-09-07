@@ -16,6 +16,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from jarvis_voice.errors import BackendError  # noqa: E402
+from jarvis_voice.manifest import BASE_MODEL_MANIFEST, validate_model_directory  # noqa: E402
 from jarvis_voice.macos.greektts15_pilot import PRONUNCIATION_REFERENCES  # noqa: E402
 from jarvis_voice.macos.greektts15_training import score_pronunciation_transcripts  # noqa: E402
 
@@ -43,16 +44,16 @@ def main() -> int:
     dataset = Path(args.dataset_root).expanduser()
     baseline = Path(args.baseline).expanduser()
     blend = Path(args.blend).expanduser()
-    required_model_files = {"config.json", "model.bin", "tokenizer.json", "vocabulary.txt"}
     if (
         not model_dir.is_absolute()
-        or not model_dir.is_dir()
-        or any(not (model_dir / name).is_file() for name in required_model_files)
         or not dataset.is_absolute()
         or not baseline.is_absolute()
         or not blend.is_absolute()
     ):
         raise SystemExit("invalid offline pronunciation inputs")
+    validation = validate_model_directory(model_dir, BASE_MODEL_MANIFEST)
+    if not validation.ok:
+        raise SystemExit(validation.code)
     os.environ.update(
         {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1"}
     )
@@ -98,7 +99,7 @@ def main() -> int:
         report = {"ready": False, "code": exc.code}
     report["asr"] = {
         "backend": "faster-whisper",
-        "model": "Systran/faster-whisper-base",
+        "model": BASE_MODEL_MANIFEST.model_id,
         "device": "cpu",
         "compute_type": "int8",
         "language": "el",

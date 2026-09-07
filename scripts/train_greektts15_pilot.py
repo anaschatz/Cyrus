@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train one deterministic 25-step GreekTTS-1.5 pilot branch."""
+"""Train one deterministic GreekTTS-1.5 pilot branch."""
 
 from __future__ import annotations
 
@@ -15,7 +15,15 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from jarvis_voice.errors import BackendError  # noqa: E402
-from jarvis_voice.macos.greektts15_training import run_training_pilot  # noqa: E402
+from jarvis_voice.macos.greektts15_training import (  # noqa: E402
+    EOS_LOSS_WEIGHTS,
+    EXACT_CORE_STEPS,
+    PILOT_LEARNING_RATES,
+    PILOT_STEPS,
+    TRAINING_SAMPLE_PROFILES,
+    TRAINING_TARGET_PROFILES,
+    run_training_pilot,
+)
 
 
 def main() -> int:
@@ -25,35 +33,11 @@ def main() -> int:
     parser.add_argument("--cache-root", required=True)
     parser.add_argument("--gradient-report", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--learning-rate", required=True, type=float, choices=(2.5e-7, 5e-7, 1e-6, 5e-6, 1e-5))
-    parser.add_argument("--steps", type=int, choices=(25, 100), default=25)
-    parser.add_argument(
-        "--target-profile",
-        choices=("all", "freeze-output-layers", "attention-only", "mlp-only"),
-        default="all",
-    )
-    parser.add_argument("--eos-loss-weight", type=int, choices=(1, 16), default=1)
-    parser.add_argument(
-        "--sample-profile",
-        choices=(
-            "uniform",
-            "jarvis-pronunciation",
-            "jarvis-lexical",
-            "jarvis-exact-core",
-            "jarvis-general-stage",
-            "jarvis-utterance-focus",
-            "jarvis-operation-morphology",
-            "jarvis-operation-morphology-mlp",
-            "jarvis-singular-operation-focus-mlp",
-            "jarvis-singular-operation-crop-attention",
-            "jarvis-singular-operation-utterance-attention",
-            "jarvis-word-focus",
-            "jarvis-operation-focus",
-            "jarvis-state-focus",
-            "jarvis-importance-focus",
-        ),
-        default="uniform",
-    )
+    parser.add_argument("--learning-rate", required=True, type=float, choices=sorted(PILOT_LEARNING_RATES))
+    parser.add_argument("--steps", type=int, choices=(PILOT_STEPS, EXACT_CORE_STEPS), default=PILOT_STEPS)
+    parser.add_argument("--target-profile", choices=sorted(TRAINING_TARGET_PROFILES), default="all")
+    parser.add_argument("--eos-loss-weight", type=int, choices=sorted(EOS_LOSS_WEIGHTS), default=1)
+    parser.add_argument("--sample-profile", choices=sorted(TRAINING_SAMPLE_PROFILES), default="uniform")
     parser.add_argument("--source-adapter-directory")
     parser.add_argument("--general-stage-index", type=int, default=0)
     parser.add_argument("--report", required=True)

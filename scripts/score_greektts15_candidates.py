@@ -16,6 +16,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from jarvis_voice.errors import BackendError  # noqa: E402
+from jarvis_voice.manifest import BASE_MODEL_MANIFEST, validate_model_directory  # noqa: E402
 from jarvis_voice.macos.greektts15_pilot import QUALITY_FIXTURES  # noqa: E402
 from jarvis_voice.macos.greektts15_training import (  # noqa: E402
     ASR_CANDIDATE_LABELS,
@@ -32,8 +33,7 @@ def main() -> int:
     parser.add_argument("--report", required=True)
     args = parser.parse_args()
     model_dir = Path(args.model_dir).expanduser()
-    required = {"config.json", "model.bin", "tokenizer.json", "vocabulary.txt"}
-    if not model_dir.is_absolute() or not model_dir.is_dir() or any(not (model_dir / name).is_file() for name in required):
+    if not model_dir.is_absolute():
         raise SystemExit("invalid local Whisper model directory")
     candidate_dirs = {
         "baseline": Path(args.baseline).expanduser(),
@@ -42,6 +42,9 @@ def main() -> int:
     }
     if set(candidate_dirs) != ASR_CANDIDATE_LABELS or any(not path.is_absolute() or not path.is_dir() for path in candidate_dirs.values()):
         raise SystemExit("invalid candidate directories")
+    validation = validate_model_directory(model_dir, BASE_MODEL_MANIFEST)
+    if not validation.ok:
+        raise SystemExit(validation.code)
     os.environ.update({"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1"})
     from faster_whisper import WhisperModel
 
@@ -79,7 +82,7 @@ def main() -> int:
         report = {"ready": False, "code": exc.code}
     report["asr"] = {
         "backend": "faster-whisper",
-        "model": "Systran/faster-whisper-base",
+        "model": BASE_MODEL_MANIFEST.model_id,
         "device": "cpu",
         "compute_type": "int8",
         "language": "el",
