@@ -38,13 +38,13 @@ def _sha256(path: Path) -> str:
 
 
 def _verify_reporting_checkout(measurement_commit: str) -> str:
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
+    prefix, head = subprocess.run(
+        ["git", "rev-parse", "--show-prefix", "HEAD"],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    ).stdout.splitlines()
     status = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all"],
         cwd=REPO_ROOT,
@@ -63,7 +63,7 @@ def _verify_reporting_checkout(measurement_commit: str) -> str:
         raise ValueError("measurement commit is not an ancestor of reporter HEAD")
     changed = set(
         subprocess.run(
-            ["git", "diff", "--name-only", f"{measurement_commit}..{head}"],
+            ["git", "diff", "--no-relative", "--name-only", f"{measurement_commit}..{head}"],
             cwd=REPO_ROOT,
             check=True,
             capture_output=True,
@@ -77,7 +77,7 @@ def _verify_reporting_checkout(measurement_commit: str) -> str:
         "src/anamnesis/openmemory_vllm_report.py",
         "tests/test_openmemory_vllm_run.py",
     }
-    if not changed <= allowed:
+    if not changed <= {prefix + path for path in allowed}:
         raise ValueError("measurement inputs changed after the frozen v4 run")
     return head
 

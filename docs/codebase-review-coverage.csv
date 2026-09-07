@@ -167,7 +167,7 @@ anamnesis/src/anamnesis/openmemory_diagnostic.py,559,code,reviewed,8ec056035de56
 anamnesis/src/anamnesis/openmemory_recall.py,788,code,pending,,
 anamnesis/src/anamnesis/openmemory_strategy.py,189,code,pending,,
 anamnesis/src/anamnesis/openmemory_vllm.py,720,code,pending,,
-anamnesis/src/anamnesis/openmemory_vllm_report.py,319,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_report.py,319,code,reviewed,5b9b6a83f0339d2873eaeea42b7182c3a37a0c78f93efedfc81b301bd88cfbc0,"Complete319-line source read: Git ancestry/allowed-change gate, frozen request reconstruction, metric recomputation, raw-audit comparisons, containment/provenance publication. A09 existing Git query supplies prefix+HEAD; --no-relative includes whole tree regardless of config.2 baseline failures among12 real temporary-Git cases;focused38 pass.0 net production lines. Follow-ups: raw decision/canary/aggregate-usage binding, same-byte provenance and multi-output publication/permissions. No measured/native/provider execution."
 anamnesis/src/anamnesis/openmemory_vllm_run.py,356,code,reviewed,0e748bba94abbe9ed3d12d614f772b021b6b8315be028218abcf8ecd6d355c0e,"Full356-line v4 runner read; pin/dataset/preflight gates, source cleanliness, configured client/probe, one canary then16 paired calls, usage/report model and output path. Existing fake tests pass in focused47/full Anam666(664/2xfail). Follow-ups: pre-try client ownership, input reread consistency, API key argv, output overwrite/collision/permissions; strict reporter still pending full review. No external execution."
 anamnesis/src/anamnesis/openmemory_vllm_v5.py,341,code,pending,,
 anamnesis/src/anamnesis/openmemory_vllm_v5_report.py,209,code,pending,,
@@ -218,7 +218,7 @@ anamnesis/tests/test_openmemory_failure_artifact.py,103,tests,pending,,
 anamnesis/tests/test_openmemory_recall.py,823,tests,pending,,
 anamnesis/tests/test_openmemory_strategy.py,275,tests,pending,,
 anamnesis/tests/test_openmemory_vllm.py,452,tests,pending,,
-anamnesis/tests/test_openmemory_vllm_run.py,218,tests,reviewed,efeb35a59ba9f4ce62f55c91ab725bc598919cebe79a4cbcdc0206c7572005a9,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. No changes to this test module."
+anamnesis/tests/test_openmemory_vllm_run.py,260,tests,reviewed,bcbb88e52b784fe9a470d1e6a9173808da4175e3ff3f6311aa9207c317034a8c,"Complete test module read: frozen diagnostic/task/transport/prompt boundaries, paired fake execution or v4 canary/usage/output/report contracts as applicable. All47 selected tests pass; full Anam666(664 passed/2 expected failures). No provider/model/live service calls; source/model verification mocked where needed. No changes to this test module. A09 one new parameterized regression uses actual temporary Git repositories, root/nested project, diff.relative False/True, report/input/outside commits and dirty-worktree rejection.12 cases,2 baseline failures;focused38 pass. Synthetic text/test identity, signing explicitly disabled, no user repo history/configuration changes."
 anamnesis/tests/test_openmemory_vllm_v5.py,192,tests,pending,,
 anamnesis/tests/test_openmemory_vllm_v6.py,89,tests,pending,,
 anamnesis/tests/test_openmemory_vllm_v7.py,70,tests,pending,,

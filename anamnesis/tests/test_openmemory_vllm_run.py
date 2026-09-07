@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -216,3 +217,44 @@ def test_report_labels_joint_cell_and_setup_exclusion(monkeypatch) -> None:
     assert "not a causal comparison with Ollama" in markdown
     assert "Setup tokens (input/output, excluded)" in markdown
     assert "No retry, repair, alternate artifact" in markdown
+
+
+@pytest.mark.parametrize("prefix", ["", "anamnesis"])
+@pytest.mark.parametrize("relative", [False, True])
+@pytest.mark.parametrize("change", ["report", "input", "outside"])
+def test_reporting_checkout_checks_full_repository_paths(tmp_path, monkeypatch, prefix, relative, change):
+    repository = tmp_path / "repository"
+    project = repository / prefix
+    project.mkdir(parents=True)
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-c", "user.name=Review Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", *args],
+            cwd=repository, check=True, capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("config", "diff.relative", str(relative).lower())
+    files = {
+        "report": project / "README.md",
+        "input": project / "src" / "experiment.py",
+        "outside": repository / "shared.txt",
+    }
+    for path in files.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("baseline\n")
+    git("add", "--", *(str(path.relative_to(repository)) for path in files.values()))
+    git("commit", "-qm", "baseline fixture")
+    measurement = git("rev-parse", "HEAD")
+    files[change].write_text("changed\n")
+    git("add", "--", str(files[change].relative_to(repository)))
+    git("commit", "-qm", "changed fixture")
+    monkeypatch.setattr(report_module, "REPO_ROOT", project)
+    if change == "report":
+        assert report_module._verify_reporting_checkout(measurement) == git("rev-parse", "HEAD")
+        files[change].write_text("uncommitted\n")
+        with pytest.raises(ValueError, match="clean worktree"):
+            report_module._verify_reporting_checkout(measurement)
+    else:
+        with pytest.raises(ValueError, match="measurement inputs changed"):
+            report_module._verify_reporting_checkout(measurement)
