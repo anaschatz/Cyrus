@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **277 of 401 code files**, plus **225 of 335 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **280 of 401 code files**, plus **228 of 336 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **784 tests (769 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **787 tests (772 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1852,3 +1852,18 @@ Transfer binding checkpoint committed as **2cc0986**, with a clean mandatory Pon
 Three new regression methods produce **four failures and two errors before the fixes**, `/tmp/cyrus-piper-failure-boundaries-before.log`. All **22 focused tests pass**, `/tmp/cyrus-piper-failure-boundaries-after.log`. Full Voice: **784 tests in 8.105 seconds, 769 passed and 15 skipped**, `/tmp/cyrus-full-review-piper-failure-boundaries-voice.log`. Fatal Ruff and unchanged module boundaries pass. Readiness tests inject host/resource/inventory values; handoff tests use disposable files and their own descriptors. No actual nvidia-smi, GPU, model, training, network or private artifact operation occurred.
 
 Ponytail: use the existing file context and JSON exception boundary; replace the inventory list with one dictionary for uniqueness, with **eight net production lines** and no dependency or new helper. Completed readiness source/test inspection and updated handoff hashes bring coverage to **277/401 code, 225/335 tests and 41/308 support**, with **543 reviewed hashes verified across 1044 entries**. The latest full Orchestrator result remains **1106 tests (1101 passed, five skipped)** from its earlier checkpoint. Remaining codebase review, broader U05 privacy, compiler qualification binding and the final quality assessment are still incomplete.
+
+
+### Compact F1 extraction validity and cleanup
+
+Piper failure-boundary checkpoint committed as **9a52e85**, with a clean mandatory Ponytail review.
+
+**V316 resolved:** WAV validation inspected only its header. A payload missing part of its declared sample data still passed and was published into the training bundle. The existing wave reader now checks the actual decoded frame-byte count against the declared frames/channels/sample width before accepting the original bytes.
+
+**V317 resolved:** creating the audio directory occurred before the cleanup scope, and KeyboardInterrupt escaped the Exception handler. Both could leave the owned temporary extraction tree behind. Directory creation now runs inside the existing try block, and cleanup also covers interruption before re-raising it.
+
+**V318 resolved:** row validation checked valid filenames and aggregate section counts independently. Swapping section labels between two filenames preserved the counts and still passed. The existing row check now requires each section to match the validated filename. Dataset pins, row counts and audio format requirements remain unchanged.
+
+Three regression methods produce **four failures before the fixes**, `/tmp/cyrus-extraction-boundaries-before.log`. All **16 focused tests pass**, `/tmp/cyrus-extraction-boundaries-after.log`. Full Voice: **787 tests in 8.289 seconds, 772 passed and 15 skipped**, `/tmp/cyrus-full-review-extraction-boundaries-voice.log`. Fatal Ruff and unchanged module boundaries pass. Tests execute the real extractor and WAV reader on synthetic PCM bytes, fake Parquet rows and disposable files. No live dataset/model download, native audio, PyArrow installation or training was performed.
+
+Ponytail: reuse existing WAV and cleanup boundaries, **five net production lines**, no new helper or dependency. Completed source inspection of both implementation modules, acquisition CLI and three test modules brings coverage to **280/401 code, 228/336 tests and 41/308 support**, with **549 reviewed hashes verified across 1045 entries**. Downloader ownership and resume behavior remain follow-up work. Remaining whole-codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment are still incomplete.

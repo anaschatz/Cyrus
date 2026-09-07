@@ -274,6 +274,10 @@ def _validated_wav_bytes(value: object) -> bytes:
                 and stream.getnframes() > 0
                 and stream.getcomptype() == "NONE"
             )
+            if valid and len(stream.readframes(stream.getnframes())) != (
+                stream.getnframes() * stream.getnchannels() * stream.getsampwidth()
+            ):
+                raise _error("tts.f1_compact.audio_wav_invalid", "Embedded WAV is truncated")
     except (EOFError, wave.Error) as exc:
         raise _error("tts.f1_compact.audio_wav_invalid", "Embedded WAV is invalid") from exc
     if not valid:
@@ -312,13 +316,13 @@ def extract_stoma_f1(
     parquet = _load_parquet_module() if parquet_module is None else parquet_module
     temporary = Path(tempfile.mkdtemp(prefix=".jarvis-f1-extract-", dir=parent))
     audio_directory = temporary / "audio"
-    audio_directory.mkdir(mode=0o700)
     rows_for_validation: list[dict[str, object]] = []
     metadata_lines: list[str] = []
     audio_hashes: dict[str, str] = {}
     total_rows = 0
     rejected_f2 = 0
     try:
+        audio_directory.mkdir(mode=0o700)
         for shard in STOMA_SHARDS:
             parquet_file = parquet.ParquetFile(stoma_root / shard.relative_path)
             batches: Iterable[object] = parquet_file.iter_batches(
@@ -382,7 +386,7 @@ def extract_stoma_f1(
             encoding="utf-8",
         )
         os.replace(temporary, destination)
-    except Exception:
+    except BaseException:
         if temporary.exists():
             shutil.rmtree(temporary)
         raise

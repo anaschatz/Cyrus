@@ -200,6 +200,7 @@ def validate_f1_rows(rows: Iterable[Mapping[str, object]]) -> DatasetValidation:
             or not isinstance(filename, str)
             or _F1_FILENAME.fullmatch(filename) is None
             or not isinstance(section, str)
+            or section != filename.split("-")[2]
             or not isinstance(text, str)
             or not text.strip()
             or filename in seen
