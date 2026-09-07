@@ -90,3 +90,9 @@ zero measured 51.3%, and the language-agnostic `na` mode measured 42.1%.
 Supertonic 3 is therefore rejected as the JARVIS Greek production voice. The
 active backend remains unchanged; the harness stays as reproducible evidence
 and as a future regression target for later model revisions.
+
+The current ASR scoring command validates the local Whisper files against the
+repository’s pinned `faster-whisper-base` manifest before loading the model.
+New reports include its model ID and revision; decoding uses CPU `int8` with
+Greek fixed. These checks apply to new runs; the historical measurements above
+have not been repeated by the code review.

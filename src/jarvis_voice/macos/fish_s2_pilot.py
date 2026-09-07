@@ -25,6 +25,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Callable, NamedTuple, Sequence
 
+from .. import manifest
 from ..errors import BackendError
 
 
@@ -97,11 +98,8 @@ class Validation:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _safe_directory(value: str | Path, *, code: str) -> Path:
@@ -495,6 +493,9 @@ def score_outputs(
     output = _safe_directory(output_directory, code="tts.fish_s2.output_invalid")
     whisper = _safe_directory(whisper_model_directory, code="tts.fish_s2.whisper_model_invalid")
     selected = _selected_fixtures(fixture_ids)
+    validation = manifest.validate_model_directory(str(whisper), manifest.BASE_MODEL_MANIFEST)
+    if not validation.ok:
+        raise BackendError(validation.code, "Pinned Whisper model validation failed", subsystem="tts")
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
@@ -521,6 +522,8 @@ def score_outputs(
     report = score_transcripts(transcripts, fixture_ids=[item[0] for item in selected])
     report["asr"] = {
         "backend": "faster_whisper",
+        "model_id": manifest.BASE_MODEL_MANIFEST.model_id,
+        "model_revision": manifest.BASE_MODEL_MANIFEST.revision,
         "model_path_explicit": True,
         "compute_type": "int8",
         "network_used": False,

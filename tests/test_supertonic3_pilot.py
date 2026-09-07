@@ -9,8 +9,11 @@ from types import SimpleNamespace
 from unittest import mock
 
 import _bootstrap  # noqa: F401
+import test_asr
 
+from jarvis_voice import manifest
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos import chatterbox_pilot, fish_s2_pilot
 from jarvis_voice.macos import supertonic3_pilot as supertonic
 from jarvis_voice.macos.supertonic3_pilot import (
     DEFAULT_SPEED,
@@ -30,6 +33,43 @@ from jarvis_voice.macos.supertonic3_pilot import (
 
 
 class Supertonic3PilotTests(unittest.TestCase):
+    def test_all_pilot_scorers_require_the_pinned_whisper_manifest(self) -> None:
+        fixture = test_asr.AsrTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        scorers = (
+            (chatterbox_pilot.score_chatterbox_f1_outputs, chatterbox_pilot.F1_QUALIFICATION_FIXTURES),
+            (fish_s2_pilot.score_outputs, fish_s2_pilot.QUALIFICATION_FIXTURES),
+            (supertonic.score_supertonic3_outputs, QUALITY_FIXTURES),
+        )
+        for score, phrases in scorers:
+            for state in ("unpinned", "matching", "tampered"):
+                with self.subTest(scorer=score.__name__, state=state), tempfile.TemporaryDirectory() as temp:
+                    output = Path(temp)
+                    for index, (name, _) in enumerate(phrases, start=1):
+                        (output / f"{index:02d}-{name}.wav").write_bytes(b"synthetic audio" * 4)
+                    (fixture.directory / "model.bin").write_bytes(b"other" if state == "tampered" else b"model")
+                    pin = manifest.BASE_MODEL_MANIFEST if state == "unpinned" else fixture.manifest
+                    backend = mock.Mock()
+                    backend.transcribe.side_effect = [([SimpleNamespace(text=text)], None) for _, text in phrases]
+                    factory = mock.Mock(return_value=backend)
+                    with (mock.patch.object(manifest, "BASE_MODEL_MANIFEST", pin),
+                          mock.patch.dict("sys.modules", {"faster_whisper": SimpleNamespace(WhisperModel=factory)})):
+                        if state == "matching":
+                            report = score(output, fixture.directory)
+                            self.assertEqual(report["micro_wer_percent"], 0.0)
+                            self.assertEqual(report["asr"]["model_id"], pin.model_id)
+                            self.assertEqual(report["asr"]["model_revision"], pin.revision)
+                            self.assertFalse(report["production_promotion_allowed"])
+                            factory.assert_called_once_with(str(fixture.directory), device="cpu", compute_type="int8", local_files_only=True)
+                            self.assertEqual(backend.transcribe.call_count, len(phrases))
+                            for call in backend.transcribe.call_args_list:
+                                self.assertEqual(call.kwargs, dict(language="el", task="transcribe", beam_size=5, vad_filter=False, condition_on_previous_text=False))
+                        else:
+                            with self.assertRaisesRegex(BackendError, "model.missing_artifact" if state == "unpinned" else "model.hash_mismatch"):
+                                score(output, fixture.directory)
+                            factory.assert_not_called()
+
     def test_invalid_settings_are_rejected_before_runtime_or_output_creation(self) -> None:
         settings = (
             {"speed": float("nan")}, {"speed": True}, {"speed": "1"},

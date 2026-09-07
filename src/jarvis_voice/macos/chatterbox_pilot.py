@@ -29,6 +29,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Callable, NamedTuple
 
+from .. import manifest
 from ..errors import BackendError
 
 
@@ -130,11 +131,8 @@ class ModelValidation:
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _module_available(name: str) -> bool:
@@ -752,6 +750,9 @@ def score_chatterbox_f1_outputs(
             "Local Whisper model directory is invalid",
             subsystem="tts",
         )
+    validation = manifest.validate_model_directory(str(model_directory), manifest.BASE_MODEL_MANIFEST)
+    if not validation.ok:
+        raise BackendError(validation.code, "Pinned Whisper model validation failed", subsystem="tts")
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
@@ -784,7 +785,11 @@ def score_chatterbox_f1_outputs(
         )
         transcripts[fixture_id] = " ".join(segment.text.strip() for segment in segments).strip()
     report = score_f1_transcripts(transcripts)
-    report["asr"] = {"backend": "faster_whisper", "model_path_explicit": True, "compute_type": "int8"}
+    report["asr"] = {
+        "backend": "faster_whisper", "model_path_explicit": True, "compute_type": "int8",
+        "model_id": manifest.BASE_MODEL_MANIFEST.model_id,
+        "model_revision": manifest.BASE_MODEL_MANIFEST.revision,
+    }
     return report
 
 

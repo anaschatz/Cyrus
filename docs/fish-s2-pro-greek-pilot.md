@@ -90,3 +90,9 @@ The rejected MOSS qualification directory was also removed. The `uv`, Xcode
 DerivedData, pip and Homebrew download caches were cleared; these are
 reproducible caches and do not contain project source. APFS reclaim later raised
 free space from 2.7 GB to about 30 GiB.
+
+The current ASR scoring command validates the local Whisper files against the
+repository’s pinned `faster-whisper-base` manifest before loading the model.
+New reports include its model ID and revision; decoding uses CPU `int8` with
+Greek fixed. These checks apply to new runs; the historical measurements above
+have not been repeated by the code review.

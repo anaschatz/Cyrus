@@ -19,6 +19,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Callable, NamedTuple
 
+from .. import manifest
 from ..errors import BackendError
 
 
@@ -564,6 +565,9 @@ def score_supertonic3_outputs(
             "Local Whisper model directory is invalid",
             subsystem="tts",
         )
+    validation = manifest.validate_model_directory(str(model_directory), manifest.BASE_MODEL_MANIFEST)
+    if not validation.ok:
+        raise BackendError(validation.code, "Pinned Whisper model validation failed", subsystem="tts")
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
@@ -598,6 +602,8 @@ def score_supertonic3_outputs(
     report = score_supertonic3_transcripts(transcripts)
     report["asr"] = {
         "backend": "faster_whisper",
+        "model_id": manifest.BASE_MODEL_MANIFEST.model_id,
+        "model_revision": manifest.BASE_MODEL_MANIFEST.revision,
         "model_path_explicit": True,
         "compute_type": "int8",
     }

@@ -197,3 +197,9 @@ headroom before streaming, interruption or LLM coexistence can be considered.
 The active JARVIS TTS backend was not changed. After qualification, the
 temporary model and isolated environment were removed; WAV and evidence files
 were retained, and free disk returned to about 14 GiB.
+
+The current ASR scoring command validates the local Whisper files against the
+repository’s pinned `faster-whisper-base` manifest before loading the model.
+New reports include its model ID and revision; decoding uses CPU `int8` with
+Greek fixed. These checks apply to new runs; the historical measurements above
+have not been repeated by the code review.
