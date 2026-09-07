@@ -8,9 +8,8 @@ import json
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Mapping
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from dataclasses import replace
 from typing import Any
 
 from .domain import ModelChunk, ModelRequest, ModelUsage, OrchestratorError, canonical_json
@@ -27,6 +26,15 @@ class DispatchPermit:
 _dispatch_reservation: contextvars.ContextVar[DispatchPermit | None] = contextvars.ContextVar(
     "jarvis_model_dispatch_reservation", default=None
 )
+
+
+@contextmanager
+def _dispatch_scope(permit: DispatchPermit):
+    token = _dispatch_reservation.set(permit)
+    try:
+        yield
+    finally:
+        _dispatch_reservation.reset(token)
 
 
 def active_dispatch_reservation() -> str | None:
@@ -95,47 +103,48 @@ class BudgetedModelPort:
             purpose=request.purpose,
             output_allowance=request.output_allowance,
         )
-        self._store.mark_model_dispatched(reservation_id, request.task_id, request.epoch)
-        guarded_request = replace(request, output_allowance=request.output_allowance)
-        token = _dispatch_reservation.set(DispatchPermit(reservation_id))
+        permit = DispatchPermit(reservation_id)
         usage: ModelUsage | None = None
+        completed = False
         try:
-            async for chunk in self.__delegate.stream(guarded_request):
-                if chunk.usage is not None:
-                    usage = chunk.usage
-                yield chunk
-        except asyncio.CancelledError:
-            # A concurrent cancellation may already have atomically cancelled
-            # this reservation. Preserve the original exception in that race.
-            with suppress(Exception):
-                self._store.reconcile_model(reservation_id, request.task_id, request.epoch, None)
-            raise
-        except OrchestratorError:
-            with suppress(Exception):
-                self._store.reconcile_model(
-                    reservation_id, request.task_id, request.epoch, None
-                )
+            self._store.mark_model_dispatched(reservation_id, request.task_id, request.epoch)
+            with _dispatch_scope(permit):
+                stream = aiter(self.__delegate.stream(request))
+            try:
+                while True:
+                    with _dispatch_scope(permit):
+                        try:
+                            chunk = await anext(stream)
+                        except StopAsyncIteration:
+                            break
+                    if chunk.usage is not None:
+                        usage = chunk.usage
+                    yield chunk
+            finally:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    with _dispatch_scope(permit):
+                        await close()
+            completed = True
+        except (asyncio.CancelledError, GeneratorExit, OrchestratorError):
             raise
         except Exception as exc:
-            # Provider SDKs expose implementation-specific connection, timeout,
-            # streaming and parse exceptions. They must not leak into lifecycle
-            # semantics or turn the same backend outage into internal_failure.
-            with suppress(Exception):
-                self._store.reconcile_model(
-                    reservation_id, request.task_id, request.epoch, None
-                )
+            # SDK-specific failures share one stable lifecycle contract.
             raise OrchestratorError(
                 "backend_failure", status=503, retryable=True
             ) from exc
-        else:
-            self._store.reconcile_model(
-                reservation_id,
-                request.task_id,
-                request.epoch,
-                usage.output_tokens if usage is not None else None,
-            )
         finally:
-            _dispatch_reservation.reset(token)
+            if completed:
+                self._store.reconcile_model(
+                    reservation_id, request.task_id, request.epoch,
+                    usage.output_tokens if usage is not None else None,
+                )
+            else:
+                # Preserve cancellation/epoch failures while charging unknown usage.
+                with suppress(Exception):
+                    self._store.reconcile_model(
+                        reservation_id, request.task_id, request.epoch, None
+                    )
 
 
 class LocalInferenceModelPort:

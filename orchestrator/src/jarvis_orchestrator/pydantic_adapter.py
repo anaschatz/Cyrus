@@ -11,7 +11,7 @@ import contextvars
 import asyncio
 import json
 from collections.abc import Mapping
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from dataclasses import replace
@@ -66,9 +66,9 @@ class BudgetedPydanticModel:
         reservation_id = self._jarvis_store.reserve_model(
             context.task_id, context.epoch, purpose=context.purpose, output_allowance=allowance
         )
-        self._jarvis_store.mark_model_dispatched(reservation_id, context.task_id, context.epoch)
         token = _dispatch_reservation.set(DispatchPermit(reservation_id))
         try:
+            self._jarvis_store.mark_model_dispatched(reservation_id, context.task_id, context.epoch)
             if model_settings is None:
                 model_settings = {}
             model_settings = dict(model_settings)
@@ -76,11 +76,7 @@ class BudgetedPydanticModel:
             if context.timeout_seconds is not None:
                 model_settings["timeout"] = context.timeout_seconds
             yield model_settings, context, reservation_id
-        except asyncio.CancelledError:
-            with suppress(Exception):
-                self._jarvis_store.reconcile_model(reservation_id, context.task_id, context.epoch, None)
-            raise
-        except OrchestratorError:
+        except (asyncio.CancelledError, GeneratorExit, OrchestratorError):
             with suppress(Exception):
                 self._jarvis_store.reconcile_model(
                     reservation_id, context.task_id, context.epoch, None
@@ -244,8 +240,9 @@ class PydanticAgentModelPort:
         from pydantic_ai.usage import UsageLimits
 
         if self._final_stream_port is not None and request.purpose == "final":
-            async for chunk in self._final_stream_port.stream(request):
-                yield chunk
+            async with aclosing(self._final_stream_port.stream(request)) as stream:
+                async for chunk in stream:
+                    yield chunk
             return
 
         agent = self._agent
