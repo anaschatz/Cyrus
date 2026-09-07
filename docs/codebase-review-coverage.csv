@@ -1,0 +1,1006 @@
+path,lines,scope,status,reviewed_sha256,evidence
+.dockerignore,10,support,reviewed,a2912a041da9f0ae4a48eaa90e7e471f59ec0d1748873507a2c1cfa3548be9c2,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+.gitattributes,20,support,reviewed,391b83454c5515bca919f9627b323ea7bf7a2a1bfa9a2bc50aea46eb04b07afd,"Complete 20-line attribute declaration inspected: LF source defaults, CRLF batch/command files and binary model/media/archive extensions. No change."
+.githooks/pre-commit,18,code,reviewed,ba866a8ff91da5e5011ff9121ffe5e40bfe3b28165cb41cca33355160792d2aa,"Complete POSIX hook inspection. H01: materialize the exact staged diff before invoking review; distinguish normal --exit-code=1 from Git failure and propagate reviewer failure. Real temporary Git fixture tests pass; no project commit/stage/push. Checkpoint commits 931f6a6 and cc30375 completed with exact staged Ponytail review and active hooks; review-requested four-line simplification applied, five regression tests passed again."
+.githooks/pre-push,39,code,reviewed,b9a48342369cc10a1135e25ab76e5bf34996830a952634ba611f9f747968be2a,"Complete POSIX hook inspection. H02: initial multi-commit publication compares against the empty tree; preserve published baseline for new branches, skip already-known history, propagate rev-list/diff failures. Tests cover initial/existing/new/deletion paths without network or real reviewer. Checkpoint commits 931f6a6 and cc30375 completed with exact staged Ponytail review and active hooks; review-requested four-line simplification applied, five regression tests passed again."
+.githooks/run-ponytail-review,19,code,reviewed,ed27bbced3b43a1eb9259447ba170b32d6421ece37cbebad412d81fd2933b69d,Complete 19-line runner inspection; current installed codex exec --help confirms configured flags. Runner requests ephemeral read-only review and propagates CLI exit status. Existing hook-trust flag retained. No model/reviewer invocation performed; human obligation to address findings remains in AGENTS.md.
+.github/workflows/backend-ci.yml,424,support,pending,,
+.gitignore,24,support,pending,,
+AGENTS.md,6,support,reviewed,d7c603f4a72025a9e03ad18e924732ca4cd15890cb07946a132a8a7a499e58ba,Repository commit/push Ponytail review and hook requirements read and followed; no commit or push attempted in this pass.
+README.md,221,support,pending,,
+anamnesis/.gitignore,20,support,pending,,
+anamnesis/ARCHITECTURE.md,181,support,pending,,
+anamnesis/README.md,422,support,pending,,
+anamnesis/RESEARCH.md,93,support,pending,,
+anamnesis/VLLM_OPENMEMORY_ARCHITECTURE.md,424,support,pending,,
+anamnesis/conftest.py,12,code,reviewed,ba8ed62e8ce35162737f2238e73bdd9c390511887d57708f4abbd7aff8b05d56,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/eval/LOCAL_EXECUTION.md,369,support,pending,,
+anamnesis/eval/LOCAL_WRITER_EXECUTION.md,171,support,pending,,
+anamnesis/eval/LOCAL_WRITER_W2_EXECUTION.md,162,support,pending,,
+anamnesis/eval/LOCAL_WRITER_W2_PREFLIGHT.md,67,support,pending,,
+anamnesis/eval/LOCAL_WRITER_W3_EXECUTION.md,100,support,pending,,
+anamnesis/eval/LOCAL_WRITER_W3_M2_EXECUTION.md,41,support,pending,,
+anamnesis/eval/LOCAL_WRITER_W3_M2_T1_EXECUTION.md,46,support,pending,,
+anamnesis/eval/LOCAL_WRITER_W3_PREFLIGHT.md,115,support,pending,,
+anamnesis/eval/MODEL_SELECTION.md,89,support,pending,,
+anamnesis/eval/OPENMEMORY_CANONICALIZER_EXECUTION.md,14,support,pending,,
+anamnesis/eval/OPENMEMORY_DIAGNOSTIC.md,51,support,pending,,
+anamnesis/eval/OPENMEMORY_DIAGNOSTIC_V2.md,21,support,pending,,
+anamnesis/eval/OPENMEMORY_DIAGNOSTIC_V3.md,22,support,pending,,
+anamnesis/eval/OPENMEMORY_DIAGNOSTIC_V4.md,21,support,pending,,
+anamnesis/eval/OPENMEMORY_EXECUTION.md,40,support,pending,,
+anamnesis/eval/OPENMEMORY_EXECUTION_V2.md,24,support,pending,,
+anamnesis/eval/OPENMEMORY_EXECUTION_V3.md,21,support,pending,,
+anamnesis/eval/OPENMEMORY_REAL_MEMORY_EXECUTION.md,18,support,pending,,
+anamnesis/eval/OPENMEMORY_VLLM_V4_EXECUTION.md,85,support,pending,,
+anamnesis/eval/OPENMEMORY_VLLM_V5_EXECUTION.md,60,support,pending,,
+anamnesis/eval/SCENARIO_PLAN.md,104,support,pending,,
+anamnesis/eval/WRITER_DIAGNOSTIC.md,64,support,pending,,
+anamnesis/eval/WRITER_DIAGNOSTIC_V2.md,61,support,pending,,
+anamnesis/eval/WRITER_DIAGNOSTIC_V3.md,79,support,pending,,
+anamnesis/eval/WRITER_DIAGNOSTIC_V4.md,61,support,pending,,
+anamnesis/eval/WRITER_W3_PROTOCOL.md,115,support,pending,,
+anamnesis/eval/__init__.py,1,code,pending,,
+anamnesis/eval/anamnesis_eval.py,361,code,pending,,
+anamnesis/eval/anamnesis_local_eval.py,969,code,pending,,
+anamnesis/eval/anamnesis_openmemory_eval.py,161,code,pending,,
+anamnesis/eval/anamnesis_openmemory_eval_v2.py,170,code,pending,,
+anamnesis/eval/anamnesis_openmemory_eval_v3.py,185,code,pending,,
+anamnesis/eval/experiment_manifest.template.json,65,support,pending,,
+anamnesis/eval/local_experiment_manifest.template.json,107,support,pending,,
+anamnesis/eval/local_model_costs.json,8,support,pending,,
+anamnesis/eval/local_model_costs_w3_m2.json,8,support,pending,,
+anamnesis/eval/local_oracle_manifest.template.json,108,support,pending,,
+anamnesis/eval/local_writer_experiment_manifest.template.json,108,support,pending,,
+anamnesis/eval/local_writer_w2_experiment_manifest.template.json,112,support,pending,,
+anamnesis/eval/local_writer_w3_experiment_manifest.template.json,114,support,pending,,
+anamnesis/eval/model_costs.json,8,support,pending,,
+anamnesis/eval/ollama_qwen3_4b_instruct.pin.json,37,support,pending,,
+anamnesis/eval/ollama_qwen3_5_9b_q4_k_m.pin.json,31,support,pending,,
+anamnesis/eval/openmemory/decision_diagnostic.v1.json,218,support,pending,,
+anamnesis/eval/openmemory/decision_diagnostic.v1.manifest.json,65,support,pending,,
+anamnesis/eval/openmemory/decision_diagnostic.v2.json,219,support,pending,,
+anamnesis/eval/openmemory/decision_diagnostic.v2.manifest.json,61,support,pending,,
+anamnesis/eval/openmemory/decision_diagnostic.v3.json,219,support,pending,,
+anamnesis/eval/openmemory/decision_diagnostic.v3.manifest.json,61,support,pending,,
+anamnesis/eval/openmemory/decision_diagnostic.v4.json,87,support,pending,,
+anamnesis/eval/openmemory/decision_diagnostic.v4.manifest.json,35,support,pending,,
+anamnesis/eval/openmemory/real_memory_canonicalizer.v1.json,67,support,pending,,
+anamnesis/eval/openmemory/real_memory_canonicalizer.v1.pin.json,24,support,pending,,
+anamnesis/eval/openmemory/real_memory_diagnostic.v1.json,87,support,pending,,
+anamnesis/eval/openmemory/real_memory_diagnostic.v1.pin.json,23,support,pending,,
+anamnesis/eval/openmemory/vllm_v4_preflight.json,13,support,pending,,
+anamnesis/eval/openmemory/vllm_v4_runtime.pin.json,49,support,pending,,
+anamnesis/eval/openmemory/vllm_v5_compatibility.json,33,support,pending,,
+anamnesis/eval/openmemory/vllm_v5_compatibility.pin.json,23,support,pending,,
+anamnesis/eval/oracle/README.md,39,support,pending,,
+anamnesis/eval/oracle/smoke_memory_deltas.v1.json,850,support,pending,,
+anamnesis/eval/oracle/writer_diagnostic_memory_deltas.v1.json,835,support,pending,,
+anamnesis/eval/oracle/writer_diagnostic_memory_deltas.v2.json,387,support,pending,,
+anamnesis/eval/oracle/writer_diagnostic_memory_deltas.v3.json,780,support,pending,,
+anamnesis/eval/oracle/writer_diagnostic_memory_deltas.v4.json,566,support,pending,,
+anamnesis/eval/preflight/local_writer_w2.v1.json,222,support,pending,,
+anamnesis/eval/preflight/local_writer_w3.protocol.v1.json,213,support,pending,,
+anamnesis/eval/preflight/local_writer_w3.v1.json,786,support,pending,,
+anamnesis/eval/preflight/local_writer_w3_m2.protocol.v1.json,44,support,pending,,
+anamnesis/eval/preflight/local_writer_w3_m2_t1.protocol.v1.json,57,support,pending,,
+anamnesis/eval/scenarios/all.jsonl,50,support,pending,,
+anamnesis/eval/scenarios/all.manifest.json,451,support,pending,,
+anamnesis/eval/scenarios/dev.jsonl,35,support,pending,,
+anamnesis/eval/scenarios/dev.manifest.json,319,support,pending,,
+anamnesis/eval/scenarios/manifest.json,14,support,pending,,
+anamnesis/eval/scenarios/sealed.jsonl,15,support,pending,,
+anamnesis/eval/scenarios/sealed.manifest.json,161,support,pending,,
+anamnesis/eval/scenarios/smoke.jsonl,10,support,pending,,
+anamnesis/eval/scenarios/writer_diagnostic.v1.jsonl,10,support,pending,,
+anamnesis/eval/scenarios/writer_diagnostic.v1.manifest.json,147,support,pending,,
+anamnesis/eval/scenarios/writer_diagnostic.v2.jsonl,10,support,pending,,
+anamnesis/eval/scenarios/writer_diagnostic.v2.manifest.json,102,support,pending,,
+anamnesis/eval/scenarios/writer_diagnostic.v3.jsonl,10,support,pending,,
+anamnesis/eval/scenarios/writer_diagnostic.v3.manifest.json,205,support,pending,,
+anamnesis/eval/scenarios/writer_diagnostic.v4.jsonl,10,support,pending,,
+anamnesis/eval/scenarios/writer_diagnostic.v4.manifest.json,251,support,pending,,
+anamnesis/hatch_build.py,201,code,reviewed,6f34450a812685dd10778299ee42e787eac49e8fef034824ef6b7ba9c1ff3cf1,"Complete packaging/build-hook and W3 test inspection; 15 focused tests pass, including wheel payload closure and updated current v0.2.1 runtime fingerprint; frozen prompt hashes preserved."
+anamnesis/pyproject.toml,62,support,reviewed,52856feb9d16dc28cb81ed5ef0730023529a97c784c7f89a3f78b59943998d18,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/results/README.md,190,support,pending,,
+anamnesis/results/local_openmemory_diagnostic_failure_log_summary.json,24,support,pending,,
+anamnesis/results/local_openmemory_diagnostic_preflight_failure.md,46,support,pending,,
+anamnesis/results/local_openmemory_diagnostic_preflight_failure.provenance.json,85,support,pending,,
+anamnesis/results/local_openmemory_diagnostic_v2.md,53,support,pending,,
+anamnesis/results/local_openmemory_diagnostic_v2.provenance.json,114,support,pending,,
+anamnesis/results/local_openmemory_diagnostic_v3.md,48,support,pending,,
+anamnesis/results/local_openmemory_diagnostic_v3.provenance.json,117,support,pending,,
+anamnesis/results/local_openmemory_vllm_v4.csv,2,support,pending,,
+anamnesis/results/local_openmemory_vllm_v4.md,26,support,pending,,
+anamnesis/results/local_openmemory_vllm_v4.provenance.json,35,support,pending,,
+anamnesis/results/local_openmemory_vllm_v4_analysis.md,72,support,pending,,
+anamnesis/results/local_openmemory_vllm_v5.csv,2,support,pending,,
+anamnesis/results/local_openmemory_vllm_v5.md,15,support,pending,,
+anamnesis/results/local_openmemory_vllm_v5.provenance.json,30,support,pending,,
+anamnesis/results/local_openmemory_vllm_v6.csv,2,support,pending,,
+anamnesis/results/local_openmemory_vllm_v6.md,20,support,pending,,
+anamnesis/results/local_openmemory_vllm_v6.provenance.json,30,support,pending,,
+anamnesis/results/local_openmemory_vllm_v6_analysis.md,35,support,pending,,
+anamnesis/results/local_openmemory_vllm_v7.csv,2,support,pending,,
+anamnesis/results/local_openmemory_vllm_v7.md,25,support,pending,,
+anamnesis/results/local_openmemory_vllm_v7.provenance.json,30,support,pending,,
+anamnesis/results/local_openmemory_vllm_v7_analysis.md,29,support,pending,,
+anamnesis/results/local_oracle_smoke.csv,2,support,pending,,
+anamnesis/results/local_oracle_smoke.md,9,support,pending,,
+anamnesis/results/local_oracle_smoke.provenance.json,59,support,pending,,
+anamnesis/results/local_oracle_smoke_analysis.md,122,support,pending,,
+anamnesis/results/local_smoke.csv,5,support,pending,,
+anamnesis/results/local_smoke.md,10,support,pending,,
+anamnesis/results/local_smoke.provenance.json,43,support,pending,,
+anamnesis/results/local_smoke_analysis.md,77,support,pending,,
+anamnesis/results/local_smoke_d1.csv,5,support,pending,,
+anamnesis/results/local_smoke_d1.md,10,support,pending,,
+anamnesis/results/local_smoke_d1.provenance.json,43,support,pending,,
+anamnesis/results/local_smoke_d1_analysis.md,136,support,pending,,
+anamnesis/results/local_writer_w1_preflight_failure.md,75,support,pending,,
+anamnesis/results/local_writer_w1_preflight_failure.provenance.json,74,support,pending,,
+anamnesis/results/local_writer_w2.csv,2,support,pending,,
+anamnesis/results/local_writer_w2.md,15,support,pending,,
+anamnesis/results/local_writer_w2.provenance.json,118,support,pending,,
+anamnesis/results/local_writer_w2_analysis.md,180,support,pending,,
+anamnesis/results/local_writer_w3_m2_preflight_failure.md,41,support,pending,,
+anamnesis/results/local_writer_w3_m2_preflight_failure.provenance.json,90,support,pending,,
+anamnesis/results/local_writer_w3_m2_t1_preflight_failure.md,49,support,pending,,
+anamnesis/results/local_writer_w3_m2_t1_preflight_failure.provenance.json,97,support,pending,,
+anamnesis/results/local_writer_w3_preflight_failure.md,96,support,pending,,
+anamnesis/results/local_writer_w3_preflight_failure.provenance.json,102,support,pending,,
+anamnesis/src/anamnesis/__init__.py,5,code,pending,,
+anamnesis/src/anamnesis/action_canonicalizer.py,136,code,reviewed,e37f9d6b56940e4f95e7d3615df52aa83694193b9381ec26695dab9fa3114d72,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/src/anamnesis/baselines.py,513,code,pending,,
+anamnesis/src/anamnesis/cli.py,996,code,pending,,
+anamnesis/src/anamnesis/experiment.py,177,code,pending,,
+anamnesis/src/anamnesis/inspect_adapter.py,790,code,pending,,
+anamnesis/src/anamnesis/io.py,131,code,reviewed,0aa14f8e2e1ae08c0cc523d374cc0b085a45a8d7ed34385b06976a2d2cc9ae95,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/src/anamnesis/local_experiment.py,775,code,pending,,
+anamnesis/src/anamnesis/local_preflight.py,944,code,pending,,
+anamnesis/src/anamnesis/local_report.py,1122,code,pending,,
+anamnesis/src/anamnesis/local_runtime.py,2652,code,pending,,
+anamnesis/src/anamnesis/local_wire.py,532,code,reviewed,6daeb9ae0f0ceebfb5c9667ef46411d27d2637d9f9bc70978b81d2346cbd8a75,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/src/anamnesis/manifest_cli.py,39,code,pending,,
+anamnesis/src/anamnesis/memory.py,1974,code,reviewed,3fba9154119625d9204a0cf72bb9f9d57d6a63bb57a75e16d30ff88ac6111cbd,Complete deterministic memory engine review; A01-A04 fixes verified by 45 tests; redundant empty-date-range return removed; module ratchet passes.
+anamnesis/src/anamnesis/openmemory_diagnostic.py,549,code,pending,,
+anamnesis/src/anamnesis/openmemory_recall.py,788,code,pending,,
+anamnesis/src/anamnesis/openmemory_strategy.py,189,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm.py,720,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_report.py,319,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_run.py,356,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_v5.py,341,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_v5_report.py,209,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_v6.py,470,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_v6_report.py,221,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_v7.py,415,code,pending,,
+anamnesis/src/anamnesis/openmemory_vllm_v7_report.py,210,code,pending,,
+anamnesis/src/anamnesis/oracle.py,240,code,pending,,
+anamnesis/src/anamnesis/oracle_report.py,975,code,pending,,
+anamnesis/src/anamnesis/preflight.py,464,code,pending,,
+anamnesis/src/anamnesis/prompts.py,214,code,pending,,
+anamnesis/src/anamnesis/runner.py,226,code,pending,,
+anamnesis/src/anamnesis/runtime_contract.py,131,code,reviewed,2877e10c9f5073542e62cc6545e57f779573f65d7a99a5232c2e7f34225725e4,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/src/anamnesis/schema.py,647,code,reviewed,da2fe3993bf17b0b0c3cf8820fa816f93470489337f3e04945248cd5bc519cf4,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/src/anamnesis/scoring.py,559,code,reviewed,435a2eb74019995c4c750bdce0810df14117ca57c206e4cff300b766f2db4505,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/src/anamnesis/vllm_runtime.py,1164,code,pending,,
+anamnesis/src/anamnesis/wire.py,278,code,reviewed,11b4caf82e465d059704a2bae6ac719af249057472b0229afd15073e98516041,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/src/anamnesis/writer_report.py,1046,code,pending,,
+anamnesis/src/anamnesis/writer_report_w2.py,1201,code,pending,,
+anamnesis/src/anamnesis/writer_report_w3.py,1335,code,pending,,
+anamnesis/tests/test_action_canonicalizer.py,103,tests,reviewed,09c2d03c49857e2d63d3016855343b89c67c1605d13cead7099738095b4c032c,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/tests/test_baselines.py,133,tests,pending,,
+anamnesis/tests/test_experiment.py,120,tests,pending,,
+anamnesis/tests/test_inspect_adapter.py,209,tests,pending,,
+anamnesis/tests/test_io_cli.py,434,tests,reviewed,1008a0623b24141a7e80e3b02b583be6f9920fbef7e731b60ec2edf4b80380ff,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/tests/test_local_eval_tasks.py,378,tests,pending,,
+anamnesis/tests/test_local_experiment.py,558,tests,pending,,
+anamnesis/tests/test_local_model_costs.py,47,tests,pending,,
+anamnesis/tests/test_local_preflight.py,597,tests,pending,,
+anamnesis/tests/test_local_report.py,879,tests,pending,,
+anamnesis/tests/test_local_runtime.py,896,tests,pending,,
+anamnesis/tests/test_local_w2_preflight_fixture.py,327,tests,pending,,
+anamnesis/tests/test_local_w3_integration.py,522,tests,reviewed,a83ed78782362c309aa70f01732899e6437229afbec146456921c7f747db4630,"Complete packaging/build-hook and W3 test inspection; 15 focused tests pass, including wheel payload closure and updated current v0.2.1 runtime fingerprint; frozen prompt hashes preserved."
+anamnesis/tests/test_local_w3_m2.py,511,tests,pending,,
+anamnesis/tests/test_local_w3_preflight_fixture.py,1053,tests,pending,,
+anamnesis/tests/test_local_wire.py,538,tests,reviewed,bab84ce35139b89f0c02fed6b3cecaf095999af65b0b55084aeea5392fb19be8,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/tests/test_manifest_cli.py,22,tests,pending,,
+anamnesis/tests/test_memory.py,1539,tests,reviewed,fcb27223d8b5e54302c773469dfd246eca335ca6bdc6b838a4d0bd74e916fc14,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/tests/test_model_costs.py,30,tests,pending,,
+anamnesis/tests/test_openmemory_diagnostic.py,296,tests,pending,,
+anamnesis/tests/test_openmemory_diagnostic_v2.py,117,tests,pending,,
+anamnesis/tests/test_openmemory_diagnostic_v3.py,141,tests,pending,,
+anamnesis/tests/test_openmemory_diagnostic_v4.py,95,tests,pending,,
+anamnesis/tests/test_openmemory_eval_task.py,65,tests,pending,,
+anamnesis/tests/test_openmemory_eval_v2_task.py,74,tests,pending,,
+anamnesis/tests/test_openmemory_eval_v3_task.py,105,tests,pending,,
+anamnesis/tests/test_openmemory_failure_artifact.py,103,tests,pending,,
+anamnesis/tests/test_openmemory_recall.py,823,tests,pending,,
+anamnesis/tests/test_openmemory_strategy.py,275,tests,pending,,
+anamnesis/tests/test_openmemory_vllm.py,452,tests,pending,,
+anamnesis/tests/test_openmemory_vllm_run.py,218,tests,pending,,
+anamnesis/tests/test_openmemory_vllm_v5.py,192,tests,pending,,
+anamnesis/tests/test_openmemory_vllm_v6.py,89,tests,pending,,
+anamnesis/tests/test_openmemory_vllm_v7.py,70,tests,pending,,
+anamnesis/tests/test_oracle.py,241,tests,pending,,
+anamnesis/tests/test_oracle_manifest_template.py,34,tests,pending,,
+anamnesis/tests/test_oracle_report.py,665,tests,pending,,
+anamnesis/tests/test_preflight.py,319,tests,pending,,
+anamnesis/tests/test_reporting_contract.py,26,tests,pending,,
+anamnesis/tests/test_runner.py,311,tests,pending,,
+anamnesis/tests/test_runtime_contract.py,197,tests,reviewed,d1b82bf5e21dba1b04d8cd0058915bae1838be8a968c54e7ffdf4347985910b7,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/tests/test_runtime_packaging.py,420,tests,reviewed,36b6cdfde238f0fcb3669b6f826d2e8f267b6900a62e4a87c2182ce1cf05e415,"Complete packaging/build-hook and W3 test inspection; 15 focused tests pass, including wheel payload closure and updated current v0.2.1 runtime fingerprint; frozen prompt hashes preserved."
+anamnesis/tests/test_scenarios.py,636,tests,pending,,
+anamnesis/tests/test_scoring.py,454,tests,reviewed,35f87c7551489148532009d08a9211400231b3c6fb0d12bd97db91d837846412,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/tests/test_vector_snapshot_pin.py,92,tests,pending,,
+anamnesis/tests/test_vllm_runtime.py,921,tests,pending,,
+anamnesis/tests/test_wire.py,92,tests,reviewed,a66ffa3ef1aaccd34ee65c0678ac75540bde58a7b43640281e2934db25e1bc52,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+anamnesis/tests/test_writer_diagnostic.py,474,tests,pending,,
+anamnesis/tests/test_writer_diagnostic_v2.py,448,tests,pending,,
+anamnesis/tests/test_writer_diagnostic_v3.py,732,tests,pending,,
+anamnesis/tests/test_writer_diagnostic_v4.py,985,tests,pending,,
+anamnesis/tests/test_writer_report.py,676,tests,pending,,
+anamnesis/tests/test_writer_report_w2.py,629,tests,pending,,
+anamnesis/uv.lock,2356,support,pending,,
+config.example.json,104,support,pending,,
+config.macos-cpu.template.json,25,support,pending,,
+config.windows-rtx5080.template.json,149,support,pending,,
+docs/anamnesis-memory-integration.md,172,support,pending,,Complete document read and current runtime pin updated for A07; qualification backed by 42 focused memory/context tests. Full documented storage/native/management claims still require the remaining implementation review.
+docs/backend-ci.md,89,support,pending,,
+docs/branding-and-compatibility.md,53,support,pending,,
+docs/chatterbox-v3-pilot.md,199,support,pending,,
+docs/compact-greek-tts-f1.md,168,support,pending,,
+docs/coqui-greek-vits-pilot.md,66,support,pending,,
+docs/cuda-coexistence.md,85,support,pending,,
+docs/evidence/macos-f1-acoustic-qualification-20260817.json,52,support,pending,,
+docs/evidence/macos-f1-rtf-qualification-20260817.json,29,support,pending,,
+docs/evidence/macos-f1-scheduler-playback-smoke-20260817.json,35,support,reviewed,ce40a15340b37d9c62445769d5e374328b6b27bbeafbca57e9d4d43fd083cf32,Complete historical evidence inspected and preserved byte-for-byte. Records one unit at source commit 4649844 and explicitly denies native gate/production promotion; 200 real turns and eight-hour soak remain required. Not freshly reproduced.
+docs/f5tts-greek-pilot.md,68,support,pending,,
+docs/fish-s2-pro-greek-pilot.md,92,support,pending,,
+docs/greektts15-attention-only-candidate.json,54,support,pending,,
+docs/greektts15-f1-approved-candidate.json,39,support,pending,,
+docs/greektts15-f1-training.md,514,support,pending,,
+docs/greektts15-pilot.md,194,support,pending,,
+docs/higgs-audio-v3-greek-pilot.md,45,support,pending,,
+docs/joy-greek-pilot.md,65,support,pending,,
+docs/kokoro-onnx-m3-qualification.json,79,support,pending,,
+docs/local-artifact-audit.md,49,support,pending,,
+docs/macos-automated-fixture-smoke.md,17,support,pending,,
+docs/macos-cpu-smoke.md,79,support,pending,,
+docs/macos-environment-materialization.md,71,support,pending,,
+docs/macos-interactive-smoke.md,49,support,pending,,
+docs/macos-packaging.md,33,support,pending,,
+docs/macos-prerequisite-staging.md,32,support,pending,,
+docs/macos-source-run.md,167,support,pending,,
+docs/macos-technical-beta-operator.md,325,support,pending,,
+docs/macos-whisper-latency.md,168,support,pending,,
+docs/milestone-3-prompt.md,42,support,reviewed,52fe0c25a6a2ebd33896f89e7af80c15d85e1e4aafa00213fba31005a04eb968,"Complete historical M3 contract inspected for bounded lifecycle, local logging, native platform and single-instance requirements; preserved unchanged."
+docs/milestone-4-prompt.md,40,support,pending,,
+docs/milestone-5-prompt.md,62,support,pending,,
+docs/milestone-5a-prompt.md,65,support,pending,,
+docs/milestone-5b-prompt.md,70,support,pending,,
+docs/milestone-5c-prompt.md,48,support,pending,,
+docs/milestone-5d-prompt.md,41,support,pending,,
+docs/milestone-5e-a-prompt.md,58,support,pending,,
+docs/milestone-5e-prompt.md,62,support,pending,,
+docs/moss-tts-nano-greek-pilot.md,63,support,pending,,
+docs/moss-tts-realtime-greek-pilot.md,72,support,pending,,
+docs/native-voice-qualification.md,294,support,pending,,
+docs/native-windows-qualification.md,93,support,pending,,
+docs/omnivoice-mlx-greek-pilot.md,89,support,pending,,
+docs/orchestrator-core-v1.md,50,support,pending,,
+docs/piper-f1-m3-training.md,349,support,pending,,
+docs/piper-f1-wsl-training.md,102,support,pending,,
+docs/pocket-tts-candidate.md,118,support,pending,,
+docs/pocket-tts-m3-qualification.json,256,support,pending,,
+docs/private-stack-run.md,214,support,reviewed,750c8b52df593da4269f6fda005e136bc08c15c1570f775c8087e7d6b1d7d6a0,"Complete operator guide inspected against config, materializer, migration, auth/status and readiness contract call sites. Documents strict bounded JSON and current signed aggregate, distinguishes config consistency from live readiness, and explains partial migration cleanup and fresh retry paths. Native operator steps remain unexecuted instructions."
+docs/s1-deterministic-scheduler-v3.md,66,support,reviewed,9efbdddf3040649d1f4350b93a716c7807e9be89652fe081f594c96e6fc6b64f,"Complete S1 contract inspected and updated for bounded yearless dates, unchanged gap/fold semantics, inclusive until/DTSTART and explicit last due instant 9999-12-29T23:59:59.999Z leaving expiry/retention headroom. Runtime-qualified native display remains a separate gate; deadline values are not clamped."
+docs/s2-native-scheduler-delivery.md,140,support,reviewed,459ccf5e62a092eef89a453c773d3c44490d4772a32ad8e1662a404d7450e62b,"Complete contract inspected; V57-V60 operator qualification now requires bounded exact manifest parsing, four physical observations and encrypted journal reopen with ID/payload preservation. Server deduplication and helper-crash OS behavior explicitly remain separate qualification. Historical evidence unchanged."
+docs/scheduler-playback.md,33,support,reviewed,df415492ec21f580637f8c1200599353f91c2436c8c6da0e5c807fec68db7a64,"Complete playback contract read against runtime/controller/journal paths and TTS qualification gate. Documents independent response ownership, encrypted ACK staging, epoch cancellation and native prerequisites. Historical smoke does not establish production readiness."
+docs/supertonic3-pilot.md,92,support,pending,,
+docs/voxcpm2-mlx-greek-pilot.md,86,support,pending,,
+docs/windows-packaging.md,82,support,pending,,
+docs/windows-primary-handoff.md,518,support,pending,,
+docs/windows-smoke.md,105,support,pending,,
+docs/windows-whisper-large-v3-turbo.md,85,support,pending,,
+inference/README.md,318,support,reviewed,3fb41fe804f22aacaebddcac24cb843ec1e5ea0336dcd211d027f2ee491da5ac,"Complete operator and package-layout documentation inspection; documented environment_sha256 format, clean legacy migration/new native qualification and -B for all sealed-interpreter commands. Historical evidence values preserved."
+inference/docs/macos-m3-endpoint-quality-2026-08-13.md,74,support,pending,,
+inference/docs/macos-m3-qwen35-9b-candidate-quality-2026-08-18.md,80,support,pending,,
+inference/docs/macos-qualified-bundle-clone.md,128,support,reviewed,00f688cb23f8cb48a75b66f0290370085a911baa65127e5079943592334bbee9,"Complete document inspection; complete Python environment binding now replaces the prior I33 warning, with explicit legacy rejection/migration and preserved source/report identities."
+inference/docs/manifest-v1.md,203,support,reviewed,ac4a58b1e750b10110c86b2d6d3470207b12ac80d0f0bd403c3e5d7668bf4912,Manifest schema/example installation identity and traceability aligned with active source; build metadata and entrypoints inspected. Placeholder examples remain non-qualified.
+inference/docs/model-profiles-v1.md,368,support,pending,,
+inference/docs/qualification-evidence-v1.md,263,support,pending,,
+inference/docs/qwen35-9b-official-sampling-prereg-v1.md,89,support,reviewed,9c1d84cbd1a6341417a7ff992468a038a195a9cfbd8437c600ecdbc76a0d7f3b,"Complete preregistration inspection; operator starts/attests server artifacts, harness remains one-shot/non-authoritative; frozen scorer preserved."
+inference/docs/traceability-v1.md,30,support,reviewed,ab2822b3aed8946f93519ce74298a16c89da69447af70c9b49b49fb8280e0be4,Manifest schema/example installation identity and traceability aligned with active source; build metadata and entrypoints inspected. Placeholder examples remain non-qualified.
+inference/docs/windows-native-fixture-runner.md,222,support,pending,,
+inference/eval/qwen35-9b-official-nonthinking-sampling-v1.prereg.json,87,support,pending,,
+inference/examples/manifest.macos.example.json,65,support,reviewed,10ae1f125829e49076c261639c66b6ec006215bd3d835d9d65ef961e7048fb16,Manifest schema/example installation identity and traceability aligned with active source; build metadata and entrypoints inspected. Placeholder examples remain non-qualified.
+inference/examples/manifest.windows.example.json,50,support,reviewed,2665ae50992ac4de26c1ac64a5c7a17550375090704b12e1a6f99b8ba70bc013,Manifest schema/example installation identity and traceability aligned with active source; build metadata and entrypoints inspected. Placeholder examples remain non-qualified.
+inference/fixtures/local-fallback-quality-v1.json,96,support,pending,,
+inference/fixtures/local-primary-quality-v1.json,52,support,pending,,
+inference/fixtures/windows-asr-audio-corpus-v1.template.json,37,support,pending,,
+inference/fixtures/windows-asr-coexistence-v1.json,41,support,pending,,
+inference/fixtures/windows-asr-config-v1.template.json,29,support,pending,,
+inference/fixtures/windows-asr-nonclean-report-pending-v1.json,24,support,pending,,
+inference/fixtures/windows-power-profile-v1.template.json,9,support,pending,,
+inference/fixtures/windows-primary-performance-soak-report-pending-v1.json,71,support,pending,,
+inference/fixtures/windows-primary-performance-soak-v1.json,1267,support,pending,,
+inference/packaging/runtime_hook_harden_dll.py,36,code,reviewed,88d63d26875cbe3ae9a972fd0964846aaf61bd24aeb5407337f9cb20692271a2,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/packaging/windows_native_fixture_runner.spec,44,code,reviewed,7334e511df3430db85c518fe593a527f65edfc97d145716a23e7dcaf0e492fcf,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/pyproject.toml,36,support,reviewed,bc60dcbf5dece3acffc3c12645b4f0da3f9f39272a6c1be9756f81ed1bdff67a,Manifest schema/example installation identity and traceability aligned with active source; build metadata and entrypoints inspected. Placeholder examples remain non-qualified.
+inference/scripts/build_macos_manifest.py,258,code,reviewed,df18cdc68de8004a7e8db01045a1e7cbbe55df04cda1b90f3a70791702021f25,"Complete source inspection; produces full installed-environment digest using shared stable reader. Identity probe now uses -I -B -S and was verified against actual CPython after full suite. Maintenance usage requires inference package or PYTHONPATH. Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/scripts/build_windows_asr_audio_corpus.py,46,code,reviewed,c5aefc3a957ca365d76b142a715cc306adc1d7597b0f8b4639c761f4fcf1fea7,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/scripts/build_windows_manifest.py,397,code,reviewed,f206245cb21f71dcb2aaa02d9411e56540353670734c0c7408013fb818384147,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/scripts/check_python_records.py,86,code,reviewed,61885e00b3e2abe18684bbc6fe2691059ae86d4b045bc1d6ea21d77457029b66,Complete source inspection; stable streamed shared file hashing replaces full-file buffering. Record-only preflight remains distinct from full installation attestation.
+inference/scripts/clone_qualified_macos_bundle.py,1559,code,reviewed,ec446276cca5a3203c6eb108af62baf761a7463d39999687cb61b17b74f216ac,Complete prior source inspection; validates included Python snapshot against manifest environment_sha256 after existing cleanup/report gates. Shared aliases/streamed hasher remove duplicated policy and unsafe hashing; I33 generated-script/runtime-file bypasses rejected.
+inference/scripts/macos_fixture_runner.py,8,code,reviewed,7cc5884165be054d8c793e23c0a5cb2d017e57bec8f91aae785e433a96720943,Complete entrypoint inspection; delegates to the package-owned macOS fixture. The active qualification launcher invokes this runner with the pinned isolated Python and -B.
+inference/scripts/run_primary_profile_quality.py,8,code,reviewed,7794066691d0383fedc145f0d8aea8db17cb1d3e08f8a7d00ea039720eeb6de9,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/scripts/run_profile_preflight.py,8,code,reviewed,d60be003e785fae21eb7257a53d6cb820d1233f9deffe873a2c34f754a7ca4f7,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/scripts/run_profile_quality.py,8,code,reviewed,94fedb8598914466efee4274d59f74b2bf9979478408c1b310cef257c4e2bdb5,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/scripts/run_qwen35_official_sampling_candidate.py,8,code,reviewed,34e55c8f5343dad02ee02498624a3fd83359153b1878b38c847f4e444aca8434,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/scripts/smoke_macos_inference.py,96,code,reviewed,a43240dd2595ba6a7e48056671e89dcc0e1a8bc742e7425614e7340a40470dd8,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/scripts/windows_native_fixture_runner.py,8,code,reviewed,de7411134f9cfd7910eeb8e515005b74b88a47b7ede03d2c99e8bee291e93b16,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/scripts/windows_primary_profile_runner.py,8,code,reviewed,bc87eb80fd3c141328fa319c17ebc6ae4528f2d4df43e4a527f662a55f2ea307,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/setup.py,333,code,reviewed,d5499a198dd2c6575ee9c4e84447b525a713f652e931a2dd0292f14a6cad5640,Complete closed-wheel setup hook inspection; updated explicit module allowlist for reviewed python_environment.py. Direct and PEP 517 wheel tests verify exact payload and preservation of unknown/recovery files.
+inference/src/jarvis_inference/__init__.py,3,code,reviewed,00fa420dcfc0376dbb3ff260e95aae3d7f5d2799467ed85df361a6b1466eb19c,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/__main__.py,4,code,reviewed,76fa916e93e0ae1a6c1bb51dcc0bcf289c014e9f760a47165f8a84401ccf41d7,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/circuit.py,61,code,reviewed,ec06eb5ef3346d653d9054b77a6cfcd445d918f818b74b5025697c7a43aefd13,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/cli.py,160,code,reviewed,897784f29ca1787f21de26143797d2dc78118c94d6a1391c8683a2de24003dae,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/contracts.py,371,code,reviewed,aea3e23f327ffbd9a4ab0e70fd4bed0593972b138ed4e724af17e0a2f76d32f1,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/durable.py,225,code,reviewed,6f3f4e1c335006be2fe79fd3252d070bb0c275937b55301f980dab627dc11024,"Complete prior source inspection; I34 generic report admission now reuses qualification evidence gates, validates report/provenance boundaries and binds Windows assets. Full suite 259 tests, 8 skipped; final focused 41 tests, 2 skipped."
+inference/src/jarvis_inference/engine.py,46,code,reviewed,112185f8b96fc0a281c058a67b15757f45d9f69c799fcac3ec6b1c2d67b41fd0,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/errors.py,34,code,reviewed,02018ca96f713e2040ddbe63464b60155f82500e9e1d316a53c802b0c8fbeb21,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/gateway.py,988,code,reviewed,d67ef8938ab601964c96a307bac2086f262f26053b1064c5ecbd32e5a26b9586,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/gemma4.py,433,code,reviewed,e58d52e49afa8cb2eaefc4bf93169739e9c6292676b135f37542fa0af44135ef,Full renderer/parser inspection; traced normalized schema and llama-engine callers; pinned prompt identity tests pass. Native template equivalence is not independently requalified.
+inference/src/jarvis_inference/http_backend.py,43,code,reviewed,49a722945fe5646eab4f79b912918e1ea893b5042837e4ffe1880beeb1a0f8ad,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/limits.py,39,code,reviewed,327f592cf7fa1f4368bb1a0e57062cc3d321353eb9d74bf7b6f5af689810ee7e,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/llama_engine.py,737,code,reviewed,65e4f1f2d247a126fbbb99e750014575939aa966e8a7db433a7b4ed1bd45b19c,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/macos_fixture.py,643,code,reviewed,7e10bcab6a641a42023299cef5de7d8addefc61e9af776ab444f52bbab93185a,"Full client/identity/cancel/restart/isolation/memory/publication inspection; I23 bounded identity reads, I25 exclusive output, I26 protocol validation, I27 actual schema validation; portable tests pass. Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/src/jarvis_inference/manifest.py,768,code,reviewed,cd63cf577252f9b13ca0e544740deec18d5c41d565cb4a1e6dbe091d02a057eb,Complete prior source inspection; optional inspection-compatible environment_sha256 is mandatory for runtime admission. Full installation/content/mode binding closes I33; stable shared hash_file replaces its prior open loop.
+inference/src/jarvis_inference/mlx_engine.py,298,code,reviewed,81b89dd7069099f219052056b454b34b2f5f3e7bd06c030cf4bf1846679c0935,"Complete prior source inspection; explicit -B prevents bytecode generation with isolated -I Python. Actual captured launch command exercised using a harmless temporary script; full inference 264 tests, 8 skipped."
+inference/src/jarvis_inference/mlx_worker_runtime.py,165,code,reviewed,6661b74df18faedbc1a302902acf29a686726e8a2ef4a74e3cdf9d54c6e1877a,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/primary_profile.py,335,code,reviewed,18c113d73c29c37ae70200a17ac09693caad9842416a1e6fc095b7f74070270f,"Full source inspection; I14-I15 primary CLI/SSE regressions; latest full inference 237 tests, 8 skipped. Frozen profile_preflight retained byte-identical."
+inference/src/jarvis_inference/primary_qualification.py,544,code,reviewed,62df6df871bf7507556376ff4e98e478a61a74664204e95e5df6e4efecc20f7e,"Complete source inspection; I16-I18 Windows exit-code and qualification supervision fixes. Full inference: 240 tests, 232 pass, 8 skip. Native Windows behavior still requires its native smoke/qualification runs."
+inference/src/jarvis_inference/primary_quality_client.py,133,code,reviewed,9628463b54377f3a5a457df1918a5533f5efc763e160e29afe6a167a06ab1541,"Full source inspection; I14-I15 primary CLI/SSE regressions; latest full inference 237 tests, 8 skipped. Frozen profile_preflight retained byte-identical."
+inference/src/jarvis_inference/private_temp.py,245,code,reviewed,6bc76051b2232d3259b0a0963e09988cdc5ed6bc0fe423ea4d19c9f7e82372a2,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/profile_performance.py,277,code,reviewed,3611417ff7bf2d75ace074c8943ebeccc4df07087059f77ada6867e3e9b1250d,Complete source inspection; existing inference tests pass. Further protocol/evidence validation questions recorded in review report; no qualification or frozen evidence changed.
+inference/src/jarvis_inference/profile_preflight.py,354,code,reviewed,b22a9659cf4e7c8f8a9629333b5e12545f91daa42402f4b0c21ccb17fc4f16e1,"Full source inspection; I14-I15 primary CLI/SSE regressions; latest full inference 237 tests, 8 skipped. Frozen profile_preflight retained byte-identical."
+inference/src/jarvis_inference/profile_quality.py,277,code,reviewed,a7c5cf30101102117ca2d4486f63f65d3c66e7913f08db385c5a303f1abe0a8f,Complete source inspection; existing inference tests pass. Further protocol/evidence validation questions recorded in review report; no qualification or frozen evidence changed.
+inference/src/jarvis_inference/profile_report.py,912,code,reviewed,f74bfaf50b1463fd8b99904aa4c4c6ab2021cbcffd756d4064b29d7485ca2729,Complete profile report review; I19/I20 metrics fixes plus I23 shared bounded regular-file reader. Full inference 250 tests passed with 8 skips.
+inference/src/jarvis_inference/python_environment.py,127,code,reviewed,49379b00e4d3d33621e547c79d99869279f7f6733f35095b93789a3b5c289fcc,"New complete source inspection; fixed-format complete installation digest, validated removable CPython aliases and stable bounded-descriptor file hashing. Full inference 268 tests, 8 skipped. I42 Windows synthetic executable-bit normalization; preserves POSIX mode-change rejection and environment digest format. Final Inference suite 273 tests (265 pass, 8 skips)."
+inference/src/jarvis_inference/qualification.py,699,code,reviewed,2c0b8f714a04a2fdb4f27bdf8a23af1df973f757c49c4d5877e277d56fdb4720,"Complete prior source inspection; native macOS fixture interpreter now uses -I -B. Actual temporary fixture regression verifies no bytecode generation; full inference 268 tests, 8 skipped."
+inference/src/jarvis_inference/qwen35_sampling_candidate.py,925,code,reviewed,debc3f43d1d00d86cbe2fb72dc1e009ba17a8c094466db46dc4cffe415b5594c,"Complete candidate source inspection; strict SSE, failed-dispatch budget and nonblocking reader fixes; full inference suite 257 tests, 8 skipped. Frozen scorer identities unchanged."
+inference/src/jarvis_inference/rendering.py,143,code,reviewed,481d90091b232be6e5e30b2c199e1fb50cf2b2a76545ab59f223892ed69bba45,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/schema_subset.py,239,code,reviewed,cb8a5ae8f4eac858d40d88914045e7dfff19b0544a903dd0017a51db58799d2f,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/strict_json.py,170,code,reviewed,a9875b61825fbd6032eceb4d93ea59109aacd595c91a0f022e4f48fcc2c879f1,"Complete source inspection; inference I01-I13 fixes and shared report validation; 235 tests run, 8 native/platform skips; frozen strict_json unchanged. MLX installed-wheel attestation needs follow-up."
+inference/src/jarvis_inference/windows_acl.py,506,code,reviewed,ad57de473dba5dbfadcaf7ca8a828ad3ddf1b83538ee14fb543b1fb08d9d8c64,"Complete source inspection; I16-I18 Windows exit-code and qualification supervision fixes. Full inference: 240 tests, 232 pass, 8 skip. Native Windows behavior still requires its native smoke/qualification runs."
+inference/src/jarvis_inference/windows_asr_corpus.py,566,code,reviewed,6828259e00587976c66b1d2ef5e7cddc14f18ec523e4d6c5b87f7e7e0efc9c1f,"Full path/corpus/reference/WAV/manifest publication inspection; I23 stable leaf reads with existing parent checks, I24 rejects truncated WAV/partial frames and EOF. Corpus tests pass. Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/src/jarvis_inference/windows_fixture.py,966,code,reviewed,a8901f4e829583e21e540790439142a63315f30c84dc0904ed65e328dc2ef5ae,"Full asset/config/trusted-tool/collector/environment/generic qualification and publication inspection; I23 shares stable reads; generic client I26/I27 fixes cover Windows callers. No native Windows qualification claimed. Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/src/jarvis_inference/windows_primary_fixture.py,563,code,reviewed,5258c35dcae4de537251eba14c6de767bf819dd307927e692082ff7f979d5757,Complete frozen fixture/materialization review; I23 deletes duplicate file reader in favor of bounded stable reads; frozen artifact identity retained.
+inference/src/jarvis_inference/windows_primary_metrics.py,636,code,reviewed,63658be2135a84a144fb6e5223a79ad1a6df67270d72c72780a39e7b6af775e8,"Full native telemetry/stream/restart/memory sampling inspection; I21 ctypes signatures and I22 SSE ordering/typed parsing/accounting fixes; portable regressions pass, not live Windows proof."
+inference/src/jarvis_inference/windows_primary_report.py,239,code,reviewed,fbd28796031a232e6d4084e732314a1a1a9dfa7793e06c9531b07fe1b9f8790c,Complete hash-frozen pending-report validation review; I23 shares stable file reads and retains the 64 KiB bound and non-authoritative status.
+inference/src/jarvis_inference/windows_primary_runner.py,725,code,reviewed,c95e7a0b74e2281a41595d673d218d07fd0af8e8b0d0f1765036d6c64db6e565,"Full quality/performance/soak/restart orchestration, environment, exclusive output and main entry-point inspection; profile/runner/metrics regressions pass."
+inference/src/jarvis_inference/windows_process.py,561,code,reviewed,b3ee677d8b4ec5c920d71193c6ef0b61a0dc00ebad53f9d631cc1fdacb742218,"Complete source inspection; I16-I18 Windows exit-code and qualification supervision fixes. Full inference: 240 tests, 232 pass, 8 skip. Native Windows behavior still requires its native smoke/qualification runs."
+inference/tests/__init__.py,1,tests,reviewed,01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/tests/sdk_conformance.py,105,tests,reviewed,4e9f6abfb358de8a720619659742d6bd3db82a4100b99234403bafad57794e4d,Complete SDK conformance source inspection; complete report fixture and scoped synthetic GPU identity; both sync and async local SDK tests passed with actual generic admission.
+inference/tests/test_backend_json.py,112,tests,reviewed,9dcc5bdcc2c3c742e295ca3ec5bff7dd2501505afb60c4ff3dbc1791e620b61b,"Complete prior test inspection; actual isolated captured MLX launch executes a temporary harmless script proving -B disables bytecode. Full inference 264 tests, 8 skipped."
+inference/tests/test_build_windows_manifest.py,243,tests,reviewed,eee39c4ea4b0308f9e960eb478432f089936585ac7b511ea50c544380e973e49,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/tests/test_circuit.py,28,tests,reviewed,33fe8415c6ac334b9dccc6a86bcacba1e484960b1b45ccd88942211ea9f682e3,"Full test-source inspection; 235 inference tests run, 8 native/platform skips. New transport, lifecycle, malformed-input and cleanup regressions pass."
+inference/tests/test_contracts.py,183,tests,reviewed,f70a21581989ce502341531a38deb81c643a2167bcc91a91ec97601cdb7df34e,"Full test-source inspection; 235 inference tests run, 8 native/platform skips. New transport, lifecycle, malformed-input and cleanup regressions pass."
+inference/tests/test_durable.py,168,tests,reviewed,e897c3f7b4b0dd1d87cad1576b54e361546bac6279b7484a96981e8df99caa58,"Full test inspection; regressions exercise actual symlink and FIFO substitution, descriptor closure, and distinct profile input size bounds. Final focused native-input tests pass."
+inference/tests/test_gateway_integration.py,268,tests,reviewed,f5d4b7aa5e0a658540bfcfa780827a3d083623c520f14464c34ac779e1d15939,Complete prior test inspection; complete generic evidence and scoped synthetic GPU identity; actual report admission remains active in local HTTP integration tests.
+inference/tests/test_gateway_lifecycle.py,502,tests,reviewed,6d4f9a401347cc64d6f37688368346b194a8da06a1d09c1b2ea9a29d62d29363,Complete prior test inspection; complete generic report fixtures and scoped synthetic GPU identity; actual generic report validation remains active in transport/lifecycle tests.
+inference/tests/test_gateway_shapes.py,96,tests,reviewed,4c14a3aae944993137feb3eb30af32fb44a260842936e98f7f27795a11d9a2c1,"Full test-source inspection; 235 inference tests run, 8 native/platform skips. New transport, lifecycle, malformed-input and cleanup regressions pass."
+inference/tests/test_gemma4.py,186,tests,reviewed,a379b5c51cc3f782a4a526b2b90be928194ff582f1e3767a6fd3fb1b8f93438b,"Full test-source inspection; 39 focused profile/metrics/runner/renderer/fixture tests passed; full inference run 244 total, 236 passed, 8 skipped."
+inference/tests/test_llama_engine.py,476,tests,reviewed,67aef79470219e725e9cd07fd6d5b4ea88183a3625289c9d4e8c2a34e5def4d4,"Full test-source inspection; 235 inference tests run, 8 native/platform skips. New transport, lifecycle, malformed-input and cleanup regressions pass."
+inference/tests/test_macos_fixture.py,271,tests,reviewed,96c5f10250c0998261295b3b5ab35244b70c83393643f821b34e5e892643108e,"Full test inspection; added publication race, malformed streaming and bool/integer schema regressions; full inference 250 total and final focused 24 tests pass."
+inference/tests/test_macos_packaging_scripts.py,167,tests,reviewed,7e98213f490fc195d612899528a38ed2cf7e6ff9bafb7b5207a0f34a3b7b79ae,"Complete test inspection; builder-to-runtime environment binding, actual isolated macOS fixture launch, nonblocking FIFO substitution with descriptor closure, and original context/metadata preflight regressions. I42 regression models Windows path/descriptor metadata and POSIX permission changes. Final Inference suite 273 tests (265 pass, 8 skips)."
+inference/tests/test_manifest.py,310,tests,reviewed,aa611273c5426835a8cc1ad75eae778bb0cc0794ed39c16ce222ccdae4a1bbfa,"Full test-source inspection; 235 inference tests run, 8 native/platform skips. New transport, lifecycle, malformed-input and cleanup regressions pass."
+inference/tests/test_mlx_rendering.py,109,tests,reviewed,b5aa7e4f2c32e4cbbd71795ce7a9fb53e2ef92d1157591b5cbed4e4b2762ddca,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/tests/test_mlx_worker_runtime.py,66,tests,reviewed,32d885f3ae021de6e5831326e62ef86284b49412348daa757adac75e03c43e98,"Full test-source inspection; 235 inference tests run, 8 native/platform skips. New transport, lifecycle, malformed-input and cleanup regressions pass."
+inference/tests/test_operator_scripts.py,207,tests,reviewed,508a1d66cbd18802f936cf246a66726986d6e0ca809cf38d341d931077154bc0,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/tests/test_primary_profile.py,99,tests,reviewed,aeaacf0b7cf2a8a6fa66cb1b058626234b2fd985494f2a2a2f498d0467f2248e,"Full source inspection; I14-I15 primary CLI/SSE regressions; latest full inference 237 tests, 8 skipped. Frozen profile_preflight retained byte-identical."
+inference/tests/test_primary_qualification_metrics.py,126,tests,reviewed,6079278f82b2ec71383c962dbe067699dac4d80dc35ee46160e47d483d3282fd,"Complete source inspection; I16-I18 Windows exit-code and qualification supervision fixes. Full inference: 240 tests, 232 pass, 8 skip. Native Windows behavior still requires its native smoke/qualification runs."
+inference/tests/test_primary_quality_client.py,117,tests,reviewed,1114acf75aa4ef01cd384fc4fecf0addb09fcda007cbd5a763b5d935407a545f,"Full source inspection; I14-I15 primary CLI/SSE regressions; latest full inference 237 tests, 8 skipped. Frozen profile_preflight retained byte-identical."
+inference/tests/test_profile_preflight.py,96,tests,reviewed,0d51c58425eeef464fb5758d88cf60cc74c48deeaddcd7b4a197a280fe712526,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/tests/test_profile_quality.py,111,tests,reviewed,a5e4f7af2d6c1e32f03b183ba0782a7b9cb88a1ed87187293c159d6eca965afc,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/tests/test_profile_report.py,896,tests,reviewed,9813d09452dcfc759531ba75c634933e0513628cd5ac1cc30f8a87ec0668136b,"Complete prior test inspection; generic report fixture now includes suite, seeds and timestamp/identity/fixture-bound provenance; profile CLI regression uses real generic admission."
+inference/tests/test_qualification.py,506,tests,reviewed,9dedfcd559419c1c0c73ab438dcec7e90e7fa087e7a272363137524a510cb12a,"Complete prior test inspection; shared complete passing report fixture, Windows gate/provenance/asset rejection regression. Full suite 259 tests, 8 skipped; final focused 41 tests, 2 skipped."
+inference/tests/test_qualified_bundle_clone.py,1704,tests,reviewed,9e2d24035a1d7f17619fbaae02bb98b4a09fb81a199d8e385fda51210503eeb9,"Complete prior test inspection; full-installation regressions cover generated command plus RECORD, stdlib edits/additions/rename, executable-bit changes and missing legacy digest. Passing fixtures seal their original installation; clean clone/alias/cache cases still pass."
+inference/tests/test_qwen35_sampling_candidate.py,461,tests,reviewed,8498cae6f1a657db88c9f81826999a08a687cb67bfdcbd02f09be699f121556a,"Complete test inspection and three candidate regressions; full inference suite 257 tests, 8 skipped."
+inference/tests/test_schema.py,53,tests,reviewed,9f818225fa6a8c02c3e8f4ffdea90de2fe3e02915ebe6ee27325fe66dfc061b5,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/tests/test_strict_json_canonical.py,58,tests,reviewed,28ce85d41b88fa0856f826c6876a146008ae763fd4ec9b5466c89cd3867c66e1,"Operator/packaging review: I39 writer descriptor ownership, I40 smoke cleanup/count admission, I41 DLL error preservation; shared artifact hashing; full inference 272 tests (264 pass, 8 skips)."
+inference/tests/test_wheel_packaging.py,468,tests,reviewed,b095661402bf9237d72ca28325f585d34e9031b09549c27ae5c40f61a2af7b8b,"Complete 468-line packaging test inspection; explicit reviewed module inclusion plus exact direct/PEP517 payloads, RECORD hashes, dirty source/staging, metadata injection, outside build paths and link protections. Native Windows junction test remains skipped here."
+inference/tests/test_windows_asr_corpus.py,360,tests,reviewed,eaf816c871fc195960956bc7cf81fca45d15199f45c6cdd45dd7db1c04a7da6e,"Full corpus/asset/environment/writer regression inspection; new cases cover missing audio, partial PCM frames and malformed WAV headers. Final focused native-input tests pass."
+inference/tests/test_windows_primary_fixture.py,285,tests,reviewed,c7dd7d2611e97bc3a9b8686b04c7c1e302a2816db22dae14c969ad773947394f,"Full test-source inspection; 39 focused profile/metrics/runner/renderer/fixture tests passed; full inference run 244 total, 236 passed, 8 skipped."
+inference/tests/test_windows_primary_metrics.py,270,tests,reviewed,e7905db0d8e95b4a1d90bbb3dd7c48244eef18ca4f90b6b6c221e5910de0fe66,"Full test-source inspection; 39 focused profile/metrics/runner/renderer/fixture tests passed; full inference run 244 total, 236 passed, 8 skipped."
+inference/tests/test_windows_primary_runner.py,341,tests,reviewed,93fb8dea6cbc710aaf7287af0709528bef3c3f79ded5ba4805f81a01d2234a4d,"Full test-source inspection; 39 focused profile/metrics/runner/renderer/fixture tests passed; full inference run 244 total, 236 passed, 8 skipped."
+inference/tests/test_windows_process.py,623,tests,reviewed,ec7d2378453ea873154085467c989fc19dd6888d2fe3b8eac1097eb33bad6403,"Complete source inspection; I16-I18 Windows exit-code and qualification supervision fixes. Full inference: 240 tests, 232 pass, 8 skip. Native Windows behavior still requires its native smoke/qualification runs."
+inference/uv.lock,1529,support,pending,,
+macos/CyrusUI/.gitignore,1,support,pending,,
+macos/CyrusUI/Package.swift,15,code,reviewed,b65c26fdc53c046dcea71ff1e27731bc4b6019bf73911b56329adbf3064c795f,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+macos/CyrusUI/README.md,43,support,reviewed,6e36cd33d1fdc7ba4cbea646ba60f7542ab3237c6e00217f2ecd7f7db7515a44,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+macos/CyrusUI/Sources/CyrusUI/ArcReactorView.swift,164,code,reviewed,9b8ca75b97e5ab55527a32a79782b0d6735b3f0990527310225cf9c040c5b70f,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+macos/CyrusUI/Sources/CyrusUI/CyrusHUDView.swift,227,code,reviewed,276944d1a62c3fcfd62daa673711fcf5b60ab2faec3d90a882ece90c4d1b089e,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+macos/CyrusUI/Sources/CyrusUI/CyrusRuntimeState.swift,149,code,reviewed,aa00a94587c9e57aa2516256a9642e31705df034f52a82f8fecb72b5e5a1b38c,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+macos/CyrusUI/Sources/CyrusUI/CyrusStateStore.swift,82,code,reviewed,261109997b2fe76bc37a41d50106e95c35e2f6eb0fc21c007048cd0b4ce1e554,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+macos/CyrusUI/Sources/CyrusUI/CyrusUIApp.swift,76,code,reviewed,236d8e67b4777848cd721b683e98eb8bc883e9dce15ca2da75aa1d59d1261707,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+macos/CyrusUI/Sources/CyrusUI/HUDTheme.swift,47,code,reviewed,1bcae50b2da8f1b60629fd8c299070dd1df1fdf8d00555c20bb26864907e34d1,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+macos/CyrusUI/Sources/CyrusUI/ReactiveTelemetryView.swift,109,code,reviewed,f71332ecd3263eb1840b701d5abf2cedffed55408be39cab9be0254118bc38ee,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+macos/CyrusUI/Tests/CyrusUITests/CyrusRuntimeStateTests.swift,131,code,reviewed,2b4ba5354b00fe1b9cb69680cd7138bdac74ad816fe807d96c784b3da21f5ed8,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+native/macos_action_host/JarvisActionNative.entitlements,10,support,reviewed,16916b0503e76aa62df34c02a1795ed267a026a13b02dcb5792b1ca0461edc3f,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
+native/macos_action_host/Package.swift,12,code,reviewed,b33f778cdfac08dfba9a8353ed3e74e23aa8a6c1fd526b4398d13d4e386974b0,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+native/macos_action_host/Sources/JarvisActionNative/main.swift,744,code,reviewed,26fe6ffbf3eaf5d8324728ede85371a27cc79373f50a2a3900b48615a0d2003c,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+native/macos_action_host/Tests/JarvisActionNativeTests/ContractTests.swift,29,tests,reviewed,3e5d57a6a12e8012be45bf6fcd23559f29783e108fc09134ff06ef692d66f13f,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+native/macos_scheduler_host/JarvisSchedulerNative.entitlements,5,support,reviewed,97704a8960b4facceef54397a08fb5d0a456247c3627359215aa2a27df22656c,Complete empty entitlement plist inspected alongside Swift helper and package manifest. Native signing/permission/notification qualification is not established by portable tests.
+native/macos_scheduler_host/Package.swift,9,code,reviewed,3e2135010e6d55840d1dc96fffaeb2a550051a5ac3388277758a40821788ef0f,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+native/macos_scheduler_host/Sources/JarvisSchedulerNative/main.swift,230,code,reviewed,0ff0a8838def33ec5a2ab404e2e103860ded71469a8d05393b2f081cfb13ef06,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+orchestrator/README.md,379,support,pending,, Current shadow runtime documentation updated to v4 and automatic CLI composition; frozen v3 evaluation/pilot descriptions remain historical. Regression evidence is explicitly not live-service qualification. Whole README review remains pending.
+orchestrator/action-host-native-tests.template.json,17,support,pending,,
+orchestrator/action-host.example.json,24,support,pending,,
+orchestrator/cloud-qualification.example.json,33,support,pending,,
+orchestrator/cloud-release-qualification.template.json,47,support,pending,,
+orchestrator/config.example.json,79,support,pending,,
+orchestrator/docs/action-host-v2-macos.md,154,support,reviewed,de1539884499df20c0657e968bdcd344a7b01b2821abb03dc4d43b974ac067ab,"Complete operator guide inspection. Documents 512 KiB encrypted/native envelope vs 256 KiB payload and 8 KiB handshake, revised current contract SHA, exact canonical qualification bytes and mandatory fresh qualification. Historical evidence unchanged; no actual native qualification performed."
+orchestrator/docs/cloud-operational-qualification-v1.md,183,support,reviewed,076196a1279e1d6e4c75feaa014f51397b7c60cf47625b25fe3c9aa353e8daf1,"Complete operational guide inspected. Exact prices and prior gate/receipt corrections retained. Documents private secret and registry limits, 4 MiB wire/decoded provider bounds, accepted compression, total request deadlines and exact dispatch origin. New operational ceiling needs live qualification; no evidence or real secret was written."
+orchestrator/docs/control-idempotency.md,44,support,pending,,
+orchestrator/docs/input-translation-v1.md,73,support,pending,,
+orchestrator/docs/macos-beta-latency.md,37,support,pending,,
+orchestrator/docs/operational-ready-gate-v1.md,432,support,pending,,Backup/restore section checked and corrected for current CLI attestor and prepublication sidecar checks. Wider readiness/signing/native gate claims remain pending full implementation review.
+orchestrator/eval/greek-english-voice-v1-holdout.jsonl,25,support,pending,,
+orchestrator/eval/greek-english-voice-v1.jsonl,82,support,pending,,
+orchestrator/eval/lifecycle_gate_v2.protocol.json,33,support,pending,,
+orchestrator/eval/lifecycle_gate_v3.protocol.json,30,support,pending,,
+orchestrator/eval/lifecycle_shadow_natural_v1.jsonl,48,support,pending,,
+orchestrator/eval/lifecycle_shadow_natural_v1.manifest.json,23,support,pending,,
+orchestrator/eval/lifecycle_shadow_natural_v2.jsonl,64,support,pending,,
+orchestrator/eval/lifecycle_shadow_natural_v2.manifest.json,30,support,pending,,
+orchestrator/eval/lifecycle_shadow_natural_v3.jsonl,48,support,pending,,
+orchestrator/eval/lifecycle_shadow_natural_v3.manifest.json,30,support,pending,,
+orchestrator/eval/lifecycle_shadow_service_pilot_v1.jsonl,8,support,pending,,
+orchestrator/eval/lifecycle_shadow_service_pilot_v1.manifest.json,20,support,pending,,
+orchestrator/eval/lifecycle_shadow_service_pilot_v1.protocol.json,21,support,pending,,
+orchestrator/private-stack.example.json,10,support,pending,,
+orchestrator/pyproject.toml,44,support,reviewed,a95769cfc7a4fc4fc1f62aac6d7ee956cc629cc3473e298ca8ac4e8d80374874,"Complete build/dependency/entrypoint declaration inspected. HTTPX is an existing dependency; Voice is not a dependency of the standalone Orchestrator wheel. All three CLI help entrypoints run with Orchestrator/Anamnesis source and installed dependencies, without Voice. No build metadata change."
+orchestrator/results/deterministic_lifecycle_diagnostic.2026-08-10.json,71,support,pending,,
+orchestrator/results/lifecycle_shadow_natural_v1.2026-08-10.json,38,support,pending,,
+orchestrator/results/lifecycle_shadow_natural_v2.2026-08-10.json,38,support,pending,,
+orchestrator/results/lifecycle_shadow_natural_v3.2026-08-10.json,32,support,pending,,
+orchestrator/results/lifecycle_shadow_service_pilot_v1.2026-08-10.json,22,support,pending,,
+orchestrator/results/live_shadow_probe_v2.2026-08-10.json,41,support,pending,,
+orchestrator/results/live_shadow_probe_v3.2026-08-10.json,50,support,pending,,
+orchestrator/results/local_lifecycle_diagnostic.2026-08-10.json,122,support,pending,,
+orchestrator/results/translation-qualification-m3-v1.json,1,support,pending,,
+orchestrator/scripts/build_translation_pack.py,331,code,pending,,
+orchestrator/scripts/report_lifecycle_shadow_sessions.py,34,code,pending,,
+orchestrator/scripts/run_deterministic_lifecycle_diagnostic.py,172,code,pending,,
+orchestrator/scripts/run_lifecycle_shadow_natural_eval.py,147,code,pending,,
+orchestrator/scripts/run_lifecycle_shadow_natural_v2_eval.py,175,code,pending,,
+orchestrator/scripts/run_lifecycle_shadow_natural_v3_eval.py,169,code,pending,,
+orchestrator/scripts/run_lifecycle_shadow_service_pilot_v1.py,345,code,pending,,
+orchestrator/scripts/run_live_memory_crud_probe.py,681,code,pending,,
+orchestrator/scripts/run_live_shadow_probe.py,112,code,pending,,
+orchestrator/scripts/run_local_lifecycle_diagnostic.py,134,code,pending,,
+orchestrator/scripts/run_translation_qualification.py,822,code,pending,,
+orchestrator/src/jarvis_orchestrator/__init__.py,35,code,reviewed,d63c9629fc7619822ad172e134b29f8a12f4834df1dac11119f26af70f9fd5be,"Complete lazy-export module inspected; names and package version match public implementation and packaging. Full Orchestrator 780 tests, four skips."
+orchestrator/src/jarvis_orchestrator/__main__.py,3,code,reviewed,935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d,Complete entrypoint inspected; delegates to CLI and propagates exit status. CLI remains separately tracked.
+orchestrator/src/jarvis_orchestrator/action_host_daemon.py,257,code,reviewed,2aaf79a6f0b6be43d94805d745a6ec7068d87fa07c0d4c05cf4785595248beff,Complete config/token/serve/setup/CLI inspection. V102 bounded strict JSON and declared field types; V103 ExitStack owns acquired resources and signal handlers; V104 private-directory validation and exclusive complete token publication. Seven injected lifecycle failure stages and real temp FIFO/symlink/fsync regression pass.
+orchestrator/src/jarvis_orchestrator/action_host_protocol.py,426,code,reviewed,fe866e42d98a54b47904a397efabc53d5c31ec45189a642e981fe5d8b2cca78f,"Full frozen-v1 source inspection; framing, canonical JSON, directional HKDF/AES-GCM, sequence checks and receipt-only message sets. Kept unchanged; four v1 tests pass. Legacy parser exception gaps are contained by current v2 wrappers and existing broad catches in adapter/qualification consumers."
+orchestrator/src/jarvis_orchestrator/action_host_qualification.py,346,code,reviewed,9388a147c19f1f4417f138d7e193c63c1f7c63f257fd61d7fc533e63c1b76112,Complete qualification/readiness/build/load inspection. V99 bounded nonblocking regular-file inputs; V100 exact state/tool types and reminder IDs; current revised v2 contract binding. dataclasses.replace removes repeated constructor fields. Generator roundtrip and malformed-input regressions pass.
+orchestrator/src/jarvis_orchestrator/action_host_security.py,83,code,reviewed,d7e8afc8473e2c5082781e9d8ef50980fae6858d2a8aa13ae7f8b9a1779addb0,"Full source inspection of POSIX path modes/ownership, same-UID checks and token loading. V98 token descriptor opened nonblocking and checked for regular file, owner and mode; directory validation checks type and owner. Temp 0600 token succeeds, 0644 and FIFO reject without blocking; no real token/Keychain accessed."
+orchestrator/src/jarvis_orchestrator/action_host_v2_client.py,284,code,reviewed,bba5df3957d4ed4967f4480a8e3de8683f9197b512cb53760ca207bb031318c5,"Full source inspection. V91 async socket I/O plus one session deadline/cancellation ownership; V92 shared live/snapshot collector with requested execution and permit identity checks. Real Unix socket execute/replay/query/ACK, cancellation, drip-fed handshake and wrong-execution tests pass; 838-test full suite green (4 skips)."
+orchestrator/src/jarvis_orchestrator/action_host_v2_protocol.py,824,code,reviewed,e43a16294f9bc778b4eeac65213d0c4b86bd4e1a721d19deff9695ad834e0d08,"Full source inspected previously; current revision raises encrypted frame bound to 512 KiB, preserving 256 KiB result and 8 KiB handshake. U03 fixed and v2 contract intentionally updated to 6a2900bfef2168ffc76244b5a1fad910ff690a7c6505ff46aabf9dece1515f14; full-size schema-valid live/snapshot roundtrip passes. V95/V96 fixes retained; v1 frozen unchanged."
+orchestrator/src/jarvis_orchestrator/action_host_v2_server.py,628,code,reviewed,505ae5fcdd10b5805853dc91b1b11815061391bbdfbc2b8c0a82fd0357366bbf,Full source inspection. V89 persist result before post-call sends; V90 atomic encrypted result/terminal receipt; V93 stdlib transaction context releases BEGIN-failure lock; V94 private journal/socket path ownership; V97 bounded sessions and per-connection invalid-tool rejection. SQLite trigger and broken-pipe fixtures pass. U03 resolved by revised v2 capacity; full-size execute/query/ACK passes. Legacy partial journal recovery remains unverified.
+orchestrator/src/jarvis_orchestrator/anamnesis_adapter.py,253,code,reviewed,5ff0bb8a277b1bfdf0aba53c5f713a33ebca942b63db554abab037e5ef6346ef,"Complete 253-line adapter and direct Anamnesis index add/search verification inspected: pinned v0.2.1 contract, local-only scope projection, one-shot write-verification scope, existing store-owned add/delete authority and content-only recall projection. Shared parser fix reaches legacy remember/forget as well as service commands. All 16 integration methods inspected and passing; broad SQLite store/retrieval implementation remains separately pending."
+orchestrator/src/jarvis_orchestrator/anamnesis_shadow.py,1189,code,reviewed,6d46bc4ece02590d8237b5df5a67991396d863be516b39e1d5f11e64f659331b,"Complete 1,189-line source inspected: frozen v1/v2/v3 gates and identities, deterministic/fallback composition, bounded content views, loopback completion transport, exact schema decisions, proposal reconstruction and system-owned identifiers. V78-V80 fix schema aliases/target range, strict JSON/index/usage/body bounds, total HTTP deadline and invalid settings/candidate types. Common parser replaces duplicate JSON logic; no contract/prompt/schema hash changed. U02 is now fixed in the current CLI runtime by the separate v4 gate. Frozen v2/v3 retain historical semantics/identities; authored v4 regressions and mixed-version replay pass, without reinterpreting old evidence as new qualification."
+orchestrator/src/jarvis_orchestrator/background.py,283,code,reviewed,9b8b3b66d742ff96779c15f9a7926130a01a258dd3ff5a35b51c5cd193918a33,"Complete background manager source inspected: generated runner and platform manifests, service commands, lock status, stop marker/restart-gap semantics, install/start/stop/uninstall. V176: atomically publish owner-only plist via existing private temporary writer and directory fsync, preserving prior target on failed replacement and never truncating link targets. V177: normalize command launch/timeout errors to OperationalError and discard unused captured output. Fake commands/disposable files only; real launchd/schtasks behavior remains native qualification. Committed as 89cfdc8 with exact staged Ponytail review and active hooks; no complexity findings."
+orchestrator/src/jarvis_orchestrator/beta_preflight.py,257,code,reviewed,24e4a19bfa5c5bb05c42f1e40f5b0ac8f03dc65bcf400020a41d94bb8b8df358,"Complete source inspection. V168-V170: explicit None probe defaults, malformed status fail-closed handling, exact ready/platform enforcement, reload selected stack and revalidate qualifications before probes, compare deployment identities across probes. Synthetic boundaries and full Orchestrator suite pass; no user provider/key or native action."
+orchestrator/src/jarvis_orchestrator/cli.py,1468,code,pending,," Compiler startup reads a pinned manifest and structured capability but does not match the declared model/runtime/profile/tokenizer hashes to live inference identity. Exact artifact-to-live identity semantics and qualification producer remain unresolved; do not infer runtime qualification from manifest self-consistency. U02 current shadow composition now selects gate/writer v4 in both existing modes; actual composition and mixed v3/v4 history are tested. Whole CLI source inspection remains pending. V109 cloud startup now shares endpoint batch draining with operational gate; changed composition block reviewed, whole CLI remains pending."
+orchestrator/src/jarvis_orchestrator/cloud_activation.py,89,code,reviewed,b6c25f9c6ab43dffb67944d8141b62d9734795bcc0989002640c8e3beb109a10,"Complete source inspected. V109 shared endpoint batch drains work before owner cleanup; V110 store still closes if adapter cleanup fails. New success/failure/cancellation/cleanup tests use fake loaders/HTTP owners; full Orchestrator 869 tests, 4 skips."
+orchestrator/src/jarvis_orchestrator/cloud_contract.py,374,code,reviewed,d222417fa874118876c0a214ae6fee3eb5c5c921bfdb7b33ea5e178c94f9de80,"Complete contract/cost/endpoint/health/dispatch/approval source inspected. U04 resolved: V113 finite nonnegative rates, V114 bounded exact decimal normalization and rational reserve independent of Decimal context, V115 strict types/identity/messages, V117 valid known health metrics. Ordinary request snapshots and 198000-microUSD Terra reserve unchanged. High-precision catalog identity may change; no historical artifacts rewritten."
+orchestrator/src/jarvis_orchestrator/cloud_privacy.py,134,code,reviewed,c95c748ee8b076699168c69a44e16561f1bbfe3945c6f6b2f61b4a6d47f739e7,Complete source inspected. V108 fifteen existing Greek stems now match inflected words; policy hash bfbdbc1aec2e49e3213671f04fcd722f8514772c5717aa1afe43565657d0ac1f requires fresh qualification. U05 OPEN: unmatched nonempty content defaults PUBLIC; synthetic Greek credential marker remains missed. Passing local fixtures are not general privacy accuracy proof.
+orchestrator/src/jarvis_orchestrator/cloud_provider.py,513,code,reviewed,35857a8baa8455a30fc24531561ad0f133bad709de134c0a48409a94b8d1f353,Complete provider source inspected. V119 private bounded secret reader; V120 bounded strict regular registry; V121 shared streamed JSON with bounded complete gzip/deflate; V122 complete request deadlines; V123 constructor admission before clients; V124 exact physical POST URL before permit consumption. Earlier receipt/numeric/revalidation fixes retained. Full Orchestrator 893 and Voice 714 tests pass with documented skips; all new provider I/O is synthetic. Live qualification and U05 remain open.
+orchestrator/src/jarvis_orchestrator/cloud_qualification.py,424,code,reviewed,88148a56ac54ce15e90df939d4eb0709b3d398ccce3e489bb55655765e7c5c63,"Complete source inspected. V105 one bounded regular-file strict JSON/hash snapshot; V106 minimum known privacy case coverage and string identity types; V107 exclusive expiry, overflow-free observation comparison and typed key errors. Full release tests pass. Live cloud qualification not performed."
+orchestrator/src/jarvis_orchestrator/cloud_routing.py,542,code,pending,,
+orchestrator/src/jarvis_orchestrator/common_schema.py,159,code,reviewed,0a1b964cab18061c315be1af252abe9670e010244a4bac5100f5412dc686e5e2,"Full source inspection: closed CommonSchema transformations, local refs, recursion/union rejection, Pydantic duck-typed seam, and route schema. Existing schema/import and golden registry tests pass in full 825-test suite; no edit."
+orchestrator/src/jarvis_orchestrator/config.py,733,code,reviewed,3eed4bc45f74cf8369fec8207d30996674c46f73c5ea761722cd2dfe89884061,"Complete configuration source inspected: private bounded snapshot reader, canonical bearer policy, mapping conversion, every feature/identity constraint and scalar field. V138-V140 reject wrong scalar types/nonfinite durations, invalid listener/URL ports and malformed path values. Reuse dataclass scalar defaults and remove redundant guards; final Orchestrator 914 tests, four skips. Stack checkpoint adds an internal maximum_bytes argument; default 256 KiB configuration limit is unchanged, while stack JSON uses 4 MiB."
+orchestrator/src/jarvis_orchestrator/context_assembler.py,745,code,reviewed,599d6a63066f2f99987811c0f6e752293a386bf3c32a51f4c65b71775923e576,"Complete source/test inspection with context assembly and speech callers. V178-V182: enforce history capacity, positive exact speech limit, Greek middle-dot boundary, aware offset and datetime range. Five new methods fail baseline (eight failures/two errors); focused 44 pass; full 979 (974 pass, five skips). Policy hash preserved. Commit afb009f, exact staged Ponytail and active hook passed."
+orchestrator/src/jarvis_orchestrator/control.py,978,code,pending,,
+orchestrator/src/jarvis_orchestrator/domain.py,311,code,reviewed,19f501ad3cc699a1f4a0c5aef451bc686bb565d6010536ba52d1e41509903ca2,"Complete domain enums, data records, budgets, canonical helpers and route validation inspected. V67 rejects nontext UUIDs and route tokens with existing typed errors; rejects surrogate queries. Canonical UUID case normalization and valid routes retained. Full Orchestrator 792 tests passes with four skips. Native backend behavior and wider store/service lifecycle remain separate reviews."
+orchestrator/src/jarvis_orchestrator/gateway.py,862,code,pending,,
+orchestrator/src/jarvis_orchestrator/history.py,33,code,reviewed,6c5c161807779c8c499123a9ce7f706ab4cdea7d3644f252d9ede05b44ca7bdd,"Complete shared adapter and all four callers inspected; V54 validates final prompt content consistently with history. Real Pydantic message conversion regressions pass; full Orchestrator 780 tests, four skips."
+orchestrator/src/jarvis_orchestrator/inference.py,146,code,reviewed,208aa1749c6ea7b8d55af695ac37e9b6b15c94e8cb0e08b1df06e7194c0def47,"Complete control-client inspection: strict bounded JSON, typed boolean readiness and identity status classification; proxy/redirect isolation and one full HTTP deadline. Eight control tests, cloud event-loop regression and full Orchestrator 804 tests (800 pass, 4 skips). Sync callers inspected; async cloud caller now offloads readiness."
+orchestrator/src/jarvis_orchestrator/jcs.py,70,code,reviewed,66e33b0dd39768d930ec5c48e02f8904310b2d835b2dfba2fe0b3d01920b55dc,"Complete 70-line canonical profile inspected. V77 translates Unicode/recursive serialization failures and rejects nontext domain IDs through CanonicalJsonError. Fixed expected-byte/domain-hash tests preserve NFC and signed-64-bit integer encoding. Module documentation now accurately identifies the frozen project profile, rather than claiming general RFC 8785 compatibility; no hash migration."
+orchestrator/src/jarvis_orchestrator/lifecycle_gate.py,130,code,reviewed,095bf3f68e348cd69708d654ef0391cbdd02ee1ba71b0d80646f20c94a15b42f,"Complete new 130-line v4 gate inspected. U02 fixed for current runtime: reuse the explicit memory command parser, whole-word family prefixes, nonempty command remainder and punctuation-aware hedge words; English whole-word/Greek stem marker matching. Distinct v4 gate/writer hashes preserve frozen v1-v3 identities and historical replay. Closed zero/one/multiple target policy and audit-only authority remain. No dependency or generalized parser framework."
+orchestrator/src/jarvis_orchestrator/llm_context.py,221,code,reviewed,870a7cad78114d11071c85d2b47ede51fc629f593dd766178bab080cf9928803,"Complete source/test inspection with context assembly and speech callers. V178-V182: enforce history capacity, positive exact speech limit, Greek middle-dot boundary, aware offset and datetime range. Five new methods fail baseline (eight failures/two errors); focused 44 pass; full 979 (974 pass, five skips). Policy hash preserved. Commit afb009f, exact staged Ponytail and active hook passed."
+orchestrator/src/jarvis_orchestrator/macos_action_adapters.py,479,code,reviewed,b3b088dddc885210e8e16be0b7db8e15b3c31a40b0f29445131a23d65e6034b8,Complete source inspected previously; N01-N06 evidence retained in report. U03 sibling native response envelope raised to 512 KiB to admit full 256 KiB schema-valid result plus metadata. Fake subprocess boundary test passes; actual EventKit persistence/permissions remain unqualified.
+orchestrator/src/jarvis_orchestrator/macos_beta_lease.py,510,code,reviewed,82677e7aad3bd8cc91bd9d9d69084b30d9c64a6b2393301f3bed6d8963e12c0c,"Complete source inspection. V164-V167: shared bounded stable private reader and strict JSON, owned descriptor/temp cleanup and replacement preservation, shared kernel microsecond process identity with parent PID and post-listener recheck, heartbeat/final validation clock checks. Full Orchestrator 965 tests: 960 passed, five skips. Own-PID read-only native snapshot passed; live session qualification remains separate."
+orchestrator/src/jarvis_orchestrator/macos_beta_probes.py,172,code,reviewed,c7197ce9ca4f110d99db06de57c313d071c3cb94596356e339cee8d4ceec51ae,"Complete 172-line probe source inspected. V152-V154 strict readiness boolean/JSON, ordered complete SSE with integer token accounting, one total deadline and no proxy/redirect/encoded-response acceptance. Reuses InferenceControlClient and parse_inference_json; warmup stays bounded at 256 KiB, control JSON uses shared 16 KiB ceiling. Fake HTTP boundary tests and full Orchestrator pass; no live model/native session qualification."
+orchestrator/src/jarvis_orchestrator/macos_beta_session.py,1892,code,pending,,Partial only: two readiness wrapper call sites now use shared HTTP probe transport without urllib injection; immediate sync startup/readiness callers inspected. Whole session/process/recovery source review remains pending. Lease checkpoint: inspected shared kernel identity helper and immediate callers; added parent_pid to process identity. Whole module remains pending.
+orchestrator/src/jarvis_orchestrator/macos_code_identity.py,23,code,reviewed,a0d9db3ef257a47a6f760854af144aabe7590e81aa83ac90e7e963d9d6171f0a,Complete canonical designated-requirement parser inspected against manifest producer and both consumers. V53 reuses it for scheduler validation; actual producer-consumer regression accepts path diagnostics and rejects changed requirement.
+orchestrator/src/jarvis_orchestrator/memory.py,470,code,reviewed,0fa169bc2e02ddd741270f56414c07384e4398129c5c68e855f2f8952836d1e2,"Complete 470-line shared memory-contract inspection: bilingual command prefixes and preserved original-text offsets, normalization/search limits, deterministic outcome consistency, recall/observation/proposal records and disabled shadow port. V73 adds word boundaries so ordinary words do not mutate memory or lose target prefixes. V76 rejects nontext proposal summaries before UTF-8 encoding. Real encrypted temporary-store lifecycle and malformed-report replay tests pass. Internal typed records remain separate from external JSON admission."
+orchestrator/src/jarvis_orchestrator/memory_backup.py,353,code,reviewed,74bc6e69cc1484832bfcaa0271599ec2867d4cc05060620922b05be8e2507a99,"Complete 353-line manifest/state/epoch/provider-verification source inspected. V130 maps deep and overlong-integer JSON to MemoryBackupError. Frozen canonical format, provider identity/epoch/high-water checks and same-install restriction retained; temporary encrypted backup/restore tests pass."
+orchestrator/src/jarvis_orchestrator/memory_crypto.py,1177,code,reviewed,c2d7bcb3053235a370dd30a54f54ebf33931a1487152fa930ab8806e0e26ced7,Complete envelope/binding/HKDF/blind-index/session source inspected. V132 rejects non-integer schema versions; one shared term validator replaces four copies without changing golden tokens or provider/session behavior. Runtime rotation/destruction remain explicitly unsupported; cached derived keys do not establish erasure.
+orchestrator/src/jarvis_orchestrator/memory_key_provider.py,2840,code,reviewed,5c45f9f692f07b86233802c11bc82d71356d49598d231cf83cd5c42e871ef037,"Complete platform provider, installation anchor, state/ledger/pending CREATE recovery, keychain/DPAPI adapters and lock source inspected. V133-V137 normalize boundary errors, preserve lock errors, reject FIFO swaps and publish exclusively with known staging-link recovery. Remove discarded failure-path readbacks. Full Orchestrator 909 tests, four skips; no real OS key store used."
+orchestrator/src/jarvis_orchestrator/memory_release.py,203,code,reviewed,faac0aa97f1a71a24d25e1b287c299769d625f74775089d543c950b46f484c37,"Complete source inspected: frozen policy SHA/immutable projection, defensive history facade, proposed/failed audit shape and provenance/authority binding. V74 requires exact types for boolean safety flags; both 0 and 0.0 rejected before persistence. Original release policy digest verified by existing test; no policy/prompt/evidence change."
+orchestrator/src/jarvis_orchestrator/memory_runtime.py,67,code,reviewed,6b6d6cc320ae43d61b4b4a726f297a08c2701f2ff3e117d5945889c64b3d9314,Complete immutable/lazy runtime injection wrappers inspected; traced cipher-only admission and later install binding in store and CLI. No change. Existing enabled/disabled/bootstrap/mismatch/readiness tests pass; full provider/store audit remains separate.
+orchestrator/src/jarvis_orchestrator/model.py,144,code,reviewed,4bf5df57f2dd7d72764bc369d3d615f83b158efa89412a388c4026e6a9a29981,"Complete remaining model dispatch module inspected after removal of the unused blocking HTTP transport and duplicate parser. V183-V185 ownership/permit/reconciliation fixes committed b5bb8c1. Dead transport and generic payload builder removed in 86717c9; active guard and exact payload tests retained. Full Orchestrator 994 tests: 989 passed, five skips. External SDK/native qualification and complete store review remain separate."
+orchestrator/src/jarvis_orchestrator/operations.py,1144,code,reviewed,f91e4739780ea82a4601e68c3a45647a61b872401f95fde33d3ed3255fd07750,"Complete source inspected: private rotating logs, process lock, read-only SQL diagnostics/invariants, same-install backup manifest/provider checks and offline restoration. V126 shared secure descriptor opens, V127 temporary setup cleanup, V128 SQLite connection ownership and V129 final destination sidecar recheck. Production module shrank 35 lines; full suite and actual temporary-file/SQLite regressions pass. Stopped/cooperating-writer and separate real-provider qualification requirements remain."
+orchestrator/src/jarvis_orchestrator/physical_turn_gate.py,518,code,pending,,
+orchestrator/src/jarvis_orchestrator/policy.py,29,code,reviewed,6ec254386e8d599b329b941ca699107d96b00fb837927f1356b41ace4497260b,Complete 29-line deterministic policy inspected. No in-repo callers; active permission enforcement is elsewhere. No change or claim that this unused policy supplies runtime authority.
+orchestrator/src/jarvis_orchestrator/ports.py,160,code,reviewed,9ebed7e85495ebf72e17bffa83deb1c85f6aef0ed39acb2f8800871b0440ffce,Complete 160-line protocol and disabled-adapter module inspected with active service callers. No confirmed defect; no change.
+orchestrator/src/jarvis_orchestrator/private_state.py,494,code,reviewed,d38dadfcf5a46b4c14b32fb835d56301b2027aa2db523522b058664a34413082,Complete POSIX ownership/modes/creation/audit/hardening source inspected. V125 defer truncate until descriptor and current pathname match; create missing files exclusively. V126 nonblocking opens/hardening prevent FIFO substitution hangs. Shared opener reused by backup operations. Real-file race preserves replacement content; private state and full suites pass. Windows ACL boundary is separate.
+orchestrator/src/jarvis_orchestrator/pydantic_adapter.py,968,code,pending,,"Complete source read; whole-file review remains pending fallback stream context and SDK client lifecycle follow-up. V183-V185 committed b5bb8c1; strict final stream validation V186-V189 committed d394f5a; unused payload/transport dependency removed in 86717c9. Active final caller supplies total asyncio timeout. Full Orchestrator 994 tests: 989 passed, five skips."
+orchestrator/src/jarvis_orchestrator/readiness.py,1109,code,reviewed,3396e093c0d5fc90cfebc2fbe681d2db6144bff27637ee9814ba2280835a2f52,"Complete 1,109-line operational gate source inspected, including synthetic lifecycle, recovery, live/failure/restart/soak and signed aggregation. V156-V163 enforce typed finite bounds, total per-turn/phase wire deadlines, shared session/turn/response/ACK and existing sequence validation, complete ordered response/replay, handshake cleanup, bounded post-cancellation observation, final soak resource samples and final-time evidence expiry. Simplified nested synthetic lifecycle and removed redundant ACK state. Full Orchestrator 950 tests: 945 pass, five skips. Installed-daemon callbacks and native qualification remain separate."
+orchestrator/src/jarvis_orchestrator/readiness_evidence.py,2293,code,pending,,"Partial inspection only: prior stable file/hash reader work plus current verify_readiness_evidence expiry/signature and qualification-binding/canonical evidence caller contracts. Complete 2,293-line evidence/cohort/signing implementation remains pending; this checkpoint changes its aggregation caller, not this file."
+orchestrator/src/jarvis_orchestrator/readiness_report.py,77,code,reviewed,ff06939b4c94898cef956096dec6298decbf79eaa0ae373a47cdc933aaffdfa4,"Complete 77-line legacy report writer and signed-evidence delegation inspected, including CLI call sites. Legacy output is explicitly not gate-eligible; signed path delegates to the dedicated verifier/writer. No change; complete readiness evidence and CLI review remain pending."
+orchestrator/src/jarvis_orchestrator/reducer.py,33,code,reviewed,b2c414affa7ba4ad923947fc12452e6672523dc7a7796551e426f4e5a5d8701c,"Complete reducer inspected with sole Store.transition caller; store separately forbids terminal transitions and owns atomic terminal writes. Full Orchestrator 780 tests, four skips."
+orchestrator/src/jarvis_orchestrator/research.py,1097,code,reviewed,e66f0b0796c76829d20ffa59da684807529a7992fac6a7addf4d4eb0fb79d08f,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/src/jarvis_orchestrator/research_adapter.py,139,code,reviewed,de1cc05c773970a4b7acc5f1b478b86d6b347c8ada38619ff7674ad7a10169c6,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/src/jarvis_orchestrator/research_security.py,279,code,reviewed,c52b8f22dd8427f99d716e0ff4eed07934ad5494cd155eadc377d4a97a375840,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/src/jarvis_orchestrator/runtime_context.py,437,code,reviewed,07b3bbb75f1e7e6c3339ce62bea599d151b510e5c312e50b207354d8df62f630,"Complete source/test inspection with context assembly and speech callers. V178-V182: enforce history capacity, positive exact speech limit, Greek middle-dot boundary, aware offset and datetime range. Five new methods fail baseline (eight failures/two errors); focused 44 pass; full 979 (974 pass, five skips). Policy hash preserved. Commit afb009f, exact staged Ponytail and active hook passed."
+orchestrator/src/jarvis_orchestrator/runtime_supervisor.py,841,code,reviewed,ce6a2afd2d5f9bea191757b823c7234e3655fa758eb3cb814a80900fa3ae1bbe,"Complete runtime supervisor source inspected: health/readiness/task ownership, monotonic and external process deadlines, signal restoration, async and threaded control cleanup. V171-V175 fix pre-entry cancellation callbacks including first_tick, cleanup failure propagation, repeated outer cancellation ownership, synchronous/Awaitable cleanup admission and process-control exception normalization inside the task. Existing timeout/hard-exit seams retained; shared shield wrapper used for three bounded cleanup boundaries. Full Orchestrator: 971 tests, 966 passed/five skipped. Committed as 72e2637 after exact staged Ponytail review and configured pre-commit hook; no complexity findings."
+orchestrator/src/jarvis_orchestrator/schedule_admission.py,53,code,reviewed,2754e35660f41784e20bd61d5b63fec8920a434fce229a840a584ea288e0c3fc,Complete bilingual pattern admission gate and service routing inspected; approval remains separate authority. Six admission integration tests pass. Keyword/negation language quality is not exhaustively qualified.
+orchestrator/src/jarvis_orchestrator/schedule_compiler.py,283,code,reviewed,c6037ea980a939c00c17a4583c8e996f07bcc7a14cbd72ee512ef00dc33a0eaf,"Complete compiler/schema/qualification source inspection. V68-V70 preserve declared prompt/schema hashes, bound artifact/model reads, reject duplicate/incomplete/multiple outputs and apply whole-request timeout. Seven new tests plus v5/Voice integration pass. Standalone imports and all three CLI help entrypoints pass without Voice. Live model/artifact identity binding in CLI deployment remains separately unresolved; manifest consistency is not runtime qualification."
+orchestrator/src/jarvis_orchestrator/scheduler_contract.py,830,code,reviewed,273f7bca68e9b1e010d239117a343f2c4585a4ba2ebe71d156d39c3249566511,"Complete 800+ line contract inspected against compiler, store materializer and S1 spec. V61-V66 bound yearless date search, preserve DST-gap year/recurrence semantics, reject NONE proposals and boolean/noninteger/oversized target revisions, translate malformed temporal/scalar input, enforce inclusive recurrence range and delivery/retention date headroom. Eight new boundary tests and existing clock/DST/store cases pass. Whole scheduler store and compiler qualification transport remain separately pending."
+orchestrator/src/jarvis_orchestrator/scheduler_crypto.py,508,code,pending,,
+orchestrator/src/jarvis_orchestrator/scheduler_port.py,12,code,reviewed,3bf2a62745376d25217f7b578ce21f2a8594a097dca77531129b2478acd99f50,Complete source and every repository reference inspected. Removed unused TimerToolAdapterV6 forwarding wrapper and duplicate schema constants; preserved documented SchedulerPort type boundary. No production or test caller referenced removed symbols; full Orchestrator passes.
+orchestrator/src/jarvis_orchestrator/scheduler_store.py,2473,code,pending,,"Selected scheduler flows inspected, not full file. U01 action mutation, encrypted command identity, inbox and result are atomic; transport-changing duplicate succeeds without mutation; legacy exact-hash upgrade and conflicting replay tested. Full store review pending. V66 materializer overflow/range/count/until exhaustion now uses one atomic drain update, preserving a valid current occurrence. Fixed-interval and monthly end-of-calendar integration regressions pass; broader expiry/retry/retention and full-source review remain pending."
+orchestrator/src/jarvis_orchestrator/scheduler_worker.py,118,code,reviewed,bc2f5bfb14f14a612b627ee1dc2d8764f19579e5e53c1cf0dc29a640174a9748,"Complete source inspected: UTC/monotonic clock split, bounded wait, wake/cancellation and supervised startup paths. V45 exact timedelta arithmetic fixes false-negative jump threshold; clock and supervision regressions pass in full 778-test Orchestrator suite. Native wall-clock changes not qualified."
+orchestrator/src/jarvis_orchestrator/service.py,1967,code,pending,," Inspected cloud approval readiness call and moved its synchronous probe to asyncio.to_thread; before-fix lifecycle test blocked the event loop for 0.5 seconds, after-fix passes. Whole service review remains pending."
+orchestrator/src/jarvis_orchestrator/shadow_audit.py,258,code,reviewed,26ffdc6e6bc80c000feb312f72cfab5ce03b666503984ad57f87567aa9f2a04c,"Complete read-only report inspected: stopped-database/schema assumptions, SQL event projection, content-free counters/hash, semantic replay and integrity/sample decisions. V75 reuses strict JSON parser, rejects duplicate/nonfinite/deep/invalid-Unicode rows, handles container-valued operations and computes payload digest once. Real tampered temporary databases reject without crashes; valid report leaves database hash unchanged. This is consistency reporting for a trusted stopped local database, not proof against coordinated operator fabrication."
+orchestrator/src/jarvis_orchestrator/speech.py,97,code,reviewed,177b450f3495dfd3db60468a56f223f36181736f32d7652d89d4b6878801867b,"Complete source/test inspection with context assembly and speech callers. V178-V182: enforce history capacity, positive exact speech limit, Greek middle-dot boundary, aware offset and datetime range. Five new methods fail baseline (eight failures/two errors); focused 44 pass; full 979 (974 pass, five skips). Policy hash preserved. Commit afb009f, exact staged Ponytail and active hook passed."
+orchestrator/src/jarvis_orchestrator/stack_cli.py,481,code,reviewed,3eca0d2fa67f463ff2f9b2bae75feeca315997b84ae715e021d748e713643a65,"Complete 481-line CLI source inspected. V152/V154 reuse bounded strict control HTTP for readiness and beta-session; V155 preserves input leaf identities before stack validation. Existing status identity/authentication and command dispatch inspected; downstream full readiness/lease/session review remains pending. Full Orchestrator 939 tests, five skips."
+orchestrator/src/jarvis_orchestrator/stack_config.py,470,code,reviewed,998f56396f066fa9527e11e230763f5166acde4550266271b4a183c7892667be,"Complete source inspected, with stack CLI status and foreground inference activation call sites traced. V142-V146: reuse bounded private strict JSON and stable streamed artifact hashing, preserve leaf identity during path normalization, validate current report status/digest, and limit failed-publication cleanup to the published inode. Full Orchestrator 923 tests, four skips. Configuration consistency is distinct from live qualification; complete CLI/session/lease review remains pending."
+orchestrator/src/jarvis_orchestrator/stack_migration.py,546,code,reviewed,41cb807db4e6831e841b5ad2590e0f1e09f8c6c6cd93c37191314c4c277b22e5,"Complete 546-line migration source inspected. V148-V151 reuse stable bounded private reads/strict JSON, enforce owner and typed option boundaries, replace recursive rollback with four-file cleanup bound to the directory identity, recheck creation, and preserve replaced file identities. Windows read/share guard uses existing pywin32 and closes on failure; native sharing test skipped on macOS. Full suite 933 tests, five skips."
+orchestrator/src/jarvis_orchestrator/store.py,8554,code,pending,, Memory shadow begin/finish and explicit transcript admission joins inspected in this pass; exact safety-field types now rejected by the shared validator before persistence. Whole store remains pending.
+orchestrator/src/jarvis_orchestrator/store_schema.py,875,code,pending,,
+orchestrator/src/jarvis_orchestrator/tool_contracts.py,696,code,reviewed,ecd7c8414b1b5d5d7432923cd54087b169527c593694c215318e16bc566de4c6,Full source inspection. V86 requires exact empty strings for absent reminder date/timezone fields; V87 translates UTC conversion overflow to ToolContractError. Golden registry and every v1 tool schema hash unchanged; full Orchestrator 825 tests pass (4 skips).
+orchestrator/src/jarvis_orchestrator/tool_crypto.py,117,code,reviewed,f00a58d6651113371422d2a29b7879963a2fab31f70b57cea740757ba5d0b426,"Full source inspection of AES-GCM content/AAD/version binding and test key provider. /tmp/cyrus-review-tool-crypto.log proves UTF-8 round trips, eight tamper rejections and old/new key versions; no actual OS key store accessed."
+orchestrator/src/jarvis_orchestrator/tool_executor.py,88,code,reviewed,79431a215c59c6ab0a905e53f77fc1e2f0b0f4960b6617e9018120e74307eff8,"Full source inspection: exact persisted permit/result binding, pending result identity checks, ACK after persistence, restart query without redispatch. Existing two fake-client tests pass; live Action Host qualification not performed."
+orchestrator/src/jarvis_orchestrator/tool_provenance.py,229,code,reviewed,d1dc7575304b885542de2f1717fa037464f510683bc7d360fb7879f7d0b136c8,"Full source inspection of source aggregation, no-egress propagation, physical-intent binding and serialization. V88 malformed top-level objects and non-string source IDs now raise ProvenanceError; actual store fallback/replay callers traced. Existing transitive privacy tests pass."
+orchestrator/src/jarvis_orchestrator/tool_state.py,162,code,reviewed,14b8e49616f52bf91580eff909889e21b3012c28ce1b5d12035beb91af0509ee,"Full source inspection of closed state/event table, terminal immutability, restart ambiguity and scheduler dependency identity. Existing lifecycle and frozen registry suite passes; no edit."
+orchestrator/src/jarvis_orchestrator/tool_store.py,995,code,reviewed,49f78bbee3da35f3138cc94a6b73c8c3d9eaaafbcf5d36e33b36bab8728b6cec,Full 995-line source inspection. V81 atomic inbox/business decision/outbox; V82 commit late expiry and cancel task; V83 canonical UTC retry threshold; V84 enforce approved unexpired permit; V85 all immutable approval replay bindings. Trigger-based rollback and typed deadline tests; /tmp/cyrus-review-tool-final-focused.log 42 pass; full 825 pass with 4 skips. Existing historical partial-commit recovery remains unverified.
+orchestrator/src/jarvis_orchestrator/translation.py,629,code,pending,,
+orchestrator/src/jarvis_orchestrator/translation_worker.py,503,code,pending,,
+orchestrator/src/jarvis_orchestrator/windows_private_file.py,218,code,reviewed,d2c33ee433bc00c3eae893774c580a01a7fd0bc8a1d535825c12f1bcc935c94b,Complete 218-line owner/DACL/path/borrowed-descriptor validation and hardening source inspected; unchanged. Portable ACL policy test passes; native Windows descriptor test skipped. This source inspection does not establish native Windows qualification.
+orchestrator/tests/_bootstrap.py,17,tests,pending,,
+orchestrator/tests/helpers.py,44,tests,pending,,
+orchestrator/tests/snapshots/openrouter_deepseek.json,36,tests,pending,,
+orchestrator/tests/snapshots/openrouter_terra.json,34,tests,pending,,
+orchestrator/tests/snapshots/pydantic_route_native.json,1,tests,pending,,
+orchestrator/tests/snapshots/pydantic_route_tool.json,1,tests,pending,,
+orchestrator/tests/snapshots/pydantic_text_stream.json,1,tests,pending,,
+orchestrator/tests/test_action_approval_v1.py,81,tests,pending,,
+orchestrator/tests/test_action_host_daemon_config.py,279,tests,reviewed,a9195f8efa376adad73d0a34f0f09c459c41df2d28573d412462fc8b4eca97f3,"Complete 12-test module inspected. Existing activation/degradation/token tests plus V102 malformed config/FIFO/deep JSON, V103 seven startup/shutdown failure stages with fake owners/signals, V104 real temp token retry and symlink-parent rejection. Full suite passes without Keychain/native side effects."
+orchestrator/tests/test_action_host_protocol_v1.py,137,tests,reviewed,4fe02be3fbae0896f6c5a8d03a87d1ea4ccd2dfdfed550ff87b3b438778861f0,"Full four-test source inspection: frozen receipt-only framing, distinct directional keys, encrypted execution and replay/stage rejection. Full suite passes; source unchanged."
+orchestrator/tests/test_action_host_protocol_v2.py,246,tests,reviewed,2aa7b7096cd0f4a55098ba261e15ca5c778b1ecd2c150aac2f1a554d53f0f09b,"Complete module inspected previously and additions read. U03 reusable schema-valid 262144-byte calendar payload, live/snapshot encrypted roundtrips and oversized payload rejection; descriptor golden updated deliberately. Existing V95/V96 regressions retained."
+orchestrator/tests/test_action_host_qualification.py,244,tests,reviewed,4deebce4185244ed6822ab66379fb9f5c93ba907c0b5af8527a3dc107d91294c,"Complete 10-test module inspected. Exact generator-writer/load roundtrip, current/old contract identity, readiness capability and boundary types, qualified tool list shapes, FIFO nonblocking rejection and malformed manifest inputs. Final Orchestrator full suite passes."
+orchestrator/tests/test_action_host_v2_client.py,338,tests,reviewed,abe28e9bc236846c99b8ef5f4faa835dfe531b794d97ed38e8e5a8ad8017430c,"Full four-test source inspection. Real fake-host handshake/query/ACK, immediate socket close on cancellation, total drip deadline and wrong-execution rejection. Fake host now tolerates the expected peer close and returns internally consistent snapshots for the wrong-execution regression."
+orchestrator/tests/test_action_host_v2_server.py,284,tests,reviewed,3b60129fc19a5fe3b9c1e4f28314f42eabf48a5a67a18b3d00fa7f143bad469c,"Complete module inspected previously; full-size calendar execute/query/ACK regression uses real temp Unix sockets, journal and fake adapter; exact result recovery and only one native-call stand-in. Previous durability/session/path regressions retained. Full suite passes."
+orchestrator/tests/test_anamnesis_integration.py,678,tests,reviewed,b88db31e8d853cbada052cde1d984583e9921c83063c7234e905f60c9bd8f5b5,"Complete 678-line, 16-test module inspected: schema migration and runtime pin, explicit commands, encrypted recall/scope projection, failures/cancellation, replay/dedup/restart/deletion. New word-boundary cases preserve thatched/thatcher and Greek target words; real service test keeps existing memory and routes remembering/forgetfulness through the fake response model."
+orchestrator/tests/test_anamnesis_packaging.py,31,tests,pending,,
+orchestrator/tests/test_anamnesis_shadow_adapter.py,260,tests,reviewed,2ae8f603cd7c0378afab0ed084f0c3dcefa81a8781d78c19728202897b415abd,"Complete five-test module inspected: frozen adapter identity, real create/replace/cancel lifecycle and content projection, deterministic system-owned keys, out-of-range target containment and corrupt history rejected before invoking writer. Temporary stores/fake writers only; no production memory authority."
+orchestrator/tests/test_background_boundaries.py,83,tests,reviewed,b0dd468aa8bb42b8750a3347ba0ad78b038229d94ae871001a62bee468ac652c,"Complete three-method boundary module inspected: POSIX symlink/hardlink target preservation and final 0600 plist, failed atomic replacement preserving prior file with no leftover temporary, stable command-start/timeout failure codes with either allowed_fail setting. Baseline: three failures/four errors. Focused 46 tests: 45 passed/one sandbox socket skip; full Orchestrator 974 tests: 969 passed/five skipped. No native service command executed. Committed as 89cfdc8 with exact staged Ponytail review and active hooks; no complexity findings."
+orchestrator/tests/test_beta_lease_boundaries.py,206,tests,reviewed,f70e98ab1558da7735f5a5835fadae669cda20a3871bf0e9fd926380e0018bec,"Complete nine-method regression module inspected: deep JSON, changed permissions, FIFO substitution, replacement cleanup and reused descriptor ownership, replacement session preservation, final freshness and PID reuse/precision, plus read-only current native PID snapshot. Synthetic fixtures except own-PID kernel read."
+orchestrator/tests/test_beta_preflight.py,451,tests,reviewed,c38798e4e03d4daaaceb61e9a62133de9ca3ee87a4f979be354f29e6b2401922,Complete existing preflight fixture and regression source inspected; temporary stack configurations and synthetic qualification/private-state reports. Included in passing focused/full lease checkpoint.
+orchestrator/tests/test_beta_preflight_boundaries.py,110,tests,reviewed,700e17cba18698e4ce17ea4f41d5dbff10c2cfeb319da6b9aa4e0c1b29e2d4c2,"Complete six-method regression module inspected: empty explicit doctor, malformed content-free status, unenforced/non-boolean private-state reports, changed qualification, cached stack path rebind and deployment changes during probes. No external/native actions."
+orchestrator/tests/test_cli_startup.py,580,tests,pending,,
+orchestrator/tests/test_cloud_activation.py,90,tests,reviewed,e5c305d0718533ebb33257c1d4dae031e4e685b931bc0a9fa9e69e60fe3e8dc2,"Complete five-test module inspected: success, endpoint failure with sibling drain, cancellation before owner close, gate store cleanup after adapter failure, and real adapter dual-client cleanup. No network or provider secrets."
+orchestrator/tests/test_cloud_contract_boundaries.py,182,tests,reviewed,fa392944139d903ceed1e9ec6514d272be34fc3eb8abc845973b4294bfe36f99,"Complete 13-test synchronous/async module inspected. Invalid rates/Decimal contexts/exponent bounds, endpoint/registry/message/approval types, health limits, provider exact policy/budget rounding, tiny price drift and real-adapter nested request drain with MockTransport. Final focused49 and full Orchestrator882 tests pass."
+orchestrator/tests/test_cloud_privacy_boundaries.py,33,tests,reviewed,f29f454be72943c7f8ad6eb6bd47144ddbb695ca0d86610108280fa3f70970a6,"Complete new test inspected: fifteen Greek inflection cases spanning seven declared sensitive classes, public positive control and changed policy digest. U05 semantic/lexicon coverage remains open."
+orchestrator/tests/test_cloud_provider_io.py,206,tests,reviewed,315a5950b1b8570aa566905faa4e5611997d3a5ff4cfc8290db7b448d3344e14,"Complete 11-test module inspected. Pre-fix 10 methods produced 21 subcase failures and two errors. Temporary private files/FIFO, invalid constructor admission, valid identity/gzip/deflate, duplicate/oversized/truncated HTTP JSON, control-stream closure, total trickle timeout/accounting and forbidden-origin permit test. Focused cloud 60 pass; full Orchestrator 893 includes these tests."
+orchestrator/tests/test_cloud_provider_receipts.py,91,tests,reviewed,a4061ac809acd8b58bb606c1d139c23708d33c5f18b3f7bb4f5c32851b6012aa,"Complete five-test module inspected. Actual adapter with MockTransport verifies positive one-shot receipt, negative/boolean/fractional/string/missing native counts, required usage, metadata shapes and generation mismatch quarantine/accounting. Full suite passes; fake store/permits used at this boundary."
+orchestrator/tests/test_cloud_release_qualification.py,305,tests,reviewed,47a5f59cea0d2885365ce02f8c15ca27018f0470ed785fa512685e92f992b6fa,"Complete 11-test module inspected: exact release/key/endpoint identity, qualification coverage, expiry extremes, both strict file/hash consumers, malformed key Unicode/types and real FIFO rejection. All current tests pass."
+orchestrator/tests/test_config_security.py,451,tests,reviewed,547e12c84465c1097a643c8ea235bdc411f69844d31fd896d1d56e9591f3e7fa,"Complete config security tests inspected. Three new table-driven methods reproduce 21 failures/five errors against the checkpoint baseline: malformed scalar types, nonfinite/overflowing durations, integer domains, listener and endpoint ports and NUL paths. Valid neighboring ports/integer duration pass. Final focused 30 tests (two native Windows skips) and full Orchestrator suite pass."
+orchestrator/tests/test_context_assembler.py,743,tests,reviewed,16f6ffd896bef6778da13d0f14a3687320e2a1494f9b74ea394086e092c2784b,"Complete source/test inspection with context assembly and speech callers. V178-V182: enforce history capacity, positive exact speech limit, Greek middle-dot boundary, aware offset and datetime range. Five new methods fail baseline (eight failures/two errors); focused 44 pass; full 979 (974 pass, five skips). Policy hash preserved. Commit afb009f, exact staged Ponytail and active hook passed."
+orchestrator/tests/test_context_speech_boundaries.py,74,tests,reviewed,7dde6e53485129fa5c297abc571df63927b71050e7b306d4caeec29459b35227,"Complete source/test inspection with context assembly and speech callers. V178-V182: enforce history capacity, positive exact speech limit, Greek middle-dot boundary, aware offset and datetime range. Five new methods fail baseline (eight failures/two errors); focused 44 pass; full 979 (974 pass, five skips). Policy hash preserved. Commit afb009f, exact staged Ponytail and active hook passed."
+orchestrator/tests/test_control_atomic_idempotency.py,772,tests,pending,,
+orchestrator/tests/test_control_security.py,216,tests,pending,,
+orchestrator/tests/test_dependency_boundaries.py,144,tests,pending,,
+orchestrator/tests/test_deterministic_lifecycle_gate.py,291,tests,reviewed,9c557c61d85ef676b7693fea9e2fbdd85d2af244a4342d19fdb25d758931f0c4,"Complete five-test module inspected: frozen v1 contract and bilingual matrix, zero-fallback clear commands, ambiguous/incomplete fallback, ordinary embedded keywords, complete v3 bilingual audit-only lifecycle. Existing tests are regression evidence, not exhaustive semantic qualification; U02 documents omitted v2/v3 adversarial cases."
+orchestrator/tests/test_deterministic_lifecycle_gate_v2.py,124,tests,reviewed,c5a6e38f20d961491c4aef387c9f0efa0a3d3c1a29513c4fd908e9557bc56454,"Complete four-test module inspected: additive frozen v2 identity, closed bilingual families, hedges/multiple targets/incomplete create and quoted/negated text. Separate source reproduction demonstrates untested frozen prefix/empty-replace/punctuated-hedge false positives (U02). Test fixtures and hashes preserved."
+orchestrator/tests/test_deterministic_lifecycle_gate_v3.py,89,tests,reviewed,c7beeee3237cf5e31cb9bb19ec9cbac9b1a0660eac64291799fb865ce218f516,"Complete three-test module inspected: frozen v1/v2/v3 and combined writer identities, normalized Greek verb/marker forms, accented and unaccented hedge fallback. U02 identifies additional failing semantics outside this matrix; passing these three methods does not establish general language precision."
+orchestrator/tests/test_deterministic_shadow_mode.py,112,tests,pending,,
+orchestrator/tests/test_domain.py,34,tests,reviewed,bf1becdba72d616219c0b7d866d6bcdb1f5d6f1a7e75fe533ccadfe353d4cd38,New complete two-test module inspected. UUID normalization and nontext error contract; route token types and Unicode surrogate rejection with preserved valid route. Before fix two failures/eight errors; final full Orchestrator passes.
+orchestrator/tests/test_history.py,28,tests,reviewed,814bb22a1b94f028651e5588464364536f2e795e20d6dc7328360a34193a36f0,New two-test module fully inspected. Invalid final prompt types/missing content fail before V54; actual SDK completed-pair conversion and final prompt validation pass after fix.
+orchestrator/tests/test_inference_control.py,173,tests,reviewed,6028352a8016f394bffd37e1150ebb86ef7cb39353d3e105bbf4bac9948c5f19,"Complete eight-test module inspection: readiness type, redirect/auth/proxy scope, malformed JSON, slow headers/trickling body closure, positive capability/identity HTTP responses and missing-route classification. Full Orchestrator 804 tests pass with 4 skips."
+orchestrator/tests/test_input_translation.py,1019,tests,pending,,
+orchestrator/tests/test_jcs.py,43,tests,reviewed,e7adbcdfa09179efcbb2b98f9a4d1821379133e5872e3a2994d5b89c1bf87d88,"Complete new four-test module: frozen exact NFC/64-bit bytes and domain separator hashes; typed invalid-domain/Unicode/recursive rejection; preserved rejection of floats, non-ASCII keys and non-JSON types. Six pre-fix error subcases reproduced; all four methods now pass."
+orchestrator/tests/test_lifecycle_gate_v4.py,159,tests,reviewed,40bb938d0031765723ac44ce1722fdb77cb6b51533965fd7a9090a5b630e83d4,"Complete four-test module inspected: 28 authored bilingual regressions, read-only compatibility check of the pinned historical 48-case dataset, target-count/ambiguity policy, fixed new gate fingerprint and real CLI composition in both modes. Real temporary-store service flows preserve a v3-recorded shadow memory and record v4 ignore decisions; authoritative memory remains empty. New regressions are not unseen qualification data. Full Orchestrator 817 tests (813 pass, 4 skips)."
+orchestrator/tests/test_lifecycle_shadow_natural_eval.py,47,tests,pending,,
+orchestrator/tests/test_lifecycle_shadow_natural_v2_eval.py,49,tests,pending,,
+orchestrator/tests/test_lifecycle_shadow_natural_v3_eval.py,49,tests,pending,,
+orchestrator/tests/test_lifecycle_shadow_service_pilot_v1.py,63,tests,pending,,
+orchestrator/tests/test_live_memory_crud_probe_safety.py,271,tests,pending,,
+orchestrator/tests/test_llm_context.py,46,tests,reviewed,0e7ac36aece9af65fde8a1b3a0442b6b3cc06e38e7b33e331e792d0c45557b50,"Complete source/test inspection with context assembly and speech callers. V178-V182: enforce history capacity, positive exact speech limit, Greek middle-dot boundary, aware offset and datetime range. Five new methods fail baseline (eight failures/two errors); focused 44 pass; full 979 (974 pass, five skips). Policy hash preserved. Commit afb009f, exact staged Ponytail and active hook passed."
+orchestrator/tests/test_local_lifecycle_writer.py,325,tests,reviewed,1fe82e570ef335025c414854ab2dd404eda4e180d9f22eba56e545660e8b1626,"Complete eight-test module inspected: real inference schema admission, hostile data as user JSON, fixed writer identity, invalid enum aliases and absent targets, scalar settings/indices, exact outgoing request, malformed response index/usage/JSON, slow headers/trickle deadlines and encoded/oversized stream closure. Before-fix run had 11 failures and one error; final eight tests pass. Full Orchestrator 813 tests (809 pass, 4 skips)."
+orchestrator/tests/test_local_text_stream_boundaries.py,200,tests,reviewed,4e5d119869494b4c31e186cfb84e1b56f59d2c5552754948fcb9bf24da082ed1,"Complete eight-method module inspected: ordered stop/usage/DONE, strict JSON and choice/content shapes, bounded incomplete framing, media/encoding, token accounting, fragmented UTF-8/CRLF, first-chunk latency, closure and length/zero-token compatibility. Saved baseline: 27 failures and one timeout error. Focused 45 pass; full 994 tests (989 passed, five skipped). d394f5a with exact staged Ponytail and hook passed."
+orchestrator/tests/test_m1c_cloud_contract.py,833,tests,reviewed,a208ef3bb1ed1ba7303ff9257f69729a27ca18342e03505a081cac54c999fd49,"Complete 833-line routing/cloud approval/ledger/fake lifecycle/HTTP boundary test module inspected, including frozen request snapshots and exact-one fake dispatch after F10. Full Orchestrator suite passes. This inspection does not establish complete central store/service correctness."
+orchestrator/tests/test_macos_action_adapters.py,232,tests,reviewed,61921201bbbf63ee808e621af84486096ba3d3013423cb58bf2c9e4826062066,"Complete eight-test module inspected, including exact 256 KiB schema-valid calendar payload inside larger native helper envelope. Fake subprocess only. Previous native adapter tests retained; full suite passes."
+orchestrator/tests/test_macos_beta_lease.py,250,tests,reviewed,e6b96c35c6666af28f7ed82ba1d0b6d866c141a84d8c22c710c9be61efde39cc,"Complete existing lease fixture and regression source inspected; disposable private files, fake process/listener snapshots and synthetic signing keys. Included in passing focused/full lease checkpoint."
+orchestrator/tests/test_macos_beta_session.py,1407,tests,pending,,Partial only: warmup integration fixture now uses MockTransport and full ordered SSE usage accounting; removed its obsolete fake urllib response. Whole large test module source review remains pending. Included in full Orchestrator 939-test run.
+orchestrator/tests/test_macos_keychain_mode.py,71,tests,pending,,
+orchestrator/tests/test_materialize_orchestrator_config.py,180,tests,reviewed,eb8fe48ce45dd9df9872c068eaeda282e0ee2bc6b2c1b548a9c28cfe526d8842,Complete four-method script test module inspected. New failure-path tests preserve a real replacement inode and clean up an unchanged published inode; baseline deleted the replacement and produced FileNotFoundError. Existing canonical-token and non-disclosure assertions pass. No native Windows ACL execution on this host.
+orchestrator/tests/test_memory_backup_cli.py,245,tests,reviewed,301d78b4341715d7db1f56f402e26d1081339c9c810503c69341e26c63b600ec,"Complete three-test CLI module inspected. Actual backup/restore with injected narrow attestor, no key bootstrap, wrong/missing-provider content-free failure and disabled/nonencrypted zero-provider paths. Exposed stale operational guide claim, now corrected. Temporary databases and fake providers only."
+orchestrator/tests/test_memory_backup_operations.py,526,tests,reviewed,f88bd4a2278db326a4515766347558f3d0565a58cdc987bdf7da02592a0669a5,"Complete nine-test 526-line source inspected. Canonical encrypted sidecar and restoration; provider/key mismatch; crypto operation/migration and legacy plaintext refusal; absent/tampered/mismatched manifests; destination preservation; uncertain publication; provider calls after SQLite closure. In-memory provider only, temporary actual databases. Full suite passes."
+orchestrator/tests/test_memory_command_lifecycle.py,696,tests,reviewed,88da349226477dba108d300039c5bba4bfb82f6d4e0194f4122c68406e6c93a7,"Complete test inspection including transactional failure/replay, provenance tampering, disabled/unprepared memory, quota/content limits, exact Greek targets and no-model behavior. Included in 42 passing memory/context focused tests and full Orchestrator 769 (765 pass, 4 skips). Read the encrypted store fixture and explicit remember/forget, Greek target preservation and size/quota lifecycle cases. Complete 13-method module passes within the final 51-test memory/canonical pass; remaining replay/failure test source inspection is pending."
+orchestrator/tests/test_memory_control_api.py,890,tests,pending,,
+orchestrator/tests/test_memory_crypto.py,629,tests,reviewed,4d7372ec797b785f408e87949c94b39035f15daf1d3ce5b189b4f870627f67ca,"Complete 629-line envelope, binding, tamper, HKDF/HMAC golden, key-version and cached-session tests inspected. Included in 99-test focused pass (one native Windows skip) and full Orchestrator 909-test run."
+orchestrator/tests/test_memory_key_boundaries.py,236,tests,reviewed,64a02cbe5be7ad898db0b61f4d3ca6cfdc22dea87259275c2cf16ce4e67e11e1,"Complete nine-method regression module inspected. Reproduces exact-type, malformed JSON, lock-open masking, FIFO substitution and competing publication failures. Tests interrupted known staging hard links, preservation of unrelated files/symlinks/unknown aliases, and both token ceilings. Initial seven methods: three failures/nine errors; final nine methods pass."
+orchestrator/tests/test_memory_key_provider.py,1261,tests,reviewed,4e1b47a39edea5d5d911441454739a98e2a4d4ce720fa70a3263fd44a16068e1,"Complete 1261-line fake-backend/keychain/DPAPI/provider-lock and fault-phase recovery tests inspected. Existing monotonic allocation, burned reservation and uncertain-commit recovery checks pass after simplification; no real Keychain or DPAPI calls."
+orchestrator/tests/test_memory_release_policy.py,192,tests,reviewed,1a52b4047a6b6a5b31857478dd41f36d83fe6115cbb1c57d22957ee7e26e6b79,"Complete four-test module inspected: frozen policy/config rejection, exact boolean/provenance bindings, defensive history projection and actual store tool-authority defaults. Numeric false aliases added to rejection cases; original policy SHA remains unchanged."
+orchestrator/tests/test_memory_runtime_startup.py,440,tests,reviewed,1844622a8232c0f46153f32f41e5ab97b172ddc48ee7684ee72ba47cc779b62f,"Complete startup/readiness module inspected. Enabled preparation ordering, disabled zero-provider behavior, original non-memory errors, typed native/prepare failures, no bootstrap on mismatch and cached readiness snapshots. Full Orchestrator suite passes; no live native provider used."
+orchestrator/tests/test_memory_shadow.py,363,tests,reviewed,a165e9b1e4bc6da2f57167cdffbe6b2f11ac73225b99e990d047b7cc9888d244,"Complete eight-test module inspected: audit-only proposal flow, timeout/failure/disabled modes, idempotent reservation, pending-row preservation on unsafe/unbound completion and proposal invariants. Existing store rejection test now includes 0 and 0.0 safety aliases. Full Orchestrator 810 tests (806 pass, 4 skips)."
+orchestrator/tests/test_memory_storage_v10.py,727,tests,pending,,
+orchestrator/tests/test_memory_storage_v9.py,1089,tests,pending,,
+orchestrator/tests/test_model_failure_gate.py,191,tests,reviewed,2bb438c6496b195113674c65287f05106a5bf53948baeead4c47e8701c3da7b7,Complete 191-line four-test service/SQLite/fake-model module inspected. Down and hanging models produce exact backend-failure outbox order with reconciled accounting and local route; replay preserves logical IDs/row counts; Pydantic MockTransport connection failure maps to the same contract. Full Orchestrator 950 tests passes with five unrelated skips. No live model or external provider used.
+orchestrator/tests/test_model_speech_schema.py,302,tests,reviewed,def031c2ead3ce333f35b2352fb091ac58c53dc6e6b1a9b9719dc0e31213d395,"Complete 302-line module inspected. Payload/unguarded-dispatch checks now target the active async HTTP adapter after removal of unused LocalInferenceModelPort. Existing wire payload snapshots unchanged, 45 focused tests pass and full Orchestrator 994 tests (989 passed, five skipped). Commit 86717c9 with active Ponytail hook."
+orchestrator/tests/test_model_stream_ownership.py,170,tests,reviewed,7eecb2dc702f564ad025cd82850976c2d2f47c0e2363ffa457fac2592e2bab74,"Complete seven-method regression module inspected. V183-V185: early closure through both wrappers, permit isolation, cross-task close, failed dispatch marks and real disposable SQLite reconciliation. Baseline seven failures/one error; focused 33 pass; full Orchestrator 986 (981 pass, five skips). Commit b5bb8c1, exact staged Ponytail and active hook passed."
+orchestrator/tests/test_operational_recovery_boundaries.py,178,tests,reviewed,b453c49931cc6da346331f77ccbb1cc50f20bda36ce2966d1af225138161238b,"Complete seven-test module inspected: malformed canonical manifests, real inode substitution before truncation, four FIFO-substitution subprocess cases, backup/restore fchmod failure cleanup, SQLite target-open failure closure, late destination WAL injections during backup verification and restore locking. Before-fix seven failures/five errors; after-fix focused/full suites pass."
+orchestrator/tests/test_operations_readiness.py,320,tests,reviewed,68bb9843db29fcc7e193ffe723587ae943571b52efaaf362b6c5794c7dc853a0,"Complete operational and readiness integration test source inspected: diagnostics/corruption, backup/restore/lock, bounded content-free logs, generated background artifacts, synthetic cancellation, fake authenticated WebSocket gate. Tests validate temporary/local fixtures; broader readiness implementation/native qualification remain pending."
+orchestrator/tests/test_physical_turn_gate.py,546,tests,pending,,
+orchestrator/tests/test_planner_scheduler_tool_e2e.py,307,tests,pending,,
+orchestrator/tests/test_private_stack.py,706,tests,reviewed,3cd7aefca0262347f83009455fb0f684e1a052ff5867d33d42dab27ea94bd9ea,"Complete prior configuration/publication/authentication/status test inspection retained. Removed unused urllib response fixture and moved beta-session semantic fixtures to the shared control-client seam; new test_stack_probe_boundaries covers actual HTTP decoding. Focused stack/probe/session pass: 59 tests, one skip. Full Orchestrator 939 tests, five skips; no real native session or inference runner launched."
+orchestrator/tests/test_private_state.py,210,tests,reviewed,ac983abc361e012bc81b1670a9f4b861ca82512ff58b0d4c343c7ee280b756f9,"Complete six-test POSIX state module inspected. Exact modes under open umask, private parent/database/sidecars, symlink rejection, passive audit and hardening, wrong-owner refusal, backup/restore private outputs. Actual temporary paths and SQLite, no user-state mutation. Full suite passes."
+orchestrator/tests/test_readiness_boundaries.py,561,tests,reviewed,5417289215f7d3b9244a7d55956066076e02f150953e99ffecf6b79af692d726,"Complete new 561-line, eleven-method regression module inspected. Fake authenticated wire fixtures cover response/ACK/session/turn/sequence violations, reordered and incomplete replay, per-phase trickling deadlines, failed-handshake cleanup and queued post-cancellation output. Typed parameter failures occur before I/O; disposable soak logs and synthetic Ed25519 evidence reproduce final resource/expiry failures. Final regressions against saved baseline: 38 failures and nine errors; current focused/full suites pass. No real daemon stop/start, provider, microphone or user key."
+orchestrator/tests/test_readiness_evidence.py,1606,tests,pending,,Partial inspection only: synthetic signer/leaf fixtures and aggregate parent/hash/cohort/window/idempotent-publication cases used to validate the operational gate. Complete large test module source inspection remains pending. Included in final 950-test Orchestrator suite.
+orchestrator/tests/test_research_adapters.py,277,tests,reviewed,8de689aea70c2511723e176385759cdce4ae25229737b5fc993a5ff7f02405f5,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_api.py,176,tests,reviewed,f2f89b921c410029f2631ee038518d4a54eea905d9d3d2c270125019e40d3cac,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_contract.py,296,tests,reviewed,fad1fa125fcfdd57ba10d082ff33f74ce8e575fef7dfdd94ceb5296be94f8151,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_corpus.py,84,tests,reviewed,13de36bfbb9834db860e5d303f450ed526572dac0ec8db313895e3b0fbd3722e,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_deployment.py,82,tests,reviewed,d5ead705d40c01c6eba709413d344e656e8ecc6265ef4a925d965be25b2842a0,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_egress_guard.py,150,tests,reviewed,0699ef7dfd2fc24b6b9effd3d0764d47695df69c21b906bf47c4a17f73ab761c,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_integration.py,171,tests,reviewed,9d3ac7aeb648044c5eeff7bbc2a9711cae9e55473ff413451f890d9c6b2f94eb,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_model.py,220,tests,reviewed,051393ac141944da335b3372ad7cf173409bce65d16f8102ad05c6e7b18790eb,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_online_qualification.py,311,tests,reviewed,549594bd3aef9df719785ae9a0bd6e6bcc20be4bbe8104ff83c5187b7198de57,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_qualification_runner.py,177,tests,reviewed,43cc0ccbcd9c2bda956db0753c0f9eb7f5c9d7652d1d5b93f89084ce01ea7c2d,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_security.py,119,tests,reviewed,aa93112f449c83cb1b4d1a4870bd0f3e48b5665c0f36b0c996e0cf0d63284a2d,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_research_store.py,95,tests,reviewed,be8afc2d53c8170f3996859a9603b56cb8eafb0b46cd4dd3501ea334ba86c8da,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+orchestrator/tests/test_runtime_context.py,154,tests,reviewed,de6a9ec685dd5cc8b6422bc197676283cae884bae0ceffc497fb300a7642c6d5,"Complete source/test inspection with context assembly and speech callers. V178-V182: enforce history capacity, positive exact speech limit, Greek middle-dot boundary, aware offset and datetime range. Five new methods fail baseline (eight failures/two errors); focused 44 pass; full 979 (974 pass, five skips). Policy hash preserved. Commit afb009f, exact staged Ponytail and active hook passed."
+orchestrator/tests/test_runtime_supervision.py,994,tests,reviewed,433b244b0d13b550fcffc72a3e13c872be191779ee1ddf17342746a277094f3a,"Complete 994-line existing runtime supervision test module inspected, including readiness barrier, content-free failures, owned tasks, bounded resistant cleanup, shared deadline, real disposable subprocess deadline and restored POSIX signal handler checks, fake control-thread draining, background stop marker/restart gap, scheduler/gateway startup and shutdown. Included in final 971-test suite; no installed daemon or external provider used."
+orchestrator/tests/test_runtime_supervisor_boundaries.py,182,tests,reviewed,7f42b081b1b0c1304358f77869520f6eeef613dbb49f281aae91c4e1216f9eba,"Complete new six-method regression module inspected. Covers cancellation before first_tick, cleanup exceptions, repeated outer cancellation for async cleanup/shutdown, control handler drain ownership, synchronous failing callback and Future-returning cleanup, plus SystemExit containment in a disposable subprocess. Initial five-method baseline: five failures/one error; separate SystemExit baseline exited 7. Final focused 60 tests and full Orchestrator suite pass. Committed as 72e2637 after exact staged Ponytail review and configured pre-commit hook; no complexity findings."
+orchestrator/tests/test_schedule_compiler.py,192,tests,reviewed,c1812e77fb31d84719a4f534bce92affcebacea86881387519426aa0d681e625,"Complete new seven-test module: immutable declared qualification fingerprints, malformed/pinned input, valid and ambiguous/truncated model responses, total deadline, typed configuration/transport errors, response-body closure/bounds and independent package import. Focused 47-test integration passes."
+orchestrator/tests/test_scheduler_admission.py,210,tests,reviewed,07497f9016f85d48b6bf2c7e47754f63b777ce5b2173fc14454451e21611fb7b,"Complete six-test module inspected: bilingual admission, ordinary routing, unavailable compiler, actual approval/store lifecycle and separately qualified native capabilities. Full Orchestrator passes."
+orchestrator/tests/test_scheduler_clock.py,74,tests,reviewed,9d584af480ea4f8ec620e7dc278a6e56db074d911da8b55929f81e3b8731ce9b,"Complete source inspected. Four tests cover exact epoch round trips, minimum lead, forward/backward wall jumps and V45 1001ms jump threshold. Before-fix threshold regression failed; full Orchestrator 778 tests passes."
+orchestrator/tests/test_scheduler_contract.py,147,tests,reviewed,741ce9441892133fd7831061597fc79df983e4079e00720b49571de7e1c16909,"New complete eight-test module inspected. Isolated subprocess bounds impossible-date regression; leap date, yearless DST gap, date arithmetic/range, malformed scalar input, target revision equality/SQLite range, NONE operation and inclusive until validated. Exact final due bound accepted; next millisecond rejected."
+orchestrator/tests/test_scheduler_transport.py,173,tests,reviewed,916427913b8a9a273503aba10eff5782d6de3ca1595ec4dd9dac443a884a58c3,"Complete source inspected; 8 tests cover independent sequencing, typed parser and target fields, approval arbiter, privacy and encrypted replay. New V44 test had 18 failing subcases before fix. Full Orchestrator 778 tests passes."
+orchestrator/tests/test_scheduler_v5.py,932,tests,reviewed,0cb2fd86f44ff645c67760034f4ed293fcd2e3c403ba2387e0b5c952a0e16aa1,"Entire module now inspected, including approval/API idempotency, real Voice approval/action recovery, recurrence DST/monthly/count/coalescing, encrypted content/key rotation, delivery retries/tombstones and strict local model request. Twenty-six tests pass; V66 real temporary-store tests preserve first delivery when future interval or monthly calendar is exhausted. Whole store implementation remains pending. Compiler transport test now uses HTTPX AsyncClient/MockTransport with the real strict gateway envelope; full Orchestrator 804 tests pass with 4 skips."
+orchestrator/tests/test_service_control_continuation.py,424,tests,pending,,
+orchestrator/tests/test_shadow_audit_report.py,314,tests,reviewed,ce4e532b7c9b83b7e85e619c3f7a86d49baa8349104da97721c0ed6d41d27a5a,"Complete seven-test module inspected: content-free/read-only reporting, authority/policy/proposal tampering, explicit-memory separation and schema/path errors. New real-database cases reject duplicate/deep/nonfinite/invalid-Unicode JSON, container operations and integer summaries without crashing."
+orchestrator/tests/test_stack_config_boundaries.py,198,tests,reviewed,29e3667d25d2c5390c73a8a5fcbe2fb08cd52ca470c5a993149e7eead708c501,"Complete nine-method regression module inspected: deep/oversized/duplicate/non-object/unencodable JSON, failed/invalid identity reports, own versus foreign publication cleanup, replaced leaf, five FIFO substitutions, Windows synthetic stat bits and bounded growing-file hashing. Initial seven methods: six failures/ten errors; separate canonical and growth regressions fail before fixes. Full/focused runs pass."
+orchestrator/tests/test_stack_migration.py,431,tests,reviewed,96cb32579234569ae88bfedf8d61f7074cba4ec7b05b30f1cf5e898abb1a5c93,"Complete 431-line existing test module inspected: independent v2 creation, unchanged legacy snapshots, CLI redaction, explicit canonical bearer rotation, invalid options/keys/permissions, existing-output preservation and final-validation rollback. All existing cases pass; no user inputs or real runtime state modified."
+orchestrator/tests/test_stack_migration_boundaries.py,222,tests,reviewed,4eb0e28f477cdc4d44a84d39f057c7169696deb9785517cf53f5ecd8b9913133,"Complete ten-method boundary module inspected. Initial six tests reproduced four failures/four errors for malformed JSON, owner/mutation/FIFO and root rollback; separate writer replacement regression also failed. Expanded cases cover creation identity, unknown subtree preservation, Windows read/share flags and handle closure; native Windows rename protection test skipped. Full suite passes."
+orchestrator/tests/test_stack_probe_boundaries.py,250,tests,reviewed,6b4ea3a3c0f82116eced319e3e2ecfafabc2c6f99b29b537353f696c28ccd42b,"Complete new six-method boundary module inspected. MockTransport covers strict readiness and beta-session JSON, malformed/wrong-order/incomplete warmup streams, token accounting, size limits, redirects/encoding, total deadline cancellation and stream closure. Real temporary selected-runner symlink rejected by CLI init; baseline accepted and published it. Full Orchestrator 939 tests, five skips."
+orchestrator/tests/test_store_contract.py,287,tests,pending,,
+orchestrator/tests/test_temporal_fast_path.py,173,tests,pending,,
+orchestrator/tests/test_tool_contracts_v1.py,221,tests,reviewed,0410de7c4d379d6b0f3b1c987e794aa4c13e495ef199c30f67fb5d04024debf7,"Full 14-test source inspection including V86-V88 regressions for falsey non-string dates, UTC overflow and malformed provenance; frozen registry/schema goldens unchanged. Full suite passes."
+orchestrator/tests/test_tool_executor.py,131,tests,reviewed,32b5cf53d7faf334c7a853c070e03a436c139fd1cf56fc0d0ef16cf56adeef76,"Full two-test source inspection: fake authenticated-client seam, forwarded permit values, delayed ACK and restart query without native redispatch. Full suite passes."
+orchestrator/tests/test_tool_store_v6.py,419,tests,reviewed,0d8b1027cb017240597455a5c486949bf7955695023aac5bb28a4dc6608b015c,"Full 11-test source inspection including five new regression methods. SQLite abort trigger verifies rollback across eight tables and exact duplicate idempotency; direct/transport expiry, same-day retry, permit TTL and changed binding rejection. Full suite passes."
+orchestrator/tests/test_translation_build.py,170,tests,pending,,
+orchestrator/tests/test_translation_qualification.py,179,tests,pending,,
+orchestrator/tests/test_translation_service_integration.py,261,tests,pending,,
+orchestrator/tests/test_voice_gateway_auth.py,384,tests,pending,,
+orchestrator/tests/test_voice_journal.py,176,tests,reviewed,b96f3f5f89592b4fe4e568de5430c1cb033330345cd339acbe6d36c0853682e1,"Complete test source inspection; persisted duplicate/conflict/capacity/expiry, startup cleanup, restart playback continuation, same-process pending/active/completed/cancelled preservation, and advancing past a completed replay. All 7 focused tests pass."
+orchestrator/tests/test_windows_private_file.py,101,tests,reviewed,0c5ab33f301e5764888ae21007e552adbbad00cce60db6c8418f22889d8bbe48,Complete 101-line portable ACL policy and native descriptor test inspected. Portable policy passes; native Windows test skipped on macOS.
+orchestrator/translation/NOTICE.txt,14,support,pending,,
+orchestrator/translation/translation-build-lock.json,72,support,pending,,
+orchestrator/uv.lock,734,support,pending,,
+packaging/jarvis_voice.spec,88,code,pending,,
+packaging/jarvis_voice_macos.spec,89,code,pending,,
+packaging/macos-entitlements.plist,8,support,pending,,
+packaging/macos_entry.py,29,code,pending,,
+packaging/runtime_hook_harden_dll.py,8,code,pending,,
+packaging/windows-manifest.xml,22,support,pending,,
+packaging/windows-version-info.txt,27,support,pending,,
+packaging/windows_asr_collector.spec,78,code,reviewed,eb7222af95feb15ed6e306f107e9dfb8367628e9b03fa6c27c6fc65581497cd1,Complete specification inspection; traced validated private CUDA DLL replacement and isolated runner packaging. No native PyInstaller executable was built during this review.
+packaging/windows_asr_collector_entry.py,58,code,pending,,
+packaging/windows_entry.py,14,code,pending,,
+packaging/windows_primary_profile_runner.spec,54,code,pending,,
+pyproject.toml,37,support,pending,,
+requirements/chatterbox-pilot-source.txt,3,support,pending,,
+requirements/chatterbox-pilot.in,6,support,pending,,
+requirements/chatterbox-pilot.lock,2011,support,pending,,
+requirements/chatterbox-pilot.overrides,3,support,pending,,
+requirements/compact-greek-tts-data-prep.lock,4,support,pending,,
+requirements/greektts15-pilot.in,5,support,pending,,
+requirements/greektts15-pilot.lock,697,support,pending,,
+requirements/greektts15-training.in,9,support,pending,,
+requirements/macos-cpu.in,5,support,pending,,
+requirements/piper-f1-mps.in,15,support,pending,,
+requirements/piper-f1-mps.lock,1883,support,pending,,
+requirements/piper-f1-torch.in,6,support,pending,,
+requirements/piper-f1-training.in,26,support,pending,,
+requirements/supertonic3-pilot.in,2,support,pending,,
+requirements/supertonic3-pilot.lock,408,support,pending,,
+research/Dockerfile,26,support,reviewed,1eea48ef0299d2449f12d4742f3c6f284fe3a8c12527a2714ae47d9aebf75a68,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/Dockerfile.dockerignore,10,support,reviewed,a2912a041da9f0ae4a48eaa90e7e471f59ec0d1748873507a2c1cfa3548be9c2,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/README.md,118,support,reviewed,ad8b579d5add70c90760d03a3e70299dfaf33b29716022aefcd2899d255a57db,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/benchmarks/retrieval-benchmark-seed-v1.json,107,support,pending,,
+research/docker-compose.qualification.yml,121,support,reviewed,fa7dd167e437a58c20f004d06c0c029099d2ac9171f233c852f5248bf76a42bb,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/docker-compose.yml,148,support,reviewed,e266278e1b115193cec85091cfba93fb42c836b26b36f5860c80c663b6ee10ff,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/image-manifest.template.json,23,support,reviewed,7798ea1eb2cced9ec5b622cf40c81081ea3b3f57cc5324200043145359edc6ea,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/online-qualification-thresholds-v1.json,15,support,reviewed,fc0c7e24a580e9b066a08490ef507a459132ed29c1aa1b13f51edae8382e25ae,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/pyproject.toml,39,support,reviewed,b37bda0e39b715712c7e400e2e98c988dbd753df2931c8fabce4f3ea7b327b83,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/qualification.manifest.template.json,73,support,reviewed,612865936beb4cea3e681dc244bc6d3bb43d7add7e57993698ac2f32b1820421,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/qualification.test.json,1,support,reviewed,5125b5eba21d7fada2ca151e045e0a58cc9f7e1a296206886c48752f06322049,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/results/direct-fetch-qualification-v1.json,1,support,pending,,
+research/results/online-retrieval-quality-v1.json,1,support,pending,,
+research/results/research-live-gate-20260811.json,1,support,pending,,
+research/searxng/qualification-settings.yml,40,support,reviewed,5eb89a0aa87db34d1a7c2744cbe9925939423720b967e4df7dd14c4b046e09a4,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/searxng/settings.yml,31,support,reviewed,7a3be39d88830f0abbfbb3f1f1aaa6ee25f1c9d7ce9fb39b8201a91e96e76706,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/secrets/.gitignore,2,support,reviewed,240a3e0d37d2e86b614063f5347eb02d4f99ca6c254de6b82871ff8d95532a7d,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/src/jarvis_research/__init__.py,24,code,reviewed,56a615ea4290125260fd514df16078daae49b266ae54f58fe4a92b326d6df96d,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/__main__.py,5,code,reviewed,aaadcdaf571b5ce0e8a2a31a45d6c26a1c98f0d4a1ce6b522c527b8e108fbe05,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/adapters.py,361,code,reviewed,4923542b84b916ac8451529257a155ef95929c5a9d8334404d11f8b60a45de4a,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/api.py,363,code,reviewed,c66824aca41a9251f8b7d43390f5d94e6e2326842efe3113d3bf3a823c713af1,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/assets/authority-registry-v1.json,1,support,reviewed,e902a991f2437a8c48a2e93671970a1b6294647833aa46c583f64f5b1a113ad6,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/src/jarvis_research/assets/language-detector-v1.json,1,support,reviewed,809e6e4f0f59c9f448ab48b3b8cab9d5337498fc012735298034fb8a70ad6985,Research deployment and artifact schema inspection; placeholders and rejected production gates documented.
+research/src/jarvis_research/benchmark_tool.py,62,code,reviewed,f63a943d80d90c2422397ee50dc33c315d50add52b6727b03cde64748af58946,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/config.py,126,code,reviewed,97b28f7b97ae94bb35241bb6aa41c7d984ae617c157c265d5696b71a87c81f9d,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/corpus.py,209,code,reviewed,00db29e20f52c7efb14801ec50aeaa1594a2e574764b201e0f0d440ef859390a,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/egress_guard.py,326,code,reviewed,a335583333f0756b12e840f0b2cbdbd0b3b02826de0d573aa6768c245067d267,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/extraction.py,133,code,reviewed,67ebb33fd06fd660befe38343e2901c70bceffe9ea323851503b46dba066cbca,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/online_qualification.py,865,code,reviewed,30dec179c1bba4279b1744fb83210f69a3a93bd549c7efc74e97936d69ab3f0f,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/proxy_bridge.py,89,code,reviewed,97ddf24efd03258d2ce908e85ffee997b78f533b03187c22b42be36b646aef21,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/qualification.py,481,code,reviewed,270ef082b9bf8e62f7b5202fd8160afee1d282b46a1aca92d35760fa1067eecc,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/qualification_fixtures.py,322,code,reviewed,a54f2d27f0b02f190e2a6e8fac4b639b17363028406c02470a0e574ac9ba9b0b,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/src/jarvis_research/runtime_probe.py,325,code,reviewed,4aff973c9230f576246d7c2234ff2997afc31deb5c5efcdca0f936fdc21eb9ed,Research source inspection; confirmed fixes and limitations in codebase-review-2026-09-05.md; research regression suite.
+research/uv.lock,104,support,pending,,
+scripts/aggregate_native_qualification.py,59,code,pending,,
+scripts/analyze_greektts15_acoustics.py,59,code,pending,,
+scripts/analyze_greektts15_adapter_delta.py,37,code,pending,,
+scripts/analyze_greektts15_quality_acoustics.py,46,code,pending,,
+scripts/approve_greektts15_singular_operation_crop.py,51,code,pending,,
+scripts/benchmark_macos_whisper_audio_ctx.py,336,code,pending,,
+scripts/blend_greektts15_adapter.py,44,code,pending,,
+scripts/build_greektts15_phrase_candidates.py,35,code,pending,,
+scripts/build_greektts15_singular_operation_crop.py,36,code,pending,,
+scripts/build_greektts15_word_focus.py,46,code,pending,,
+scripts/build_macos.sh,102,code,pending,,
+scripts/build_macos_profile.py,38,code,pending,,
+scripts/build_windows.ps1,334,code,pending,,
+scripts/cache_greektts15_snac.py,52,code,pending,,
+scripts/compose_greektts15_word_branches.py,42,code,pending,,
+scripts/export_piper_mps_checkpoint.py,48,code,pending,,
+scripts/generate_action_host_qualification.py,148,code,reviewed,a8a5a6eb9b291311305810642902b7c7a114278352a3fcb663325c2d7d8c8d5f,"Complete manifest/parser/writer/CLI inspection. V99 bounded shared input; V101 exact JCS artifact bytes accepted by real loader, strict parser reuse and malformed digest/root handling. Native qualification main not executed; signed-helper and permission evidence remain required."
+scripts/inspect_macos_helper.py,91,code,reviewed,95291c46aa149acf34b7be3f3f66eaa24d52f2ae803d423bc1abd529418cc98a,"Native/HUD source inspection; N01-N06 in review report; Swift builds and isolated tests, no live OS writes"
+scripts/materialize_macos_cpu.py,119,code,pending,,
+scripts/materialize_orchestrator_config.py,177,code,reviewed,d2cc72b8ed8588ad774dddd938d0e4c7754d0de5595de6e046282f0e28da1fc9,Complete operator script inspected. V141 post-publication cleanup checks the published inode before unlinking; competing replacement is preserved and own-file failure cleanup still works. Merge duplicate exception cleanup while retaining stable error codes. Tests use temporary synthetic keys/configs only; no user configuration is created.
+scripts/materialize_piper_mps_extension.py,49,code,pending,,
+scripts/preflight_windows_source.ps1,281,code,pending,,
+scripts/probe_greektts15_training.py,39,code,pending,,
+scripts/provision_windows_source.ps1,110,code,pending,,
+scripts/qualify_windows.ps1,57,code,pending,,
+scripts/run_chatterbox_v3_pilot.py,96,code,pending,,
+scripts/run_compact_greek_tts_acquisition.py,71,code,pending,,
+scripts/run_compact_greek_tts_preflight.py,35,code,pending,,
+scripts/run_fish_s2_pilot.py,76,code,pending,,
+scripts/run_greektts15_pilot.py,131,code,pending,,
+scripts/run_greektts15_sidecar_worker.py,160,code,pending,,
+scripts/run_greektts15_training.py,23,code,pending,,
+scripts/run_macos_automated_smoke.py,60,code,pending,,
+scripts/run_macos_f1_acoustic_qualification.py,120,code,pending,,
+scripts/run_macos_f1_rtf_qualification.py,148,code,pending,,
+scripts/run_macos_f1_scheduler_playback_smoke.py,172,code,reviewed,c7270cdf4a6fd67aa6fedfc4f3d334ba10a6848afca3bdc5b5116217ee232c99,Complete single-unit smoke runner inspected. V59 rejects nonfinite timeouts before TTS creation and reports enqueue failure immediately rather than waiting for callbacks that cannot arrive. Three portable controller/TTS tests pass. No real F1 model or CoreAudio playback invoked.
+scripts/run_macos_inference_qualification.py,89,code,pending,,
+scripts/run_macos_interactive_smoke.py,82,code,pending,,
+scripts/run_macos_native_collection.py,189,code,pending,,
+scripts/run_macos_scheduler_callback_qualification.py,239,code,reviewed,45f15df3ba8eacdfdd4a8fdd8952d82811dd5d246ea0e70c6d53713a15068e6d,"Complete CLI, physical checks, manifest reading/writing and reconnect probe inspected. V57 rejects invalid deadlines, oversized/ambiguous manifests and noninteger sizes using the shared bounded reader; V58 reopens the real encrypted journal and compares action ID/payload/session with guaranteed cleanup; V60 requires four operator observations. Four portable tests use only simulated helper/confirmation and temporary journals. Native physical qualification not executed."
+scripts/run_native_voice_qualification.py,86,code,pending,,
+scripts/run_piper_f1_qualification.py,67,code,pending,,
+scripts/run_piper_mps_fit.py,42,code,pending,,
+scripts/run_piper_mps_training.py,71,code,pending,,
+scripts/run_piper_training_handoff.py,68,code,pending,,
+scripts/run_piper_training_readiness.py,35,code,pending,,
+scripts/run_qualified_macos_inference.py,88,code,pending,,
+scripts/run_supertonic3_pilot.py,77,code,pending,,
+scripts/run_windows_source_beta.ps1,399,code,pending,,
+scripts/score_greektts15_candidates.py,95,code,pending,,
+scripts/score_greektts15_pronunciation.py,114,code,pending,,
+scripts/score_greektts15_quality_candidate.py,83,code,pending,,
+scripts/smoke_greektts15_optimizer.py,46,code,pending,,
+scripts/smoke_orchestrator_memory.py,179,code,pending,,
+scripts/smoke_orchestrator_text.py,189,code,pending,,
+scripts/stage_macos_cpu.py,53,code,pending,,
+scripts/test_windows_source_job.ps1,294,code,pending,,
+scripts/train_greektts15_pilot.py,84,code,pending,,
+scripts/verify_windows_handoff.py,704,code,pending,,
+scripts/windows_build_guard.py,219,code,reviewed,a15acbe5d9b07cc4bf505e72c83dc7928577d887e6ef62b0db3a1cdf4d74e7f1,"Complete offline guard/CLI inspection, tracing CUDA and runner manifest creation/verification, exclusive output, smoke environment and failure codes; portable build-guard tests pass. Native build and process execution remain unqualified."
+scripts/windows_source_common.ps1,1102,code,pending,,
+setup.py,306,code,pending,,
+src/jarvis_voice/__init__.py,6,code,reviewed,9897999008a93229c68682ab5208af7647bb6ff1706352b9bf529b6d9865bbde,Complete package initialization/export inspection; covered by normal imports in the full Voice suite.
+src/jarvis_voice/__main__.py,10,code,reviewed,633af663b8458d3c9f70a2c02bbbc869cc386815d4b1880f8c414e1a87061894,"Complete guarded entry-point inspection; freeze_support and CLI execution are restricted to __main__, preserving multiprocessing import safety."
+src/jarvis_voice/action_approval.py,491,code,pending,,
+src/jarvis_voice/app_paths.py,89,code,reviewed,89232c3cce67c67746c6d98944136c0227476eca5711da48c33b09dcfa10ddf6,Complete source inspection: shared backend/error contracts and application paths traced through Windows runtime/tray composition. Native ACL/device behavior remains separately qualified.
+src/jarvis_voice/approval_arbiter.py,108,code,pending,,
+src/jarvis_voice/artifact_audit.py,415,code,pending,,
+src/jarvis_voice/asr.py,149,code,pending,,
+src/jarvis_voice/asr_factory.py,139,code,pending,,
+src/jarvis_voice/audio.py,118,code,pending,,"Complete source read as dependency; callback/end_turn concurrency, capture packing and conversion contract review remain pending."
+src/jarvis_voice/backends.py,103,code,reviewed,4580e5f2b1fc90624329be876665246d1eb660399c00063bd5b70635e7183367,Complete source inspection: shared backend/error contracts and application paths traced through Windows runtime/tray composition. Native ACL/device behavior remains separately qualified.
+src/jarvis_voice/cli.py,230,code,reviewed,bc34d8fb77e05917f23d0fa076f4a333a309a3609ff0dcd9aecb19fbbfba38d2,"Complete CLI/parser/dispatch inspection; V25 output-error JSON fallback and removal of redundant full distribution hashing. Offline mocked command tests and full Voice suite pass; native commands were not invoked. V31 common VoiceError CLI handling and protocol/state error regressions; full Voice 681 tests (673 pass, 8 skips)."
+src/jarvis_voice/cloud_approval.py,825,code,pending,,
+src/jarvis_voice/config.py,813,code,reviewed,5997d2d113d1cd59f60b81f87955792f385e30144322162997060113d73b108a,"Complete configuration source inspection; V15–V18 canonical PTT names, finite numeric conversion, exact VAD integers and typed JSON/Core ML boundary failures. Full Voice 661 tests: 653 passed, 8 native/prerequisite skips."
+src/jarvis_voice/core.py,391,code,reviewed,2f7c2e39c835dd51d1634678c14d210b6e8c2c151df31ef74d799e43a01cdebb,"Complete core/state/protocol/replay and input-retry inspection. V30/V32/V36 stale-turn, restart/reconnect replay and replacement audio fixes verified; V37 clears old submission at capture and V38 preserves turn identity after failed input. Full Voice 688 tests (680 pass, 8 skips) and Orchestrator 769 (765 pass, 4 skips). Native adapters and broader runtime qualification remain separate."
+src/jarvis_voice/cuda_probe.py,92,code,pending,,
+src/jarvis_voice/cuda_worker.py,424,code,pending,,
+src/jarvis_voice/delivery_journal.py,127,code,reviewed,82e21d1e688f632c4f213e2e5ad019d492b70ca9b5f28b8d1d06fed0afdd4fc3,"Complete bounded persisted-dedup source and tests inspected: semantic digest excludes transport session/sequence, conflicts roll back, expiry/capacity fail closed, lock serializes SQL, private path audited and startup prune covered by cleanup. V34 rejects malformed Unicode before hashing without changing the persisted semantic digest format. Seven journal tests and complete Voice/Orchestrator suites pass."
+src/jarvis_voice/distribution.py,175,code,reviewed,27e4c45c6c11206892faf0137227b4e9ee9fccb52490ba7b6c11d25dc3020042,"Complete distribution inventory/builder/verifier inspection; V19–V21 and V24 unreadable directories, nonregular/reparse entries, typed metadata/JSON errors, schema types, exact verified manifest digest and cleanup failures. Removed unused custom manifest-name keyword. Full Voice 675 tests: 667 passed, 8 native/prerequisite skips."
+src/jarvis_voice/doctor.py,374,code,pending,,
+src/jarvis_voice/errors.py,45,code,reviewed,6858d996f3c099d1c611efdc4084a89eb4e6395424dabe62766764ec987e9dc3,Complete source inspection: shared backend/error contracts and application paths traced through Windows runtime/tray composition. Native ACL/device behavior remains separately qualified.
+src/jarvis_voice/fakes.py,230,code,reviewed,222f9bf5cd78ddc5bfe5e2f1fd478ec9d59a0acc69578e36cd9240e098f21737,"Complete fake clock/ASR/TTS/orchestrator inspection; deterministic queue, cancellation fence, ACK duplicate identity and script ordering traced against integration tests. Fakes are test adapters, not native qualification."
+src/jarvis_voice/gpu.py,176,code,pending,,
+src/jarvis_voice/lifecycle.py,139,code,reviewed,22709728c4e27f07fc60b2191a854ac1f3b02998695a9e0fae07bdd867620dae,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
+src/jarvis_voice/macos/__init__.py,2,code,pending,,
+src/jarvis_voice/macos/asr_selection.py,85,code,pending,,
+src/jarvis_voice/macos/audio_capture.py,123,code,reviewed,e49055913741656e62c21db27f422f528e68e1bba5478e7db1bd826eb40ed7aa,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
+src/jarvis_voice/macos/audio_queue_playback.py,410,code,pending,,
+src/jarvis_voice/macos/automated_smoke.py,349,code,pending,,
+src/jarvis_voice/macos/chatterbox_pilot.py,894,code,pending,,
+src/jarvis_voice/macos/compact_greek_tts_acquisition.py,480,code,pending,,
+src/jarvis_voice/macos/compact_greek_tts_pilot.py,344,code,pending,,
+src/jarvis_voice/macos/doctor.py,445,code,pending,,
+src/jarvis_voice/macos/fish_s2_pilot.py,528,code,pending,,
+src/jarvis_voice/macos/greektts15_acoustics.py,157,code,pending,,
+src/jarvis_voice/macos/greektts15_adapter_analysis.py,132,code,pending,,
+src/jarvis_voice/macos/greektts15_pilot.py,1132,code,pending,,
+src/jarvis_voice/macos/greektts15_runtime.py,899,code,pending,,
+src/jarvis_voice/macos/greektts15_sidecar.py,369,code,pending,,
+src/jarvis_voice/macos/greektts15_training.py,2466,code,pending,,
+src/jarvis_voice/macos/interactive_smoke.py,504,code,pending,,
+src/jarvis_voice/macos/kokoro_onnx.py,458,code,pending,,
+src/jarvis_voice/macos/language_policy.py,72,code,reviewed,025c009327c04bc678a6b7f9a7f9aa9a76403ec565c89d69a2c94446b0070eb4,"Complete bilingual stabilization policy inspected with its runtime caller. Five tests cover short/uncertain English, confident switching, follow-up retention and Greek-script restoration. Heuristic language quality and native ASR confidence calibration are not exhaustively qualified."
+src/jarvis_voice/macos/materialization.py,354,code,pending,,
+src/jarvis_voice/macos/native_collector.py,725,code,pending,,
+src/jarvis_voice/macos/native_run.py,663,code,pending,,
+src/jarvis_voice/macos/package_profile.py,130,code,pending,,
+src/jarvis_voice/macos/piper_f1_qualification.py,634,code,pending,,
+src/jarvis_voice/macos/ptt.py,321,code,pending,,
+src/jarvis_voice/macos/recovery.py,71,code,pending,,
+src/jarvis_voice/macos/runtime.py,807,code,pending,,Capture/retry and scheduler decision bookkeeping caller ranges inspected; V37 cancels old transcript retry on new capture. Broader complete runtime review remains pending.
+src/jarvis_voice/macos/staging.py,269,code,pending,,
+src/jarvis_voice/macos/supertonic3_pilot.py,595,code,pending,,
+src/jarvis_voice/macos/system_tts.py,215,code,pending,,
+src/jarvis_voice/macos/tts_router.py,155,code,pending,,
+src/jarvis_voice/macos/whisper_cpp.py,422,code,pending,,
+src/jarvis_voice/manifest.py,388,code,pending,,
+src/jarvis_voice/native_evidence_bundle.py,186,code,pending,,
+src/jarvis_voice/native_qualification.py,478,code,pending,,
+src/jarvis_voice/piper_mps_checkpoint.py,444,code,pending,,
+src/jarvis_voice/piper_mps_export.py,259,code,pending,,
+src/jarvis_voice/piper_mps_materialization.py,307,code,pending,,
+src/jarvis_voice/piper_mps_training.py,442,code,pending,,
+src/jarvis_voice/piper_training_handoff.py,325,code,pending,,
+src/jarvis_voice/piper_training_readiness.py,266,code,pending,,
+src/jarvis_voice/pocket_tts.py,734,code,pending,,
+src/jarvis_voice/private_state.py,549,code,reviewed,0dd46eea65b91cedcb2ae21ac1fde47ef9d95ab054883a74b027dc3e61b8dc41,"Complete boundary/ancestor checks, private creation, hardening, audit and default journal selection inspected. V126 hardener rejects FIFO swaps without blocking; V131 default audit/hardening now includes scheduler journal. Existing missing-tree passive-audit semantics and POSIX/current-user versus Windows reparse/ACL distinction retained. All four real journal families and new default-path regression pass."
+src/jarvis_voice/protocol.py,456,code,reviewed,d43806918f5f6e3cea0da91de57e8e43164f8a3b33edd2658d48690a01adc7f2,"Complete wire/factory validation inspection. V34 validates finite UTF-8 JSON before journal/wire use; V35 canonicalizes accepted uppercase session and ACK UUIDs. Full Voice 684 tests (676 pass, 8 skips) and Orchestrator 769 (765 pass, 4 skips). Unknown optional top-level fields remain discarded; producer schema and finite numeric compatibility preserved."
+src/jarvis_voice/ptt.py,236,code,reviewed,ae5c8bcd703ad4e413532cc61e89944bf6f444b67b2c32e66f3af7f2c74a8c66,Complete publisher and key-mapping inspection; V11 device-removal held-state reset and V15 shared canonical F1–F24 map; no synthetic approval events. Full Voice regression suite passes.
+src/jarvis_voice/qualification.py,477,code,reviewed,3e7ae5fc305e9c5e8d40f017648aeaa5e4a0ac4dc987ea16f7fc0b4d246415c1,"Complete release/sample/atomic-writer/signature-gate inspection; V21–V24 verified-byte identity, typed malformed sample inputs, pre-resolution output-link rejection and stable write failures. Full Voice suite passes with fake native evidence/SignTool; no native Windows qualification or signing performed."
+src/jarvis_voice/reliable.py,57,code,reviewed,cda507acad178320ebca27743950caa9e2d49f34a7c3788a369fe7fde8cdee8e,"Complete manager inspection and runtime caller trace; new retransmission sequences preserve event identity, delayed initialization no longer consumes due retries, ACK and reconnect deadlines covered. Capture supersession remains a runtime integration follow-up. V37/V38 capture supersession cancels prior retries and retains the last turn after input failure. Final Voice 688 tests (680 pass, 8 skips); Orchestrator 769 (765 pass, 4 skips)."
+src/jarvis_voice/retry.py,52,code,reviewed,b89697d30b9baa8224f794c471a0a1b0437fb83b5cfb72c1f5916b2651a56053,"Complete retry/deadline inspection and delayed-clock regression; start reserves only the caller-owned initial send, ACK halts retries, reconnect TTL retains original start."
+src/jarvis_voice/runtime.py,434,code,reviewed,151dad27c015659699949f57ccd4459a670fdb21f26df7be8ae73e8b84df7ad9,"Existing complete Windows runtime composition review plus V10 asynchronous input failure propagation. Resource ownership and input/TTS error regressions pass in full Voice suite. V37/V38 capture supersession cancels prior retries and retains the last turn after input failure. Final Voice 688 tests (680 pass, 8 skips); Orchestrator 769 (765 pass, 4 skips)."
+src/jarvis_voice/safe_log.py,72,code,reviewed,f96b4e5689a49a15dec7045c5c625eeab75f510fad2c8fb38bcf0132f5c9c778,SAPI terminal failure/cancellation and shared logger concurrency review V07–V09; complete source inspection and full Voice regression suite. Native hardware remains unqualified.
+src/jarvis_voice/scheduler_callback.py,115,code,reviewed,5e3e44f89e684b8b3cb5ce43fdec760c6d055105e225c35f260aac387135f4df,Complete authenticated callback parser/signing module inspected. V56 introduces a ValueError-compatible rejection type for malformed/authentication/retired frames so the shared pump can reject one callback without swallowing storage errors. Wire/HMAC bytes unchanged; six runtime/auth tests pass.
+src/jarvis_voice/scheduler_callback_qualification.py,73,code,reviewed,d11b4d96322b4f0b0ca3df27f0443ca357d450dd181884140ba3db548f53d61a,"Complete source inspected: exact callback checks, helper/code/adapter digests, UTC timestamp and supported platform. V48 shared strict loader rejects duplicate keys/oversized/deep/nonregular input. Full Voice 698 passes; live callback qualification remains blocked."
+src/jarvis_voice/scheduler_client.py,201,code,pending,,"Complete source read; approval, encrypted staging, native dispatch and reconnect flows traced. Pending: replay semantic identity across sessions and approval recovery; _seen retains complete wire strings for connection lifetime."
+src/jarvis_voice/scheduler_compatibility.py,127,code,pending,,"Complete source read. V48 one bounded regular-file UTF-8/digest/JSON reader serves all four gates; strict capability, hash and scalar types added. Pending cross-file qualification review: key_provider_contract has no defined expected runtime identifier, and actual artifact_signature binding needs tracing beyond inter-document equality. V56 rejects invalid/retired callbacks individually without suppressing storage failures; V57 reuses the bounded reader for operator manifest input while all four runtime gates still require pins. Full Voice 709 and Orchestrator 780 tests pass with documented skips. Broader lifecycle/retention/implementation-binding review remains pending."
+src/jarvis_voice/scheduler_journal.py,492,code,pending,,Complete source reread; U01 notification payload equality allows session/timestamp replay while preserving original wire hashes and rejecting changed payloads. Callback reset and action-result closure traced. Retention/expiry and remaining integration review pending. V56 rejects invalid/retired callbacks individually without suppressing storage failures; V57 reuses the bounded reader for operator manifest input while all four runtime gates still require pins. Full Voice 709 and Orchestrator 780 tests pass with documented skips. Broader lifecycle/retention/implementation-binding review remains pending.
+src/jarvis_voice/scheduler_native.py,596,code,pending,,"Complete source read; V46-V53 fix ABI, cleanup, command deadlines/partial writes, receipt validation, oversized framing, WinRT XML and producer-compatible code identity. V55 retains callbacks under queue pressure with bounded draining. Portable native/manifest tests 23 pass, full Voice 702 tests with 15 skips. Remains pending: running implementation/artifact binding, native lock and callback shutdown durability qualification."
+src/jarvis_voice/scheduler_native_qualification.py,90,code,reviewed,e9ab60a9eef2d5e1a5c80a061ece4093a5a93b228cc728f073583d080e3869b0,"Complete source inspected: exact schema/checks, supported platform, readiness, SHA/timestamp and manifest bindings. V48 shares bounded strict JSON reader and rejects empty-platform qualification on unsupported hosts. Full Voice 698 and Orchestrator 778 suites pass; actual native artifact qualification remains separate."
+src/jarvis_voice/scheduler_playback.py,161,code,reviewed,74d07ef9ee20cfb5ab33359c9d3c919db5b42bb4b8972c2aeeb746926827b4c8,"Complete pure scheduler playback and full test-module inspection: persist-before-enqueue, shared epochs, isolated response IDs, callback ownership, whole-notification cancellation, tombstone precedence and restart cancellation. Fake adapters validate state transitions; actual native TTS behavior remains unqualified."
+src/jarvis_voice/scheduler_protocol.py,319,code,pending,,"Complete source reread. V44 rejects nullable required UUIDs, boolean/fractional/out-of-range revisions or generations, and invalid action/due-time combinations. Frozen hash remains unchanged. Remaining notification fields, operation-specific nullable targets and timestamp canonicalization under review."
+src/jarvis_voice/scheduler_runtime.py,273,code,pending,,"Complete source reread; U01 startup resets EMITTED callbacks. Actual producer/callback/store recovery across three journal lifetimes passes; no repeated mutation. V39/V40 ownership and private-state guards retained. Full qualification, expiry and lifecycle review pending. V56 rejects invalid/retired callbacks individually without suppressing storage failures; V57 reuses the bounded reader for operator manifest input while all four runtime gates still require pins. Full Voice 709 and Orchestrator 780 tests pass with documented skips. Broader lifecycle/retention/implementation-binding review remains pending."
+src/jarvis_voice/scheduler_tts_qualification.py,36,code,reviewed,95c4773316b1848eced90e4e627f666e42346af9efcd50942dffdc8397c9b4ea,Complete source inspected previously and shared-loader change reviewed. V48 bounded strict JSON snapshot precedes native evidence evaluation and existing runtime-profile/compatibility binding. TTS regression and full Voice 698 tests pass.
+src/jarvis_voice/sequencing.py,35,code,reviewed,0da58b991d209ff42404afb362378988b43e2fbf870ba88df060e5f3ee3dde29,Complete per-connection ordering inspection; gap/conflict/exact duplicate regressions and reconnect reset reviewed. SHA-256 avoids retaining message text; entry count remains proportional to connection length.
+src/jarvis_voice/state.py,298,code,reviewed,3120ab238933a16ec1ac43fd8a6675cc2fff74e9544c6ad61a04c9f48acd0d40,"Complete pure input/response/playback state inspection and state tests; ordered commits, idempotence, tombstones, completion and epoch callbacks covered. Physical TTS replacement is owned by core/runtime and remains their follow-up. V37/V38 capture supersession cancels prior retries and retains the last turn after input failure. Final Voice 688 tests (680 pass, 8 skips); Orchestrator 769 (765 pass, 4 skips)."
+src/jarvis_voice/transcription.py,89,code,reviewed,19d6acd0b998d441b90059138acf8e244e1578138da2052e2a2b88a53db5bf10,Complete async coordinator inspected with both platform runtimes and collector call sites. Cancellation retires the future before backend callbacks; polling never publishes retired results. Existing real-thread and failure-cleanup tests pass. Thread shutdown is intentionally nonblocking; native backend cancellation responsiveness remains separate qualification.
+src/jarvis_voice/transport.py,222,code,reviewed,20cd9541d6ba1914d0ceeb2cb9c6bb9a0d1ffaaa9342dc8ba197a4bad4179cb3,"Complete client/fake-server source inspection; authenticated session binding, error redaction, auth cleanup, serialization and reconnect tests reviewed. Actual native/live transport qualification is separate."
+src/jarvis_voice/tray_app.py,127,code,pending,,Read complete composition root; inspect shutdown outcome and mutex ownership across failed lifecycle shutdown.
+src/jarvis_voice/ui_state.py,256,code,pending,,
+src/jarvis_voice/vad.py,134,code,pending,,
+src/jarvis_voice/voice_auth.py,865,code,pending,,
+src/jarvis_voice/voice_auth_transport.py,168,code,pending,,
+src/jarvis_voice/windows/__init__.py,2,code,reviewed,d0386292713aa087e8131ba0ef404adf00805e6867d559f9c45bef5624bc2d46,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
+src/jarvis_voice/windows/asr_collector.py,838,code,pending,,
+src/jarvis_voice/windows/asr_collector_contract.py,902,code,pending,,
+src/jarvis_voice/windows/asr_collector_metrics.py,63,code,pending,,
+src/jarvis_voice/windows/asr_collector_probes.py,221,code,pending,,
+src/jarvis_voice/windows/audio_capture.py,81,code,reviewed,67c95a41b3d302cdcdc386d83f88fa4deeaa8084d2087179fa2522d7c2dc8358,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
+src/jarvis_voice/windows/cuda_bundle.py,444,code,reviewed,0d71d0aa0c9b0d11d7a50fda13aa5064c8560c7303be98e1f85544f4ada35bf3,"Complete CUDA/runner manifest and hashing inspection; V13 bounded canonical JSON/error handling and V14 bounded stable hashing. Portable manifest, same-size mutation and growth regressions pass; native Windows build remains unqualified. V14 also accounts for Windows stat/fstat executable-bit differences; final Voice suite 661 tests (653 pass, 8 skips)."
+src/jarvis_voice/windows/hardening.py,67,code,reviewed,5a4aaf310c0a1acb3fc3a92e19dbc11bdd7c1a1632a69445066db4c536e66ea7,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
+src/jarvis_voice/windows/raw_input.py,262,code,reviewed,6ad82c5d85d71168f763587abfde9bbe5e06526ad3f15b6fcf0f2bdec1e58bf2,V10 callback and worker failures are retained and propagated; V11 approval held-state reset; V12 suspend/resume registration cleanup. Existing V01–V06 ownership review retained. Fake native callback/resource tests pass; native Windows qualification pending.
+src/jarvis_voice/windows/sapi.py,194,code,reviewed,be3b5a08b1fea5255f23469cd012b73e6e0a0cd24346b622309693695fe92212,SAPI terminal failure/cancellation and shared logger concurrency review V07–V09; complete source inspection and full Voice regression suite. Native hardware remains unqualified.
+src/jarvis_voice/windows/single_instance.py,80,code,reviewed,4f3679017a37c637cdf75657381e12038e528bd587c1b6abbd23912c5904ac1e,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
+src/jarvis_voice/windows/tray.py,317,code,reviewed,baf8e287855ae118c743f548783c6bca00df643970535a5643174f3a1c0acada,Existing complete tray/ownership review plus V10 ctypes callback error propagation. Fake callbacks and full Voice suite pass; native Windows tray behavior remains unqualified.
+tests/__init__.py,2,tests,pending,,
+tests/_bootstrap.py,16,tests,pending,,
+tests/fixtures/fake_greektts15_sidecar_worker.py,44,tests,pending,,
+tests/helpers.py,14,tests,pending,,
+tests/test_artifact_audit.py,230,tests,pending,,
+tests/test_asr.py,164,tests,pending,,
+tests/test_asr_factory.py,191,tests,reviewed,b260078eabab4ad88d3bee29fb0ef7e34a66a0faa8b3cecd92353d635cc4644c,"Complete nine-test factory/coordinator module inspected. CPU import isolation, explicit CUDA profile/manifest identity, fallback policy, same-audio retry, resource forwarding and cancelled-result retirement covered with fakes and a bounded real worker thread. Full Voice passes; no CUDA model loaded."
+tests/test_audio_vad.py,130,tests,pending,,
+tests/test_backend_ci_workflow.py,328,tests,pending,,
+tests/test_chatterbox_pilot.py,267,tests,pending,,
+tests/test_cli.py,136,tests,pending,,
+tests/test_compact_greek_tts_acquisition.py,187,tests,pending,,
+tests/test_compact_greek_tts_pilot.py,124,tests,pending,,
+tests/test_config_doctor.py,328,tests,reviewed,1e8a0be70d1b69b0866097ffd1b86a241ca8e5d227650bddd3184c92de9217ee,Complete test inspection; 104 numeric-invalid subcases plus exact VAD integers and malformed JSON/Core ML boundaries. Existing passive doctor/config tests pass without live GPU or microphone access.
+tests/test_core_integration.py,175,tests,reviewed,5a6744bccc3c7f5c3b05a3ccf8d4b5633a338a48227b085db5956f8f942a2685,"Complete test source inspection; assertions traced to actual retry, protocol, transport, input/playback or fake-server behavior. Full Voice 681 tests (673 pass, 8 skips). V34-V36 finite UTF-8 JSON, canonical ACK matching and replacement cancellation/callback regressions; full Voice 684 tests (676 pass, 8 skips). V37/V38 capture supersession cancels prior retries and retains the last turn after input failure. Final Voice 688 tests (680 pass, 8 skips); Orchestrator 769 (765 pass, 4 skips)."
+tests/test_core_voice_input.py,55,tests,reviewed,bbc57906f015c917d97db8826f4ed68e1adc91a030e2d50db83a175535622bb8,"Complete test source inspection; assertions traced to actual retry, protocol, transport, input/playback or fake-server behavior. Full Voice 681 tests (673 pass, 8 skips)."
+tests/test_cuda_probe.py,78,tests,pending,,
+tests/test_cuda_worker.py,275,tests,pending,,
+tests/test_cyrus_branding.py,106,tests,pending,,
+tests/test_fish_s2_pilot.py,98,tests,pending,,
+tests/test_gpu.py,46,tests,pending,,
+tests/test_greektts15_acoustics.py,62,tests,pending,,
+tests/test_greektts15_adapter_analysis.py,29,tests,pending,,
+tests/test_greektts15_pilot.py,346,tests,pending,,
+tests/test_greektts15_runtime.py,568,tests,pending,,
+tests/test_greektts15_sidecar.py,132,tests,pending,,
+tests/test_greektts15_training.py,817,tests,pending,,
+tests/test_kokoro_onnx.py,221,tests,pending,,
+tests/test_lifecycle.py,128,tests,reviewed,00e2475acf1faca51fa5fccfdf34a647bbca49e044a33733abd9c81ba828afec,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
+tests/test_m1_end_to_end.py,71,tests,pending,,
+tests/test_m2_end_to_end.py,94,tests,pending,,
+tests/test_macos.py,827,tests,pending,,
+tests/test_macos_audio_queue_playback.py,134,tests,pending,,
+tests/test_macos_automated_smoke.py,102,tests,pending,,
+tests/test_macos_cpu_smoke.py,356,tests,pending,,
+tests/test_macos_f1_acoustic_qualification_script.py,37,tests,pending,,
+tests/test_macos_f1_rtf_qualification_script.py,69,tests,pending,,
+tests/test_macos_f1_scheduler_playback_smoke.py,96,tests,reviewed,637a1dd792f0a210f7da372fccbef70380f78163e89b0b8ff265b376bc858545,"Complete three-test module inspected: real scheduler controller receipts, nonfinite timeout rejection before backend creation, and immediate enqueue failure with TTS cleanup. Full Voice 709 tests, 15 skips."
+tests/test_macos_helper_inspection.py,77,tests,reviewed,e30f38bdb122d9462e77cfc68d89274ac90485e32351f60cd9f55bbe9f6f23d2,"Complete source inspected; V53 uses the actual helper inspection producer output in scheduler identity validation, including path diagnostics and changed-designated-requirement rejection. Two tests pass; signatures mocked."
+tests/test_macos_interactive_smoke.py,234,tests,pending,,
+tests/test_macos_language_policy.py,55,tests,reviewed,a73c135d4af3ea325b88928ef6c155d21ac433f1c0d7c810a7ad1dbbae1efb8a,"Complete five-test policy module inspected; actual result preservation, confidence fallback and bilingual session transitions pass in full Voice."
+tests/test_macos_materialization.py,239,tests,pending,,
+tests/test_macos_native_collection_script.py,97,tests,pending,,
+tests/test_macos_native_collector.py,778,tests,pending,,
+tests/test_macos_packaging.py,100,tests,pending,,
+tests/test_macos_scheduler_callback_qualification.py,161,tests,reviewed,c9c11bd83feae6089e726cab5b80a19b51d471c5b6140ee0bcfd824a1c44adfa,"New complete four-test module inspected: invalid deadline/artifact inputs, actual encrypted journal reopen and payload corruption detection, cleanup, simulated full CLI report accepted by the real loader, and operator rejection preventing output. No native helper or notifications."
+tests/test_macos_staging.py,172,tests,pending,,
+tests/test_macos_tts_router.py,103,tests,pending,,
+tests/test_manifest.py,206,tests,pending,,
+tests/test_module_boundaries.py,75,tests,pending,,
+tests/test_native_evidence_bundle.py,116,tests,pending,,
+tests/test_native_qualification.py,160,tests,pending,,
+tests/test_native_resource_cleanup.py,326,tests,reviewed,598c13095e043e08b50c99ad9aea09599cd0207d07f3520c12327da0d4b4db33,"Existing complete ownership regression inspection plus V10–V12 fake native callback, worker termination, device removal and suspend/resume registration cases; full Voice suite passes."
+tests/test_packaging.py,341,tests,reviewed,1b30792365ea15f31d7357586dfde62e6c952f031c3783ca24bcadb7845e20e1,"Complete updated tests inspected; distribution error/read/reparse/FIFO/JSON/schema cases, failed cleanup, CLI output fallback and exactly one hash pass. Full Voice suite 675 tests (667 pass, 8 skips). V31 common VoiceError CLI handling and protocol/state error regressions; full Voice 681 tests (673 pass, 8 skips)."
+tests/test_piper_f1_qualification.py,179,tests,pending,,
+tests/test_piper_mps_checkpoint.py,359,tests,pending,,
+tests/test_piper_mps_export.py,146,tests,pending,,
+tests/test_piper_mps_materialization.py,132,tests,pending,,
+tests/test_piper_mps_training.py,192,tests,pending,,
+tests/test_piper_training_handoff.py,132,tests,pending,,
+tests/test_piper_training_readiness.py,90,tests,pending,,
+tests/test_pocket_tts.py,530,tests,pending,,
+tests/test_ponytail_hooks.py,110,tests,reviewed,9b65e38605bc5952dfda4645b7ae2379ae5f8ba719ee38ec28625bc195e6ee31,"Complete five-test POSIX module inspected. Isolated temporary repositories and stub reviewer reproduce H01/H02, preserve staged-only review, propagate failure and cover new/existing/deleted branch paths. No network, user configuration, project Git mutations or model calls. Full Voice suite 714 tests (699 pass, 15 skips). Checkpoint commits 931f6a6 and cc30375 completed with exact staged Ponytail review and active hooks; review-requested four-line simplification applied, five regression tests passed again."
+tests/test_protocol.py,175,tests,reviewed,97a2860e837b69ae9828e23d51ec78a4c584962a944bcaee84fafc0c299d2ffd,"Complete test source inspection; assertions traced to actual retry, protocol, transport, input/playback or fake-server behavior. Full Voice 681 tests (673 pass, 8 skips). V34-V36 finite UTF-8 JSON, canonical ACK matching and replacement cancellation/callback regressions; full Voice 684 tests (676 pass, 8 skips)."
+tests/test_ptt.py,136,tests,reviewed,402812cfa00869b543f30a6fb4fdee6a1b69a3f59c2d894bf262854d50be5447,"Complete test inspection; approval keyboard removal preserves other held devices/counters, aliases cannot bypass reserved F10/F11, existing PTT queue/watchdog tests pass."
+tests/test_qualification.py,467,tests,reviewed,87725136eea9ae0a1c4c243ee20ec1d0a6d40aa8425fbb566dc2c45dc6f90de1,"Complete tests inspected; verified manifest snapshot, malformed numeric/type/JSON inputs, output symlinks, serialization and cleanup failures. Existing report gates use synthetic fixtures and fake signature runners; full Voice suite passes."
+tests/test_redaction.py,27,tests,pending,,
+tests/test_reliable.py,94,tests,reviewed,23552cf41d8172fb3272015b2c696b5274ccb7726cedcd5784fa246f32d233d4,"Complete test source inspection; assertions traced to actual retry, protocol, transport, input/playback or fake-server behavior. Full Voice 681 tests (673 pass, 8 skips). V34-V36 finite UTF-8 JSON, canonical ACK matching and replacement cancellation/callback regressions; full Voice 684 tests (676 pass, 8 skips). V37/V38 capture supersession cancels prior retries and retains the last turn after input failure. Final Voice 688 tests (680 pass, 8 skips); Orchestrator 769 (765 pass, 4 skips)."
+tests/test_retry.py,36,tests,reviewed,6cb563cd2e1495af1001ae15ba2a9b64ed6910788015dd3c0fef4dab582781f1,"Complete test source inspection; assertions traced to actual retry, protocol, transport, input/playback or fake-server behavior. Full Voice 681 tests (673 pass, 8 skips)."
+tests/test_sapi.py,158,tests,reviewed,5f66f1646782544e021818afb1cc72fc24a862f43c8c4c8b5d5bf2aa9ce17a23,SAPI terminal failure/cancellation and shared logger concurrency review V07–V09; complete source inspection and full Voice regression suite. Native hardware remains unqualified.
+tests/test_scheduler_callback.py,211,tests,reviewed,cb743f6234fc9c7843752064c3c8def5546f708ed25aed0b7174b7eda25c25fe,"Complete six-test module inspected. V56 regression feeds malformed, wrong-key and tombstoned callbacks before a valid action; only the valid action is emitted once. OSError and unrelated ValueError storage failures still propagate. Existing identity/restart binding tests pass."
+tests/test_scheduler_callback_qualification.py,148,tests,reviewed,4269e3f25cdff1dbb059f94dbd8f3a7065ccb7d60a1b0e210277926568cfa361,"Complete five-test gate module inspected, including final missing-pin cases through all four runtime loaders. Shared bounds, FIFO, malformed/duplicate/nonfinite JSON, capability/scalar validation pass. Qualification producers may omit an input pin; runtime consumers cannot."
+tests/test_scheduler_native.py,669,tests,reviewed,b10755828110c27720d6a359511637d82620e7343e47aeeb45a440fa4422050f,"Complete module and added regressions inspected. V50-V55 cover bounded partial pipe writes, concurrent commands, invalid timeout/receipt, oversized framing, WinRT XML script contract, and retention of 65 callbacks with a bounded drain. Native plus manifest inspection: 23 tests pass; full Voice 702 tests, 15 skips. No live OS notifications."
+tests/test_scheduler_playback.py,420,tests,reviewed,f386fc68b7a378c7e0ae0b6903b08c47f47f8c1a1579f90c10e95d2eca48c4d5,"Complete 420-line test source inspection: fake TTS state/callback/epoch routing, whole-notification cancellation, strict speech/receipt fields, qualified evidence/config bindings, encrypted durable ordering/gap/conflict and interrupted restart recovery. Full Voice suite passes."
+tests/test_state.py,132,tests,reviewed,5e0af53fe87ab0b478002d68b79ee084c5b339b25cad67f61292c7a293a9322b,"Complete test source inspection; assertions traced to actual retry, protocol, transport, input/playback or fake-server behavior. Full Voice 681 tests (673 pass, 8 skips)."
+tests/test_supertonic3_pilot.py,128,tests,pending,,
+tests/test_transport.py,282,tests,reviewed,39ce6681848bcf4c0ac364b20a4ae9051cfdac3c66a766ce617da3709be388db,"Complete test source inspection; assertions traced to actual retry, protocol, transport, input/playback or fake-server behavior. Full Voice 681 tests (673 pass, 8 skips)."
+tests/test_ui_state.py,124,tests,pending,,
+tests/test_voice_auth.py,370,tests,pending,,
+tests/test_voice_private_state.py,326,tests,reviewed,4a9f41a1322f601f9ac60d4e31b33fcbf6dee3f223ebdb346e646530e0876cc8,"Complete source inspected, retaining prior all-four-journal coverage. Added V126 bounded subprocess FIFO substitution and V131 default audit/hardener scheduler inclusion with redirected temporary default paths. Eleven methods pass; module-size ratchet also passes. POSIX tests do not establish native Windows ACL behavior."
+tests/test_voice_wheel_packaging.py,556,tests,pending,,
+tests/test_windows_asr_collector.py,577,tests,pending,,
+tests/test_windows_cuda_bundle.py,459,tests,reviewed,1d73a8a1a7589982a9d5e73c28abeeac66c06884cd040a03078ee46be0cf1a23,"Complete test inspection and new V13/V14 regressions: both manifest loaders, bounded read, same-size mutation and growing hash input. Existing fake build-guard tests pass. Includes simulated Windows stat/fstat executable permissions; final Voice suite 661 tests (653 pass, 8 skips)."
+tests/test_windows_handoff_verifier.py,269,tests,pending,,
+tests/test_windows_handoff_voice_template.py,46,tests,pending,,
+tests/test_windows_native.py,50,tests,reviewed,ce73a9df0e2a02156a492c37f8044f1c18cbd551d08b1b51be902b5625772864,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
+tests/test_windows_runtime_resources.py,182,tests,reviewed,daf840d05227619a70aeea9ffab4ca9e436bda833b0e02f8d7e79a3f4c49fc2a,Existing complete partial-initialization/close regression inspection plus asynchronous input and TTS backend-error propagation; full Voice suite passes.
+tests/test_windows_shell.py,92,tests,reviewed,639364814eadb224afd160566b249a7007cc187e76d6d52be192f08d415f347d,"Voice native resource review V01–V06: complete source/test inspection, cleanup and lifecycle regressions; full Voice 643 tests (635 pass, 8 skips). Native hardware behavior and listed integration follow-ups remain pending."
+tests/test_windows_source_bringup_scripts.py,434,tests,pending,,
+uv.lock,2180,support,pending,,

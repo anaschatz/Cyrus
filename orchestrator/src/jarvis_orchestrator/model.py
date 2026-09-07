@@ -142,4 +142,3 @@ class BudgetedModelPort:
                     self._store.reconcile_model(
                         reservation_id, request.task_id, request.epoch, None
                     )
-
