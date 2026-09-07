@@ -892,7 +892,7 @@ src/jarvis_voice/manifest.py,375,code,reviewed,5ac7392e6f70f2ca45d30e532debfcb72
 src/jarvis_voice/native_evidence_bundle.py,186,code,pending,,
 src/jarvis_voice/native_qualification.py,478,code,pending,,
 src/jarvis_voice/piper_mps_checkpoint.py,444,code,pending,,
-src/jarvis_voice/piper_mps_export.py,259,code,pending,,
+src/jarvis_voice/piper_mps_export.py,263,code,reviewed,62cb5667fb47a278a8fea058e88031743cf64128dfea5bcbfce340005226eb49,"Complete 259-line original source and export CLI caller reviewed. V304/V305: claim config/model partial files atomically using touch(exist_ok=False), preserve foreign partials and recheck final output after ownership; clean owned partials across preparation/export interruptions while restoring torch.load. Successful publication does not unlink a subsequent writer partial. Legacy exporter arguments, checkpoint gates and model math unchanged. First four regression methods fail baseline; 14 focused tests and full Voice 774 (759 passed, 15 skipped) pass using fake native modules only."
 src/jarvis_voice/piper_mps_materialization.py,307,code,pending,,
 src/jarvis_voice/piper_mps_training.py,442,code,pending,,
 src/jarvis_voice/piper_training_handoff.py,325,code,pending,,
@@ -1003,9 +1003,10 @@ tests/test_native_evidence_bundle.py,116,tests,pending,,
 tests/test_native_qualification.py,160,tests,pending,,
 tests/test_native_resource_cleanup.py,326,tests,reviewed,598c13095e043e08b50c99ad9aea09599cd0207d07f3520c12327da0d4b4db33,"Existing complete ownership regression inspection plus V10–V12 fake native callback, worker termination, device removal and suspend/resume registration cases; full Voice suite passes."
 tests/test_packaging.py,341,tests,reviewed,1b30792365ea15f31d7357586dfde62e6c952f031c3783ca24bcadb7845e20e1,"Complete updated tests inspected; distribution error/read/reparse/FIFO/JSON/schema cases, failed cleanup, CLI output fallback and exactly one hash pass. Full Voice suite 675 tests (667 pass, 8 skips). V31 common VoiceError CLI handling and protocol/state error regressions; full Voice 681 tests (673 pass, 8 skips)."
+tests/test_piper_export_ownership.py,143,tests,reviewed,2c0149bbdc364cde099a8560f44bab2f39ba2cd0c8ec5629d200db9d60fee087,"Complete six-method regression reviewed. Real temporary-file creation/open/replace under deterministic competing-writer interleavings; fake Torch/Piper/ONNX setup executes the actual export orchestration. First four baseline methods fail. Verifies foreign partial preservation, late final-output refusal, KeyboardInterrupt cleanup through preparation/export/checking/config serialization, restored weights-only loader and successful publication without deleting a subsequent writer partial. All six pass; no actual model or native library loaded."
 tests/test_piper_f1_qualification.py,179,tests,pending,,
 tests/test_piper_mps_checkpoint.py,359,tests,pending,,
-tests/test_piper_mps_export.py,146,tests,pending,,
+tests/test_piper_mps_export.py,146,tests,reviewed,0a5d4d0aca3f808928e36c71455775eefcb011184486f2d0127133fd92a54145,"Complete 146-line seven-test module reviewed: bounded regular/protected checkpoint layouts, unsafe-global rejection, existing outputs, canonical Greek metadata and conflicting language. All seven pass in 14 focused checks and full Voice 774. Disposable fake checkpoint/config bytes and injected scan only; no PyTorch/ONNX model execution."
 tests/test_piper_mps_materialization.py,132,tests,pending,,
 tests/test_piper_mps_training.py,192,tests,pending,,
 tests/test_piper_training_handoff.py,132,tests,pending,,

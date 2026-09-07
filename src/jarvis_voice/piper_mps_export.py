@@ -33,6 +33,13 @@ def _error(code: str, message: str) -> BackendError:
     return BackendError(code, message, subsystem="tts")
 
 
+def _claim_partial(partial: Path, code: str) -> None:
+    try:
+        partial.touch(exist_ok=False)
+    except FileExistsError as exc:
+        raise _error(code, "A previous Piper partial already exists") from exc
+
+
 def validate_piper_mps_export(
     checkpoint_path: str | Path,
     output_path: str | Path,
@@ -102,6 +109,7 @@ def validate_piper_mps_export(
         or not output.parent.is_dir()
         or output.parent.is_symlink()
         or output.exists()
+        or output.is_symlink()
         or output.with_name(f"{output.name}.json").is_symlink()
         or not output.with_name(f"{output.name}.json").is_file()
     ):
@@ -155,11 +163,7 @@ def finalize_piper_mps_config(config_path: str | Path) -> None:
         return
     payload["language"] = LANGUAGE_METADATA
     partial = config.with_name(f".{config.name}.part")
-    if partial.exists() or partial.is_symlink():
-        raise _error(
-            "tts.f1_mps.export_config_partial_exists",
-            "A previous Piper config partial already exists",
-        )
+    _claim_partial(partial, "tts.f1_mps.export_config_partial_exists")
     try:
         partial.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -167,8 +171,10 @@ def finalize_piper_mps_config(config_path: str | Path) -> None:
         )
         os.chmod(partial, config.stat().st_mode & 0o777)
         os.replace(partial, config)
-    except OSError as exc:
+    except BaseException as exc:
         partial.unlink(missing_ok=True)
+        if not isinstance(exc, OSError):
+            raise
         raise _error(
             "tts.f1_mps.export_config_write_failed",
             "Piper export config could not be finalized",
@@ -199,43 +205,41 @@ def run_piper_mps_export(checkpoint_path: str | Path, output_path: str | Path) -
         return original_torch_load(source, *args, **kwargs)
 
     partial = output.with_name(f".{output.name}.part")
-    if partial.exists() or partial.is_symlink():
-        raise _error(
-            "tts.f1_mps.export_partial_exists",
-            "A previous Piper export partial already exists",
+    _claim_partial(partial, "tts.f1_mps.export_partial_exists")
+    try:
+        if output.exists() or output.is_symlink():
+            raise _error("tts.f1_mps.export_output_invalid", "Piper export output already exists")
+        torch.load = weights_only_load
+        try:
+            model = model_class.load_from_checkpoint(checkpoint, map_location="cpu")
+        finally:
+            torch.load = original_torch_load
+        model_g = model.model_g
+        model_g.eval()
+        with torch.no_grad():
+            model_g.dec.remove_weight_norm()
+
+        def infer_forward(text, text_lengths, scales, sid=None):
+            audio = model_g.infer(
+                text,
+                text_lengths,
+                noise_scale=scales[0],
+                length_scale=scales[1],
+                noise_scale_w=scales[2],
+                sid=sid,
+            )[0].unsqueeze(1)
+            return audio
+
+        model_g.forward = infer_forward
+        sequence = torch.randint(
+            low=0,
+            high=model_g.n_vocab,
+            size=(1, 50),
+            dtype=torch.long,
         )
-    torch.load = weights_only_load
-    try:
-        model = model_class.load_from_checkpoint(checkpoint, map_location="cpu")
-    finally:
-        torch.load = original_torch_load
-    model_g = model.model_g
-    model_g.eval()
-    with torch.no_grad():
-        model_g.dec.remove_weight_norm()
-
-    def infer_forward(text, text_lengths, scales, sid=None):
-        audio = model_g.infer(
-            text,
-            text_lengths,
-            noise_scale=scales[0],
-            length_scale=scales[1],
-            noise_scale_w=scales[2],
-            sid=sid,
-        )[0].unsqueeze(1)
-        return audio
-
-    model_g.forward = infer_forward
-    sequence = torch.randint(
-        low=0,
-        high=model_g.n_vocab,
-        size=(1, 50),
-        dtype=torch.long,
-    )
-    lengths = torch.LongTensor([sequence.size(1)])
-    speaker = torch.LongTensor([0]) if model_g.n_speakers > 1 else None
-    scales = torch.FloatTensor([0.667, 1.0, 0.8])
-    try:
+        lengths = torch.LongTensor([sequence.size(1)])
+        speaker = torch.LongTensor([0]) if model_g.n_speakers > 1 else None
+        scales = torch.FloatTensor([0.667, 1.0, 0.8])
         torch.onnx.export(
             model=model_g,
             args=(sequence, lengths, scales, speaker),
@@ -254,6 +258,6 @@ def run_piper_mps_export(checkpoint_path: str | Path, output_path: str | Path) -
         onnx.checker.check_model(onnx.load(partial))
         finalize_piper_mps_config(output.with_name(f"{output.name}.json"))
         os.replace(partial, output)
-    except Exception:
+    except BaseException:
         partial.unlink(missing_ok=True)
         raise
