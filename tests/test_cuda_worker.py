@@ -80,6 +80,9 @@ class FakeProcess:
     def is_alive(self): return self._alive
     def terminate(self): self.terminated = True; self._alive = False
     def join(self, timeout=None): del timeout
+    def kill(self): self._alive = False
+    def close(self):
+        if self._alive: raise ValueError("process still alive")
 
 
 class PollConnection:

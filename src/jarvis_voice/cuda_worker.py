@@ -197,13 +197,16 @@ class ProcessCudaWorkerSession:
     def start(self) -> None:
         if self.alive:
             return
+        self.cancel()
         started = self.clock()
         parent, child = self.context.Pipe(duplex=True)
-        process = self.context.Process(target=_process_entry, args=(child, self.config), name="jarvis-cuda-asr", daemon=True)
-        self._connection, self._process = parent, process
-        process.start()
-        child.close()
+        self._connection = parent
         try:
+            try:
+                self._process = self.context.Process(target=_process_entry, args=(child, self.config), name="jarvis-cuda-asr", daemon=True)
+                self._process.start()
+            finally:
+                child.close()
             frame = self._receive(self.config.worker_start_timeout_seconds, "cuda.worker_start_timeout")
             if frame["type"] == "error":
                 self._raise_error(frame)
@@ -255,9 +258,14 @@ class ProcessCudaWorkerSession:
 
     def cancel(self) -> None:
         process = self._process
-        if process is not None and process.is_alive():
-            process.terminate()
-            process.join(timeout=5)
+        if process is not None:
+            for method in ("terminate", "kill"):
+                if not process.is_alive():
+                    break
+                getattr(process, method)()
+                process.join(timeout=5)
+            if process.is_alive():
+                raise BackendError("cuda.worker_shutdown_timeout", "CUDA worker did not exit", subsystem="cuda")
         self._close_handles()
 
     def close(self) -> None:
@@ -269,19 +277,22 @@ class ProcessCudaWorkerSession:
                 frame = self._receive(min(5.0, self.config.worker_start_timeout_seconds), "cuda.worker_shutdown_timeout")
                 if frame.get("type") != "shutdown.complete":
                     raise BackendError("cuda.worker_protocol_error", "CUDA worker shutdown was not acknowledged", subsystem="cuda")
-            except (BackendError, BrokenPipeError, EOFError, OSError):
-                process.terminate()
-            process.join(timeout=5)
-            if process.is_alive():
-                process.terminate(); process.join(timeout=5)
-        self._close_handles()
+            except (BackendError, EOFError, OSError):
+                pass
+            else:
+                process.join(timeout=5)
+        self.cancel()
         self.metrics.append({"event": "worker_shutdown", "duration_seconds": self.clock() - started})
 
     def _close_handles(self) -> None:
-        if self._connection is not None:
-            self._connection.close()
-        self._connection = None
-        self._process = None
+        try:
+            if self._connection is not None:
+                self._connection.close()
+        finally:
+            self._connection = None
+            if self._process is not None:
+                self._process.close()
+            self._process = None
 
 
 FALLBACKABLE_CUDA_ERRORS = frozenset(
@@ -415,16 +426,29 @@ class CudaFasterWhisperBackend:
     def cancel_current(self) -> None:
         with self._lock:
             session = self._active_session
-            if session is not None and self._warm_session is session:
-                self._warm_session = None
-            self._active_session = None
         if session is not None:
             session.cancel()
+            with self._lock:
+                if self._warm_session is session:
+                    self._warm_session = None
+                if self._active_session is session:
+                    self._active_session = None
 
     def close(self) -> None:
         with self._lock:
             sessions = {id(item): item for item in (self._active_session, self._warm_session) if item is not None}
-            self._active_session = None
-            self._warm_session = None
+        failure: BaseException | None = None
         for session in sessions.values():
-            session.close()
+            try:
+                session.close()
+            except BaseException as exc:
+                if failure is None:
+                    failure = exc
+            else:
+                with self._lock:
+                    if self._active_session is session:
+                        self._active_session = None
+                    if self._warm_session is session:
+                        self._warm_session = None
+        if failure is not None:
+            raise failure

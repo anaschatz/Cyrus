@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **231 of 401 code files**, plus **201 of 324 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **231 of 401 code files**, plus **202 of 325 test files** and **41 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-07**. Latest complete runs: Voice **737 tests (722 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-07**. Latest complete runs: Voice **743 tests (728 passed, 15 skipped)**; Orchestrator **1106 tests (1101 passed, 5 skipped)**; Inference **273 tests (265 passed, 8 skipped)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -1620,3 +1620,21 @@ Two regression methods reproduce **19 errors before the fix** (15 startup/transc
 Full Voice: **737 tests in 6.667 seconds, 722 passed and 15 skipped**. Full Orchestrator: **1106 tests in 20.248 seconds, 1101 passed and five skipped**. Logs: `/tmp/cyrus-full-review-cuda-ipc-{voice,orchestrator}.log`. Fatal Ruff and unchanged module boundaries pass. Source process creation/shutdown ownership, concurrency and result-frame validation remain follow-ups; this checkpoint does not claim full CUDA lifecycle qualification.
 
 Coverage is **231/401 code, 201/324 tests and 41/308 support**, with **473 reviewed hashes verified across 1033 entries**. Whole-repository review, U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
+
+
+### CUDA subprocess ownership through failed startup and shutdown
+
+Channel failure checkpoint committed as **9d2ca75**, with a clean mandatory Ponytail review. Read the current CPython multiprocessing process lifecycle implementation and traced the supervisor through both backend residency modes and AsyncTranscriptionCoordinator.
+
+| ID | Finding and impact | Resolution |
+| --- | --- | --- |
+| V285 | Process construction/start failures bypassed child/parent cleanup; restarting after a dead worker replaced old handles without closing them. | Close stale session handles first, place construction/start inside the cleanup boundary and always release the parent's child-pipe copy immediately after start. KeyboardInterrupt follows the same cleanup path. |
+| V286 | terminate plus a bounded join did not guarantee exit; cancel/close could forget a still-running child and permit result publication while it remained alive. | Reuse cancel for final shutdown, escalate terminate to kill with bounded joins, confirm exit, and retain the process with cuda.worker_shutdown_timeout if it still lives. |
+| V287 | Process handles were never explicitly closed, and a pipe-close error skipped subsequent cleanup. | Call multiprocessing Process.close after confirmed exit, also when pipe close fails; retain a process handle whose close fails so it remains available for retry. |
+| V288 | Backend cancellation/shutdown discarded session references before cleanup succeeded; one failure also prevented closing another owned session. | Remove only successfully cleaned-up matching references, attempt every owned session and raise the first failure afterward. Failed cleanup remains available for retry. |
+
+The first five regression methods produce **11 failures before fixes**; the additional backend ownership test produces **two failures**. All **42 focused tests pass** after fixes, `/tmp/cyrus-cuda-ownership-after.log`; baseline logs are `/tmp/cyrus-cuda-ownership-before.log` and `/tmp/cyrus-cuda-backend-retention-before.log`. A real, harmless POSIX spawn child acknowledges readiness and ignores SIGTERM: the actual supervisor now kills and reaps it and closes its process handle. The test always cleans up its own child, including before the fix. Other failure cases use fake connections/processes/inventory and disposable manifest bytes. No CUDA library, model, GPU query, microphone or unrelated process is used; Windows process cleanup remains unqualified natively.
+
+Full Voice: **743 tests in 7.211 seconds, 728 passed and 15 skipped**. Full Orchestrator: **1106 tests in 20.499 seconds, 1101 passed and five skipped**. Logs: `/tmp/cyrus-full-review-cuda-ownership-{voice,orchestrator}.log`. Fatal Ruff and unchanged module-size checks pass. Ponytail: share final cancellation logic instead of maintaining duplicate termination paths; use native Process.kill/close and existing ownership references. Net production growth is **24 lines**, with no new dependency or schema change.
+
+Coverage is **231/401 code, 202/325 tests and 41/308 support**, with **474 reviewed hashes verified across 1034 entries**. CUDA concurrent cancellation/receive, startup cancellation and result-frame validation remain pending; this checkpoint does not claim full worker lifecycle qualification. Whole-codebase review, broader U05 privacy, compiler qualification binding and final code-quality assessment remain incomplete.
