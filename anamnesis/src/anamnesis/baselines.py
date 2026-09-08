@@ -344,9 +344,7 @@ class VectorRAGMemory:
             for event, vector in zip(self._events, self._vectors, strict=True)
             if event.id != current.id
         )
-        candidates.extend(
-            zip(self._decisions, self._decision_vectors, strict=True)
-        )
+        candidates.extend(zip(self._decisions, self._decision_vectors, strict=True))
         if not candidates:
             return ContextSelection(events=[current])
 

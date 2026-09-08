@@ -466,8 +466,11 @@ def test_hosted_loader_binds_producer_run_to_model_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import asyncio
+
     from inspect_ai.log import EvalStats
     from inspect_ai.model import ModelOutput
+    from test_preflight import MODEL, _model_event, _valid_preflight_log
+
     from anamnesis.baselines import AnamnesisMemoryStrategy, NoPersistentMemory
     from anamnesis.inspect_adapter import (
         InspectDecisionModel,
@@ -476,7 +479,6 @@ def test_hosted_loader_binds_producer_run_to_model_events(
     )
     from anamnesis.runner import run_scenario
     from anamnesis.wire import DecisionWire, PayloadWire
-    from test_preflight import MODEL, _model_event, _valid_preflight_log
 
     scenario = load_scenarios("eval/scenarios/smoke.jsonl")[0]
     action_json = json.dumps(

@@ -68,7 +68,8 @@ def validate_run(path: Path) -> OpenMemoryVllmV5Run:
             VllmOpenMemoryAlignedDecisionModel.wire_model.model_validate_json(
                 observed.raw_completion
             ).to_domain()
-            if observed.audit.validation.accepted else Decision()
+            if observed.audit.validation.accepted
+            else Decision()
         )
         if observed.decision != decision:
             raise ValueError("v5 decision differs from raw completion")

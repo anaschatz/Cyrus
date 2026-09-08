@@ -294,17 +294,22 @@ class OpenMemoryPairedRun(StrictModel):
 
     @model_validator(mode="after")
     def validate_matrix(self) -> Self:
-        if self.metrics.case_count < 1 or len(self.calls) != self.metrics.case_count * 2:
+        if (
+            self.metrics.case_count < 1
+            or len(self.calls) != self.metrics.case_count * 2
+        ):
             raise ValueError("paired run must contain exactly two calls per case")
         seen: set[str] = set()
-        for baseline, recall in zip(self.calls[::2], self.calls[1::2]):
+        for baseline, recall in zip(self.calls[::2], self.calls[1::2], strict=True):
             if (
                 baseline.arm != "baseline"
                 or recall.arm != "recall"
                 or baseline.case_id != recall.case_id
                 or baseline.case_id in seen
             ):
-                raise ValueError("paired run requires unique ordered baseline/recall pairs")
+                raise ValueError(
+                    "paired run requires unique ordered baseline/recall pairs"
+                )
             seen.add(baseline.case_id)
         return self
 

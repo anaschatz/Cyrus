@@ -145,7 +145,8 @@ def report_output_paths(
             or path.suffix != suffix
         ):
             raise ValueError(
-                "report outputs must be CSV/Markdown/JSON files under results, outside runs"
+                "report outputs must be CSV/Markdown/JSON files under results, "
+                "outside runs"
             )
         if path.exists() and (not path.is_file() or path.stat().st_nlink != 1):
             raise ValueError("report outputs must be regular files without hard links")

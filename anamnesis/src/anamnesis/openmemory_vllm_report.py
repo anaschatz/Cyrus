@@ -67,7 +67,13 @@ def _verify_reporting_checkout(measurement_commit: str) -> str:
         raise ValueError("measurement commit is not an ancestor of reporter HEAD")
     changed = set(
         subprocess.run(
-            ["git", "diff", "--no-relative", "--name-only", f"{measurement_commit}..{head}"],
+            [
+                "git",
+                "diff",
+                "--no-relative",
+                "--name-only",
+                f"{measurement_commit}..{head}",
+            ],
             cwd=REPO_ROOT,
             check=True,
             capture_output=True,
@@ -118,7 +124,9 @@ def _validate_run(path: Path) -> OpenMemoryVllmV4Run:
                 case, prompt_builder=build_openmemory_vllm_user_envelope
             )
             for arm, prompt in zip(("baseline", "recall"), prompts, strict=True):
-                expected_calls.append((case.id, arm, hashlib.sha256(prompt.encode()).hexdigest()))
+                expected_calls.append(
+                    (case.id, arm, hashlib.sha256(prompt.encode()).hexdigest())
+                )
                 expected_requests.append(
                     build_openmemory_vllm_request(
                         pin, DecisionRequest(event=case.event, prompt=prompt)
@@ -126,7 +134,10 @@ def _validate_run(path: Path) -> OpenMemoryVllmV4Run:
                 )
         if result.paired_run.artifact_sha256 != result.dataset_canonical_sha256:
             raise ValueError("paired artifact identity differs from frozen dataset")
-        if [(call.case_id, call.arm, call.prompt_sha256) for call in result.paired_run.calls] != expected_calls:
+        if [
+            (call.case_id, call.arm, call.prompt_sha256)
+            for call in result.paired_run.calls
+        ] != expected_calls:
             raise ValueError("paired calls differ from frozen prompt order")
         for call in result.paired_run.calls:
             destination = baseline if call.arm == "baseline" else recall
@@ -141,11 +152,16 @@ def _validate_run(path: Path) -> OpenMemoryVllmV4Run:
             raise ValueError("raw request differs from frozen reconstruction")
     if result.canary.accepted != result.audits[0].validation.accepted:
         raise ValueError("canary accepted flag differs from first audit")
-    if result.canary.prompt_sha256 != hashlib.sha256(canary_prompt.encode()).hexdigest():
+    if (
+        result.canary.prompt_sha256
+        != hashlib.sha256(canary_prompt.encode()).hexdigest()
+    ):
         raise ValueError("canary prompt differs from frozen reconstruction")
     if result.canary.semantic_passed != (not result.canary.decision.actions):
         raise ValueError("canary semantic result differs from its decision")
-    if (result.status == "complete") != (result.canary.accepted and result.canary.semantic_passed):
+    if (result.status == "complete") != (
+        result.canary.accepted and result.canary.semantic_passed
+    ):
         raise ValueError("run status differs from canary outcome")
     calls = result.paired_run.calls if result.paired_run is not None else ()
     if result.headline_usage != _sum_usage([call.usage for call in calls]):
@@ -154,15 +170,21 @@ def _validate_run(path: Path) -> OpenMemoryVllmV4Run:
         if audit.raw_completion != record.raw_completion or audit.usage != record.usage:
             raise ValueError("record differs from its raw audit")
         decision = (
-            VllmOpenMemoryDecisionModel.wire_model.model_validate_json(audit.raw_completion).to_domain()
-            if audit.validation.accepted else Decision()
+            VllmOpenMemoryDecisionModel.wire_model.model_validate_json(
+                audit.raw_completion
+            ).to_domain()
+            if audit.validation.accepted
+            else Decision()
         )
         if record.decision != decision:
             raise ValueError("recorded decision differs from raw model output")
     for audit, call in zip(result.audits[1:], calls, strict=True):
         if audit.validation.accepted == call.parse_error:
             raise ValueError("paired parse status differs from its raw audit")
-        if call.usage_complete != audit.validation.usage_valid or call.cost_complete != audit.validation.usage_valid:
+        if (
+            call.usage_complete != audit.validation.usage_valid
+            or call.cost_complete != audit.validation.usage_valid
+        ):
             raise ValueError("paired accounting flags differ from raw audit")
     return result
 

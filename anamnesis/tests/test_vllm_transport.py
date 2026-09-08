@@ -8,7 +8,6 @@ from openai import APIStatusError
 
 from anamnesis.vllm_runtime import OpenAIExternalVllmClient
 
-
 REQUEST = {
     "model": "synthetic-model",
     "messages": [{"role": "user", "content": "synthetic data only"}],

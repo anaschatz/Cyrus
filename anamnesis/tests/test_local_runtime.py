@@ -945,14 +945,18 @@ def test_local_solver_checks_configuration_before_live_preflight(
     sample = scenario_record_to_sample(scenario.model_dump(mode="json"))
     expected_error = RuntimeError if valid_config else ValueError
     expected_message = (
-        "live preflight reached" if valid_config else "runtime system configuration differs"
+        "live preflight reached"
+        if valid_config
+        else "runtime system configuration differs"
     )
     with pytest.raises(expected_error, match=expected_message):
         asyncio.run(solve(SimpleNamespace(metadata=sample.metadata), None))
     assert calls == ([variant] if valid_config else [])
 
 
-def test_local_solver_preserves_preflight_state_and_counts_setup_once(monkeypatch) -> None:
+def test_local_solver_preserves_preflight_state_and_counts_setup_once(
+    monkeypatch,
+) -> None:
     import anamnesis.local_runtime as runtime
     from anamnesis.inspect_adapter import scenario_record_to_sample
     from anamnesis.schema import ScenarioRun
@@ -970,18 +974,22 @@ def test_local_solver_preserves_preflight_state_and_counts_setup_once(monkeypatc
 
         async def decide(self, request):
             return DecisionCall(
-                decision=Decision(), usage=Usage(cost_usd=0.0),
-                cost_complete=True, raw_completion='{"mode":"no_action","actions":[]}',
+                decision=Decision(),
+                usage=Usage(cost_usd=0.0),
+                cost_complete=True,
+                raw_completion='{"mode":"no_action","actions":[]}',
             )
 
     async def preflight(self, model):
         # Inspect may return a new TaskState after generate; retain that state.
         model.state = SimpleNamespace(
-            metadata=dict(model.state.metadata), store=model.state.store,
+            metadata=dict(model.state.metadata),
+            store=model.state.store,
         )
         performed.append(True)
         return SimpleNamespace(
-            setup_latency_ms=7.0, model_dump=lambda **_: {"passed": True},
+            setup_latency_ms=7.0,
+            model_dump=lambda **_: {"passed": True},
         ), len(performed) == 1
 
     monkeypatch.setattr(runtime, "LocalInspectDecisionModel", FakeModel)
@@ -990,7 +998,8 @@ def test_local_solver_preserves_preflight_state_and_counts_setup_once(monkeypatc
     for setup_ms in (7.0, 0.0):
         stored = {}
         state = SimpleNamespace(
-            metadata=sample.metadata, store=SimpleNamespace(set=stored.__setitem__),
+            metadata=sample.metadata,
+            store=SimpleNamespace(set=stored.__setitem__),
         )
         result = asyncio.run(solve(state, None))
         assert result is not state

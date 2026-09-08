@@ -219,7 +219,8 @@ def test_solver_checks_configuration_before_hosted_warmup(monkeypatch) -> None:
         raise AssertionError("provider warmup ran before configuration validation")
 
     monkeypatch.setattr(
-        "anamnesis.inspect_adapter._run_hosted_model_warmup", unexpected_warmup,
+        "anamnesis.inspect_adapter._run_hosted_model_warmup",
+        unexpected_warmup,
     )
     solve = scenario_solver(
         "no_memory",

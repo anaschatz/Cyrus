@@ -251,7 +251,9 @@ def test_paired_gate_rejects_missing_or_extra_cases() -> None:
         score_openmemory_pair(artifact, baseline=decisions, recall=decisions)
 
 
-@pytest.mark.parametrize("corruption", [None, "empty", "duplicate", "reversed", "mismatched", "same_arm"])
+@pytest.mark.parametrize(
+    "corruption", [None, "empty", "duplicate", "reversed", "mismatched", "same_arm"]
+)
 def test_diagnostic_runner_makes_exactly_sixteen_ordered_calls(corruption) -> None:
     artifact = load_openmemory_diagnostic(DATASET_PATH)
     by_event = {case.event.id: case for case in artifact.cases}

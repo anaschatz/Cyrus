@@ -2,17 +2,15 @@ import asyncio
 import hashlib
 import json
 
+import numpy as np
 import pytest
+from test_openmemory_vllm_v5 import API_KEY, FakeClient, FakeProbe, _response
 
 import anamnesis.openmemory_vllm as boundary
 import anamnesis.openmemory_vllm_v6 as v6
 import anamnesis.openmemory_vllm_v6_report as report6
 import anamnesis.openmemory_vllm_v7 as v7
 import anamnesis.openmemory_vllm_v7_report as report7
-from test_openmemory_vllm_v5 import API_KEY, FakeClient, FakeProbe, _response
-
-import numpy as np
-
 from anamnesis.openmemory_recall import OpenMemoryRecallIndex
 from anamnesis.openmemory_vllm_v6 import (
     FIXTURE_PATH,

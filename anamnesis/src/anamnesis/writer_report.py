@@ -23,7 +23,12 @@ from inspect_ai.log import EvalLog, read_eval_log
 from inspect_ai.model import ChatMessageUser
 from pydantic import ValidationError
 
-from anamnesis.io import canonical_sha256, dataset_sha256, load_scenarios, report_output_paths
+from anamnesis.io import (
+    canonical_sha256,
+    dataset_sha256,
+    load_scenarios,
+    report_output_paths,
+)
 from anamnesis.local_experiment import (
     LocalExperimentManifest,
     validate_zero_api_pricing,

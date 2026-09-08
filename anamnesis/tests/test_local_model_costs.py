@@ -49,7 +49,9 @@ def test_nonzero_or_additional_pricing_is_rejected(tmp_path: Path) -> None:
         validate_zero_api_pricing(path)
 
 
-@pytest.mark.parametrize("verify", [validate_zero_api_pricing, verify_zero_local_pricing])
+@pytest.mark.parametrize(
+    "verify", [validate_zero_api_pricing, verify_zero_local_pricing]
+)
 def test_pricing_hash_binds_the_bytes_that_were_validated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verify
 ) -> None:

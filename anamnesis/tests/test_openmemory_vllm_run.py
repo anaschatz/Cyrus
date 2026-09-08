@@ -161,8 +161,24 @@ def test_failed_canary_stops_before_all_scenario_calls(monkeypatch, tmp_path) ->
         report_module._validate_run(raw_path)
 
 
-@pytest.mark.parametrize("corruption", [None, "valid_pass", "decisions", "canary_decision", "canary_semantics", "usage", "case_order", "prompt", "artifact", "accounting"])
-def test_passing_canary_runs_exactly_one_eight_by_two_matrix(monkeypatch, tmp_path, corruption) -> None:
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        None,
+        "valid_pass",
+        "decisions",
+        "canary_decision",
+        "canary_semantics",
+        "usage",
+        "case_order",
+        "prompt",
+        "artifact",
+        "accounting",
+    ],
+)
+def test_passing_canary_runs_exactly_one_eight_by_two_matrix(
+    monkeypatch, tmp_path, corruption
+) -> None:
     _patch_runtime(monkeypatch)
     no_action = _response('{"mode":"no_action","actions":[]}')
     FakeClient.queue = [no_action for _ in range(run_module.EXPECTED_CALLS)]
@@ -171,22 +187,40 @@ def test_passing_canary_runs_exactly_one_eight_by_two_matrix(monkeypatch, tmp_pa
     cases = {case.id: case for case in artifact.cases}
 
     def expected_decision(case):
-        actions = [] if case.expected.mode == "no_action" else [{
-            "kind": "reminder", "action_key": case.expected.action_key,
-            "payload": case.expected.payload, "summary": "Synthetic expected action",
-            "evidence_event_ids": list(case.expected.evidence_event_ids),
-        }]
+        actions = (
+            []
+            if case.expected.mode == "no_action"
+            else [
+                {
+                    "kind": "reminder",
+                    "action_key": case.expected.action_key,
+                    "payload": case.expected.payload,
+                    "summary": "Synthetic expected action",
+                    "evidence_event_ids": list(case.expected.evidence_event_ids),
+                }
+            ]
+        )
         return run_module.Decision.model_validate({"actions": actions})
 
     if corruption == "valid_pass":
         FakeClient.queue = [no_action]
         for case in artifact.cases:
             for arm in ("baseline", "recall"):
-                decision = run_module.Decision() if arm == "baseline" and case.helpful_hit_ids else expected_decision(case)
-                FakeClient.queue.append(_response(json.dumps({
-                    "mode": "emit" if decision.actions else "no_action",
-                    **decision.model_dump(mode="json"),
-                })))
+                decision = (
+                    run_module.Decision()
+                    if arm == "baseline" and case.helpful_hit_ids
+                    else expected_decision(case)
+                )
+                FakeClient.queue.append(
+                    _response(
+                        json.dumps(
+                            {
+                                "mode": "emit" if decision.actions else "no_action",
+                                **decision.model_dump(mode="json"),
+                            }
+                        )
+                    )
+                )
 
     result = asyncio.run(
         run_module.run_openmemory_vllm_v4(
@@ -207,7 +241,9 @@ def test_passing_canary_runs_exactly_one_eight_by_two_matrix(monkeypatch, tmp_pa
     assert result.total_usage.input_tokens == 1700
     assert result.passed == (corruption == "valid_pass")
 
-    monkeypatch.setattr(report_module, "_verify_reporting_checkout", lambda *args: "b" * 40)
+    monkeypatch.setattr(
+        report_module, "_verify_reporting_checkout", lambda *args: "b" * 40
+    )
     path = tmp_path / "run.json"
     path.write_text(result.model_dump_json())
     assert report_module._validate_run(path) == result
@@ -218,19 +254,29 @@ def test_passing_canary_runs_exactly_one_eight_by_two_matrix(monkeypatch, tmp_pa
         baseline, recall = {}, {}
         for call in raw["paired_run"]["calls"]:
             case = cases[call["case_id"]]
-            decision = run_module.Decision() if call["arm"] == "baseline" and case.helpful_hit_ids else expected_decision(case)
+            decision = (
+                run_module.Decision()
+                if call["arm"] == "baseline" and case.helpful_hit_ids
+                else expected_decision(case)
+            )
             call["decision"] = decision.model_dump(mode="json")
             (baseline if call["arm"] == "baseline" else recall)[case.id] = decision
-        metrics = report_module.score_openmemory_pair(artifact, baseline=baseline, recall=recall)
+        metrics = report_module.score_openmemory_pair(
+            artifact, baseline=baseline, recall=recall
+        )
         assert metrics.gate_passed
         raw["paired_run"]["metrics"] = metrics.model_dump(mode="json")
         raw["passed"] = True
     elif corruption == "canary_decision":
-        raw["canary"]["decision"] = expected_decision(next(case for case in artifact.cases if case.expected.mode == "emit")).model_dump(mode="json")
+        raw["canary"]["decision"] = expected_decision(
+            next(case for case in artifact.cases if case.expected.mode == "emit")
+        ).model_dump(mode="json")
     elif corruption == "canary_semantics":
         raw["canary"]["semantic_passed"] = False
     elif corruption == "usage":
-        headline = run_module.Usage(input_tokens=1, uncached_input_tokens=1, output_tokens=1)
+        headline = run_module.Usage(
+            input_tokens=1, uncached_input_tokens=1, output_tokens=1
+        )
         raw["headline_usage"] = headline.model_dump(mode="json")
         raw["total_usage"] = result.setup_usage.plus(headline).model_dump(mode="json")
     elif corruption == "case_order":
@@ -283,15 +329,30 @@ def test_report_labels_joint_cell_and_setup_exclusion(monkeypatch) -> None:
 @pytest.mark.parametrize("prefix", ["", "anamnesis"])
 @pytest.mark.parametrize("relative", [False, True])
 @pytest.mark.parametrize("change", ["report", "input", "outside"])
-def test_reporting_checkout_checks_full_repository_paths(tmp_path, monkeypatch, prefix, relative, change):
+def test_reporting_checkout_checks_full_repository_paths(
+    tmp_path, monkeypatch, prefix, relative, change
+):
     repository = tmp_path / "repository"
     project = repository / prefix
     project.mkdir(parents=True)
 
     def git(*args):
         return subprocess.run(
-            ["git", "-c", "user.name=Review Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", *args],
-            cwd=repository, check=True, capture_output=True, text=True, timeout=10,
+            [
+                "git",
+                "-c",
+                "user.name=Review Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
         ).stdout.strip()
 
     git("init", "-q")
@@ -312,7 +373,9 @@ def test_reporting_checkout_checks_full_repository_paths(tmp_path, monkeypatch, 
     git("commit", "-qm", "changed fixture")
     monkeypatch.setattr(report_module, "REPO_ROOT", project)
     if change == "report":
-        assert report_module._verify_reporting_checkout(measurement) == git("rev-parse", "HEAD")
+        assert report_module._verify_reporting_checkout(measurement) == git(
+            "rev-parse", "HEAD"
+        )
         files[change].write_text("uncommitted\n")
         with pytest.raises(ValueError, match="clean worktree"):
             report_module._verify_reporting_checkout(measurement)

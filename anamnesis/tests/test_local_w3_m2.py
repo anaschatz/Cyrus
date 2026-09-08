@@ -69,7 +69,6 @@ from anamnesis.local_runtime import (
 )
 from anamnesis.runner import DecisionCall, DecisionRequest
 from anamnesis.schema import Decision, Usage
-
 from tests.test_local_preflight import _chat_response
 
 ROOT = Path(__file__).resolve().parents[1]

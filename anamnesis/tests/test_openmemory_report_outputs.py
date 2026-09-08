@@ -5,12 +5,12 @@ import json
 import os
 
 import pytest
+from test_openmemory_vllm_v6 import _paired_run
 
 import anamnesis.openmemory_vllm_report as v4
 import anamnesis.openmemory_vllm_v5_report as v5
 import anamnesis.openmemory_vllm_v6_report as v6
 import anamnesis.openmemory_vllm_v7_report as v7
-from test_openmemory_vllm_v6 import _paired_run
 
 
 @pytest.mark.parametrize("version,report", [(4, v4), (5, v5), (6, v6), (7, v7)])

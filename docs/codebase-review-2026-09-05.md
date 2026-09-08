@@ -1,6 +1,6 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **341 of 348 test files** and **92 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **342 of 348 test files** and **92 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
 Updated **2026-09-08**. Latest complete runs: Voice **892 tests (877 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **274 unit tests (266 passed, 8 skipped)** plus **2 official SDK tests passed**. Anamnesis **900 tests (898 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
@@ -2884,3 +2884,12 @@ A complete HEAD archive plus only these four files passed **900 Anamnesis tests 
 Full declared Anamnesis quality checks also exposed **35 lint findings and 13 files needing formatting elsewhere** (`/tmp/cyrus-anamnesis-declared-lint.log`, `-format.log`). Those checks currently fail and will be addressed separately; the focused pass above does not imply that the full CI gate is green. The complete scenario-integrity/leakage test module was manually inspected and included in the full run; its frozen assertions do not replace the still-pending independent semantic review of dataset labels.
 
 Coverage is **401/401 code, 341/348 tests, 92/308 support; 834/1057 entries**. Seven test files, 216 support files, remaining Orchestrator fixes, the Anamnesis quality-gate cleanup, open findings and the final quality assessment remain outstanding. Exact staged Ponytail review and active hooks apply; no push is requested.
+
+
+### Anamnesis declared quality gate checkpoint — 2026-09-08
+
+Resolved all **35 lint findings and 13 format failures** identified by the full declared quality commands. The resulting patch touches **21 tracked source/test files**: formatting and import ordering, an unchanged error string split across literals, explicit `strict=True` for already validated even-length diagnostic call pairs, and binding the per-sample event iterator in its local parser. The parser is called synchronously within each loop iteration; this was a lint-contract cleanup, not evidence of an observed late-binding failure. No lint rule, module-size ceiling, dependency, frozen dataset, historical artifact or model setting was changed.
+
+All changed files matched their previously reviewed hashes before editing. Compared Python ASTs: they are identical except for the explicit zip/default binding and four test import moves; reviewed those exact differences. An isolated copy of the committed Anamnesis tree plus this patch passed **900 tests (898 passed, 2 expected historical-source failures)** in 26.90 seconds (`/tmp/cyrus-anamnesis-ci-cleanup-full.log`). The full actual-worktree declared Ruff lint and format commands both pass; the unchanged root module-size ratchet and whitespace check also pass. Existing untracked user/Finder duplicates were not modified. Hosted Linux/Windows CI and live models remain outside these checks.
+
+Completed manual inspection of the writer diagnostic v1 test module. Its real-store oracle replay and frozen-byte checks passed within the complete run; they remain a development-only ceiling, not evidence of actual writer performance or independent human review. Coverage is **401/401 code, 342/348 tests, 92/308 support; 835/1057 entries**. Six test files, 216 support files, remaining Orchestrator checkpoints, open findings and the final quality assessment remain pending. Exact staged Ponytail review and active hooks apply; no push is requested.

@@ -86,11 +86,13 @@ def _model_event(prompt: str, schema, completion: str) -> ModelEvent:
                 "object": "chat.completion",
                 "created": 0,
                 "model": SERVICE_MODEL,
-                "choices": [{
-                    "index": 0,
-                    "finish_reason": "stop",
-                    "message": {"role": "assistant", "content": completion},
-                }],
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": completion},
+                    }
+                ],
                 "usage": {
                     "prompt_tokens": 100,
                     "completion_tokens": 10,
@@ -315,6 +317,7 @@ def test_preflight_artifact_binds_bytes_and_pricing(
         path=str(pricing_path),
         sha256=hashlib.sha256(pricing_path.read_bytes()).hexdigest(),
     )
+
     def read_verified_log(source, *, resolve_attachments=False, format="auto"):
         assert resolve_attachments is True
         assert format == "eval"
@@ -338,12 +341,25 @@ def test_preflight_artifact_binds_bytes_and_pricing(
         )
 
 
-@pytest.mark.parametrize("tamper", [
-    "none", "cached", "matching-invalid-json", "content", "event-content",
-    "prompt-tokens",
-    "completion-tokens", "total-tokens", "cached-tokens", "reasoning-tokens",
-    "missing-usage", "missing-choices", "extra-choice", "invalid-choice",
-])
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "none",
+        "cached",
+        "matching-invalid-json",
+        "content",
+        "event-content",
+        "prompt-tokens",
+        "completion-tokens",
+        "total-tokens",
+        "cached-tokens",
+        "reasoning-tokens",
+        "missing-usage",
+        "missing-choices",
+        "extra-choice",
+        "invalid-choice",
+    ],
+)
 def test_raw_response_binds_decoded_content_and_usage(tamper: str) -> None:
     log = _valid_preflight_log()
     event = log.samples[0].events[0]
@@ -378,10 +394,16 @@ def test_raw_response_binds_decoded_content_and_usage(tamper: str) -> None:
         validate_model_preflight_log(log, model_name=MODEL, pricing=MODEL_COST)
     elif tamper == "matching-invalid-json":
         _validate_openai_chat_completion_log(
-            log, model_name=MODEL, temperature=0.0, seed=101,
+            log,
+            model_name=MODEL,
+            temperature=0.0,
+            seed=101,
         )
     else:
         with pytest.raises(ValueError, match="raw response"):
             _validate_openai_chat_completion_log(
-                log, model_name=MODEL, temperature=0.0, seed=101,
+                log,
+                model_name=MODEL,
+                temperature=0.0,
+                seed=101,
             )

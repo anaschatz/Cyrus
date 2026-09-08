@@ -71,10 +71,10 @@ from anamnesis.local_runtime import (
 from anamnesis.local_wire import build_local_memory_compiler_prompt
 from anamnesis.schema import CheckpointAudit, Decision, Scenario, ScenarioRun, Usage
 from anamnesis.scoring import aggregate_results, score_scenario
+from tests.test_local_preflight import _chat_response
 
 TEMPLATE = Path("eval/local_experiment_manifest.template.json")
 SCENARIOS_PATH = Path("eval/scenarios/smoke.jsonl")
-from tests.test_local_preflight import _chat_response
 
 GIT_COMMIT = "a" * 40
 MANIFEST_SHA256 = "b" * 64

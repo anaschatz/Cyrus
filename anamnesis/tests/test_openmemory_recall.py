@@ -467,11 +467,19 @@ def test_namespace_and_user_form_the_provider_partition() -> None:
     ]
 
 
-@pytest.mark.parametrize("score", [
-    -0.1, 1.1, math.nan, math.inf, True, "0.8",
-    pytest.param(10**1000, id="huge-positive"),
-    pytest.param(-(10**1000), id="huge-negative"),
-])
+@pytest.mark.parametrize(
+    "score",
+    [
+        -0.1,
+        1.1,
+        math.nan,
+        math.inf,
+        True,
+        "0.8",
+        pytest.param(10**1000, id="huge-positive"),
+        pytest.param(-(10**1000), id="huge-negative"),
+    ],
+)
 def test_search_rejects_invalid_scores(score: object) -> None:
     client = FakeOpenMemoryClient()
     client.search_response = [_valid_row(score=score)]
@@ -639,7 +647,8 @@ def test_main_adapter_rejects_hydrated_search_id_mismatch() -> None:
 @pytest.mark.parametrize("row_metadata", ["meta", "metadata", "missing", "both"])
 @pytest.mark.parametrize("hit_metadata", ["meta", "metadata"])
 def test_main_adapter_binds_search_content_to_the_hydrated_row(
-    row_metadata: str, hit_metadata: str,
+    row_metadata: str,
+    hit_metadata: str,
 ) -> None:
     class ForgedSearchContentMemory(FakeUpstreamMainMemory):
         def search(
@@ -842,14 +851,19 @@ def test_recall_remains_explicitly_non_authoritative_and_store_independent() -> 
 
 
 @pytest.mark.parametrize("operation", ["get", "search"])
-@pytest.mark.parametrize("field,value", [
-    pytest.param("metadata", "[" * 10000 + "0" + "]" * 10000, id="deep-json"),
-    pytest.param("metadata", '{"n":' + "1" * 5000 + "}", id="huge-json-integer"),
-    pytest.param("content", "x" * (16 * 1024 + 1), id="oversize-content"),
-    pytest.param("content", "\ud800", id="invalid-unicode"),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        pytest.param("metadata", "[" * 10000 + "0" + "]" * 10000, id="deep-json"),
+        pytest.param("metadata", '{"n":' + "1" * 5000 + "}", id="huge-json-integer"),
+        pytest.param("content", "x" * (16 * 1024 + 1), id="oversize-content"),
+        pytest.param("content", "\ud800", id="invalid-unicode"),
+    ],
+)
 def test_provider_data_errors_stay_inside_protocol_boundary(
-    operation: str, field: str, value: str,
+    operation: str,
+    field: str,
+    value: str,
 ) -> None:
     client = FakeOpenMemoryClient()
     index = OpenMemoryRecallIndex(namespace=_NAMESPACE, user_id=_USER_ID, client=client)

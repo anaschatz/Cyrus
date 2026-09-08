@@ -307,7 +307,14 @@ def _validate_hosted_run_events(log: EvalLog, runs: list[ScenarioRun]) -> None:
             raise ValueError("hosted sample ModelEvent count differs from checkpoints")
         pending = iter(events)
 
-        def parse_event(kind: str, raw: str | None, usage: Usage, prompt_hash=None):
+        def parse_event(
+            kind: str,
+            raw: str | None,
+            usage: Usage,
+            prompt_hash=None,
+            *,
+            pending=pending,
+        ):
             event = next(pending)
             if event.config.response_schema.name != f"anamnesis_{kind}":
                 raise ValueError(

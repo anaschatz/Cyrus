@@ -472,7 +472,9 @@ def test_local_preflight_log_rejects_drift(tamper: str, expected: str) -> None:
 
     if tamper in {"early_action", "wrong_time"}:
         event = log.samples[0].events[1 if tamper == "early_action" else 0]
-        event.call.response["choices"][0]["message"]["content"] = event.output.completion
+        event.call.response["choices"][0]["message"]["content"] = (
+            event.output.completion
+        )
 
     with pytest.raises(ValueError, match=expected):
         validate_local_preflight_log(
