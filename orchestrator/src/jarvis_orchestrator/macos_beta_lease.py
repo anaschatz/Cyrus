@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from .config import OrchestratorConfig
+from .config import OrchestratorConfig, _parse_strict_json, _read_private_configuration
 from .stack_config import PrivateStackConfig
 
 
@@ -97,47 +97,14 @@ def _safe_parent(path: Path) -> bool:
 
 
 def _inspect_process(pid: int) -> ProcessSnapshot | None:
-    if sys.platform != "darwin" or type(pid) is not int or pid <= 1:
+    from .macos_beta_session import _inspect_process_identity, _SZOMB
+
+    current = _inspect_process_identity(pid)
+    if current is None or current.status == _SZOMB:
         return None
-    try:
-        result = subprocess.run(
-            (
-                "/bin/ps",
-                "-p",
-                str(pid),
-                "-o",
-                "uid=",
-                "-o",
-                "ppid=",
-                "-o",
-                "lstart=",
-                "-o",
-                "stat=",
-            ),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            timeout=1.0,
-            env={"LANG": "C", "LC_ALL": "C", "PATH": "/usr/bin:/bin"},
-        )
-        if result.returncode != 0 or len(result.stdout) > 4096:
-            return None
-        fields = result.stdout.decode("utf-8", errors="strict").strip().split()
-        # uid, ppid, then exactly five lstart fields, followed by process state.
-        if len(fields) != 8 or fields[7].startswith("Z"):
-            return None
-        uid = int(fields[0])
-        parent_pid = int(fields[1])
-        started = " ".join(fields[2:7])
-        return ProcessSnapshot(
-            pid=pid,
-            parent_pid=parent_pid,
-            uid=uid,
-            start_token=hashlib.sha256(started.encode("ascii")).hexdigest(),
-        )
-    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
-        return None
+    return ProcessSnapshot(
+        current.pid, current.parent_pid, current.uid, current.start_token
+    )
 
 
 def _listener_pids(port: int) -> frozenset[int] | None:
@@ -231,7 +198,10 @@ def _processes_match(
     expected_components: dict[str, ProcessSnapshot] = {}
     for name in _COMPONENTS:
         value = components[name]
-        if not isinstance(value, Mapping) or set(value) != {"command_sha256", "process"}:
+        if not isinstance(value, Mapping) or set(value) != {
+            "command_sha256",
+            "process",
+        }:
             return False
         command_digest = value.get("command_sha256")
         expected = snapshot(value.get("process"))
@@ -252,38 +222,59 @@ def _processes_match(
         "8766": expected_components["inference"].pid,
         "8767": expected_components["orchestrator"].pid,
     }
-    if listeners != expected_listener_pids:
+    if listeners != expected_listener_pids or any(
+        type(pid) is not int for pid in listeners.values()
+    ):
         return False
     return all(
         listener_pids(int(port)) == frozenset({pid})
         for port, pid in expected_listener_pids.items()
+    ) and all(
+        inspect_process(expected.pid) == expected
+        for expected in (expected_supervisor, *expected_components.values())
     )
 
 
 def _write_private(path: Path, value: Mapping[str, Any]) -> None:
     if not _safe_parent(path):
         raise RuntimeError("live_lease_parent_invalid")
+    encoded = _canonical(value) + b"\n"
+    if len(encoded) > _MAX_LEASE_BYTES:
+        raise RuntimeError("live_lease_size_invalid")
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", dir=path.parent
     )
     temporary = Path(temporary_name)
+    created = None
     try:
+        created = os.fstat(descriptor)
         os.fchmod(descriptor, 0o600)
-        encoded = _canonical(value) + b"\n"
         with os.fdopen(descriptor, "wb") as destination:
+            descriptor = None  # fdopen owns the descriptor until context exit.
             destination.write(encoded)
             destination.flush()
             os.fsync(destination.fileno())
+            published = os.fstat(destination.fileno())
+        if not os.path.samestat(created, temporary.lstat()):
+            raise RuntimeError("live_lease_file_changed")
         os.replace(temporary, path)
-        if os.name != "nt":
-            path.chmod(0o600)
-    except BaseException:
-        try:
+        after = path.lstat()
+        if (
+            not os.path.samestat(published, after)
+            or stat.S_IMODE(after.st_mode) != 0o600
+            or after.st_nlink != 1
+            or after.st_size != published.st_size
+            or after.st_mtime_ns != published.st_mtime_ns
+        ):
+            raise RuntimeError("live_lease_file_changed")
+    finally:
+        if descriptor is not None:
             os.close(descriptor)
-        except OSError:
+        try:
+            if created is not None and os.path.samestat(created, temporary.lstat()):
+                temporary.unlink()
+        except FileNotFoundError:
             pass
-        temporary.unlink(missing_ok=True)
-        raise
 
 
 def _signed(core: Mapping[str, Any], key: bytes) -> dict[str, Any]:
@@ -295,39 +286,8 @@ def _signed(core: Mapping[str, Any], key: bytes) -> dict[str, Any]:
 
 def _read_signed(path: Path, key: bytes) -> dict[str, Any] | None:
     try:
-        before = path.lstat()
-        if (
-            stat.S_ISLNK(before.st_mode)
-            or not stat.S_ISREG(before.st_mode)
-            or before.st_size < 1
-            or before.st_size > _MAX_LEASE_BYTES
-            or (os.name != "nt" and (before.st_uid != os.getuid() or before.st_mode & 0o077))
-        ):
-            return None
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags)
-        try:
-            opened = os.fstat(descriptor)
-            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
-                return None
-            raw = os.read(descriptor, _MAX_LEASE_BYTES + 1)
-        finally:
-            os.close(descriptor)
-        if len(raw) > _MAX_LEASE_BYTES or raw.startswith(b"\xef\xbb\xbf"):
-            return None
-
-        def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-            result: dict[str, Any] = {}
-            for name, value in items:
-                if name in result:
-                    raise ValueError
-                result[name] = value
-            return result
-
-        value = json.loads(
-            raw.decode("utf-8", errors="strict"),
-            object_pairs_hook=pairs,
-            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        value = _parse_strict_json(
+            _read_private_configuration(path, maximum_bytes=_MAX_LEASE_BYTES)
         )
         if not isinstance(value, dict) or "mac" not in value:
             return None
@@ -342,7 +302,7 @@ def _read_signed(path: Path, key: bytes) -> dict[str, Any] | None:
         ):
             return None
         return value
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+    except (OSError, UnicodeError, ValueError, RecursionError):
         return None
 
 
@@ -359,7 +319,12 @@ class LiveSessionLease:
 
     def heartbeat(self, *, force: bool = False) -> None:
         current = self.now_ns()
-        if not force and current - self._last_write_ns < LEASE_HEARTBEAT_INTERVAL_NS:
+        if type(current) is not int or current < self.core["created_unix_ns"]:
+            raise RuntimeError("live_lease_clock_invalid")
+        if (
+            not force
+            and 0 <= current - self._last_write_ns < LEASE_HEARTBEAT_INTERVAL_NS
+        ):
             return
         matched = False
         for attempt in range(LEASE_PROBE_ATTEMPTS):
@@ -374,20 +339,25 @@ class LiveSessionLease:
                 self.sleep(LEASE_PROBE_RETRY_SECONDS)
         if not matched:
             raise RuntimeError("live_lease_process_mismatch")
+        current = self.now_ns()
+        if type(current) is not int or current < self.core["created_unix_ns"]:
+            raise RuntimeError("live_lease_clock_invalid")
         self.core["heartbeat_unix_ns"] = current
         _write_private(self.path, _signed(self.core, self.key))
         self._last_write_ns = current
 
     def close(self) -> None:
-        current = _read_signed(self.path, self.key)
-        if current is not None and hmac.compare_digest(
-            str(current.get("session_nonce", "")),
-            str(self.core.get("session_nonce", "")),
-        ):
-            try:
+        try:
+            before = self.path.lstat()
+            current = _read_signed(self.path, self.key)
+            if (
+                current is not None
+                and current.get("session_nonce") == self.core.get("session_nonce")
+                and os.path.samestat(before, self.path.lstat())
+            ):
                 self.path.unlink()
-            except FileNotFoundError:
-                pass
+        except FileNotFoundError:
+            pass
 
 
 def activate_live_session_lease(
@@ -420,6 +390,8 @@ def activate_live_session_lease(
         }
     expected_manifest, expected_runtime = stack.expected_inference_runtime_identity()
     created = now_ns()
+    if type(created) is not int or created <= 0:
+        raise RuntimeError("live_lease_clock_invalid")
     core: dict[str, Any] = {
         "components": component_values,
         "created_unix_ns": created,
@@ -476,7 +448,9 @@ def validate_live_session_lease(
             "supervisor",
         }:
             return False
-        expected_manifest, expected_runtime = stack.expected_inference_runtime_identity()
+        expected_manifest, expected_runtime = (
+            stack.expected_inference_runtime_identity()
+        )
         created = core.get("created_unix_ns")
         heartbeat = core.get("heartbeat_unix_ns")
         nonce = core.get("session_nonce")
@@ -500,6 +474,9 @@ def validate_live_session_lease(
             or not isinstance(nonce, str)
             or _HEX64.fullmatch(nonce) is None
             or type(created) is not int
+            or created <= 0
+            or type(current) is not int
+            or current <= 0
             or type(heartbeat) is not int
             or created > heartbeat
             or current - heartbeat > LEASE_MAX_AGE_NS
@@ -508,10 +485,15 @@ def validate_live_session_lease(
             or inference.get("command_sha256") != _command_sha256(inference_command)
         ):
             return False
-        return _processes_match(
-            core,
-            inspect_process=inspect_process,
-            listener_pids=listener_pids,
+        if not _processes_match(
+            core, inspect_process=inspect_process, listener_pids=listener_pids
+        ):
+            return False
+        current = now_ns()
+        return (
+            type(current) is int
+            and current > 0
+            and -LEASE_FUTURE_TOLERANCE_NS <= current - heartbeat <= LEASE_MAX_AGE_NS
         )
     except Exception:
         return False

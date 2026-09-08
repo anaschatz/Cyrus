@@ -136,10 +136,10 @@ An online backup uses the SQLite backup API, verifies integrity and lifecycle
 invariants on the temporary copy, and atomically renames it into place. For a
 schema-v10 `ENCRYPTED` saved-memory database, the library additionally needs a
 narrow live provider attestor. Provider calls happen only after SQLite readers
-are closed. The current CLI does not wire that attestor yet, so it deliberately
-refuses encrypted-memory backup with `memory_backup_provider_required` rather
-than creating an unverifiable artifact. Pre-v10 and empty `LEGACY_PENDING`
-databases retain the existing command behavior:
+are closed. The CLI supplies a narrow platform-provider attestor only when
+the selected database is encrypted. It never bootstraps keys, and missing or
+mismatched provider identity refuses the operation. Pre-v10 and empty
+`LEGACY_PENDING` databases require no provider:
 
 ```bash
 python -m jarvis_orchestrator --config /absolute/path/config.json \
@@ -189,6 +189,16 @@ hash match, the same provider installation, the recorded active epoch, and
 every referenced provider key. It never bootstraps a replacement provider.
 SQLite WAL/SHM/journal files beside a committed backup are rejected as an
 ambiguous artifact.
+
+Backup and restore recheck destination WAL/SHM/journal absence immediately
+before publication; restore performs this check while holding the service
+lock. If a sidecar appeared during verification or before lock acquisition,
+the existing destination is preserved. The service must remain stopped during
+restore; these checks do not fence a separate writer that ignores its lock.
+Temporary-file setup failures close descriptors and remove temporary files;
+both SQLite connections close even when opening the backup target fails.
+Private-file opens reject FIFO substitutions without blocking, and control
+files are truncated only after descriptor/path identity validation.
 
 Saved-memory envelope encryption does not encrypt canonical transcripts,
 prompts, responses, or historical SQLite pages outside the encrypted memory
@@ -326,7 +336,8 @@ python scripts/run_macos_native_collection.py run \
 
 The Orchestrator is declared operationally ready only by the aggregate command.
 It validates all evidence independently and emits no prompt, transcript,
-response, UUID or device identifier:
+response, conversation/task identifier or device identifier. The signed
+envelope retains the qualification cohort UUID:
 
 First project the raw native collector result into a closed, content-free,
 signed native leaf. The expected runtime-profile SHA must come from the

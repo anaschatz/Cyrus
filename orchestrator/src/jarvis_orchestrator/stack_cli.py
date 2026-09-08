@@ -6,12 +6,12 @@ import argparse
 import asyncio
 import json
 import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 from .config import OrchestratorConfig
+from .domain import OrchestratorError
+from .macos_beta_probes import orchestrator_http_ready as _readyz
 from .inference import (
     InferenceControlClient,
     InferenceIdentityEndpointUnavailable,
@@ -83,13 +83,9 @@ def _parser() -> argparse.ArgumentParser:
     preflight = commands.add_parser("beta-preflight")
     preflight.add_argument("--output", type=Path)
     beta_run = commands.add_parser("beta-run")
-    beta_run.add_argument(
-        "--runtime-python", type=Path, default=Path(sys.executable)
-    )
+    beta_run.add_argument("--runtime-python", type=Path, default=Path(sys.executable))
     beta_run.add_argument("--session-parent", type=Path, required=True)
-    beta_run.add_argument(
-        "--startup-timeout-seconds", type=float, default=600.0
-    )
+    beta_run.add_argument("--startup-timeout-seconds", type=float, default=600.0)
     beta_recover = commands.add_parser("beta-recover")
     beta_recover.add_argument("--session-parent", type=Path, required=True)
     physical_turn = commands.add_parser(
@@ -138,8 +134,7 @@ def _beta_session_error_payload(
                 and 1 <= len(item) <= 128
                 and item[0].isalpha()
                 and all(
-                    character
-                    in "abcdefghijklmnopqrstuvwxyz0123456789_.-"
+                    character in "abcdefghijklmnopqrstuvwxyz0123456789_.-"
                     for character in item
                 )
                 for item in raw
@@ -154,34 +149,13 @@ def _beta_session_error_payload(
     return {"error": error, "ready": False}
 
 
-def _readyz(config: OrchestratorConfig) -> bool:
-    request = urllib.request.Request(
-        f"http://{config.control_host}:{config.control_port}/readyz",
-        headers={"Host": f"127.0.0.1:{config.control_port}"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=2) as response:
-            payload = json.loads(response.read())
-        return response.status == 200 and payload == {"ready": True}
-    except (OSError, ValueError, urllib.error.URLError):
-        return False
-
-
 def _beta_session(config: OrchestratorConfig) -> dict[str, Any] | None:
-    request = urllib.request.Request(
-        f"http://{config.control_host}:{config.control_port}/v1/beta-session",
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {config.control_bearer_token}",
-            "Host": f"127.0.0.1:{config.control_port}",
-        },
-    )
     try:
-        with urllib.request.urlopen(request, timeout=2) as response:
-            raw = response.read(16 * 1024 + 1)
-        if response.status != 200 or len(raw) > 16 * 1024:
-            return None
-        payload = json.loads(raw.decode("utf-8", errors="strict"))
+        payload = InferenceControlClient(
+            f"http://{config.control_host}:{config.control_port}/v1",
+            config.control_bearer_token,
+            timeout_seconds=2.0,
+        )._get("/v1/beta-session", authenticated=True)
         expected = {
             "core_ready",
             "effective_capabilities",
@@ -201,8 +175,7 @@ def _beta_session(config: OrchestratorConfig) -> dict[str, Any] | None:
             return None
         capabilities = payload.get("effective_capabilities")
         if (
-            payload.get("schema_version")
-            != BETA_SESSION_SCHEMA_VERSION
+            payload.get("schema_version") != BETA_SESSION_SCHEMA_VERSION
             or type(payload.get("core_ready")) is not bool
             or type(payload.get("voice_client_connected")) is not bool
             or type(payload.get("voice_connection_generation")) is not int
@@ -216,7 +189,7 @@ def _beta_session(config: OrchestratorConfig) -> dict[str, Any] | None:
         ):
             return None
         return payload
-    except (OSError, UnicodeError, ValueError, urllib.error.URLError):
+    except OrchestratorError:
         return None
 
 
@@ -286,9 +259,7 @@ def _status(stack: PrivateStackConfig) -> dict[str, Any]:
     foreground_session_ready = bool(
         identity_endpoint_missing and validate_live_session_lease(stack)
     )
-    inference_identity_ready = (
-        inference_identity_ready or foreground_session_ready
-    )
+    inference_identity_ready = inference_identity_ready or foreground_session_ready
     inference_identity_source = (
         "runtime_endpoint"
         if inference_identity_ready and not foreground_session_ready
@@ -343,17 +314,17 @@ def main(argv: list[str] | None = None) -> int:
         if parsed.command == "init":
             document = {
                 "schema_version": STACK_SCHEMA_VERSION,
-                "voice_config_path": str(parsed.voice_config.expanduser().resolve()),
+                "voice_config_path": str(parsed.voice_config.expanduser().absolute()),
                 "orchestrator_config_path": str(
-                    parsed.orchestrator_config.expanduser().resolve()
+                    parsed.orchestrator_config.expanduser().absolute()
                 ),
                 "inference": {
-                    "runner_path": str(parsed.inference_runner.expanduser().resolve()),
+                    "runner_path": str(parsed.inference_runner.expanduser().absolute()),
                     "manifest_path": str(
-                        parsed.inference_manifest.expanduser().resolve()
+                        parsed.inference_manifest.expanduser().absolute()
                     ),
                     "qualification_report_path": str(
-                        parsed.inference_qualification_report.expanduser().resolve()
+                        parsed.inference_qualification_report.expanduser().absolute()
                     ),
                 },
             }
@@ -394,9 +365,7 @@ def main(argv: list[str] | None = None) -> int:
                 orchestrator_command=CommandPrefix(
                     runtime_python, ("-m", "jarvis_orchestrator")
                 ),
-                voice_command=CommandPrefix(
-                    runtime_python, ("-m", "jarvis_voice")
-                ),
+                voice_command=CommandPrefix(runtime_python, ("-m", "jarvis_voice")),
                 session_parent=parsed.session_parent.expanduser().absolute(),
                 startup_timeout_seconds=parsed.startup_timeout_seconds,
             )
@@ -457,11 +426,11 @@ def main(argv: list[str] | None = None) -> int:
                 auth_key=_voice_auth_key(config),
                 turns=parsed.turns,
                 database_path=config.database_path,
-            maximum_database_bytes=512 * 1024 * 1024,
-            request_text="Reply exactly: CYRUS local E2E ready.",
-            include_latency_profile=True,
-            send_playback_completion=False,
-        )
+                maximum_database_bytes=512 * 1024 * 1024,
+                request_text="Reply exactly: CYRUS local E2E ready.",
+                include_latency_profile=True,
+                send_playback_completion=False,
+            )
         )
         report = {
             **report,

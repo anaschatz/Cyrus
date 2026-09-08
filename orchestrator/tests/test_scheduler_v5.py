@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import tempfile
 import unittest
 import uuid
-from datetime import UTC, datetime, timedelta
+from contextlib import closing
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -18,6 +18,12 @@ from jarvis_orchestrator.scheduler_crypto import InMemorySchedulerKeyProvider, S
 from jarvis_orchestrator.scheduler_store import SchedulerStore
 from jarvis_orchestrator.store import OrchestratorStore
 from jarvis_orchestrator.domain import OrchestratorError
+from jarvis_voice.approval_arbiter import GlobalApprovalController
+from jarvis_voice.scheduler_client import SchedulerClientController
+from jarvis_voice.scheduler_callback import sign_callback
+from jarvis_voice.scheduler_runtime import SchedulerNativeRuntime
+from jarvis_voice.scheduler_journal import SchedulerClientJournal
+from jarvis_voice.scheduler_protocol import SchedulerEnvelope, SchedulerEventFactory
 
 
 def utc(value: str) -> datetime:
@@ -69,20 +75,214 @@ def proposal_output(request_id: str, *, minutes: int = 20, recurrence: str = "NO
 
 
 class SchedulerV5Tests(unittest.TestCase):
+    def test_native_action_dedup_survives_transport_changes_and_legacy_upgrade(self) -> None:
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                activated = self.activate()
+                payload = {
+                    "action": "CANCEL", "job_id": activated["job_id"], "job_revision": 1,
+                    "occurrence_id": activated["occurrence_id"], "snooze_generation": 0,
+                    "requested_due_at_utc": None,
+                }
+                first = SchedulerEventFactory(str(uuid.uuid4())).create(
+                    "scheduler.notification.action", payload, sent_at="2030-01-10T12:00:00.000Z",
+                )
+
+                def apply(event, selected_payload=None):
+                    p = selected_payload or event.payload
+                    return self.scheduler.apply_notification_action(
+                        event_id=event.event_id, semantic_sha256=event.semantic_sha256,
+                        action=p["action"], job_id=p["job_id"], job_revision=p["job_revision"],
+                        occurrence=p["occurrence_id"], expected_generation=p["snooze_generation"],
+                        requested_due_at_utc=p["requested_due_at_utc"], now=self.reference,
+                    )
+
+                self.assertTrue(apply(first))
+                if legacy:
+                    self.base._connection.execute(
+                        "UPDATE scheduler_inbox SET content_record_id=NULL WHERE event_id=?", (first.event_id,),
+                    )
+                    self.assertFalse(apply(first))
+                retry = SchedulerEventFactory(str(uuid.uuid4())).create(
+                    first.type, payload, event_id=first.event_id, sent_at="2030-01-10T12:00:01.000Z",
+                )
+                self.assertNotEqual(first.semantic_sha256, retry.semantic_sha256)
+                self.assertFalse(apply(retry))
+                original_hash = self.base._connection.execute(
+                    "SELECT semantic_sha256 FROM scheduler_inbox WHERE event_id=?", (first.event_id,),
+                ).fetchone()[0]
+                self.assertEqual(original_hash, first.semantic_sha256)
+                with self.assertRaisesRegex(OrchestratorError, "protocol.conflicting_duplicate"):
+                    apply(first, {**payload, "job_revision": 2})
+
+    def test_legacy_native_action_rejects_unverifiable_transport_change(self) -> None:
+        activated = self.activate()
+        arguments = dict(
+            event_id=str(uuid.uuid4()), action="CANCEL", job_id=activated["job_id"],
+            job_revision=1, occurrence=activated["occurrence_id"], expected_generation=0,
+            requested_due_at_utc=None, now=self.reference,
+        )
+        self.scheduler.apply_notification_action(**arguments, semantic_sha256="a" * 64)
+        self.base._connection.execute(
+            "UPDATE scheduler_inbox SET content_record_id=NULL WHERE event_id=?", (arguments["event_id"],),
+        )
+        with self.assertRaisesRegex(OrchestratorError, "protocol.conflicting_duplicate"):
+            self.scheduler.apply_notification_action(**arguments, semantic_sha256="b" * 64)
+        row = self.base._connection.execute(
+            "SELECT state,semantic_sha256,content_record_id FROM scheduler_inbox WHERE event_id=?",
+            (arguments["event_id"],),
+        ).fetchone()
+        self.assertEqual(tuple(row), ("QUARANTINED", "a" * 64, None))
+
+    def test_native_action_round_trip_recovers_after_process_restart(self) -> None:
+        activated = self.activate()
+        now = self.reference + timedelta(minutes=20)
+        self.scheduler.fire_due(now=now)
+        notification = next(row for row in self.scheduler.claim_outbox(str(uuid.uuid4()), now=now)
+                            if row["event_type"] == "scheduler.notification.requested")
+        cipher = SchedulerContentCipher(InMemorySchedulerKeyProvider())
+        path = Path(self.temporary.name) / "callback.sqlite3"
+        original = None
+        for attempt in range(3):
+            with closing(SchedulerClientJournal(path, cipher=cipher)) as journal:
+                controller = SchedulerClientController(
+                    session_id=str(uuid.uuid4()), journal=journal,
+                    approval_arbiter=GlobalApprovalController(),
+                )
+                runtime = SchedulerNativeRuntime(
+                    controller=controller, delivery=SimpleNamespace(), capabilities=(),
+                    manifest_sha256="a" * 64,
+                )
+                server = SchedulerEventFactory(controller.factory.session_id)
+                if attempt == 0:
+                    requested = server.create(notification["event_type"], notification["payload"],
+                                              event_id=notification["event_id"])
+                    controller.handle_server_event(requested, key_counter=0, both_keys_up=True)
+                    callback = sign_callback({
+                        "callback_id": str(uuid.uuid4()),
+                        "notification_id": notification["payload"]["notification_id"],
+                        "action": "CANCEL", "requested_due_at_utc": None,
+                        "occurred_at_utc": "2030-01-10T12:20:00.000Z",
+                    }, key=bytes(range(32)))
+                    runtime.ingest_native_callback(callback, key=bytes(range(32)))
+                pending = runtime.pump_native_callbacks()
+                if attempt == 2:
+                    self.assertEqual(pending, [])
+                    continue
+                self.assertEqual(len(pending), 1)
+                event = SchedulerEnvelope.from_json(pending[0].to_json())
+                if original is None:
+                    original = event
+                else:
+                    self.assertEqual(event.event_id, original.event_id)
+                    self.assertEqual(event.payload, original.payload)
+                    self.assertNotEqual(event.semantic_sha256, original.semantic_sha256)
+                payload = event.payload
+                applied = self.scheduler.apply_notification_action(
+                    event_id=event.event_id, semantic_sha256=event.semantic_sha256,
+                    action=payload["action"], job_id=payload["job_id"],
+                    job_revision=payload["job_revision"], occurrence=payload["occurrence_id"],
+                    expected_generation=payload["snooze_generation"],
+                    requested_due_at_utc=payload["requested_due_at_utc"], now=now,
+                )
+                self.assertEqual(applied, attempt == 0)
+                if attempt == 1:
+                    result = next(row for row in self.scheduler.claim_outbox(str(uuid.uuid4()), now=now)
+                                  if row["event_type"] == "scheduler.notification.action_result"
+                                  and row["payload"]["result"] == "DUPLICATE")
+                    runtime.handle_server_event(
+                        server.create(result["event_type"], result["payload"], event_id=result["event_id"]),
+                        key_counter=0, both_keys_up=True, send=lambda _event: None,
+                    )
+        count = self.base._connection.execute(
+            "SELECT COUNT(*) FROM scheduler_ledger WHERE entity_id=? AND event_type='scheduler.job.cancelled'",
+            (activated["job_id"],),
+        ).fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_native_action_identity_failure_rolls_back_cancellation(self) -> None:
+        activated = self.activate()
+        event_id = str(uuid.uuid4())
+        original_state = self.base._connection.execute(
+            "SELECT state FROM scheduler_jobs WHERE job_id=?", (activated["job_id"],),
+        ).fetchone()[0]
+        put = self.scheduler._put_content_tx
+
+        def fail_identity(connection, **kwargs):
+            if kwargs["record_type"] == "NATIVE_ACTION_IDENTITY":
+                raise RuntimeError("identity write failed")
+            return put(connection, **kwargs)
+
+        with patch.object(self.scheduler, "_put_content_tx", side_effect=fail_identity):
+            with self.assertRaisesRegex(RuntimeError, "identity write failed"):
+                self.scheduler.apply_notification_action(
+                    event_id=event_id, semantic_sha256="a" * 64, action="CANCEL",
+                    job_id=activated["job_id"], job_revision=1,
+                    occurrence=activated["occurrence_id"], expected_generation=0,
+                    requested_due_at_utc=None, now=self.reference,
+                )
+        self.assertEqual(self.base._connection.execute(
+            "SELECT state FROM scheduler_jobs WHERE job_id=?", (activated["job_id"],),
+        ).fetchone()[0], original_state)
+        for table, column in (("scheduler_inbox", "event_id"), ("scheduler_outbox", "entity_id"),
+                              ("scheduler_ledger", "cause_event_id")):
+            self.assertEqual(self.base._connection.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {column}=?", (event_id,),
+            ).fetchone()[0], 0)
+
+    def test_real_approval_round_trips_through_voice_controller(self) -> None:
+        session_id = str(uuid.uuid4())
+        self.scheduler.create_proposal(self.compile(), now=self.reference)
+        promoted = self.scheduler.promote_next_approval(
+            session_id, supported_protocols=("jarvis.scheduler/1",), now=self.reference
+        )
+        self.assertIsNotNone(promoted)
+        journal = SchedulerClientJournal(
+            Path(self.temporary.name) / "voice.sqlite3",
+            cipher=SchedulerContentCipher(InMemorySchedulerKeyProvider()),
+        )
+        self.addCleanup(journal.close)
+        controller = SchedulerClientController(
+            session_id=session_id, journal=journal, approval_arbiter=GlobalApprovalController(),
+        )
+        server = SchedulerEventFactory(session_id)
+        requested = server.create(
+            "scheduler.approval.requested", promoted["payload"],
+            event_id=promoted["event_id"], sent_at="2030-01-10T12:00:00.000Z",
+        )
+        replies = controller.handle_server_event(
+            SchedulerEnvelope.from_json(requested.to_json()), key_counter=0, both_keys_up=True,
+        )
+        self.assertEqual([event.type for event in replies], ["scheduler.event_ack"])
+        self.scheduler.acknowledge_scheduler_event(requested.event_id, status=replies[0].payload["status"], now=self.reference)
+        decision = controller.key_down("F10", key_counter=1, capture_idle=True, autorepeat=False)
+        self.assertIsNotNone(decision)
+        result = self.scheduler.decide_approval(
+            **{name: decision.payload[name] for name in (
+                "approval_id", "proposal_id", "proposal_sha256", "decision", "presentation_id",
+                "requested_event_id", "decision_nonce",
+            )},
+            cause_event_id=decision.event_id, owner_session_id=session_id, now=self.reference,
+        )
+        self.assertIsNotNone(result["job_id"])
+        outbox = self.scheduler.claim_outbox(str(uuid.uuid4()), now=self.reference)
+        finished = next(row for row in outbox if row["event_type"] == "scheduler.approval.decision_result")
+        response = server.create("scheduler.approval.decision_result", finished["payload"])
+        controller.handle_server_event(SchedulerEnvelope.from_json(response.to_json()), key_counter=1, both_keys_up=False)
+        self.assertIsNone(controller.approval)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
         self.path = Path(self.temporary.name) / "orchestrator.sqlite3"
         self.base = OrchestratorStore(self.path)
+        self.addCleanup(self.base.close)
         self.scheduler = SchedulerStore(
             self.base,
             cipher=SchedulerContentCipher(InMemorySchedulerKeyProvider()),
             zones=PackagedTimezoneProvider(),
         )
         self.reference = utc("2030-01-10T12:00:00.000Z")
-
-    def tearDown(self) -> None:
-        self.base.close()
-        self.temporary.cleanup()
 
     def compile(self, *, recurrence: str = "NONE", count: int | None = None, minutes: int = 20):
         request_id = str(uuid.uuid4())
@@ -299,6 +499,53 @@ class SchedulerV5Tests(unittest.TestCase):
         self.assertNotEqual(first["payload"]["presentation_id"], second["payload"]["presentation_id"])
         self.assertNotEqual(first["payload"]["decision_nonce"], second["payload"]["decision_nonce"])
         self.assertEqual(second["payload"]["approval_id"], created["approval_id"])
+
+    def test_unrepresentable_next_interval_does_not_block_the_due_notification(self) -> None:
+        request_id = str(uuid.uuid4())
+        output = proposal_output(request_id, recurrence="FIXED_INTERVAL")
+        output["recurrence"].update(interval_amount=10_000_000, interval_unit="WEEK")
+        compiled = compile_proposal(
+            proposal_input(request_id, "2030-01-10T12:00:00.000Z"), output,
+            compiler_qualification_sha256="1" * 64, zones=self.scheduler.zones,
+        )
+        created = self.scheduler.create_proposal(compiled, now=self.reference)
+        decision = self.scheduler.decide_approval(
+            approval_id=created["approval_id"], proposal_id=created["proposal_id"],
+            proposal_sha256=created["proposal_sha256"], decision="approve",
+            cause_event_id=str(uuid.uuid4()), now=self.reference,
+        )
+        fired = self.scheduler.fire_due(now=utc(compiled.first_due_at_utc))
+        self.assertEqual(len(fired), 1)
+        cursor = self.base._connection.execute(
+            "SELECT exhausted,next_scheduled_at_utc FROM scheduler_recurrence_cursors WHERE job_id=?",
+            (decision["job_id"],),
+        ).fetchone()
+        self.assertEqual(tuple(cursor), (1, None))
+        self.assertEqual(self.scheduler.fire_due(now=utc(compiled.first_due_at_utc)), [])
+
+    def test_monthly_calendar_exhaustion_keeps_the_last_supported_occurrence(self) -> None:
+        request_id = str(uuid.uuid4())
+        reference = utc("9999-12-27T00:00:00.000Z")
+        incoming = proposal_input(request_id, "9999-12-27T00:00:00.000Z")
+        incoming["default_timezone"] = "UTC"
+        output = proposal_output(request_id, recurrence="MONTHLY")
+        output["time_expression"] = {
+            **temporal_none(), "kind": "ABSOLUTE_LOCAL", "local_datetime": "9999-12-28T09:00:00.000",
+        }
+        compiled = compile_proposal(incoming, output, compiler_qualification_sha256="1" * 64,
+                                    zones=self.scheduler.zones)
+        created = self.scheduler.create_proposal(compiled, now=reference)
+        decision = self.scheduler.decide_approval(
+            approval_id=created["approval_id"], proposal_id=created["proposal_id"],
+            proposal_sha256=created["proposal_sha256"], decision="approve",
+            cause_event_id=str(uuid.uuid4()), now=reference,
+        )
+        self.assertEqual(len(self.scheduler.fire_due(now=utc(compiled.first_due_at_utc))), 1)
+        cursor = self.base._connection.execute(
+            "SELECT exhausted,next_scheduled_at_utc FROM scheduler_recurrence_cursors WHERE job_id=?",
+            (decision["job_id"],),
+        ).fetchone()
+        self.assertEqual(tuple(cursor), (1, None))
 
     def test_dst_gap_fold_and_monthly_skip_are_frozen(self) -> None:
         def absolute(local: str) -> dict:
@@ -622,26 +869,19 @@ class SchedulerV5Tests(unittest.TestCase):
         model_output = proposal_output(request_id)
         calls: list[dict] = []
 
-        class Response:
-            def raise_for_status(self) -> None:
-                return
+        import httpx
+        client_type = httpx.AsyncClient
 
-            def json(self) -> dict:
-                return {"choices": [{"message": {"content": __import__("json").dumps(model_output)}}]}
+        def response(request):
+            calls.append({"url": str(request.url), "json": json.loads(request.content)})
+            return httpx.Response(200, json={"choices": [{
+                "index": 0, "message": {"role": "assistant", "content": json.dumps(model_output)},
+                "finish_reason": "stop",
+            }]})
 
-        class Client:
-            def __init__(self, **kwargs) -> None:
-                calls.append({"client": kwargs})
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args) -> None:
-                return
-
-            def post(self, url, **kwargs):
-                calls.append({"url": url, **kwargs})
-                return Response()
+        def client(**kwargs):
+            calls.append({"client": kwargs})
+            return client_type(transport=httpx.MockTransport(response), **kwargs)
 
         compiler = LocalScheduleCompiler(
             base_url="http://127.0.0.1:8765/v1",
@@ -651,7 +891,7 @@ class SchedulerV5Tests(unittest.TestCase):
             timeout_seconds=5,
             zones=self.scheduler.zones,
         )
-        with patch("httpx.Client", Client):
+        with patch("httpx.AsyncClient", client):
             compiled = compiler.compile(model_input)
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0]["client"], {

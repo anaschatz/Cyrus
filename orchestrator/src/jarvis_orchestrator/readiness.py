@@ -15,6 +15,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
@@ -81,7 +82,7 @@ def _synthetic_payload(index: int) -> dict[str, Any]:
 def run_synthetic_lifecycle_gate(*, turns: int = 1000) -> dict[str, Any]:
     """Exercise every durable cancellation phase and successful completion."""
 
-    if isinstance(turns, bool) or not 1 <= turns <= 100_000:
+    if type(turns) is not int or not 1 <= turns <= 100_000:
         raise ValueError("turns must be from 1 to 100000")
     started = time.monotonic()
     outcomes: Counter[str] = Counter()
@@ -100,83 +101,39 @@ def run_synthetic_lifecycle_gate(*, turns: int = 1000) -> dict[str, Any]:
                 if task is None:
                     raise OperationalError("synthetic_admission_failed")
                 scenario = index % (len(SYNTHETIC_CANCELLATION_STAGES) + 2)
-                if scenario == 0:
-                    store.cancel_task(task.task_id, task.epoch, ReasonCode.USER_CANCELLED)
-                    outcomes["cancelled_admitted"] += 1
-                else:
-                    task = store.transition(
-                        task.task_id, task.epoch, TaskState.ADMITTED, TaskState.ROUTING
+                # Reach the chosen cancellation phase, or complete the full path.
+                for phase, (before, after) in enumerate((
+                    (TaskState.ADMITTED, TaskState.ROUTING),
+                    (TaskState.ROUTING, TaskState.LOADING_CONTEXT),
+                    (TaskState.LOADING_CONTEXT, TaskState.EXECUTING),
+                ), start=1):
+                    if scenario >= phase:
+                        task = store.transition(task.task_id, task.epoch, before, after)
+                if scenario in (4, 7, 8):
+                    store.start_response(task.task_id, task.epoch, "en-US")
+                if scenario in (5, 6):
+                    approval_id = store.create_approval(
+                        task.task_id, task.epoch,
+                        kind="tool", name="synthetic_noop", arguments={},
                     )
-                    if scenario == 1:
-                        store.cancel_task(task.task_id, task.epoch, ReasonCode.USER_CANCELLED)
-                        outcomes["cancelled_routing"] += 1
-                    else:
-                        task = store.transition(
-                            task.task_id,
-                            task.epoch,
-                            TaskState.ROUTING,
-                            TaskState.LOADING_CONTEXT,
+                    if scenario == 6:
+                        store.decide_approval(
+                            approval_id, task.epoch, "deny", client_connected=False,
                         )
-                        if scenario == 2:
-                            store.cancel_task(task.task_id, task.epoch, ReasonCode.USER_CANCELLED)
-                            outcomes["cancelled_loading_context"] += 1
-                        else:
-                            task = store.transition(
-                                task.task_id,
-                                task.epoch,
-                                TaskState.LOADING_CONTEXT,
-                                TaskState.EXECUTING,
-                            )
-                            if scenario == 3:
-                                store.cancel_task(task.task_id, task.epoch, ReasonCode.USER_CANCELLED)
-                                outcomes["cancelled_executing"] += 1
-                            elif scenario == 4:
-                                store.start_response(task.task_id, task.epoch, "en-US")
-                                store.cancel_task(task.task_id, task.epoch, ReasonCode.USER_CANCELLED)
-                                outcomes["cancelled_responding"] += 1
-                            elif scenario == 5:
-                                store.create_approval(
-                                    task.task_id,
-                                    task.epoch,
-                                    kind="tool",
-                                    name="synthetic_noop",
-                                    arguments={},
-                                )
-                                store.cancel_task(task.task_id, task.epoch, ReasonCode.USER_CANCELLED)
-                                outcomes["cancelled_awaiting_approval"] += 1
-                            elif scenario == 6:
-                                approval_id = store.create_approval(
-                                    task.task_id,
-                                    task.epoch,
-                                    kind="tool",
-                                    name="synthetic_noop",
-                                    arguments={},
-                                )
-                                store.decide_approval(
-                                    approval_id,
-                                    task.epoch,
-                                    "deny",
-                                    client_connected=False,
-                                )
-                                store.cancel_task(task.task_id, task.epoch, ReasonCode.USER_CANCELLED)
-                                outcomes["cancelled_decision_waiting_reconnect"] += 1
-                            else:
-                                store.start_response(task.task_id, task.epoch, "en-US")
-                                store.append_response_event(
-                                    task.task_id,
-                                    task.epoch,
-                                    "response.text.delta",
-                                    {"chunk_index": 0, "text": "Synthetic response."},
-                                )
-                                store.complete_response(
-                                    task.task_id,
-                                    task.epoch,
-                                    "Synthetic response.",
-                                    chunk_count=1,
-                                    trailing_speech=[(1, "en-US", "Synthetic response.")],
-                                    last_unit_index=1,
-                                )
-                                outcomes["completed"] += 1
+                if scenario < len(SYNTHETIC_CANCELLATION_STAGES):
+                    store.cancel_task(task.task_id, task.epoch, ReasonCode.USER_CANCELLED)
+                    outcomes[f"cancelled_{SYNTHETIC_CANCELLATION_STAGES[scenario].lower()}"] += 1
+                else:
+                    store.append_response_event(
+                        task.task_id, task.epoch, "response.text.delta",
+                        {"chunk_index": 0, "text": "Synthetic response."},
+                    )
+                    store.complete_response(
+                        task.task_id, task.epoch, "Synthetic response.", chunk_count=1,
+                        trailing_speech=[(1, "en-US", "Synthetic response.")],
+                        last_unit_index=1,
+                    )
+                    outcomes["completed"] += 1
                 with store._lock:
                     active_conversations = store._connection.execute(
                         "SELECT COUNT(*) FROM conversations WHERE state='ACTIVE'"
@@ -278,6 +235,100 @@ def run_sqlite_recovery_gate(database_path: str | Path) -> dict[str, Any]:
     }
 
 
+def _validate_live_gate(host: str, port: int, timeout_seconds: float) -> None:
+    try:
+        valid = (host == "127.0.0.1" and type(port) is int and 1 <= port <= 65535
+                 and type(timeout_seconds) in (int, float)
+                 and math.isfinite(timeout_seconds) and timeout_seconds > 0)
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError("live gate parameters are invalid")
+
+
+async def _gate_event(websocket, session_id, sequence, deadline, transcript=None, response_id=None):
+    from jarvis_voice.errors import ProtocolError
+    from jarvis_voice.protocol import Envelope
+    from jarvis_voice.sequencing import SequenceResult
+
+    try:
+        event = Envelope.from_json(
+            await asyncio.wait_for(
+                websocket.recv(),
+                timeout=max(0.0, deadline - time.monotonic()),
+            )
+        )
+        if sequence.observe(event) != SequenceResult.ACCEPTED:
+            raise OperationalError("duplicate_server_publication")
+    except ProtocolError:
+        raise OperationalError("live_protocol_invalid") from None
+    if event.session_id != session_id or (
+        transcript is not None
+        and (
+            event.turn_id != transcript.turn_id
+            or (response_id is None and event.type != "server.ack")
+            or (response_id is not None and event.response_id != response_id)
+            or (
+                event.type == "server.ack"
+                and (
+                    event.payload["acked_event_id"] != transcript.event_id
+                    or event.payload["status"] != "accepted"
+                    or event.response_id is None
+                )
+            )
+        )
+    ):
+        raise OperationalError("live_event_binding_invalid")
+    return event
+
+
+@dataclass(slots=True)
+class _ResponseProgress:
+    started: bool = False
+    text_done: bool = False
+    text_chunks: int = 0
+    speech_units: int = 0
+
+    def observe(self, event) -> bool:
+        if event.type == "response.started":
+            if self.started:
+                raise OperationalError("live_started_order_violation")
+            self.started = True
+        elif event.type == "response.text.delta":
+            if (
+                not self.started
+                or self.text_done
+                or event.payload["chunk_index"] != self.text_chunks
+            ):
+                raise OperationalError("live_text_sequence_violation")
+            self.text_chunks += 1
+        elif event.type == "response.speech.commit":
+            if not self.started or event.payload["unit_index"] != self.speech_units + 1:
+                raise OperationalError("live_speech_sequence_violation")
+            self.speech_units += 1
+        elif event.type == "response.text.done":
+            if (
+                not self.started
+                or self.text_done
+                or event.payload["chunk_count"] != self.text_chunks
+            ):
+                raise OperationalError("live_text_terminal_violation")
+            self.text_done = True
+        elif event.type == "response.speech.done":
+            if (
+                not self.started
+                or not self.text_done
+                or not self.text_chunks
+                or not self.speech_units
+                or event.payload["last_unit_index"] != self.speech_units
+            ):
+                raise OperationalError("live_terminal_violation")
+            return True
+        else:
+            raise OperationalError("live_turn_failed")
+        return False
+
+
 async def run_live_sequential_gate(
     *,
     host: str,
@@ -297,7 +348,10 @@ async def run_live_sequential_gate(
     speaker playback remains a voice-runtime qualification signal.
     """
 
-    if host != "127.0.0.1" or isinstance(turns, bool) or not 1 <= turns <= 10_000:
+    _validate_live_gate(host, port, timeout_seconds)
+    if (type(turns) is not int or not 1 <= turns <= 10_000
+            or type(include_latency_profile) is not bool
+            or (maximum_database_bytes is not None and (type(maximum_database_bytes) is not int or maximum_database_bytes < 1))):
         raise ValueError("live gate parameters are invalid")
     if request_text is not None and (
         not isinstance(request_text, str)
@@ -309,13 +363,15 @@ async def run_live_sequential_gate(
         raise ValueError("live gate playback mode is invalid")
     try:
         from websockets.asyncio.client import connect
-        from jarvis_voice.protocol import Envelope, EventFactory
+        from jarvis_voice.protocol import EventFactory
+        from jarvis_voice.sequencing import SequenceTracker
         from jarvis_voice.voice_auth_transport import authenticate_async_client
     except ImportError as exc:  # pragma: no cover - dependency gate
         raise OperationalError("live_gate_dependency_unavailable") from exc
     started = time.monotonic()
     session_id = str(uuid.uuid4())
     factory = EventFactory(session_id=session_id)
+    sequence = SequenceTracker()
     seen_event_ids: set[str] = set()
     response_count = 0
     speech_unit_count = 0
@@ -346,11 +402,12 @@ async def run_live_sequential_gate(
             },
         )
         await authenticate_async_client(websocket, auth_key, hello.to_json())
-        ready = Envelope.from_json(await asyncio.wait_for(websocket.recv(), timeout=2.0))
+        ready = await _gate_event(websocket, session_id, sequence, time.monotonic() + 2.0)
         if ready.type != "server.ready":
             raise OperationalError("live_gate_handshake_failed")
         for index in range(turns):
             turn_started = time.monotonic()
+            deadline = turn_started + timeout_seconds
             payload = _synthetic_payload(index)
             if request_text is not None:
                 payload = {**payload, "text": request_text}
@@ -359,80 +416,31 @@ async def run_live_sequential_gate(
                 payload,
                 turn_id=str(uuid.uuid4()),
             )
-            await websocket.send(transcript.to_json())
-            accepted = False
-            started_response = False
-            text_done = False
-            text_chunks = 0
-            speech_units = 0
+            await asyncio.wait_for(websocket.send(transcript.to_json()), timeout=timeout_seconds)
+            progress = _ResponseProgress()
             response_id: str | None = None
             markers: dict[str, float] = {}
             while True:
-                raw = await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
-                event = Envelope.from_json(raw)
+                event = await _gate_event(websocket, session_id, sequence, deadline, transcript, response_id)
                 if event.event_id in seen_event_ids:
                     raise OperationalError("duplicate_server_publication")
                 seen_event_ids.add(event.event_id)
-                if event.type == "server.ack" and event.payload["acked_event_id"] == transcript.event_id:
-                    accepted = True
+                if event.type == "server.ack":
+                    if response_id is not None:
+                        raise OperationalError("live_duplicate_ack")
                     markers.setdefault("ack", time.monotonic())
                     response_id = event.response_id
-                    if response_id is None:
-                        raise OperationalError("live_ack_binding_missing")
-                elif event.type == "server.error" and accepted and event.response_id in {
-                    None,
-                    response_id,
-                }:
-                    raise OperationalError("live_turn_failed")
-                elif response_id is not None and event.response_id == response_id:
-                    if event.type == "response.started":
-                        if started_response or text_chunks or speech_units:
-                            raise OperationalError("live_started_order_violation")
-                        started_response = True
-                        markers.setdefault("response_started", time.monotonic())
-                    elif event.type == "response.text.delta":
-                        if (
-                            not started_response
-                            or text_done
-                            or event.payload["chunk_index"] != text_chunks
-                        ):
-                            raise OperationalError("live_text_sequence_violation")
-                        text_chunks += 1
-                        markers.setdefault("first_text_delta", time.monotonic())
-                    elif event.type == "response.speech.commit":
-                        if (
-                            not started_response
-                            or event.payload["unit_index"] != speech_units + 1
-                        ):
-                            raise OperationalError("live_speech_sequence_violation")
-                        speech_units += 1
-                        markers.setdefault("first_speech_commit", time.monotonic())
-                    elif event.type == "response.text.done":
-                        if (
-                            not started_response
-                            or text_done
-                            or event.payload["chunk_count"] != text_chunks
-                        ):
-                            raise OperationalError("live_text_terminal_violation")
-                        text_done = True
-                    elif event.type == "response.cancelled":
-                        raise OperationalError("live_turn_failed")
-                    elif event.type == "response.speech.done":
-                        if (
-                            not accepted
-                            or not started_response
-                            or not text_done
-                            or event.payload["last_unit_index"] != speech_units
-                        ):
-                            raise OperationalError("live_terminal_violation")
-                        speech_done_at = time.monotonic()
-                        markers["speech_done"] = speech_done_at
-                        required_markers = {
-                            "ack", "response_started", "first_text_delta",
-                            "first_speech_commit", "speech_done",
-                        }
-                        if not required_markers.issubset(markers):
-                            raise OperationalError("live_latency_sequence_incomplete")
+                else:
+                    complete = progress.observe(event)
+                    marker = {
+                        "response.started": "response_started",
+                        "response.text.delta": "first_text_delta",
+                        "response.speech.commit": "first_speech_commit",
+                        "response.speech.done": "speech_done",
+                    }.get(event.type)
+                    if marker is not None:
+                        markers.setdefault(marker, time.monotonic())
+                    if complete:
                         for name in (
                             "ack", "response_started", "first_text_delta",
                             "first_speech_commit", "speech_done",
@@ -450,9 +458,9 @@ async def run_live_sequential_gate(
                                 turn_id=transcript.turn_id,
                                 response_id=response_id,
                             )
-                            await websocket.send(playback.to_json())
+                            await asyncio.wait_for(websocket.send(playback.to_json()), timeout=max(0.0, deadline - time.monotonic()))
                         response_count += 1
-                        speech_unit_count += speech_units
+                        speech_unit_count += progress.speech_units
                         maximum_turn_ms = max(
                             maximum_turn_ms, int((time.monotonic() - turn_started) * 1000)
                         )
@@ -512,22 +520,20 @@ async def run_live_model_failure_gate(
     probe only admits one bounded turn and reports content-free counts/codes.
     """
 
-    if (
-        host != "127.0.0.1"
-        or isinstance(timeout_seconds, bool)
-        or not 0 < timeout_seconds <= 120
-        or expected_error_code != "backend_failure"
-    ):
+    _validate_live_gate(host, port, timeout_seconds)
+    if timeout_seconds > 120 or expected_error_code != "backend_failure":
         raise ValueError("model failure gate parameters are invalid")
     try:
         from websockets.asyncio.client import connect
-        from jarvis_voice.protocol import Envelope, EventFactory
+        from jarvis_voice.protocol import EventFactory
+        from jarvis_voice.sequencing import SequenceTracker
         from jarvis_voice.voice_auth_transport import authenticate_async_client
     except ImportError as exc:  # pragma: no cover - dependency gate
         raise OperationalError("live_gate_dependency_unavailable") from exc
 
     started = time.monotonic()
     factory = EventFactory(session_id=str(uuid.uuid4()))
+    sequence = SequenceTracker()
     uri = f"ws://{host}:{port}"
     event_types: list[str] = []
     event_ids: set[str] = set()
@@ -555,9 +561,7 @@ async def run_live_model_failure_gate(
             },
         )
         await authenticate_async_client(websocket, auth_key, hello.to_json())
-        ready = Envelope.from_json(
-            await asyncio.wait_for(websocket.recv(), timeout=2.0)
-        )
+        ready = await _gate_event(websocket, factory.session_id, sequence, time.monotonic() + 2.0)
         if ready.type != "server.ready":
             raise OperationalError("failure_gate_handshake_failed")
         transcript = factory.create(
@@ -568,31 +572,32 @@ async def run_live_model_failure_gate(
             },
             turn_id=str(uuid.uuid4()),
         )
-        await websocket.send(transcript.to_json())
-        deadline = time.monotonic() + timeout_seconds + 2.0
+        deadline = started + timeout_seconds + 2.0
+        await asyncio.wait_for(websocket.send(transcript.to_json()), timeout=max(0.0, deadline - time.monotonic()))
+        cancelled_at = None
         while time.monotonic() < deadline:
-            remaining = deadline - time.monotonic()
-            event = Envelope.from_json(
-                await asyncio.wait_for(websocket.recv(), timeout=remaining)
-            )
+            try:
+                event = await _gate_event(websocket, factory.session_id, sequence, deadline, transcript, response_id)
+            except TimeoutError:
+                if cancelled_at is None:
+                    raise
+                break
             if event.event_id in event_ids:
                 raise OperationalError("duplicate_server_publication")
             event_ids.add(event.event_id)
-            if (
-                event.type == "server.ack"
-                and event.payload["acked_event_id"] == transcript.event_id
-            ):
+            if event.type == "server.ack":
                 response_id = event.response_id
                 event_types.append(event.type)
-                continue
-            if response_id is None or event.response_id != response_id:
                 continue
             event_types.append(event.type)
             if event.type == "server.error":
                 error_code = event.payload["code"]
             elif event.type == "response.cancelled":
                 reason_code = event.payload["reason_code"]
-                break
+                if cancelled_at is None:
+                    cancelled_at = time.monotonic()
+                    # Observe queued/late publications for a bounded quiet interval.
+                    deadline = min(deadline, cancelled_at + 0.1)
 
     expected_order = ["server.ack", "server.error", "response.cancelled"]
     forbidden_output = {
@@ -602,7 +607,7 @@ async def run_live_model_failure_gate(
         "response.speech.commit",
         "response.speech.done",
     }
-    bounded = (time.monotonic() - started) <= timeout_seconds + 2.0
+    bounded = cancelled_at is not None and cancelled_at - started <= timeout_seconds + 2.0
     return {
         "bounded_timeout": bounded,
         "duplicate_publication_count": 0,
@@ -636,7 +641,10 @@ async def run_live_soak_gate(
 ) -> dict[str, Any]:
     """Run bounded sequential batches until the requested wall-clock duration."""
 
-    if duration_seconds < 60 or batch_turns < 1:
+    _validate_live_gate(host, port, 120.0)
+    if (type(duration_seconds) is not int or duration_seconds < 60
+            or type(batch_turns) is not int or not 1 <= batch_turns <= 10_000
+            or type(maximum_database_bytes) is not int or maximum_database_bytes < 1):
         raise ValueError("soak bounds are invalid")
     started = time.monotonic()
     batches = 0
@@ -645,6 +653,8 @@ async def run_live_soak_gate(
     operations_state = operational_paths(database_path)["state"]
     maximum_observed_log_bytes = 0
     qualification_log = ContentFreeOperationalLog(operations_state / "soak.operations.jsonl")
+    def log_bytes() -> int:
+        return sum(item.stat().st_size for item in operations_state.glob("*.jsonl*") if item.is_file())
     try:
         qualification_log.emit("soak_started", duration_seconds=duration_seconds)
         while time.monotonic() - started < duration_seconds:
@@ -663,11 +673,7 @@ async def run_live_soak_gate(
             maximum_observed_bytes = max(maximum_observed_bytes, observed)
             if observed > maximum_database_bytes:
                 raise OperationalError("soak_database_bound_exceeded")
-            observed_logs = sum(
-                item.stat().st_size
-                for item in operations_state.glob("*.jsonl*")
-                if item.is_file()
-            )
+            observed_logs = log_bytes()
             maximum_observed_log_bytes = max(
                 maximum_observed_log_bytes, observed_logs
             )
@@ -683,7 +689,6 @@ async def run_live_soak_gate(
                 turn_count=turns,
             )
             await asyncio.sleep(0.05)
-        final = database_diagnostics(database_path)
         elapsed = int(time.monotonic() - started)
         qualification_log.emit(
             "soak_completed",
@@ -692,6 +697,9 @@ async def run_live_soak_gate(
         )
     finally:
         qualification_log.close()
+    final = database_diagnostics(database_path)
+    maximum_observed_bytes = max(maximum_observed_bytes, final.database_bytes + final.wal_bytes + final.shm_bytes)
+    maximum_observed_log_bytes = max(maximum_observed_log_bytes, log_bytes())
     return {
         "batch_count": batches,
         "database_bounded": maximum_observed_bytes <= maximum_database_bytes,
@@ -706,6 +714,8 @@ async def run_live_soak_gate(
         "playback_completion_mode": "protocol_probe",
         "ready": (
             elapsed >= duration_seconds
+            and turns > 0
+            and maximum_observed_bytes <= maximum_database_bytes
             and final.ready
             and maximum_observed_log_bytes <= MAXIMUM_OPERATIONAL_LOG_BYTES
         ),
@@ -726,12 +736,12 @@ async def run_live_restart_gate(
 ) -> dict[str, Any]:
     """Restart the installed daemon during generation and pending playback."""
 
-    if host != "127.0.0.1":
-        raise ValueError("restart gate requires loopback")
+    _validate_live_gate(host, port, timeout_seconds)
     try:
         from websockets.asyncio.client import connect
         from websockets.exceptions import ConnectionClosed
-        from jarvis_voice.protocol import Envelope, EventFactory
+        from jarvis_voice.protocol import EventFactory
+        from jarvis_voice.sequencing import SequenceTracker
         from jarvis_voice.voice_auth import VoiceAuthError
         from jarvis_voice.voice_auth_transport import authenticate_async_client
     except ImportError as exc:  # pragma: no cover
@@ -743,6 +753,7 @@ async def run_live_restart_gate(
         deadline = time.monotonic() + 15.0
         while True:
             websocket = None
+            connected = False
             try:
                 websocket = await connect(
                     uri,
@@ -754,6 +765,7 @@ async def run_live_restart_gate(
                     max_queue=32,
                 )
                 factory = EventFactory(session_id=session_id)
+                sequence = SequenceTracker()
                 hello = factory.create(
                     "client.hello",
                     {
@@ -770,21 +782,21 @@ async def run_live_restart_gate(
                     auth_key,
                     hello.to_json(),
                 )
-                ready = Envelope.from_json(
-                    await asyncio.wait_for(websocket.recv(), timeout=2.0)
-                )
+                ready = await _gate_event(websocket, session_id, sequence, min(deadline, time.monotonic() + 2.0))
                 if ready.type != "server.ready":
                     raise OperationalError("restart_gate_handshake_failed")
-                return websocket, factory
+                connected = True
+                return websocket, factory, sequence
             except (ConnectionClosed, OSError, TimeoutError, VoiceAuthError):
-                if websocket is not None:
-                    with suppress(Exception):
-                        await websocket.close()
                 if time.monotonic() >= deadline:
                     raise OperationalError("restart_gate_reconnect_timeout")
                 await asyncio.sleep(0.1)
+            finally:
+                if websocket is not None and not connected:
+                    with suppress(Exception):
+                        await websocket.close()
 
-    websocket, factory = await open_connection()
+    websocket, factory, sequence = await open_connection()
     generation_interrupted = False
     playback_replay_exact = False
     duplicate_publications = 0
@@ -794,28 +806,18 @@ async def run_live_restart_gate(
             _synthetic_payload(1),
             turn_id=str(uuid.uuid4()),
         )
-        await websocket.send(generation_turn.to_json())
-        generation_response_id: str | None = None
-        while generation_response_id is None:
-            event = Envelope.from_json(
-                await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
-            )
-            if (
-                event.type == "server.ack"
-                and event.payload["acked_event_id"] == generation_turn.event_id
-            ):
-                generation_response_id = event.response_id
+        deadline = time.monotonic() + timeout_seconds
+        await asyncio.wait_for(websocket.send(generation_turn.to_json()), timeout=timeout_seconds)
+        event = await _gate_event(websocket, session_id, sequence, deadline, generation_turn)
+        generation_response_id = event.response_id
         await asyncio.to_thread(stop_service)
         with suppress(Exception):
             await websocket.close()
         await asyncio.to_thread(start_service)
-        websocket, factory = await open_connection()
+        websocket, factory, sequence = await open_connection()
+        deadline = time.monotonic() + timeout_seconds
         while True:
-            event = Envelope.from_json(
-                await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
-            )
-            if event.response_id != generation_response_id:
-                continue
+            event = await _gate_event(websocket, session_id, sequence, deadline, generation_turn, generation_response_id)
             if event.type == "response.cancelled":
                 generation_interrupted = (
                     event.payload["reason_code"] == "service_interrupted"
@@ -829,63 +831,42 @@ async def run_live_restart_gate(
             _synthetic_payload(2),
             turn_id=str(uuid.uuid4()),
         )
-        await websocket.send(playback_turn.to_json())
+        deadline = time.monotonic() + timeout_seconds
+        await asyncio.wait_for(websocket.send(playback_turn.to_json()), timeout=timeout_seconds)
         playback_response_id: str | None = None
-        original: dict[str, tuple[str, str, str]] = {}
+        original: list[dict[str, Any]] = []
+        progress = _ResponseProgress()
         while True:
-            event = Envelope.from_json(
-                await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
-            )
-            if (
-                event.type == "server.ack"
-                and event.payload["acked_event_id"] == playback_turn.event_id
-            ):
+            event = await _gate_event(websocket, session_id, sequence, deadline, playback_turn, playback_response_id)
+            if event.type == "server.ack":
+                if playback_response_id is not None:
+                    raise OperationalError("live_duplicate_ack")
                 playback_response_id = event.response_id
-            if playback_response_id is None or event.response_id != playback_response_id:
-                continue
-            semantic = (
-                event.type,
-                event.sent_at,
-                str(sorted(event.payload.items())),
-            )
-            if event.event_id in original:
-                duplicate_publications += 1
-            original[event.event_id] = semantic
-            if event.type == "response.cancelled":
-                raise OperationalError("restart_playback_turn_failed")
-            if event.type == "response.speech.done":
+            original.append({key: value for key, value in event.to_dict().items() if key != "seq"})
+            if event.type != "server.ack" and progress.observe(event):
                 break
         await asyncio.to_thread(stop_service)
         with suppress(Exception):
             await websocket.close()
         await asyncio.to_thread(start_service)
-        websocket, factory = await open_connection()
-        replay: dict[str, tuple[str, str, str]] = {}
+        websocket, factory, sequence = await open_connection()
+        deadline = time.monotonic() + timeout_seconds
+        replay: list[dict[str, Any]] = []
         while True:
-            event = Envelope.from_json(
-                await asyncio.wait_for(websocket.recv(), timeout=timeout_seconds)
-            )
-            if event.response_id != playback_response_id:
-                continue
-            semantic = (
-                event.type,
-                event.sent_at,
-                str(sorted(event.payload.items())),
-            )
-            if event.event_id in replay:
-                duplicate_publications += 1
-            replay[event.event_id] = semantic
+            event = await _gate_event(websocket, session_id, sequence, deadline, playback_turn, playback_response_id)
+            replay.append({key: value for key, value in event.to_dict().items() if key != "seq"})
             if event.type == "response.speech.done":
                 break
+        duplicate_publications = sum(len(events) - len({event["event_id"] for event in events}) for events in (original, replay))
         playback_replay_exact = replay == original
-        await websocket.send(
+        await asyncio.wait_for(websocket.send(
             factory.create(
                 "playback.completed",
                 {"epoch": 0},
                 turn_id=playback_turn.turn_id,
                 response_id=playback_response_id,
             ).to_json()
-        )
+        ), timeout=max(0.0, deadline - time.monotonic()))
     finally:
         with suppress(Exception):
             await websocket.close()
@@ -1061,7 +1042,7 @@ def evaluate_operational_ready_gate(
         )
     except Exception:  # noqa: BLE001 - injected clock failures fail closed
         raise OperationalError("readiness_final_time_unavailable") from None
-    if final_now.tzinfo is None:
+    if not isinstance(final_now, datetime) or final_now.tzinfo is None:
         raise OperationalError("readiness_final_time_invalid")
     final_now = final_now.astimezone(UTC)
     last_leaf_capture = captured_by_sequence[-1][1]
@@ -1078,7 +1059,7 @@ def evaluate_operational_ready_gate(
             verifier=verifier,
             expected_kind=kind,
             expected_identity=expected_identity,
-            now=aggregate_capture,
+            now=final_now,
         )
         for kind, path in paths.items()
     }
@@ -1113,6 +1094,8 @@ def evaluate_operational_ready_gate(
             kind: evidence.evidence_sha256 for kind, evidence in reverified.items()
         },
     )
+    if final_now >= datetime.fromisoformat(aggregate.expires_at_utc.replace("Z", "+00:00")):
+        raise OperationalError("readiness_evidence_stale")
     return aggregate
 
 

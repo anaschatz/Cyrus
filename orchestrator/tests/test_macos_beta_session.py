@@ -60,37 +60,6 @@ def canonical(value: object) -> bytes:
     ).encode("utf-8")
 
 
-class FakeHttpResponse:
-    def __init__(self, body: bytes, *, status: int = 200) -> None:
-        self.body = body
-        self.status = status
-
-    def __enter__(self) -> "FakeHttpResponse":
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        return None
-
-    def read(self, _maximum: int | None = None) -> bytes:
-        return self.body
-
-
-class FakeSseResponse:
-    def __init__(self, lines: list[bytes], *, status: int = 200) -> None:
-        self.stream = io.BytesIO(b"".join(lines))
-        self.status = status
-        self.headers = {"Content-Type": "text/event-stream; charset=utf-8"}
-
-    def __enter__(self) -> "FakeSseResponse":
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        return None
-
-    def readline(self, maximum: int = -1) -> bytes:
-        return self.stream.readline(maximum)
-
-
 class FakeClock:
     def __init__(self) -> None:
         self.value = 0.0
@@ -931,29 +900,48 @@ class MacOSBetaSessionTests(unittest.TestCase):
                 self.assertEqual(str(caught.exception), caught.exception.code)
 
     def test_inference_warmup_is_exact_bounded_and_loopback_only(self) -> None:
+        import httpx
+
         config = OrchestratorConfig.load(self.orchestrator)
-        response = FakeSseResponse(
-            [
-                b'data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
-                b'data: {"choices":[{"delta":{"content":"ready"},"finish_reason":null}]}\n\n',
-                b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
-                b'data: {"choices":[],"usage":{"completion_tokens":1}}\n\n',
-                b"data: [DONE]\n\n",
-            ]
-        )
+        frames = [
+            b'data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+            b'data: {"choices":[{"index":0,"delta":{"content":"ready"},"finish_reason":null}]}\n\n',
+            b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+            b'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\n',
+            b"data: [DONE]\n\n",
+        ]
+        requests = []
 
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(
+                200,
+                content=b"".join(frames),
+                headers={"content-type": "text/event-stream; charset=utf-8"},
+            )
+
+        client = httpx.AsyncClient
         with patch(
-            "jarvis_orchestrator.macos_beta_session.urllib.request.urlopen",
-            return_value=response,
+            "jarvis_orchestrator.macos_beta_probes.httpx.AsyncClient",
+            side_effect=lambda **kwargs: client(
+                transport=httpx.MockTransport(respond), **kwargs
+            ),
         ) as opened:
-            self.assertTrue(_inference_warmup(PrivateStackConfig.load(self.stack), config))
+            self.assertTrue(
+                _inference_warmup(PrivateStackConfig.load(self.stack), config)
+            )
 
-        request = opened.call_args.args[0]
-        self.assertEqual(request.full_url, "http://127.0.0.1:8766/v1/chat/completions")
-        self.assertEqual(opened.call_args.kwargs, {"timeout": 10.0})
-        document = json.loads(request.data)
+        request = requests[0]
+        self.assertEqual(str(request.url), "http://127.0.0.1:8766/v1/chat/completions")
+        self.assertEqual(
+            opened.call_args.kwargs,
+            {"timeout": 10.0, "trust_env": False, "follow_redirects": False},
+        )
+        document = json.loads(request.content)
         self.assertEqual(document["messages"][0]["role"], "system")
-        self.assertIn("concise bilingual Greek/English", document["messages"][0]["content"])
+        self.assertIn(
+            "concise bilingual Greek/English", document["messages"][0]["content"]
+        )
         self.assertEqual(
             document["messages"][1],
             {"content": "Reply with only this word: ready", "role": "user"},

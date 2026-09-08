@@ -26,6 +26,19 @@ Persisted instants have exact integer-millisecond precision and canonical RFC 33
 
 `count` includes DTSTART. `until_at_utc` is inclusive. Monthly missing dates use `skip`; there is no implicit clamp. Recurring DST gaps skip the invalid nominal slot without consuming count. One-shot gaps require clarification. Ambiguous folds use the earlier instant (`fold=0`). Relative day is local-calendar arithmetic; day/week duration is elapsed 24h/7×24h.
 
+A date without a year searches only the representable years through 9999;
+impossible dates fail with clarification instead of looping. A future DST gap
+keeps its selected calendar date and follows the same one-shot/recurring gap
+rules as an explicitly supplied year. A recurrence end cannot precede DTSTART;
+an end exactly at DTSTART is valid.
+
+Accepted due instants must also leave room for the 24-hour delivery expiry and
+24-hour content-retention deadline. The last representable due instant is
+`9999-12-29T23:59:59.999Z`. Proposal and snooze validation reject later instants;
+recurrence materialization stops when its next slot is unrepresentable or exceeds
+that bound, while preserving delivery of the current valid occurrence. Deadline
+values are never silently clamped.
+
 Occurrence identity is the domain-separated SHA-256 of `(job_id, job_revision, canonical scheduled UTC slot)`. Snooze preserves the occurrence and canonical recurrence slot, increments delivery generation, and produces a new deterministic notification identity. At most eight snoozes are accepted.
 
 ## Persistence, delivery, and recovery

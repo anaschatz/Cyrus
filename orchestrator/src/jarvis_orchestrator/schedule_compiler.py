@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import os
+import stat
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from .inference import parse_inference_json
 from .jcs import jcs_bytes
 from .scheduler_contract import (
     PackagedTimezoneProvider,
@@ -139,18 +143,32 @@ class CompilerQualification:
 
 
 def load_compiler_qualification(path: Path, expected_sha256: str) -> CompilerQualification:
-    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+    if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
         raise ScheduleContractError("compiler_qualification_missing", status=503)
-    raw = path.read_bytes()
-    if hashlib.sha256(raw).hexdigest() != expected_sha256:
-        raise ScheduleContractError("compiler_qualification_mismatch", status=503)
-    value = json.loads(raw)
-    if not isinstance(value, Mapping) or set(value) != {"qualification_inputs", "qualification_sha256"}:
+    try:
+        with open(path, "rb", opener=lambda name, flags: os.open(
+            name, flags | getattr(os, "O_NONBLOCK", 0)
+        )) as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("compiler qualification must be a regular file")
+            raw = stream.read(1024 * 1024 + 1)
+        if not raw or len(raw) > 1024 * 1024:
+            raise ValueError("compiler qualification size invalid")
+        if hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise ScheduleContractError("compiler_qualification_mismatch", status=503)
+        value = parse_inference_json(raw, maximum_bytes=1024 * 1024)
+    except (OSError, ValueError) as exc:
+        raise ScheduleContractError("compiler_qualification_invalid", status=503) from exc
+    if set(value) != {"qualification_inputs", "qualification_sha256"}:
         raise ScheduleContractError("compiler_qualification_invalid", status=503)
-    inputs = dict(value["qualification_inputs"])
-    inputs["prompt_template_sha256"] = PROMPT_TEMPLATE_SHA256
-    inputs["input_schema_sha256"] = hashlib.sha256(jcs_bytes(INPUT_JSON_SCHEMA)).hexdigest()
-    inputs["output_schema_sha256"] = hashlib.sha256(jcs_bytes(OUTPUT_JSON_SCHEMA)).hexdigest()
+    inputs = value["qualification_inputs"]
+    expected_inputs = {
+        "prompt_template_sha256": PROMPT_TEMPLATE_SHA256,
+        "input_schema_sha256": hashlib.sha256(jcs_bytes(INPUT_JSON_SCHEMA)).hexdigest(),
+        "output_schema_sha256": hashlib.sha256(jcs_bytes(OUTPUT_JSON_SCHEMA)).hexdigest(),
+    }
+    if not isinstance(inputs, dict) or any(inputs.get(name) != digest for name, digest in expected_inputs.items()):
+        raise ScheduleContractError("compiler_qualification_mismatch", status=503)
     calculated = compiler_qualification_digest(inputs)
     if value["qualification_sha256"] != calculated:
         raise ScheduleContractError("compiler_qualification_mismatch", status=503)
@@ -161,15 +179,17 @@ class LocalScheduleCompiler:
     def __init__(self, *, base_url: str, bearer_token: str, model_alias: str,
                  qualification: CompilerQualification, timeout_seconds: float,
                  zones: PackagedTimezoneProvider) -> None:
-        parsed = urlsplit(base_url)
+        if not isinstance(base_url, str):
+            raise ScheduleContractError("compiler_not_loopback", status=503)
         try:
+            parsed = urlsplit(base_url)
             port = parsed.port
         except ValueError as exc:
             raise ScheduleContractError("compiler_not_loopback", status=503) from exc
         if (
             parsed.scheme != "http"
             or parsed.hostname != "127.0.0.1"
-            or port is None
+            or port is None or port == 0
             or parsed.username is not None
             or parsed.password is not None
             or parsed.path.rstrip("/") != "/v1"
@@ -179,9 +199,12 @@ class LocalScheduleCompiler:
             raise ScheduleContractError("compiler_not_loopback", status=503)
         if model_alias != "jarvis-local":
             raise ScheduleContractError("compiler_model_alias_mismatch", status=503)
-        if not isinstance(bearer_token, str) or not 1 <= len(bearer_token.encode("utf-8")) <= 512:
+        if (not isinstance(bearer_token, str) or not bearer_token.isascii()
+                or not 1 <= len(bearer_token) <= 512
+                or any(ord(character) < 32 or ord(character) == 127 for character in bearer_token)):
             raise ScheduleContractError("compiler_credentials_invalid", status=503)
-        if not 0 < timeout_seconds <= 60:
+        if (isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float))
+                or not 0 < timeout_seconds <= 60):
             raise ScheduleContractError("compiler_timeout_invalid", status=503)
         self.base_url = base_url.rstrip("/")
         self.bearer_token = bearer_token
@@ -210,16 +233,48 @@ class LocalScheduleCompiler:
                 "name": "schedule_proposal_v1", "strict": True, "schema": OUTPUT_JSON_SCHEMA,
             }},
         }
-        with httpx.Client(timeout=self.timeout_seconds, trust_env=False, follow_redirects=False) as client:
-            response = client.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.bearer_token}", "Content-Type": "application/json"},
-                json=body,
-            )
-        response.raise_for_status()
+        async def request_bytes() -> bytes:
+            # One deadline covers headers and the complete body, including a slowly trickling peer.
+            async with asyncio.timeout(self.timeout_seconds):
+                async with httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=False, follow_redirects=False) as client:
+                    async with client.stream(
+                        "POST", f"{self.base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {self.bearer_token}",
+                                 "Content-Type": "application/json", "Accept-Encoding": "identity"},
+                        json=body,
+                    ) as response:
+                        response.raise_for_status()
+                        if (response.headers.get("content-encoding", "identity").lower() != "identity"
+                                or response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json"):
+                            raise ScheduleContractError("PROPOSAL_INVALID")
+                        raw = bytearray()
+                        async for chunk in response.aiter_bytes(chunk_size=16384):
+                            raw.extend(chunk)
+                            if len(raw) > 65536:
+                                raise ScheduleContractError("PROPOSAL_INVALID")
+                        return bytes(raw)
+
         try:
-            output = json.loads(response.json()["choices"][0]["message"]["content"])
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raw = asyncio.run(request_bytes())
+        except (TimeoutError, httpx.TimeoutException) as exc:
+            raise ScheduleContractError("compiler_timeout", status=503) from exc
+        except httpx.HTTPError as exc:
+            raise ScheduleContractError("compiler_unavailable", status=503) from exc
+        try:
+            envelope = parse_inference_json(raw, maximum_bytes=65536)
+            choices = envelope["choices"]
+            if not isinstance(choices, list) or len(choices) != 1:
+                raise ValueError
+            choice = choices[0]
+            if (type(choice["index"]) is not int or choice["index"] != 0
+                    or choice["finish_reason"] != "stop"):
+                raise ValueError
+            message = choice["message"]
+            if (message["role"] != "assistant" or not isinstance(message["content"], str)
+                    or message.get("tool_calls") not in (None, []) or message.get("refusal") is not None):
+                raise ValueError
+            output = parse_inference_json(message["content"].encode("utf-8"), maximum_bytes=16384)
+        except (KeyError, IndexError, TypeError, ValueError, RecursionError) as exc:
             raise ScheduleContractError("PROPOSAL_INVALID") from exc
         return compile_proposal(
             request, output,

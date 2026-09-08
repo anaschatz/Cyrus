@@ -4,8 +4,12 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import Mock
 
-from jarvis_orchestrator.scheduler_contract import PackagedTimezoneProvider
+from jarvis_orchestrator.scheduler_contract import (
+    PackagedTimezoneProvider, ScheduleContractError, ensure_minimum_lead,
+    epoch_ms, from_epoch_ms,
+)
 from jarvis_orchestrator.scheduler_crypto import InMemorySchedulerKeyProvider, SchedulerContentCipher
 from jarvis_orchestrator.scheduler_store import SchedulerStore
 from jarvis_orchestrator.scheduler_worker import SchedulerWorker
@@ -13,6 +17,30 @@ from jarvis_orchestrator.store import OrchestratorStore
 
 
 class SchedulerClockTests(unittest.TestCase):
+    def test_clock_jump_threshold_uses_exact_milliseconds(self) -> None:
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        walls = iter([epoch, epoch + timedelta(milliseconds=1001)])
+        worker = SchedulerWorker(
+            Mock(fire_due=Mock(return_value=[])),
+            wall_clock=lambda: next(walls), monotonic_ns=lambda: 0,
+        )
+        self.assertFalse(worker.tick()["clock_jump_detected"])
+        self.assertTrue(worker.tick()["clock_jump_detected"])
+
+    def test_epoch_milliseconds_are_exact(self) -> None:
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        for milliseconds in (-1001, 0, 1001, 253370764800001):
+            expected = epoch + timedelta(milliseconds=milliseconds)
+            with self.subTest(milliseconds=milliseconds):
+                self.assertEqual(epoch_ms(expected), milliseconds)
+                self.assertEqual(from_epoch_ms(milliseconds), expected)
+
+    def test_minimum_lead_does_not_round_up_a_short_interval(self) -> None:
+        now = datetime(1970, 1, 1, 0, 0, 1, 1000, tzinfo=UTC)
+        with self.assertRaisesRegex(ScheduleContractError, "minimum_lead_violated"):
+            ensure_minimum_lead("1970-01-01T00:00:11.000Z", now)
+        ensure_minimum_lead("1970-01-01T00:00:11.001Z", now)
+
     def test_wall_jump_is_observed_but_monotonic_owns_wait_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = OrchestratorStore(Path(directory) / "db.sqlite3")

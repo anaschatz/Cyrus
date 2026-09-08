@@ -165,9 +165,10 @@ def _open_private_fd(path: Path, flags: int, *, create: bool) -> int:
         _validate_regular_metadata(before)
     elif not create:
         raise PrivateStateError("private_state_file_missing")
-    open_flags = flags | getattr(os, "O_CLOEXEC", 0)
-    if create:
-        open_flags |= os.O_CREAT
+    # Truncation must wait until descriptor and pathname identity are verified.
+    open_flags = (flags & ~os.O_TRUNC) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    if create and before is None:
+        open_flags |= os.O_CREAT | os.O_EXCL
     if os.name == "posix":
         open_flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -179,11 +180,17 @@ def _open_private_fd(path: Path, flags: int, *, create: bool) -> int:
         _validate_regular_metadata(opened)
         if before is not None and (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
             raise PrivateStateError("private_state_identity_changed")
+        current = _lstat(selected)
+        if current is None or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+            raise PrivateStateError("private_state_identity_changed")
+        _validate_regular_metadata(current)
         if before is None and os.name == "posix":
             os.fchmod(descriptor, PRIVATE_FILE_MODE)
             opened = os.fstat(descriptor)
             if stat.S_IMODE(opened.st_mode) != PRIVATE_FILE_MODE:
                 raise PrivateStateError("private_state_file_permissions_invalid")
+        if flags & os.O_TRUNC:
+            os.ftruncate(descriptor, 0)
         return descriptor
     except BaseException:
         os.close(descriptor)
@@ -281,7 +288,7 @@ def unlink_private_file(path: str | Path, *, missing_ok: bool = True) -> bool:
 
 
 def _chmod_owned_no_follow(path: Path, expected: str, mode: int) -> bool:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     if expected == "directory":
         flags |= getattr(os, "O_DIRECTORY", 0)
     try:

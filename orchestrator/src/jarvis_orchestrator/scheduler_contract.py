@@ -18,7 +18,7 @@ from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 from .domain import OrchestratorError, parse_utc, require_uuid4, utc_text
-from .jcs import domain_sha256, jcs_bytes, jcs_text
+from .jcs import domain_sha256, jcs_bytes
 
 
 PROPOSAL_INPUT_SCHEMA = "schedule-proposal-input/1"
@@ -42,6 +42,10 @@ MAXIMUM_PAGE_SIZE = 100
 APPROVAL_TTL_SECONDS = 600
 MISSED_GRACE_MS = 24 * 60 * 60 * 1000
 CONTENT_RETENTION_MS = MISSED_GRACE_MS
+# Every accepted due instant must also represent its delivery expiry and content purge time.
+MAXIMUM_DUE_AT_UTC = datetime.max.replace(tzinfo=UTC, microsecond=999000) - timedelta(
+    milliseconds=MISSED_GRACE_MS + CONTENT_RETENTION_MS
+)
 MANUAL_CANONICAL_API_SHA256 = hashlib.sha256(b"jarvis.scheduler.manual-canonical-api/1").hexdigest()
 
 
@@ -191,17 +195,20 @@ def epoch_ms(value: datetime) -> int:
     utc = value.astimezone(UTC)
     if utc.microsecond % 1000:
         raise ScheduleContractError("submillisecond_precision_forbidden")
-    return int(utc.timestamp() * 1000)
+    return (utc - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(milliseconds=1)
 
 
 def from_epoch_ms(value: int) -> datetime:
-    return datetime.fromtimestamp(_integer(value) / 1000, tz=UTC)
+    return datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=_integer(value))
 
 
 def strict_utc(value: Any) -> datetime:
     if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", value):
         raise ScheduleContractError("invalid_timestamp")
-    parsed = parse_utc(value)
+    try:
+        parsed = parse_utc(value)
+    except ValueError as exc:
+        raise ScheduleContractError("invalid_timestamp") from exc
     epoch_ms(parsed)
     return parsed
 
@@ -288,12 +295,16 @@ class ProposalInput:
         if not isinstance(request, str):
             raise ScheduleContractError()
         request = unicodedata.normalize("NFC", request).strip()
-        if not request or len(request.encode("utf-8")) > 4096:
+        try:
+            encoded_request = request.encode("utf-8")
+        except UnicodeError as exc:
+            raise ScheduleContractError() from exc
+        if not request or len(encoded_request) > 4096:
             raise ScheduleContractError()
         strict_utc(value["request_received_at_utc"])
         timezone_key = value["default_timezone"]
         locale = value["default_locale"]
-        if not isinstance(timezone_key, str) or locale not in LOCALES:
+        if not isinstance(timezone_key, str) or not isinstance(locale, str) or locale not in LOCALES:
             raise ScheduleContractError()
         target = _exact(value["selected_target"], TARGET_FIELDS)
         if target["job_id"] is not None:
@@ -303,7 +314,7 @@ class ProposalInput:
             or not re.fullmatch(r"[0-9a-f]{64}", target["occurrence_id"])
         ):
             raise ScheduleContractError()
-        _nullable_integer(target["job_revision"], minimum=1)
+        _nullable_integer(target["job_revision"], minimum=1, maximum=2**63 - 1)
         _nullable_integer(target["snooze_generation"], minimum=0, maximum=MAXIMUM_SNOOZE_GENERATIONS)
         policy = _exact(value["policy"], POLICY_FIELDS)
         if policy != {
@@ -410,110 +421,113 @@ def resolve_temporal(
     one_shot: bool,
     recurrence: Mapping[str, Any] | None = None,
 ) -> tuple[datetime | None, str, str]:
-    raw = expression.raw
-    timezone_key = raw["timezone"] or default_timezone
-    zone, tzif_sha256 = zones.load(timezone_key)
-    reference_local = reference_at_utc.astimezone(zone)
-    if expression.kind is TemporalKind.NONE:
-        return None, timezone_key, tzif_sha256
-    if expression.kind is TemporalKind.AFTER_DURATION:
-        resolved = reference_at_utc + timedelta(milliseconds=_duration_ms(raw["amount"], raw["unit"]))
-        return resolved, timezone_key, tzif_sha256
-    if expression.kind is TemporalKind.ABSOLUTE_LOCAL:
-        local = _strict_local_datetime(raw["local_datetime"])
-    elif expression.kind is TemporalKind.CALENDAR_DATE:
-        year = raw["year"]
-        if year is None:
-            year = reference_local.year
-            while True:
-                try:
-                    candidate_date = date(year, raw["month"], raw["day"])
-                except ValueError:
-                    year += 1
-                    continue
-                local = datetime.combine(candidate_date, _strict_local_time(raw["local_time"]))
-                instants = _valid_local_instants(local, zone)
-                if instants and instants[0] > reference_at_utc:
-                    break
-                year += 1
-        else:
-            try:
-                local = datetime.combine(date(year, raw["month"], raw["day"]), _strict_local_time(raw["local_time"]))
-            except ValueError as exc:
-                raise ScheduleContractError("ambiguous_date") from exc
-    elif expression.kind is TemporalKind.RELATIVE_DAY:
-        target_date = reference_local.date() + timedelta(days=1 if raw["relation"] == "TOMORROW" else 0)
-        local = datetime.combine(target_date, _strict_local_time(raw["local_time"]))
-    elif expression.kind is TemporalKind.WEEKDAY:
-        desired = raw["weekday"]
-        if raw["relation"] == "THIS":
-            target_date = reference_local.date() + timedelta(days=desired - reference_local.isoweekday())
-        elif raw["relation"] == "NEXT":
-            target_date = reference_local.date() + timedelta(days=(8 - reference_local.isoweekday()) + desired - 1)
-        else:
-            delta = (desired - reference_local.isoweekday()) % 7
-            target_date = reference_local.date() + timedelta(days=delta)
-            tentative = datetime.combine(target_date, _strict_local_time(raw["local_time"]))
-            instants = _valid_local_instants(tentative, zone)
-            if not instants or instants[0] < reference_at_utc + timedelta(milliseconds=MINIMUM_LEAD_MS):
-                target_date += timedelta(days=7)
-        local = datetime.combine(target_date, _strict_local_time(raw["local_time"]))
-    else:  # pragma: no cover - exhaustive enum guard
-        raise ScheduleContractError("unsupported_temporal_expression")
-    instants = _valid_local_instants(local, zone)
-    if not instants:
-        if one_shot or recurrence is None:
-            raise ScheduleContractError("one_shot_dst_gap")
-        recurrence_kind = RecurrenceKind(recurrence["kind"])
-        for _ in range(370):
-            if recurrence_kind is RecurrenceKind.DAILY:
-                local += timedelta(days=1)
-            elif recurrence_kind is RecurrenceKind.WEEKLY:
-                weekdays = sorted(set(recurrence["weekdays"]))
-                if not weekdays:
-                    raise ScheduleContractError("ambiguous_recurrence")
-                while True:
-                    local += timedelta(days=1)
-                    if local.isoweekday() in weekdays:
+    try:
+        raw = expression.raw
+        timezone_key = raw["timezone"] or default_timezone
+        zone, tzif_sha256 = zones.load(timezone_key)
+        reference_local = reference_at_utc.astimezone(zone)
+        if expression.kind is TemporalKind.NONE:
+            return None, timezone_key, tzif_sha256
+        if expression.kind is TemporalKind.AFTER_DURATION:
+            resolved = reference_at_utc + timedelta(milliseconds=_duration_ms(raw["amount"], raw["unit"]))
+            return resolved, timezone_key, tzif_sha256
+        if expression.kind is TemporalKind.ABSOLUTE_LOCAL:
+            local = _strict_local_datetime(raw["local_datetime"])
+        elif expression.kind is TemporalKind.CALENDAR_DATE:
+            year = raw["year"]
+            if year is None:
+                for year in range(reference_local.year, 10000):
+                    try:
+                        candidate_date = date(year, raw["month"], raw["day"])
+                    except ValueError:
+                        continue
+                    local = datetime.combine(candidate_date, _strict_local_time(raw["local_time"]))
+                    instants = _valid_local_instants(local, zone)
+                    if (instants and instants[0] > reference_at_utc) or (
+                        not instants and local > reference_local.replace(tzinfo=None)
+                    ):
                         break
-            elif recurrence_kind is RecurrenceKind.MONTHLY:
-                day = recurrence["day_of_month"] or local.day
-                year, month = local.year, local.month
-                while True:
-                    month += 1
-                    if month == 13:
-                        year += 1
-                        month = 1
-                    if day <= monthrange(year, month)[1]:
-                        local = local.replace(year=year, month=month, day=day)
-                        break
-            elif recurrence_kind is RecurrenceKind.FIXED_INTERVAL:
-                local += timedelta(milliseconds=_duration_ms(
-                    recurrence["interval_amount"], recurrence["interval_unit"]
-                ))
+                else:
+                    raise ScheduleContractError("ambiguous_date")
             else:
-                raise ScheduleContractError("recurring_dst_gap")
-            instants = _valid_local_instants(local, zone)
-            if instants:
-                break
+                try:
+                    local = datetime.combine(date(year, raw["month"], raw["day"]), _strict_local_time(raw["local_time"]))
+                except ValueError as exc:
+                    raise ScheduleContractError("ambiguous_date") from exc
+        elif expression.kind is TemporalKind.RELATIVE_DAY:
+            target_date = reference_local.date() + timedelta(days=1 if raw["relation"] == "TOMORROW" else 0)
+            local = datetime.combine(target_date, _strict_local_time(raw["local_time"]))
+        elif expression.kind is TemporalKind.WEEKDAY:
+            desired = raw["weekday"]
+            if raw["relation"] == "THIS":
+                target_date = reference_local.date() + timedelta(days=desired - reference_local.isoweekday())
+            elif raw["relation"] == "NEXT":
+                target_date = reference_local.date() + timedelta(days=(8 - reference_local.isoweekday()) + desired - 1)
+            else:
+                delta = (desired - reference_local.isoweekday()) % 7
+                target_date = reference_local.date() + timedelta(days=delta)
+                tentative = datetime.combine(target_date, _strict_local_time(raw["local_time"]))
+                instants = _valid_local_instants(tentative, zone)
+                if not instants or instants[0] < reference_at_utc + timedelta(milliseconds=MINIMUM_LEAD_MS):
+                    target_date += timedelta(days=7)
+            local = datetime.combine(target_date, _strict_local_time(raw["local_time"]))
+        else:  # pragma: no cover - exhaustive enum guard
+            raise ScheduleContractError("unsupported_temporal_expression")
+        instants = _valid_local_instants(local, zone)
         if not instants:
-            raise ScheduleContractError("recurring_dst_gap")
-    return instants[0], timezone_key, tzif_sha256
+            if one_shot or recurrence is None:
+                raise ScheduleContractError("one_shot_dst_gap")
+            recurrence_kind = RecurrenceKind(recurrence["kind"])
+            for _ in range(370):
+                if recurrence_kind is RecurrenceKind.DAILY:
+                    local += timedelta(days=1)
+                elif recurrence_kind is RecurrenceKind.WEEKLY:
+                    weekdays = sorted(set(recurrence["weekdays"]))
+                    if not weekdays:
+                        raise ScheduleContractError("ambiguous_recurrence")
+                    while True:
+                        local += timedelta(days=1)
+                        if local.isoweekday() in weekdays:
+                            break
+                elif recurrence_kind is RecurrenceKind.MONTHLY:
+                    day = recurrence["day_of_month"] or local.day
+                    year, month = local.year, local.month
+                    while True:
+                        month += 1
+                        if month == 13:
+                            year += 1
+                            month = 1
+                        if day <= monthrange(year, month)[1]:
+                            local = local.replace(year=year, month=month, day=day)
+                            break
+                elif recurrence_kind is RecurrenceKind.FIXED_INTERVAL:
+                    local += timedelta(milliseconds=_duration_ms(
+                        recurrence["interval_amount"], recurrence["interval_unit"]
+                    ))
+                else:
+                    raise ScheduleContractError("recurring_dst_gap")
+                instants = _valid_local_instants(local, zone)
+                if instants:
+                    break
+            if not instants:
+                raise ScheduleContractError("recurring_dst_gap")
+        return instants[0], timezone_key, tzif_sha256
+    except (OverflowError, ValueError) as exc:
+        raise ScheduleContractError("invalid_time_range") from exc
 
 
 def _parse_notification(raw: Any, *, operation: ProposalOperation) -> dict[str, Any]:
     value = _exact(raw, NOTIFICATION_FIELDS)
+    if (not isinstance(value["locale"], str) or value["locale"] not in LOCALES
+            or not isinstance(value["visibility"], str) or value["visibility"] not in {"private", "title_only", "full"}):
+        raise ScheduleContractError()
     if operation is not ProposalOperation.CREATE_JOB:
         if any(value[name] is not None for name in ("title", "body", "speakable_text")):
             raise ScheduleContractError("conflicting_fields")
-        if value["locale"] not in LOCALES or value["visibility"] not in {"private", "title_only", "full"}:
-            raise ScheduleContractError()
         return value
     title = canonical_content(value["title"], field="title")
     body = canonical_content(value["body"], field="body")
     speakable = None if value["speakable_text"] is None else canonical_content(value["speakable_text"], field="speakable_text")
-    if value["locale"] not in LOCALES or value["visibility"] not in {"private", "title_only", "full"}:
-        raise ScheduleContractError()
     return {**value, "title": title, "body": body, "speakable_text": speakable}
 
 
@@ -554,7 +568,10 @@ def compile_proposal(
     count = _nullable_integer(recurrence["count"], minimum=1, maximum=100_000)
     _nullable_integer(recurrence["day_of_month"], minimum=1, maximum=31)
     _nullable_integer(recurrence["interval_amount"], minimum=1, maximum=10_000_000)
-    if recurrence["interval_unit"] is not None and recurrence["interval_unit"] not in {"MINUTE", "HOUR", "DAY", "WEEK"}:
+    if recurrence["interval_unit"] is not None and (
+        not isinstance(recurrence["interval_unit"], str)
+        or recurrence["interval_unit"] not in {"MINUTE", "HOUR", "DAY", "WEEK"}
+    ):
         raise ScheduleContractError()
     if recurrence_kind is RecurrenceKind.NONE:
         if any(recurrence[name] is not None for name in ("interval_amount", "interval_unit", "day_of_month", "count")) or weekdays or until.kind is not TemporalKind.NONE:
@@ -572,7 +589,7 @@ def compile_proposal(
         if recurrence["interval_amount"] is not None or recurrence["interval_unit"] is not None or weekdays:
             raise ScheduleContractError("conflicting_fields")
     notification = _parse_notification(output["notification"], operation=operation)
-    if output["clarification_reason"] not in CLARIFICATION_REASONS:
+    if not isinstance(output["clarification_reason"], str) or output["clarification_reason"] not in CLARIFICATION_REASONS:
         raise ScheduleContractError()
     if outcome is not ProposalOutcome.PROPOSAL:
         if operation is not ProposalOperation.NONE or output["clarification_reason"] == "NONE":
@@ -583,12 +600,15 @@ def compile_proposal(
         canonical = {**output, "clarification_question": question, "notification": notification}
         digest = domain_sha256(PROPOSAL_SCHEMA, canonical)
         return CompiledProposal(canonical, digest, None, None)
+    if operation is ProposalOperation.NONE:
+        raise ScheduleContractError("conflicting_fields")
     if output["clarification_reason"] != "NONE" or output["clarification_question"] is not None:
         raise ScheduleContractError("conflicting_fields")
     if operation is ProposalOperation.CREATE_JOB and any(
         output[name] is not None for name in ("target_job_id", "target_job_revision", "target_occurrence_id")
     ):
         raise ScheduleContractError("conflicting_fields")
+    _nullable_integer(output["target_job_revision"], minimum=1, maximum=2**63 - 1)
     target = proposal_input.selected_target
     if operation in {ProposalOperation.CANCEL_JOB, ProposalOperation.SNOOZE_OCCURRENCE}:
         if target["job_id"] is None or target["job_revision"] is None:
@@ -609,6 +629,8 @@ def compile_proposal(
         one_shot=recurrence_kind is RecurrenceKind.NONE,
         recurrence=recurrence,
     )
+    if first is not None and first > MAXIMUM_DUE_AT_UTC:
+        raise ScheduleContractError("invalid_time_range")
     if operation is ProposalOperation.CREATE_JOB and first is None:
         raise ScheduleContractError("missing_time")
     until_at: datetime | None = None
@@ -622,7 +644,9 @@ def compile_proposal(
         )
         if until_zone != timezone_key or until_hash != tzif_sha256:
             raise ScheduleContractError("conflicting_fields")
-    if count is not None and until_at is not None:
+    if (count is not None and until_at is not None) or (
+        first is not None and until_at is not None and until_at < first
+    ):
         raise ScheduleContractError("conflicting_fields")
     schedule: dict[str, Any]
     if operation in {ProposalOperation.CANCEL_JOB}:
@@ -726,6 +750,8 @@ def compile_proposal(
 
 def ensure_minimum_lead(first_due_at_utc: str, authoritative_now: datetime) -> None:
     due = strict_utc(first_due_at_utc)
+    if due > MAXIMUM_DUE_AT_UTC:
+        raise ScheduleContractError("invalid_time_range")
     if epoch_ms(due) - epoch_ms(authoritative_now) < MINIMUM_LEAD_MS:
         raise ScheduleContractError("minimum_lead_violated", status=410)
 
@@ -759,12 +785,14 @@ def next_calendar_local(schedule: Mapping[str, Any], current_local: datetime) ->
         raise ScheduleContractError("invalid_recurrence")
     if kind == "CALENDAR_MONTHLY":
         year, month = current_local.year, current_local.month
-        day = int(schedule["day_of_month"])
+        day = _integer(schedule["day_of_month"], minimum=1, maximum=31)
         while True:
             month += 1
             if month == 13:
                 year += 1
                 month = 1
+            if year > 9999:
+                raise OverflowError("recurrence exceeds the supported calendar")
             if day <= monthrange(year, month)[1]:
                 return current_local.replace(year=year, month=month, day=day)
     raise ScheduleContractError("invalid_recurrence")

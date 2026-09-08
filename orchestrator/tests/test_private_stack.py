@@ -41,21 +41,6 @@ def canonical(value: object) -> bytes:
     ).encode("utf-8")
 
 
-class FakeHttpResponse:
-    def __init__(self, body: bytes, *, status: int = 200) -> None:
-        self.body = body
-        self.status = status
-
-    def __enter__(self) -> "FakeHttpResponse":
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        return None
-
-    def read(self, _maximum: int | None = None) -> bytes:
-        return self.body
-
-
 class PrivateStackConfigTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -366,8 +351,8 @@ class PrivateStackConfigTests(unittest.TestCase):
             ),
         }
         with patch(
-            "jarvis_orchestrator.stack_cli.urllib.request.urlopen",
-            return_value=FakeHttpResponse(canonical(valid)),
+            "jarvis_orchestrator.stack_cli.InferenceControlClient._get",
+            return_value=valid,
         ):
             self.assertEqual(_beta_session(config), valid)
 
@@ -384,8 +369,8 @@ class PrivateStackConfigTests(unittest.TestCase):
         for document in invalid_documents:
             with self.subTest(document=document):
                 with patch(
-                    "jarvis_orchestrator.stack_cli.urllib.request.urlopen",
-                    return_value=FakeHttpResponse(canonical(document)),
+                    "jarvis_orchestrator.stack_cli.InferenceControlClient._get",
+                    return_value=document,
                 ):
                     self.assertIsNone(_beta_session(config))
 

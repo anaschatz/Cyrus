@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config import OrchestratorConfig
 from .private_state import PrivateStateReportV1, audit_orchestrator_state
-from .stack_config import PrivateStackConfig
+from .stack_config import PrivateStackConfig, StackConfigError
 
 if TYPE_CHECKING:
     from jarvis_voice.private_state import VoicePrivateStateReportV1
@@ -19,9 +19,7 @@ VOICE_PROBE_SCOPE = "current_process_identity"
 _GENERIC_VOICE_BLOCKER = "voice.environment_not_ready"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REASON_CODE_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_.-")
-_TECHNICAL_BETA_ASR_BACKENDS = frozenset(
-    {"faster_whisper_cpu_smoke", "whisper_cpp"}
-)
+_TECHNICAL_BETA_ASR_BACKENDS = frozenset({"faster_whisper_cpu_smoke", "whisper_cpp"})
 _TECHNICAL_BETA_TTS_BACKENDS = frozenset({"system_say", "pocket_tts"})
 
 
@@ -57,7 +55,7 @@ def _voice_blocker_codes(doctor: Mapping[str, Any]) -> list[str]:
         if identity in visited:
             continue
         visited.add(identity)
-        if item.get("status") in {"blocked", "inconclusive"}:
+        if item.get("status") in ("blocked", "inconclusive"):
             code = item.get("code")
             if _valid_reason_code(code):
                 blockers.add(str(code))
@@ -186,13 +184,24 @@ def evaluate_macos_beta_preflight(
     from jarvis_voice.macos.doctor import macos_doctor_report
     from jarvis_voice.private_state import audit_voice_journal_state
 
+    if PrivateStackConfig.load(stack.source_path) != stack:
+        raise StackConfigError("stack_config_changed")
+    identity_before = stack.deployment_identity()
     orchestrator = OrchestratorConfig.load(stack.orchestrator_config_path)
     voice = load_voice_config(stack.voice_config_path)
-    doctor = dict(doctor_report or macos_doctor_report(voice))
-    private_state = private_state_report or audit_orchestrator_state(
-        orchestrator.database_path
+    doctor = macos_doctor_report(voice) if doctor_report is None else doctor_report
+    if not isinstance(doctor, Mapping):
+        doctor = {}
+    private_state = (
+        private_state_report
+        if private_state_report is not None
+        else audit_orchestrator_state(orchestrator.database_path)
     )
-    voice_private_state = voice_private_state_report or audit_voice_journal_state()
+    voice_private_state = (
+        voice_private_state_report
+        if voice_private_state_report is not None
+        else audit_voice_journal_state()
+    )
     selected_memory_state = _live_memory_crypto_state(orchestrator)
     safe_scope, capabilities = _feature_scope(
         orchestrator,
@@ -208,17 +217,22 @@ def evaluate_macos_beta_preflight(
         and voice.ptt_key in {"CONTROL_OPTION", "RIGHT_OPTION"}
     )
     voice_blockers = _voice_blocker_codes(doctor)
+    identity = stack.deployment_identity()
     checks = {
-        "deployment_identity_bound": bool(stack.sha256),
+        "deployment_identity_bound": identity == identity_before,
         "inference_appliance_qualified": True,
         "memory_crypto_qualified": memory_crypto_qualified,
-        "owner_only_state": (private_state.ready and voice_private_state.ready),
+        "owner_only_state": (
+            private_state.ready is True
+            and private_state.platform_enforced is True
+            and voice_private_state.ready is True
+            and voice_private_state.platform_enforced is True
+        ),
         "safe_feature_scope": safe_scope,
         "selected_voice_profile": selected_voice_profile,
         "voice_environment": doctor.get("ready") is True,
     }
     technical_ready = all(checks.values())
-    identity = stack.deployment_identity()
     return {
         "capabilities": capabilities,
         "checks": checks,

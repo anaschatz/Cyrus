@@ -24,10 +24,16 @@ def _print_result(value: dict[str, object]) -> None:
     print(json.dumps(value, sort_keys=True, separators=(",", ":")))
 
 
-def _remove_if_present(path: Path | None) -> None:
+def _remove_if_present(
+    path: Path | None, identity: tuple[int, int] | None = None
+) -> None:
     if path is None:
         return
     try:
+        if identity is not None:
+            current = path.lstat()
+            if (current.st_dev, current.st_ino) != identity:
+                return
         path.unlink()
     except FileNotFoundError:
         pass
@@ -82,7 +88,7 @@ def main() -> int:
         )
         return 2
     temporary: Path | None = None
-    published = False
+    published_identity: tuple[int, int] | None = None
     descriptor: int | None = None
     try:
         value = {
@@ -132,32 +138,22 @@ def main() -> int:
         if os.name == "nt":  # pragma: no cover - native Windows CI
             harden_windows_private_path(temporary)
         OrchestratorConfig.load(temporary)
+        staged = temporary.lstat()
         os.link(temporary, output)
-        published = True
+        published_identity = (staged.st_dev, staged.st_ino)
         temporary.unlink()
         temporary = None
         OrchestratorConfig.load(output)
-    except (ValueError, WindowsPrivateFileError):
+    except Exception as exc:  # noqa: BLE001 - emit one stable content-free failure
         _remove_if_present(temporary)
-        if published:
-            _remove_if_present(output)
-        _print_result(
-            {
-                "ready": False,
-                "code": "materialization.private_config_validation_failed",
-            }
+        if published_identity is not None:
+            _remove_if_present(output, published_identity)
+        code = (
+            "materialization.private_config_validation_failed"
+            if isinstance(exc, (ValueError, WindowsPrivateFileError))
+            else "materialization.private_config_write_failed"
         )
-        return 2
-    except Exception:  # noqa: BLE001 - emit one stable content-free failure
-        _remove_if_present(temporary)
-        if published:
-            _remove_if_present(output)
-        _print_result(
-            {
-                "ready": False,
-                "code": "materialization.private_config_write_failed",
-            }
-        )
+        _print_result({"ready": False, "code": code})
         return 2
     finally:
         if descriptor is not None:

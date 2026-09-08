@@ -10,9 +10,9 @@ from __future__ import annotations
 import json
 import os
 import secrets
-import shutil
 import stat
 from collections.abc import Mapping
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,7 +20,12 @@ from typing import Any
 from jarvis_voice.config import voice_config_from_mapping
 from jarvis_voice.voice_auth import create_voice_auth_key_file
 
-from .config import BearerTokenFormatError, OrchestratorConfig
+from .config import (
+    BearerTokenFormatError,
+    OrchestratorConfig,
+    _parse_strict_json,
+    _read_private_configuration,
+)
 from .stack_config import (
     STACK_SCHEMA_VERSION,
     PrivateStackConfig,
@@ -74,19 +79,6 @@ class _LegacyStack:
     orchestrator_document: dict[str, Any]
 
 
-class _DuplicateKey(ValueError):
-    pass
-
-
-def _unique_pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in items:
-        if key in result:
-            raise _DuplicateKey
-        result[key] = value
-    return result
-
-
 def _selected_absolute_path(value: str | Path, code: str) -> Path:
     if isinstance(value, Path):
         selected = value
@@ -94,7 +86,7 @@ def _selected_absolute_path(value: str | Path, code: str) -> Path:
         selected = Path(value)
     else:
         raise StackMigrationError(code)
-    if not selected.is_absolute():
+    if not selected.is_absolute() or "\x00" in str(selected):
         raise StackMigrationError(code)
     return selected
 
@@ -112,73 +104,28 @@ def _private_regular_file(value: str | Path, code: str) -> tuple[Path, os.stat_r
             validate_windows_private_path(selected)
         except WindowsPrivateFileError:
             raise StackMigrationError("legacy_private_file_permissions") from None
-    elif metadata.st_mode & 0o077:
+    elif metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
         raise StackMigrationError("legacy_private_file_permissions")
     return selected, metadata
 
 
 def _read_private_bytes(value: str | Path, code: str) -> tuple[Path, bytes]:
-    selected, before = _private_regular_file(value, code)
-    if before.st_size < 1 or before.st_size > MAX_JSON_BYTES:
-        raise StackMigrationError(code)
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
+    selected, _before = _private_regular_file(value, code)
     try:
-        descriptor = os.open(selected, flags)
-    except OSError:
+        encoded = _read_private_configuration(selected, maximum_bytes=MAX_JSON_BYTES)
+        if not encoded:
+            raise ValueError
+        return selected, encoded
+    except ValueError:
         raise StackMigrationError(code) from None
-    try:
-        opened = os.fstat(descriptor)
-        if (
-            stat.S_ISLNK(opened.st_mode)
-            or not stat.S_ISREG(opened.st_mode)
-            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
-            or (os.name != "nt" and opened.st_mode & 0o077)
-        ):
-            raise StackMigrationError(code)
-        if os.name == "nt":  # pragma: no cover - native Windows CI
-            try:
-                validate_windows_private_descriptor(descriptor)
-            except WindowsPrivateFileError:
-                raise StackMigrationError("legacy_private_file_permissions") from None
-        chunks: list[bytes] = []
-        remaining = MAX_JSON_BYTES + 1
-        while remaining:
-            chunk = os.read(descriptor, min(remaining, 64 * 1024))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        encoded = b"".join(chunks)
-    except StackMigrationError:
-        raise
-    except OSError:
-        raise StackMigrationError(code) from None
-    finally:
-        os.close(descriptor)
-    if not encoded or len(encoded) > MAX_JSON_BYTES:
-        raise StackMigrationError(code)
-    return selected, encoded
 
 
 def _strict_private_json(value: str | Path, unavailable_code: str) -> tuple[Path, Any]:
     selected, encoded = _read_private_bytes(value, unavailable_code)
     try:
-        text = encoded.decode("utf-8", errors="strict")
-        if text.startswith("\ufeff"):
-            raise ValueError
-        parsed = json.loads(
-            text,
-            object_pairs_hook=_unique_pairs,
-            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
-        )
-    except (UnicodeError, json.JSONDecodeError, ValueError, _DuplicateKey):
+        return selected, _parse_strict_json(encoded)
+    except ValueError:
         raise StackMigrationError("legacy_json_invalid") from None
-    return selected, parsed
 
 
 def _object(value: Any, code: str) -> Mapping[str, Any]:
@@ -312,28 +259,23 @@ def _create_output_directory(output_directory: Path) -> tuple[int, int]:
         raise StackMigrationError("migration_output_not_fresh") from None
     except OSError:
         raise StackMigrationError("migration_output_create_failed") from None
+    identity: tuple[int, int] | None = None
     try:
+        identity = _output_identity(output_directory)
         if os.name == "nt":  # pragma: no cover - native Windows CI
-            try:
+            with closing(_open_windows_output_directory(output_directory)):
+                if _output_identity(output_directory) != identity:
+                    raise OSError
                 harden_windows_private_path(output_directory)
-            except WindowsPrivateFileError:
-                raise StackMigrationError("migration_output_create_failed") from None
-        else:
-            output_directory.chmod(0o700)
-        metadata = output_directory.lstat()
-        if (
-            stat.S_ISLNK(metadata.st_mode)
-            or not stat.S_ISDIR(metadata.st_mode)
-            or (os.name != "nt" and metadata.st_mode & 0o077)
+        if _output_identity(output_directory) != identity or (
+            os.name != "nt" and output_directory.lstat().st_mode & 0o077
         ):
             raise StackMigrationError("migration_output_create_failed")
-        return metadata.st_dev, metadata.st_ino
+        return identity
     except BaseException:
-        try:
-            shutil.rmtree(output_directory)
-        except OSError:
-            pass
-        raise
+        if identity is not None:
+            _rollback(output_directory, identity)
+        raise StackMigrationError("migration_output_create_failed") from None
 
 
 def _canonical_json(value: Mapping[str, Any]) -> bytes:
@@ -348,8 +290,19 @@ def _canonical_json(value: Mapping[str, Any]) -> bytes:
             ).encode("utf-8")
             + b"\n"
         )
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         raise StackMigrationError("migration_document_invalid") from None
+
+
+def _unlink_created_file(path: Path, identity: tuple[int, int] | None) -> None:
+    if identity is None:
+        return
+    try:
+        current = path.lstat()
+        if (current.st_dev, current.st_ino) == identity:
+            path.unlink()
+    except OSError:
+        pass
 
 
 def _create_private_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -363,10 +316,11 @@ def _create_private_json(path: Path, value: Mapping[str, Any]) -> None:
         | getattr(os, "O_NOFOLLOW", 0)
     )
     descriptor: int | None = None
-    created = False
+    created_identity: tuple[int, int] | None = None
     try:
         descriptor = os.open(path, flags, 0o600)
-        created = True
+        opened = os.fstat(descriptor)
+        created_identity = (opened.st_dev, opened.st_ino)
         if os.name != "nt":
             os.fchmod(descriptor, 0o600)
         view = memoryview(encoded)
@@ -377,50 +331,94 @@ def _create_private_json(path: Path, value: Mapping[str, Any]) -> None:
             view = view[written:]
         os.fsync(descriptor)
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or (
-            os.name != "nt" and metadata.st_mode & 0o077
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or not os.path.samestat(metadata, path.lstat())
+            or (os.name != "nt" and metadata.st_mode & 0o077)
         ):
             raise OSError
-    except OSError:
-        if created:
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        if os.name == "nt":  # pragma: no cover - native Windows CI
+            harden_windows_private_path(path)
+            validate_windows_private_descriptor(descriptor)
+    except (OSError, WindowsPrivateFileError):
+        _unlink_created_file(path, created_identity)
         raise StackMigrationError("migration_output_write_failed") from None
     finally:
         if descriptor is not None:
             try:
                 os.close(descriptor)
             except OSError:
-                if created:
-                    try:
-                        path.unlink()
-                    except OSError:
-                        pass
+                _unlink_created_file(path, created_identity)
                 raise StackMigrationError("migration_output_write_failed") from None
-    if os.name == "nt":  # pragma: no cover - native Windows CI
-        try:
-            harden_windows_private_path(path)
-        except WindowsPrivateFileError:
-            try:
-                path.unlink()
-            except OSError:
-                pass
-            raise StackMigrationError("migration_output_write_failed") from None
+
+
+def _output_identity(path: Path) -> tuple[int, int]:
+    metadata = path.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or getattr(
+        metadata, "st_file_attributes", 0
+    ) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+        raise OSError
+    return metadata.st_dev, metadata.st_ino
+
+
+_OUTPUT_FILES = (
+    VOICE_CONFIG_NAME,
+    ORCHESTRATOR_CONFIG_NAME,
+    VOICE_AUTH_KEY_NAME,
+    STACK_CONFIG_NAME,
+)
+
+
+def _open_windows_output_directory(path: Path):
+    import win32con  # type: ignore[import-not-found]
+    import win32file  # type: ignore[import-not-found]
+
+    # Read access makes sharing effective; omit DELETE sharing during mutations.
+    return win32file.CreateFile(
+        str(path),
+        win32con.GENERIC_READ,
+        win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE,
+        None,
+        win32con.OPEN_EXISTING,
+        win32con.FILE_FLAG_BACKUP_SEMANTICS | win32con.FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+
+
+def _remove_windows_output_files(path: Path, identity: tuple[int, int]) -> None:
+    with closing(_open_windows_output_directory(path)):
+        if _output_identity(path) != identity:
+            raise OSError
+        for name in _OUTPUT_FILES:
+            (path / name).unlink(missing_ok=True)
 
 
 def _rollback(output_directory: Path, identity: tuple[int, int]) -> None:
     try:
-        metadata = output_directory.lstat()
-        if (
-            stat.S_ISLNK(metadata.st_mode)
-            or not stat.S_ISDIR(metadata.st_mode)
-            or (metadata.st_dev, metadata.st_ino) != identity
-        ):
+        if _output_identity(output_directory) != identity:
             raise OSError
-        shutil.rmtree(output_directory)
-    except OSError:
+        if os.name == "nt":
+            _remove_windows_output_files(output_directory, identity)
+        else:
+            descriptor = os.open(
+                output_directory,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            )
+            try:
+                opened = os.fstat(descriptor)
+                if (opened.st_dev, opened.st_ino) != identity:
+                    raise OSError
+                for name in _OUTPUT_FILES:
+                    try:
+                        os.unlink(name, dir_fd=descriptor)
+                    except FileNotFoundError:
+                        pass
+            finally:
+                os.close(descriptor)
+        if _output_identity(output_directory) != identity:
+            raise OSError
+        output_directory.rmdir()
+    except Exception:  # noqa: BLE001 - normalize native and filesystem failures
         raise StackMigrationError("migration_rollback_failed") from None
 
 
@@ -445,7 +443,7 @@ def prepare_auth_v2_stack(
         legacy_manifest_path,
         rotate_weak_bearer_tokens=rotate_weak_bearer_tokens,
     )
-    if macos_ptt_key not in {None, "CONTROL_OPTION", "RIGHT_OPTION"}:
+    if macos_ptt_key not in (None, "CONTROL_OPTION", "RIGHT_OPTION"):
         raise StackMigrationError("migration_macos_ptt_key_invalid")
     if not isinstance(safe_beta_scope, bool):
         raise StackMigrationError("migration_safe_beta_scope_invalid")

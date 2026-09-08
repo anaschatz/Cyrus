@@ -25,8 +25,6 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,7 +36,10 @@ from .inference import (
     InferenceControlClient,
     InferenceIdentityEndpointUnavailable,
 )
-from .macos_beta_probes import inference_warmup, orchestrator_http_ready
+from .macos_beta_probes import (
+    inference_warmup as _inference_warmup,
+    orchestrator_http_ready as _orchestrator_http_ready,
+)
 from .service import (
     BETA_SESSION_SCHEMA_VERSION,
     valid_voice_connection_tracker_id,
@@ -232,6 +233,7 @@ class _ProcessIdentity:
     uid: int
     status: int
     start_token: str
+    parent_pid: int = 0
 
 
 ProcessGroupInspector = Callable[
@@ -272,6 +274,7 @@ def _inspect_process_identity(pid: int) -> _ProcessIdentity | None:
             uid=info.pbi_uid,
             status=info.pbi_status,
             start_token=_process_start_token(info),
+            parent_pid=info.pbi_ppid,
         )
     except (AttributeError, OSError, ValueError):
         return None
@@ -689,14 +692,6 @@ def _inference_ready(context: ProbeContext) -> bool:
         )
     except Exception:
         return False
-
-
-def _inference_warmup(stack: PrivateStackConfig, config: OrchestratorConfig) -> bool:
-    return inference_warmup(stack, config, urlopen=urllib.request.urlopen)
-
-
-def _orchestrator_http_ready(config: OrchestratorConfig) -> bool:
-    return orchestrator_http_ready(config, urlopen=urllib.request.urlopen)
 
 
 async def _authenticated_gateway_ready(config: OrchestratorConfig) -> bool:

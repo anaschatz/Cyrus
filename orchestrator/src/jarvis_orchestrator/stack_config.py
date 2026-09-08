@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
-from .config import OrchestratorConfig
+from .config import OrchestratorConfig, _parse_strict_json, _read_private_configuration
+from .operations import OperationalError
+from .readiness_evidence import sha256_regular_artifact
 from .windows_private_file import (
     WindowsPrivateFileError,
     harden_windows_private_path,
@@ -23,6 +25,7 @@ from .windows_private_file import (
 
 
 STACK_SCHEMA_VERSION = "jarvis-private-stack/2"
+MAX_STACK_JSON_BYTES = 4 * 1024 * 1024
 
 
 class StackConfigError(ValueError):
@@ -40,7 +43,7 @@ def _object(value: Any, code: str) -> Mapping[str, Any]:
 
 
 def _absolute_file(value: Any, code: str) -> Path:
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value or "\x00" in value:
         raise StackConfigError(code)
     path = Path(value).expanduser()
     if not path.is_absolute():
@@ -55,7 +58,10 @@ def _absolute_file(value: Any, code: str) -> Path:
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         raise StackConfigError(code)
     try:
-        return path.resolve(strict=True)
+        resolved = path.parent.resolve(strict=True) / path.name
+        if not os.path.samestat(metadata, resolved.lstat()):
+            raise StackConfigError(code)
+        return resolved
     except OSError as exc:
         raise StackConfigError(code) from exc
 
@@ -122,24 +128,31 @@ def _revalidate_stack_descriptor(descriptor: int) -> None:
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
     try:
-        with path.open("rb") as source:
-            for block in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(block)
-    except OSError as exc:
-        raise StackConfigError("component_identity_unavailable") from exc
-    return digest.hexdigest()
+        return sha256_regular_artifact(path)
+    except OperationalError:
+        raise StackConfigError("component_identity_unavailable") from None
+
+
+def _read_stack_json(path: Path, code: str) -> Mapping[str, Any]:
+    try:
+        raw = _read_private_configuration(path, maximum_bytes=MAX_STACK_JSON_BYTES)
+        return _object(_parse_strict_json(raw), code)
+    except (ValueError, RecursionError):
+        raise StackConfigError(code) from None
 
 
 def _canonical_document(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError, RecursionError):
+        raise StackConfigError("stack_json_invalid") from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +179,10 @@ class PrivateStackConfig:
             "orchestrator_config_path",
             "inference",
         }
-        if set(value) != expected or value.get("schema_version") != STACK_SCHEMA_VERSION:
+        if (
+            set(value) != expected
+            or value.get("schema_version") != STACK_SCHEMA_VERSION
+        ):
             raise StackConfigError("stack_schema_invalid")
         inference = _object(value["inference"], "inference_config_invalid")
         if set(inference) != {
@@ -175,7 +191,9 @@ class PrivateStackConfig:
             "qualification_report_path",
         }:
             raise StackConfigError("inference_config_invalid")
-        source = _absolute_file(str(Path(source_path).expanduser()), "stack_config_unavailable")
+        source = _absolute_file(
+            str(Path(source_path).expanduser()), "stack_config_unavailable"
+        )
         result = cls(
             source_path=source,
             voice_config_path=_absolute_file(
@@ -204,28 +222,10 @@ class PrivateStackConfig:
     @classmethod
     def load(cls, path: str | Path) -> "PrivateStackConfig":
         selected = Path(path).expanduser()
-        try:
-            raw = selected.read_text(encoding="utf-8")
-            if raw.startswith("\ufeff"):
-                raise StackConfigError("stack_json_invalid")
-            def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-                result: dict[str, Any] = {}
-                for key, item in items:
-                    if key in result:
-                        raise ValueError("duplicate key")
-                    result[key] = item
-                return result
-
-            parsed = json.loads(
-                raw,
-                object_pairs_hook=pairs,
-                parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
-            )
-        except StackConfigError:
-            raise
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-            raise StackConfigError("stack_json_invalid") from exc
-        return cls.from_mapping(_object(parsed, "stack_schema_invalid"), source_path=selected)
+        parsed = _read_stack_json(selected, "stack_json_invalid")
+        return cls.from_mapping(
+            _object(parsed, "stack_schema_invalid"), source_path=selected
+        )
 
     def validate(self) -> None:
         for path in (
@@ -242,11 +242,11 @@ class PrivateStackConfig:
 
             voice = load_voice_config(self.voice_config_path)
             orchestrator = OrchestratorConfig.load(self.orchestrator_config_path)
-            manifest = json.loads(
-                self.inference.manifest_path.read_text(encoding="utf-8")
+            manifest = _read_stack_json(
+                self.inference.manifest_path, "component_config_invalid"
             )
-            report = json.loads(
-                self.inference.qualification_report_path.read_text(encoding="utf-8")
+            report = _read_stack_json(
+                self.inference.qualification_report_path, "component_config_invalid"
             )
         except StackConfigError:
             raise
@@ -255,7 +255,10 @@ class PrivateStackConfig:
         expected_ws = f"ws://{orchestrator.voice_host}:{orchestrator.voice_port}"
         if voice.orchestrator_url != expected_ws:
             raise StackConfigError("voice_orchestrator_mismatch")
-        if voice.voice_auth_key_file is None or orchestrator.voice_auth_key_file is None:
+        if (
+            voice.voice_auth_key_file is None
+            or orchestrator.voice_auth_key_file is None
+        ):
             raise StackConfigError("voice_auth_key_required")
         try:
             from jarvis_voice.voice_auth import load_voice_auth_key
@@ -282,7 +285,10 @@ class PrivateStackConfig:
             or inference_url.path.rstrip("/") != "/v1"
         ):
             raise StackConfigError("inference_endpoint_mismatch")
-        if not isinstance(manifest, Mapping) or manifest.get("alias") != orchestrator.model_alias:
+        if (
+            not isinstance(manifest, Mapping)
+            or manifest.get("alias") != orchestrator.model_alias
+        ):
             raise StackConfigError("inference_alias_mismatch")
         identity = report.get("identity") if isinstance(report, Mapping) else None
         digest = hashlib.sha256(_canonical_document(manifest)).hexdigest()
@@ -335,13 +341,9 @@ class PrivateStackConfig:
         components = {
             "stack_manifest_sha256": _sha256_file(self.source_path),
             "voice_config_sha256": _sha256_file(self.voice_config_path),
-            "orchestrator_config_sha256": _sha256_file(
-                self.orchestrator_config_path
-            ),
+            "orchestrator_config_sha256": _sha256_file(self.orchestrator_config_path),
             "inference_runner_sha256": _sha256_file(self.inference.runner_path),
-            "inference_manifest_sha256": _sha256_file(
-                self.inference.manifest_path
-            ),
+            "inference_manifest_sha256": _sha256_file(self.inference.manifest_path),
             "inference_qualification_sha256": _sha256_file(
                 self.inference.qualification_report_path
             ),
@@ -366,32 +368,30 @@ class PrivateStackConfig:
         }
         return {
             **core,
-            "deployment_sha256": hashlib.sha256(
-                _canonical_document(core)
-            ).hexdigest(),
+            "deployment_sha256": hashlib.sha256(_canonical_document(core)).hexdigest(),
         }
 
     def expected_inference_runtime_identity(self) -> tuple[str, str]:
         """Return the manifest and qualified runtime-identity digests."""
 
         try:
-            report = json.loads(
-                self.inference.qualification_report_path.read_text(
-                    encoding="utf-8"
-                )
+            report = _read_stack_json(
+                self.inference.qualification_report_path,
+                "component_identity_unavailable",
             )
             identity = report.get("identity")
-            if not isinstance(identity, Mapping):
+            if report.get("status") != "pass" or not isinstance(identity, Mapping):
                 raise ValueError
             manifest_digest = identity.get("manifest_digest")
             if (
                 not isinstance(manifest_digest, str)
                 or len(manifest_digest) != 64
+                or any(
+                    character not in "0123456789abcdef" for character in manifest_digest
+                )
             ):
                 raise ValueError
-            runtime_digest = hashlib.sha256(
-                _canonical_document(identity)
-            ).hexdigest()
+            runtime_digest = hashlib.sha256(_canonical_document(identity)).hexdigest()
             return manifest_digest, runtime_digest
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
             raise StackConfigError("component_identity_unavailable") from exc
@@ -406,7 +406,7 @@ def write_private_stack_config(path: str | Path, value: Mapping[str, Any]) -> No
     encoded = _canonical_document(value) + b"\n"
     descriptor: int | None = None
     temporary: Path | None = None
-    published = False
+    published_identity: tuple[int, int] | None = None
     try:
         selected.parent.mkdir(parents=True, exist_ok=True)
         if _platform_name() == "nt":
@@ -423,11 +423,12 @@ def write_private_stack_config(path: str | Path, value: Mapping[str, Any]) -> No
             os.fsync(destination.fileno())
             _revalidate_stack_descriptor(destination.fileno())
         PrivateStackConfig.load(temporary)
+        staged = temporary.lstat()
         try:
             os.link(temporary, selected, follow_symlinks=False)
         except FileExistsError as exc:
             raise StackConfigError("stack_output_invalid") from exc
-        published = True
+        published_identity = (staged.st_dev, staged.st_ino)
         temporary.unlink()
         if _platform_name() == "nt":
             try:
@@ -435,7 +436,7 @@ def write_private_stack_config(path: str | Path, value: Mapping[str, Any]) -> No
             except WindowsPrivateFileError:
                 raise StackConfigError("stack_output_permissions") from None
         PrivateStackConfig.load(selected)
-        published = False
+        published_identity = None
     except StackConfigError:
         raise
     except OSError as exc:
@@ -451,9 +452,11 @@ def write_private_stack_config(path: str | Path, value: Mapping[str, Any]) -> No
                 temporary.unlink(missing_ok=True)
             except OSError:
                 pass
-        if published:
+        if published_identity is not None:
             try:
-                selected.unlink(missing_ok=True)
+                current = selected.lstat()
+                if (current.st_dev, current.st_ino) == published_identity:
+                    selected.unlink(missing_ok=True)
             except OSError:
                 pass
 

@@ -13,6 +13,7 @@ from typing import Any
 from .domain import OrchestratorError, ReasonCode, TaskState, new_uuid4, parse_utc, require_uuid4, utc_now, utc_text
 from .jcs import domain_sha256, jcs_text
 from .scheduler_contract import (
+    MAXIMUM_DUE_AT_UTC,
     APPROVAL_TTL_SECONDS,
     CONTENT_RETENTION_MS,
     MAXIMUM_ACTIVE_JOBS,
@@ -1415,40 +1416,37 @@ class SchedulerStore:
             raise OrchestratorError("scheduler_cursor_invalid", status=500)
         sequence = int(cursor["next_sequence"])
         count = schedule.get("count")
-        if count is not None and sequence >= int(count):
-            connection.execute(
-                "UPDATE scheduler_recurrence_cursors SET exhausted=1,next_scheduled_at_utc=NULL,updated_at=? WHERE job_id=?",
-                (utc_text(now), job_id),
-            )
-            connection.execute(
-                "UPDATE scheduler_jobs SET state='DRAINING',updated_at=? WHERE job_id=? AND state='ACTIVE'",
-                (utc_text(now), job_id),
-            )
-            return None
-        if schedule["kind"] == "FIXED_INTERVAL":
-            next_due = parse_utc(previous["scheduled_at_utc"]) + timedelta(milliseconds=int(schedule["interval_ms"]))
-            local_slot = None
-        elif schedule["kind"].startswith("CALENDAR_"):
-            zone, _digest = self.zones.load(schedule["timezone"])
-            current_local = parse_utc(previous["scheduled_at_utc"]).astimezone(zone).replace(tzinfo=None)
-            while True:
-                next_local = next_calendar_local(schedule, current_local)
-                candidates = []
-                for fold in (0, 1):
-                    aware = next_local.replace(tzinfo=zone, fold=fold)
-                    if aware.astimezone(UTC).astimezone(zone).replace(tzinfo=None) == next_local:
-                        utc = aware.astimezone(UTC)
-                        if utc not in candidates:
-                            candidates.append(utc)
-                if candidates:
-                    next_due = sorted(candidates)[0]
-                    local_slot = next_local.isoformat(timespec="milliseconds")
-                    break
-                current_local = next_local  # gap: skip without consuming count
-        else:
-            return None
+        next_due: datetime | None = None
+        local_slot = None
+        if count is None or sequence < int(count):
+            try:
+                if schedule["kind"] == "FIXED_INTERVAL":
+                    next_due = parse_utc(previous["scheduled_at_utc"]) + timedelta(milliseconds=int(schedule["interval_ms"]))
+                elif schedule["kind"].startswith("CALENDAR_"):
+                    zone, _digest = self.zones.load(schedule["timezone"])
+                    current_local = parse_utc(previous["scheduled_at_utc"]).astimezone(zone).replace(tzinfo=None)
+                    while True:
+                        next_local = next_calendar_local(schedule, current_local)
+                        candidates = []
+                        for fold in (0, 1):
+                            aware = next_local.replace(tzinfo=zone, fold=fold)
+                            if aware.astimezone(UTC).astimezone(zone).replace(tzinfo=None) == next_local:
+                                utc = aware.astimezone(UTC)
+                                if utc not in candidates:
+                                    candidates.append(utc)
+                        if candidates:
+                            next_due = sorted(candidates)[0]
+                            local_slot = next_local.isoformat(timespec="milliseconds")
+                            break
+                        current_local = next_local  # gap: skip without consuming count
+                else:
+                    return None
+            except OverflowError:
+                # The current occurrence remains deliverable when no later date is representable.
+                next_due = None
         until = schedule.get("until_at_utc")
-        if until is not None and next_due > parse_utc(until):
+        if (next_due is None or next_due > MAXIMUM_DUE_AT_UTC
+                or (until is not None and next_due > parse_utc(until))):
             connection.execute(
                 "UPDATE scheduler_recurrence_cursors SET exhausted=1,next_scheduled_at_utc=NULL,updated_at=? WHERE job_id=?",
                 (utc_text(now), job_id),
@@ -1966,66 +1964,71 @@ class SchedulerStore:
         require_uuid4(event_id)
         self._sha(semantic_sha256)
         selected = now or utc_now()
-        replay_exists, _replay = self._existing_inbox(event_id, semantic_sha256)
-        if replay_exists:
-            with self._transaction() as connection:
+        identity = {"command_sha256": domain_sha256("scheduler-native-action/1", {
+            "action": action, "job_id": job_id, "job_revision": job_revision,
+            "occurrence_id": occurrence, "snooze_generation": expected_generation,
+            "requested_due_at_utc": requested_due_at_utc,
+        })}
+        conflict = False
+        with self._transaction() as connection:
+            existing = connection.execute(
+                "SELECT * FROM scheduler_inbox WHERE event_id=?", (event_id,)
+            ).fetchone()
+            duplicate = existing is not None
+            if existing is not None:
+                conflict = (existing["state"] != "APPLIED"
+                            or existing["event_type"] != "scheduler.notification.action")
+                if not conflict:
+                    if existing["content_record_id"] is None:
+                        # Legacy rows can be upgraded only by an exact original frame.
+                        conflict = existing["semantic_sha256"] != semantic_sha256
+                    else:
+                        conflict = self._get_content_tx(connection, existing["content_record_id"]) != identity
+                if conflict:
+                    connection.execute(
+                        "UPDATE scheduler_inbox SET state='QUARANTINED' WHERE event_id=?", (event_id,)
+                    )
+            else:
+                if action == "CANCEL":
+                    if requested_due_at_utc is not None:
+                        raise OrchestratorError("invalid_request", status=400)
+                    self._cancel_job_tx(connection, job_id, job_revision, selected, event_id)
+                elif action == "SNOOZE" and requested_due_at_utc is not None:
+                    self._snooze_tx(
+                        connection, job_id=job_id, job_revision=job_revision,
+                        occurrence=occurrence, snooze_until_at_utc=requested_due_at_utc,
+                        cause_event_id=event_id, now=selected, expected_generation=expected_generation,
+                    )
+                else:
+                    raise OrchestratorError("invalid_request", status=400)
+                connection.execute(
+                    """INSERT INTO scheduler_inbox(
+                       event_id,semantic_sha256,protocol,event_type,state,created_at,applied_at
+                       ) VALUES(?,?,?,'scheduler.notification.action','APPLIED',?,?)""",
+                    (event_id, semantic_sha256, SCHEDULER_PROTOCOL, utc_text(selected), utc_text(selected)),
+                )
+            if not conflict:
+                if existing is None or existing["content_record_id"] is None:
+                    record_id = self._put_content_tx(
+                        connection, record_type="NATIVE_ACTION_IDENTITY", record_id=new_uuid4(),
+                        job_id=None, job_revision=0, value=identity, now=selected,
+                    )
+                    connection.execute(
+                        "UPDATE scheduler_inbox SET content_record_id=? WHERE event_id=?", (record_id, event_id)
+                    )
                 self._append_outbox_tx(
                     connection,
                     event_type="scheduler.notification.action_result",
                     payload={
                         "action_event_id": event_id,
-                        "result": "DUPLICATE",
-                        "reason_code": "duplicate_action",
+                        "result": "DUPLICATE" if duplicate else "APPLIED",
+                        "reason_code": "duplicate_action" if duplicate else "action_applied",
                     },
-                    expires_at=selected + timedelta(seconds=30),
-                    now=selected,
-                    entity_id=event_id,
+                    expires_at=selected + timedelta(seconds=30), now=selected, entity_id=event_id,
                 )
-            return False
-        with self._transaction() as connection:
-            existing = connection.execute(
-                "SELECT semantic_sha256 FROM scheduler_inbox WHERE event_id=?", (event_id,)
-            ).fetchone()
-            if existing is not None:
-                if existing["semantic_sha256"] != semantic_sha256:
-                    raise OrchestratorError("protocol.conflicting_duplicate", status=409)
-                return False
-            if action == "CANCEL":
-                if requested_due_at_utc is not None:
-                    raise OrchestratorError("invalid_request", status=400)
-                self._cancel_job_tx(connection, job_id, job_revision, selected, event_id)
-            elif action == "SNOOZE" and requested_due_at_utc is not None:
-                self._snooze_tx(
-                    connection,
-                    job_id=job_id,
-                    job_revision=job_revision,
-                    occurrence=occurrence,
-                    snooze_until_at_utc=requested_due_at_utc,
-                    cause_event_id=event_id,
-                    now=selected,
-                    expected_generation=expected_generation,
-                )
-            else:
-                raise OrchestratorError("invalid_request", status=400)
-            connection.execute(
-                """INSERT INTO scheduler_inbox(
-                   event_id,semantic_sha256,protocol,event_type,state,created_at,applied_at
-                   ) VALUES(?,?,?,'scheduler.notification.action','APPLIED',?,?)""",
-                (event_id, semantic_sha256, SCHEDULER_PROTOCOL, utc_text(selected), utc_text(selected)),
-            )
-            self._append_outbox_tx(
-                connection,
-                event_type="scheduler.notification.action_result",
-                payload={
-                    "action_event_id": event_id,
-                    "result": "APPLIED",
-                    "reason_code": "action_applied",
-                },
-                expires_at=selected + timedelta(seconds=30),
-                now=selected,
-                entity_id=event_id,
-            )
-        return True
+        if conflict:
+            raise OrchestratorError("protocol.conflicting_duplicate", status=409)
+        return not duplicate
 
     def record_delivery_receipt(
         self,

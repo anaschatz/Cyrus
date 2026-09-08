@@ -104,6 +104,55 @@ class MaterializeOrchestratorConfigTests(unittest.TestCase):
         if os.name != "nt":
             self.assertEqual(self.output.stat().st_mode & 0o777, 0o600)
 
+    def test_failed_validation_preserves_a_replacement_file(self) -> None:
+        rendered = io.StringIO()
+        real_load = OrchestratorConfig.load
+        replaced = self.root / "published-original.json"
+
+        def replace_before_validation(path):
+            if Path(path) == self.output:
+                self.output.rename(replaced)
+                self.output.write_bytes(b"competing writer")
+                raise ValueError("synthetic validation failure")
+            return real_load(path)
+
+        with (
+            patch.object(sys, "argv", self.arguments()),
+            patch.object(
+                MATERIALIZER.OrchestratorConfig,
+                "load",
+                side_effect=replace_before_validation,
+            ),
+            redirect_stdout(rendered),
+        ):
+            self.assertEqual(MATERIALIZER.main(), 2)
+        self.assertEqual(self.output.read_bytes(), b"competing writer")
+        self.assertTrue(replaced.exists())
+        self.assertEqual(list(self.root.glob(".orchestrator-*")), [])
+        self.assertNotIn(str(self.root), rendered.getvalue())
+
+    def test_failed_validation_removes_only_its_published_file(self) -> None:
+        rendered = io.StringIO()
+        real_load = OrchestratorConfig.load
+
+        def fail_after_publication(path):
+            if Path(path) == self.output:
+                raise ValueError("synthetic validation failure")
+            return real_load(path)
+
+        with (
+            patch.object(sys, "argv", self.arguments()),
+            patch.object(
+                MATERIALIZER.OrchestratorConfig,
+                "load",
+                side_effect=fail_after_publication,
+            ),
+            redirect_stdout(rendered),
+        ):
+            self.assertEqual(MATERIALIZER.main(), 2)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(list(self.root.glob(".orchestrator-*")), [])
+
     def test_noncanonical_generated_token_fails_closed_and_is_removed(self) -> None:
         rendered = io.StringIO()
         with (

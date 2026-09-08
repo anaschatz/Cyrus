@@ -59,7 +59,13 @@ randomness from the value itself.
 After both component configs reference the same key, create the private stack
 file outside version control. The command writes it atomically with mode `0600`
 and validates every referenced file, endpoint, model alias and inference
-qualification digest:
+qualification digest. Stack and inference JSON documents are bounded to 4 MiB
+and reject duplicate keys, non-finite numbers and invalid object shapes.
+Component configuration loaders retain their own limits. Files are read and
+hashed through stable regular-file descriptors; executable runner permissions
+remain supported. Successful `init` or `validate` establishes configuration
+consistency. Run the qualified inference service and require the live `status`
+checks before treating the stack as ready:
 
 ```zsh
 PYTHONPATH=orchestrator/src:src:inference/src:research/src \
@@ -147,6 +153,11 @@ orchestrator/.venv/bin/python -m jarvis_orchestrator.stack_cli \
   --rotate-weak-bearer-tokens
 ```
 
+If preparation fails, rollback removes only the migration's four output files.
+Unexpected contents are preserved. A `migration_rollback_failed` result means
+the output needs private inspection; use a fresh output directory for the next
+attempt instead of reusing the partial one. Legacy inputs remain unchanged.
+
 The flag rotates the configured inline Orchestrator bearer tokens only in the
 fresh v2 bundle. It never edits the v1 manifest or component configs. Start all
 consumers from the generated v2 paths, validate the new stack, then require
@@ -185,9 +196,13 @@ binaries, and regenerate native runtime evidence whose profile fingerprint was
 created before the authentication protocol became part of that profile.
 
 Operational live, model-failure, restart and soak reports now use their `/2`
-schemas and bind `voice_auth_protocol`; the aggregate is
-`operational-ready-gate/2`. Older `/1` transport, restart, soak or aggregate
-evidence is rejected. A secret-only rotation with unchanged binaries and
+schemas and bind `voice_auth_protocol`. The current aggregate is
+`operational-ready-gate/4` inside a signed `jarvis.readiness-evidence/2`
+envelope, with pinned signer trust and qualification-cohort checks. Legacy
+plain reports, `jarvis.readiness-evidence/1` envelopes and older aggregates
+cannot establish current operational readiness. See the
+[operational readiness guide](../orchestrator/docs/operational-ready-gate-v1.md)
+for the full evidence requirements. A secret-only rotation with unchanged binaries and
 runtime profile does not retroactively invalidate component acoustic evidence,
 but fresh `status` and `e2e` results are required to prove that both components
 were updated consistently.

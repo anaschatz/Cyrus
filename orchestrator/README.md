@@ -250,7 +250,8 @@ for the qualification inventory and limitations.
 
 Explicit retrospective deletion is equally closed: `Forget that…` or
 `Ξέχασε ότι…` deletes only when the normalized command target equals exactly
-one stored record in the active conversation. Zero or multiple matches are
+one active stored record belonging to the installation's stable local-owner
+principal, including records saved in earlier conversations. Zero or multiple matches are
 content-free audited outcomes and leave all records unchanged; no model selects
 the record to delete. A pre-commit crash leaves no mutation or acknowledgement;
 a post-commit restart replays the same response without applying the command
@@ -276,13 +277,16 @@ identical before/after fingerprints of the authoritative memory/approval/tool
 state. The production composition gives the shadow adapter only a defensive
 read-only history facade, never the `OrchestratorStore`.
 
-Shadow mode is off by default. Setting `memory_shadow_enabled` only activates
-the boundary; a separately qualified memory adapter must still be injected.
+Shadow mode is off by default. Setting `memory_shadow_enabled` activates the
+composed audit-only adapter. Both runtime modes use gate v4.
 `memory_shadow_mode: "structured_fallback"` retains the schema-constrained
 local fallback. For local inference appliances without JSON Schema support,
 the conservative trial setting `memory_shadow_mode: "deterministic_only"`
-uses gate v3 for clear commands and resolves every ambiguous or hedged command
-to `ignore`; it never makes a lifecycle model call.
+uses gate v4 for clear commands and resolves every ambiguous or hedged command
+to `ignore`; it never makes a lifecycle model call. Gate v4 fixes word-prefix,
+empty-command and punctuated-hedge errors. Frozen gates v1–v3 and their evidence
+remain available for historical reproduction. The v4 regression checks are not
+live-service or production-memory qualification.
 Final voice responses default to a closed 256-token ceiling through
 `final_response_output_tokens` (valid range 32–1024), preventing a local
 model that misses its stop condition from consuming the former 1,024-token
@@ -343,8 +347,9 @@ Gate v3 changed only normalization: input, prefixes, markers and hedge words
 now share one accent-insensitive boundary. Its first frozen corpus passed
 48/48, split evenly between English and Greek, including 28/28 explicit
 commands, 12/12 safe ignores and 8/8 fallback routes. Gate v3 is therefore the
-deterministic gate used by the source-run shadow composition. This promotion
-applies only to the off-by-default, non-authoritative shadow pilot; it does not
+deterministic gate originally used by the source-run shadow composition; the
+current composition uses gate v4 as described above. That historical promotion
+applied only to the off-by-default, non-authoritative shadow pilot; it does not
 enable durable production memory.
 
 The first frozen service-level pilot runs gate v3 through the complete

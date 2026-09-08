@@ -11,7 +11,7 @@ import asyncio
 import time
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from .runtime_supervisor import RuntimeSupervisor
 from .scheduler_store import SchedulerStore
@@ -77,7 +77,7 @@ class SchedulerWorker:
         now = self.wall_clock()
         if now.tzinfo is None or now.utcoffset() != UTC.utcoffset(now):
             raise RuntimeError("scheduler wall clock must return UTC")
-        wall_ms = int(now.timestamp() * 1000)
+        wall_ms = (now - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(milliseconds=1)
         mono = self.monotonic_ns()
         jumped = False
         if self._last_wall_ms is not None and self._last_monotonic_ns is not None:

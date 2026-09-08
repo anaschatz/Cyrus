@@ -15,7 +15,11 @@ enables the extension and supplies exact SHA-256 bindings for both:
 
 Both files are parsed with closed field sets. Their protocol, CPython 3.11.14,
 Unicode DB 14.0.0, AEAD, journal, platform, adapter, lock provider, artifact,
-permission, and native test bindings must match the running artifacts. A missing
+permission, and native test bindings must match the running artifacts. Each
+scheduler compatibility/qualification document must be a regular UTF-8 JSON file
+of at most 1 MiB, with unique object keys, finite numbers and valid Unicode
+scalar values. Its configured digest binds the exact bytes read in that same
+bounded snapshot. A missing
 key, mismatched digest, unsupported platform, missing permission, or failed
 qualification prevents scheduler capability advertisement. There is no downgrade
 to `jarvis.voice/1` response events.
@@ -86,6 +90,12 @@ outbox frame closes the Voice callback. If a connection is lost before that
 result, Voice retransmits the same action `event_id` on reconnect and the
 Orchestrator returns `DUPLICATE` without repeating the mutation.
 
+Current action records retain an encrypted command digest so this also works
+when restart changes the Voice session or frame timestamp. The original wire
+hash is preserved. Legacy inbox records containing only that wire hash can be
+upgraded by an exact-hash replay; replay with different transport headers cannot
+be verified from those legacy records and is rejected as a conflicting duplicate.
+
 The signed macOS callback boundary is implemented as the separate
 `jarvis-scheduler-native` process. Voice starts the
 exact digest- and code-identity-pinned executable directly with `shell=False`;
@@ -120,3 +130,11 @@ authentication and reconnect replay all pass. Voice advertises
 `scheduler_notification_actions` plus the resulting qualification digest; the
 Orchestrator requires the independently pinned expected digest before tracking
 that connection as action-capable.
+
+The physical runner now asks for explicit observation of initial delivery,
+replacement without duplicates, removal from Notification Center, and silent
+delivery. A successful native API receipt alone does not satisfy these visible
+checks. Callback replay also reopens the encrypted journal under a new session
+and verifies both the stable action ID and its full payload. This portable
+recovery check does not independently qualify server-side deduplication or
+OS behavior after a helper crash.

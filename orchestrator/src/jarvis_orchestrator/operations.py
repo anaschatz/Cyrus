@@ -16,6 +16,7 @@ import os
 import sqlite3
 import tempfile
 from collections.abc import Mapping
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ from .memory_backup import (
 from .private_state import (
     PRIVATE_FILE_MODE,
     PrivateStateError,
+    _open_private_fd,
     absolute_path_no_resolve,
     assert_private_database,
     assert_private_log_family,
@@ -558,11 +560,11 @@ def database_diagnostics(path: str | Path) -> DatabaseDiagnosticsV1:
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    try:
+        with open(path, "rb", opener=lambda name, flags: _open_private_fd(Path(name), flags, create=False)) as source:
+            return hashlib.file_digest(source, "sha256").hexdigest()
+    except PrivateStateError as exc:
+        raise OperationalError(exc.code) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -691,14 +693,11 @@ def _inspect_memory_backup_database(
 
 
 def _fsync_file(path: Path) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if os.name == "posix":
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        with open(path, "rb", opener=lambda name, flags: _open_private_fd(Path(name), flags, create=False)) as source:
+            os.fsync(source.fileno())
+    except PrivateStateError as exc:
+        raise OperationalError(exc.code) from exc
 
 
 def _fsync_directory(path: Path) -> None:
@@ -754,18 +753,10 @@ def _write_private_temporary(
 
 def _read_private_bounded(path: Path, *, maximum: int) -> bytes:
     try:
-        assert_private_regular_file(path)
-        before = path.lstat()
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-        if os.name == "posix":
-            flags |= getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(path, flags)
+        descriptor = _open_private_fd(path, os.O_RDONLY, create=False)
         try:
             opened = os.fstat(descriptor)
-            if (before.st_dev, before.st_ino) != (
-                opened.st_dev,
-                opened.st_ino,
-            ) or not 1 <= opened.st_size <= maximum:
+            if not 1 <= opened.st_size <= maximum:
                 raise OperationalError("memory_backup_manifest_invalid")
             chunks: list[bytes] = []
             remaining = maximum + 1
@@ -857,19 +848,9 @@ def _copy_private_database_exact(source: Path, destination: Path) -> str:
 
     try:
         assert_private_database(source)
-        assert_private_regular_file(destination)
-        before = source.lstat()
-        read_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-        write_flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0)
-        if os.name == "posix":
-            read_flags |= getattr(os, "O_NOFOLLOW", 0)
-            write_flags |= getattr(os, "O_NOFOLLOW", 0)
-        source_descriptor = os.open(source, read_flags)
+        source_descriptor = _open_private_fd(source, os.O_RDONLY, create=False)
         try:
-            opened = os.fstat(source_descriptor)
-            if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
-                raise OperationalError("backup_verification_failed")
-            destination_descriptor = os.open(destination, write_flags)
+            destination_descriptor = _open_private_fd(destination, os.O_WRONLY | os.O_TRUNC, create=False)
             digest = hashlib.sha256()
             try:
                 while True:
@@ -928,24 +909,15 @@ def backup_database(
     if not before.integrity_ok:
         raise OperationalError("source_database_corrupt")
     _inspect_memory_backup_database(source_path)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination_path.name}.", suffix=".tmp", dir=destination_path.parent
+    temporary = _write_private_temporary(
+        destination_path.parent, prefix=f".{destination_path.name}.", suffix=".tmp", payload=b""
     )
-    if os.name == "posix":
-        os.fchmod(descriptor, PRIVATE_FILE_MODE)
-    os.close(descriptor)
-    temporary = Path(temporary_name)
     manifest_temporary: Path | None = None
     try:
-        source_connection = sqlite3.connect(
+        with closing(sqlite3.connect(
             f"{source_path.as_uri()}?mode=ro", uri=True
-        )
-        target_connection = sqlite3.connect(temporary)
-        try:
+        )) as source_connection, closing(sqlite3.connect(temporary)) as target_connection:
             source_connection.backup(target_connection, pages=256, sleep=0.01)
-        finally:
-            target_connection.close()
-            source_connection.close()
         _fsync_file(temporary)
         inspection = _inspect_memory_backup_database(temporary, immutable=True)
         verified = _database_diagnostics(temporary, immutable=True)
@@ -976,16 +948,13 @@ def backup_database(
             except MemoryBackupError as exc:
                 raise OperationalError(exc.code) from exc
         sidecar = memory_backup_manifest_path(destination_path)
+        _require_no_sqlite_sidecars(destination_path, code="memory_backup_destination_sqlite_sidecar_present")
         try:
             os.replace(temporary, destination_path)
-            if os.name == "posix":
-                destination_path.chmod(PRIVATE_FILE_MODE)
             if manifest is not None:
                 if manifest_temporary is None:
                     raise OperationalError("memory_backup_manifest_unavailable")
                 os.replace(manifest_temporary, sidecar)
-                if os.name == "posix":
-                    sidecar.chmod(PRIVATE_FILE_MODE)
             else:
                 unlink_private_file(sidecar, missing_ok=True)
             _fsync_directory(destination_path.parent)
@@ -1078,15 +1047,9 @@ def restore_database(
         ):
             raise OperationalError("memory_backup_provider_active_mismatch")
     with ProcessLock(service_lock):
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=f".{destination_path.name}.",
-            suffix=".restore",
-            dir=destination_path.parent,
+        temporary = _write_private_temporary(
+            destination_path.parent, prefix=f".{destination_path.name}.", suffix=".restore", payload=b""
         )
-        if os.name == "posix":
-            os.fchmod(descriptor, PRIVATE_FILE_MODE)
-        os.close(descriptor)
-        temporary = Path(temporary_name)
         try:
             copied_sha256 = _copy_private_database_exact(backup_path, temporary)
             restored_inspection = _inspect_memory_backup_database(
@@ -1130,10 +1093,9 @@ def restore_database(
                     raise OperationalError(exc.code) from exc
                 if final_provider.active_version != manifest.provider_active_version:
                     raise OperationalError("memory_backup_provider_active_mismatch")
+            _require_no_sqlite_sidecars(destination_path, code="restore_destination_sqlite_sidecar_present")
             try:
                 os.replace(temporary, destination_path)
-                if os.name == "posix":
-                    destination_path.chmod(PRIVATE_FILE_MODE)
                 _fsync_directory(destination_path.parent)
                 assert_private_database(destination_path)
             except (OSError, PrivateStateError) as exc:
