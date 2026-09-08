@@ -502,12 +502,13 @@ PYTHONPATH=src python scripts/run_greektts15_training.py \
   "$PWD/artifacts/greektts15-training/f1-plan.json"
 ```
 
-Training will begin with two short branches from the same pinned adapter at
-learning rates `5e-6` and `1e-5`. Checkpoints at 25, 50, and 100 optimizer
-steps must pass validation loss, fixed Greek pronunciation fixtures, memory,
-and human listening gates. A longer run is allowed only after one branch
-clearly improves the untouched baseline. No result is called production-ready
-from training loss or ASR alone.
+The initial `5e-6` and `1e-5` branches described above were completed and
+rejected after 25 updates; this historical plan does not authorize restarting
+or extending them. The current voice candidate and remaining runtime gates are
+recorded in `docs/greektts15-f1-approved-candidate.json`. Streaming and generation
+interruption now have recorded evidence, while realtime factor and native
+scheduler integration remain incomplete. Training loss or ASR alone cannot
+establish production readiness.
 
 STOMA audio is CC-BY-4.0. GreekTTS-1.5 publishes its adapter under Apache-2.0,
 while the Orpheus base inherits its own upstream model terms. Packaging or

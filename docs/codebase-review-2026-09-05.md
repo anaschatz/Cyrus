@@ -1,6 +1,6 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **349 of 349 test files** and **272 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **349 of 349 test files** and **308 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
 Updated **2026-09-08**. Latest complete runs: Voice **898 tests (883 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **274 unit tests (266 passed, 8 skipped)** plus **2 official SDK tests passed**. Anamnesis **900 tests (898 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
@@ -2993,3 +2993,14 @@ Corrected the W2 analysis's claim that its manifest and raw logs are available f
 **Historical replay limitation:** current-engine replay rejects previously accepted initial `at` deltas in wd3_03, wd3_04 and wd3_10 because their times are not strictly after their source events. The strict reporter correctly stops on acceptance disagreement. Therefore the old W2 candidate scores were not reproduced against the current engine; no compatibility bypass or frozen-result rewrite was applied. The analysis now states this limitation.
 
 Coverage: **401/401 code, 349/349 tests, 272/308 support; 1022/1058 entries**. **36 support files**, final disposition of open findings and the final quality assessment remain. Exact staged Ponytail review and active hooks apply; no push requested.
+
+
+### Final support artifacts checkpoint — 2026-09-08
+
+Completed the remaining **36 support files**: eleven Orchestrator datasets/results, eight TTS training/candidate records, three uv locks and fourteen isolated training dependency inputs/locks. Read all 82 translation development and 25 holdout fixtures, all 160 lifecycle cases and eight service sequences. Their exact/keyword expectations cover bounded examples, not general semantic correctness. The retained lifecycle probes have only three live turns; the translation/native evidence was not rerun on hardware. The focused dataset/translation/shadow selection passed **41 tests** in 0.226 seconds (`/tmp/cyrus-orchestrator-support-tests.log`).
+
+Read the complete TTS training histories and candidate manifests. Piper experiments remain rejected for articulation; the approved GreekTTS F1 voice still fails production runtime gates; Kokoro's 1.51–2.91 recorded RTF and unmeasured acoustic/coexistence gates remain unpromoted. Corrected the GreekTTS runbook's stale closing instruction to start the already rejected high-rate branches and linked the current candidate's actual outstanding gates. The related portable training/runtime/qualification selection passed **98 tests** in 1.769 seconds (`/tmp/cyrus-tts-support-tests.log`). Historical listening approvals and recorded physical measurements were not independently re-established.
+
+Dependency review inspected all input declarations and every normalized uv package/source/dependency/marker record. Structured checks covered all **2669 wheel/sdist entries** (HTTPS URLs, positive sizes, SHA-256 syntax and referenced package names) and all **244 pinned requirements entries with 4277 hash alternatives**. This checks generated lock structure, not third-party package internals or downloaded wheel contents. All three `uv lock --check --offline --no-python-downloads` checks passed (97/109/46 packages); the initial macOS sandbox panic was resolved by running the same read-only checks outside the sandbox. No network access, installation, lock regeneration or dependency upgrade was performed. Native target resolution and vulnerability auditing are separate work.
+
+Inspection coverage is now **401/401 code, 349/349 tests, 308/308 support; 1058/1058 entries**. Final disposition of earlier open findings and the overall quality assessment remain in progress. Exact staged Ponytail review and active hooks apply; no push requested.
