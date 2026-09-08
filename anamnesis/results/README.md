@@ -1,5 +1,12 @@
 # Results
 
+Checkout availability, reviewed 2026-09-08: `results/runs/` is not tracked in
+this Git checkout. The publication history below describes the original
+artifacts, not files included in a fresh clone. OpenMemory v1 and v4-v7 raw
+logs are retained locally with matching provenance hashes; v2-v3 raw logs and
+the cited historical source commits are unavailable here. Reproducing the
+original reports requires those missing artifacts and source revisions.
+
 No preregistered benchmark result is claimed yet. A strict 10-scenario
 zero-provider-cost [local smoke diagnostic](local_smoke.md) is available with
 its [CSV](local_smoke.csv), [failure analysis](local_smoke_analysis.md), and

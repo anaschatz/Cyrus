@@ -2960,3 +2960,14 @@ Completed 31 support-file inspections: research/architecture/history and writer/
 Focused contract, scenario and writer suites passed **182 tests, 1 expected failure** in 2.07 seconds (`/tmp/cyrus-anamnesis-contract-docs-tests.log`). All populated existing static path/hash pairs in the six templates match current bytes; both Ollama pins pass the actual typed loader (5 blobs/2,497,293,803 bytes and 4 blobs/6,594,474,711 bytes). These checks do not independently validate historical raw runs, current hosted prices, human reviewer metadata or model blob contents. No production code changed.
 
 Coverage: **401/401 code, 349/349 tests, 172/308 support; 922/1058 entries**. **136 support files**, open findings and final quality assessment remain. Exact staged Ponytail review and active hooks apply; no push requested.
+
+
+### OpenMemory retained evidence checkpoint — 2026-09-08
+
+Completed 50 support-file inspections: eleven frozen protocols, sixteen fixtures/manifests/pins, twenty-two OpenMemory result/analysis/provenance files and the results index. Manually checked all case text and expected action semantics. V1-v4 use frozen recall text; v6-v7 use a local FastEmbed index through the non-authoritative boundary, not the upstream Cavira SDK. The small diagnostic gates and exact canonical subjects do not establish general recall quality or the main research hypothesis.
+
+**Publication documentation corrected:** the results index and v4 analysis called raw runs tracked, but none is tracked in this checkout. OpenMemory v1 and v4-v7 raw artifacts exist locally and match provenance hashes; v2-v3 raw logs and all eight referenced measurement/reporter commits are unavailable. The index now distinguishes original publication history from clone availability. Historical source-hash differences cannot be resolved against missing commits. Frozen tables, provenance and run bytes were preserved.
+
+All current populated input/output path hashes match except source/lock files changed since the unavailable historical revisions. Independently decoded available v4-v7 raw model outputs into the recorded decisions, recomputed their frozen scores (and v7 canonical transformations), and reproduced all four published CSVs byte-for-byte. This is internal consistency evidence, not successful historical checkout validation or fresh runtime/retrieval attestation. Logs: `/tmp/cyrus-openmemory-retained-recompute.log`. The complete tracked OpenMemory/vLLM test selection passed **300 tests, 1 expected unavailable-history failure** in 11.07 seconds (`/tmp/cyrus-openmemory-evidence-tests.log`). No production code or model execution changed.
+
+Coverage: **401/401 code, 349/349 tests, 222/308 support; 972/1058 entries**. **86 support files**, remaining findings and final quality assessment are still pending. Exact staged Ponytail review and active hooks apply; no push requested.

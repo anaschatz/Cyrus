@@ -65,7 +65,7 @@ boundary and all non-authoritative recall protections. This cannot be repaired
 or rerun on v4; a new schema cell requires fresh v5 cases frozen before the
 intervention.
 
-The exact raw run is tracked at
+The exact raw run is retained locally, but is not tracked in this Git checkout, at
 `results/runs/local/openmemory_vllm_v4/run.json` and is bound by the
 [provenance sidecar](local_openmemory_vllm_v4.provenance.json). The strict
 [table](local_openmemory_vllm_v4.md) and
