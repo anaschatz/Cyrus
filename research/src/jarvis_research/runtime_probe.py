@@ -92,7 +92,11 @@ def _egress_matrix() -> bool:
             )
             header = bytearray()
             while b"\r\n\r\n" not in header and len(header) < 16 * 1024:
-                header.extend(connection.recv(4096))
+                chunk = connection.recv(4096)
+                if not chunk:
+                    connection.close()
+                    raise OSError("connect_peer_closed")
+                header.extend(chunk)
             return connection, bytes(header)
 
         connection, header = connect()

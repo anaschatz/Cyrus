@@ -16,6 +16,7 @@ from jarvis_orchestrator.research_security import (
     DIRECT_MAX_BODY_BYTES,
     DIRECT_MAX_REDIRECTS,
     FIXED_USER_AGENT,
+    ROBOTS_DEADLINE_SECONDS,
     ROBOTS_MAX_BYTES,
     ROBOTS_MAX_REDIRECTS,
     RetryBudgetV1,
@@ -128,7 +129,7 @@ class SearXNGSearchAdapter:
                 if len(selected) == limit:
                     break
             return tuple(selected)
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (KeyError, TypeError, ValueError, RecursionError) as exc:
             raise RuntimeError("searxng_contract_failed") from exc
 
 
@@ -136,7 +137,7 @@ class DirectHTTPFetcher:
     def __init__(self, client: httpx.AsyncClient, *, retry_budget: RetryBudgetV1 | None = None) -> None:
         self._client = client
         self._retry = retry_budget or RetryBudgetV1()
-        self._robots: dict[str, str] = {}
+        self._robots: dict[str, tuple[int, bytes]] = {}
 
     @classmethod
     def with_egress_proxy(
@@ -167,43 +168,34 @@ class DirectHTTPFetcher:
 
     async def fetch(self, url: str, *, deadline_seconds: float = 45.0) -> FetchResultV1:
         requested = validate_public_url(url)
-        origin = self._origin(requested)
-        decision = self._robots.get(origin)
-        if decision is None:
-            decision = await self._check_robots(origin, self._robots_target(requested))
-            self._robots[origin] = decision
-        if decision != RobotsDecision.ALLOW:
-            raise RuntimeError("robots_disallowed" if decision == RobotsDecision.DISALLOW else "robots_failed_closed")
         async with asyncio.timeout(deadline_seconds):
+            decision = await self._check_robots(self._origin(requested), self._robots_target(requested))
+            if decision != RobotsDecision.ALLOW:
+                raise RuntimeError("robots_disallowed" if decision == RobotsDecision.DISALLOW else "robots_failed_closed")
             current = requested
             for redirects in range(DIRECT_MAX_REDIRECTS + 1):
                 response = await self._request_with_retry(current)
-                if response.status_code in {301, 302, 303, 307, 308}:
+                try:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        if redirects == DIRECT_MAX_REDIRECTS:
+                            raise RuntimeError("redirect_limit")
+                        location = response.headers.get("location")
+                        if not location:
+                            raise RuntimeError("redirect_missing_location")
+                    else:
+                        if response.status_code != 200:
+                            raise RuntimeError("fetch_http_status")
+                        mime = response.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
+                        if mime not in ALLOWED_MIME:
+                            raise RuntimeError("fetch_mime_forbidden")
+                        body = await self._bounded_body(response)
+                        return FetchResultV1(requested, current, mime, body, redirects)
+                finally:
                     await response.aclose()
-                    if redirects == DIRECT_MAX_REDIRECTS:
-                        raise RuntimeError("redirect_limit")
-                    location = response.headers.get("location")
-                    if not location:
-                        raise RuntimeError("redirect_missing_location")
-                    current = validate_public_url(urljoin(current, location))
-                    redirected_origin = self._origin(current)
-                    redirected = self._robots.get(redirected_origin)
-                    if redirected is None:
-                        redirected = await self._check_robots(redirected_origin, self._robots_target(current))
-                        self._robots[redirected_origin] = redirected
-                    if redirected != RobotsDecision.ALLOW:
-                        raise RuntimeError("redirect_robots_failed_closed")
-                    continue
-                if response.status_code != 200:
-                    await response.aclose()
-                    raise RuntimeError("fetch_http_status")
-                mime = response.headers.get("content-type", "").split(";", 1)[0].strip().casefold()
-                if mime not in ALLOWED_MIME:
-                    await response.aclose()
-                    raise RuntimeError("fetch_mime_forbidden")
-                body = await self._bounded_body(response)
-                await response.aclose()
-                return FetchResultV1(requested, current, mime, body, redirects)
+                current = validate_public_url(urljoin(current, location))
+                redirected = await self._check_robots(self._origin(current), self._robots_target(current))
+                if redirected != RobotsDecision.ALLOW:
+                    raise RuntimeError("redirect_robots_failed_closed")
         raise AssertionError("unreachable")
 
     async def _request_with_retry(self, url: str) -> httpx.Response:
@@ -235,30 +227,34 @@ class DirectHTTPFetcher:
         return response
 
     async def _check_robots(self, origin: str, path: str) -> str:
+        cached = self._robots.get(origin)
+        if cached is not None:
+            return robots_decision(status=cached[0], body=cached[1], path=path)
         current = origin + "/robots.txt"
-        for redirects in range(ROBOTS_MAX_REDIRECTS + 1):
-            try:
-                async with asyncio.timeout(3.0):
+        try:
+            async with asyncio.timeout(ROBOTS_DEADLINE_SECONDS):
+                for redirects in range(ROBOTS_MAX_REDIRECTS + 1):
                     response = await self._request_with_retry(current)
-            except (TimeoutError, httpx.HTTPError):
-                return RobotsDecision.FAIL_CLOSED
-            if response.status_code in {301, 302, 303, 307, 308}:
-                await response.aclose()
-                if redirects == ROBOTS_MAX_REDIRECTS or not response.headers.get("location"):
-                    return RobotsDecision.FAIL_CLOSED
-                current = validate_public_url(urljoin(current, response.headers["location"]))
-                continue
-            body = await self._read_raw(response, ROBOTS_MAX_BYTES)
-            status = response.status_code
-            await response.aclose()
-            return robots_decision(status=status, body=body, path=path)
+                    try:
+                        if response.status_code in {301, 302, 303, 307, 308}:
+                            if redirects == ROBOTS_MAX_REDIRECTS or not response.headers.get("location"):
+                                return RobotsDecision.FAIL_CLOSED
+                            current = validate_public_url(urljoin(current, response.headers["location"]))
+                            continue
+                        status = response.status_code
+                        body = await self._bounded_body(response, limit=ROBOTS_MAX_BYTES) if 200 <= status < 300 else b""
+                        self._robots[origin] = (status, body)
+                        return robots_decision(status=status, body=body, path=path)
+                    finally:
+                        await response.aclose()
+        except (TimeoutError, httpx.HTTPError, RuntimeError, ValueError, zlib.error):
+            return RobotsDecision.FAIL_CLOSED
         return RobotsDecision.FAIL_CLOSED
 
     @staticmethod
     def _origin(url: str) -> str:
         parsed = urlsplit(url)
-        port = f":{parsed.port}" if parsed.port is not None else ""
-        return f"{parsed.scheme}://{parsed.hostname}{port}"
+        return f"{parsed.scheme}://{parsed.netloc}"
 
     @staticmethod
     def _robots_target(url: str) -> str:
@@ -280,14 +276,14 @@ class DirectHTTPFetcher:
             chunks.append(chunk)
         return b"".join(chunks)
 
-    async def _bounded_body(self, response: httpx.Response) -> bytes:
+    async def _bounded_body(self, response: httpx.Response, *, limit: int = DIRECT_MAX_BODY_BYTES) -> bytes:
         if response.is_stream_consumed:
-            if len(response.content) > DIRECT_MAX_BODY_BYTES:
+            if len(response.content) > limit:
                 raise RuntimeError("decompressed_body_too_large")
             return response.content
         encoding = response.headers.get("content-encoding", "identity").casefold().strip()
         if encoding in {"", "identity"}:
-            return await self._read_raw(response, DIRECT_MAX_BODY_BYTES)
+            return await self._read_raw(response, limit)
         if encoding == "gzip":
             decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
         elif encoding == "deflate":
@@ -299,15 +295,19 @@ class DirectHTTPFetcher:
         decompressed = 0
         async for chunk in response.aiter_raw():
             compressed += len(chunk)
-            if compressed > DIRECT_MAX_BODY_BYTES:
+            if compressed > limit:
                 raise RuntimeError("compressed_body_too_large")
-            value = decoder.decompress(chunk, DIRECT_MAX_BODY_BYTES - decompressed + 1)
+            value = decoder.decompress(chunk, limit - decompressed + 1)
             decompressed += len(value)
-            if decompressed > DIRECT_MAX_BODY_BYTES:
+            if decompressed > limit:
                 raise RuntimeError("decompressed_body_too_large")
             output.append(value)
-        value = decoder.flush(DIRECT_MAX_BODY_BYTES - decompressed + 1)
-        if decompressed + len(value) > DIRECT_MAX_BODY_BYTES:
+        if not decoder.eof:
+            raise RuntimeError("compressed_body_incomplete")
+        if decoder.unused_data:
+            raise RuntimeError("compressed_body_trailing_data")
+        value = decoder.flush(limit - decompressed + 1)
+        if decompressed + len(value) > limit:
             raise RuntimeError("decompressed_body_too_large")
         output.append(value)
         return b"".join(output)

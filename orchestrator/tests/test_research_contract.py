@@ -31,6 +31,7 @@ from jarvis_orchestrator.research import (
     reconstruct,
     render_bundle,
     resolve_research_status,
+    select_ranked_passages,
     validate_syntactic_citation_coverage,
 )
 
@@ -219,9 +220,39 @@ class ResearchContractTests(unittest.TestCase):
         )
         self.assertTrue(corroborates(anchor, candidate, **common))
         self.assertFalse(corroborates(anchor, candidate.replace("100", "101"), **common))
+        self.assertFalse(corroborates(anchor, candidate.replace("2026-08-10", "2026-10-08"), **common))
+        self.assertFalse(corroborates(anchor.replace("100", "10000"), candidate.replace("100", "20000"), **common))
+        self.assertFalse(corroborates(anchor.replace("100", "-100"), candidate, **common))
+        self.assertTrue(corroborates(anchor.replace("100", "+100"), candidate, **common))
         self.assertFalse(corroborates(anchor, candidate, **{**common, "relation": SpanRelation.CONFLICTS}))
         self.assertFalse(corroborates(anchor, candidate, **{**common, "conflict_candidate_present": True}))
         self.assertEqual(CORROBORATION_POLICY_VERSION, "jarvis-corroboration/1")
+
+    def test_model_span_offsets_reject_floats_and_boolean_endpoints(self) -> None:
+        for start, end in ((0.5, 50), (0, 50.5), (0, True)):
+            with self.subTest(start=start, end=end), self.assertRaises(ValueError):
+                SpanSelectionV1("price", "p01", start, end, SpanRelation.ANCHOR)
+
+    def test_long_paragraphs_produce_bounded_reconstructable_passages(self) -> None:
+        document = NormalizedDocumentV1.from_text(
+            "The published report contains a verified research finding with explanatory context. " * 16
+        )
+        passages = select_ranked_passages({"s1": document}, (SearchFacetV1("f1", "verified research finding"),))
+        self.assertTrue(passages)
+        for passage in passages:
+            self.assertLessEqual(passage.end_char - passage.start_char, 1000)
+            self.assertEqual(passage.document_hash, document.sha256)
+            self.assertTrue(document.text[passage.start_char:passage.end_char])
+
+    def test_global_passage_budget_does_not_starve_later_facets(self) -> None:
+        document = NormalizedDocumentV1.from_text("\n\n".join(
+            f"The official report number {index} provides a verified research finding with supporting context."
+            for index in range(4)
+        ))
+        facets = tuple(SearchFacetV1(f"f{index}", "verified research finding") for index in range(6))
+        passages = select_ranked_passages({"s1": document}, facets)
+        self.assertEqual(len(passages), 12)
+        self.assertEqual({passage.facet_id for passage in passages}, {facet.facet_id for facet in facets})
 
     def test_renderer_has_syntactic_citations_and_escapes_hostile_markdown(self) -> None:
         plan, _, _, bundle = fixture()

@@ -6,6 +6,7 @@ import asyncio
 import json
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from dataclasses import asdict
 from typing import Mapping
 
@@ -28,7 +29,12 @@ class LoopbackResearchAdapter:
     """Thin sidecar adapter; public-network policy remains in the sidecar/proxy."""
 
     def __init__(self, *, base_url: str, bearer_token: str, timeout_seconds: float = 45.0) -> None:
-        if not base_url.startswith(("http://127.0.0.1:", "http://[::1]:")) or base_url.rstrip("/").split("/")[-1] != "v1":
+        target = urlsplit(base_url)
+        if (
+            target.scheme != "http" or target.hostname not in {"127.0.0.1", "::1"}
+            or target.port is None or target.port == 0 or target.path not in {"/v1", "/v1/"}
+            or target.username is not None or target.query or target.fragment
+        ):
             raise ValueError("research endpoint must be fixed loopback /v1")
         if not bearer_token or len(bearer_token.encode("utf-8")) > 512:
             raise ValueError("bounded research bearer token is required")
@@ -74,7 +80,7 @@ class LoopbackResearchAdapter:
             raise RuntimeError("research_qualification_invalid")
         try:
             actual = json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise RuntimeError("research_qualification_invalid") from exc
         if not isinstance(actual, dict) or set(actual) != required or actual != dict(expected):
             raise RuntimeError("research_qualification_mismatch")
@@ -111,7 +117,7 @@ class LoopbackResearchAdapter:
             if set(parsed) != {"corpus"}:
                 raise ValueError("unexpected fields")
             return corpus_from_json(canonical_json(parsed["corpus"]))
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (KeyError, TypeError, ValueError, RecursionError) as exc:
             raise RuntimeError("research_sidecar_contract_failed") from exc
 
 

@@ -6,16 +6,19 @@ import json
 import tempfile
 import unittest
 from copy import deepcopy
+from dataclasses import asdict
 from pathlib import Path
 
 import _bootstrap  # noqa: F401
 import httpx
+from test_research_contract import corpus_fixture
 
 from jarvis_research.online_qualification import (
     DEFAULT_THRESHOLDS,
     BenchmarkV1,
     CaseEvaluationV1,
     RankedResultV1,
+    QrelV1,
     RegistryImageV1,
     OnlineRetrievalRunnerV1,
     classification_metrics,
@@ -31,6 +34,7 @@ from jarvis_research.online_qualification import (
     verify_evidence_digest,
     verify_quote_locator,
     verify_runtime_image,
+    _matches,
 )
 
 
@@ -151,6 +155,25 @@ class OnlineResearchQualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "case_set"):
             compute_retrieval_metrics(benchmark, [])
 
+    def test_online_parser_accepts_the_actual_research_corpus_wire_contract(self) -> None:
+        _, corpus, _, _ = corpus_fixture()
+        wire = json.loads(json.dumps({"corpus": asdict(corpus)}))
+        ranked, covered, size, retries = OnlineRetrievalRunnerV1._parse_corpus(wire)
+        self.assertEqual(ranked[0].url, corpus.sources[0].accepted_canonical_url)
+        self.assertEqual(covered, ("price",))
+        self.assertEqual(size, sum(document.byte_length for document in corpus.documents.values()))
+        self.assertEqual(retries, 0)
+
+    def test_qrel_urls_normalize_hosts_but_preserve_path_and_query_case(self) -> None:
+        qrel = QrelV1("one", "URL", "https://EXAMPLE.com/Article?q=Value", 2, True, ("answer",))
+        for url, expected in (
+            ("https://example.com:443/Article?q=Value", True),
+            ("https://example.com/article?q=Value", False),
+            ("https://example.com/Article?q=value", False),
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(_matches(qrel, RankedResultV1(url, "example.com", "s1", "PRIMARY")), expected)
+
     def test_live_runner_sends_only_benchmark_query_and_persists_sanitized_summaries(self) -> None:
         benchmark = reviewed_benchmark()
         outgoing = []
@@ -164,19 +187,36 @@ class OnlineResearchQualificationTests(unittest.TestCase):
                 "plan_hash": "a" * 64,
                 "sources": [{
                     "source_id": "source-1",
+                    "requested_url": "https://official.example/page",
+                    "final_url": "https://official.example/page",
                     "accepted_canonical_url": "https://official.example/page",
+                    "title": "Official publication",
+                    "publisher": "Publisher",
+                    "published_at": None,
+                    "date_provenance": "NONE",
+                    "retrieved_at": "2026-09-05T00:00:00.000Z",
+                    "authority_registry_version": "authority-registry/1",
                     "registrable_domain": "official.example",
                     "source_role": "PRIMARY",
+                    "independence_group_id": "ig-1",
+                    "normalized_document_hash": document_hash,
+                    "language_code": "en",
+                    "language_detector_version": "lid/1",
+                    "language_confidence": 0.99,
                 }],
                 "documents": {"source-1": {
-                    "version": "jarvis-research-text/1",
+                    "normalization_version": "jarvis-research-text/1",
                     "text": document,
                     "sha256": document_hash,
                     "character_length": len(document),
                     "byte_length": len(document.encode()),
                     "truncated": False,
                 }},
-                "passages": [{"facet_id": "answer"}],
+                "passages": [{
+                    "passage_id": "p01", "facet_id": "answer", "source_id": "source-1",
+                    "document_hash": document_hash, "start_char": 0, "end_char": len(document),
+                    "section_heading": None,
+                }],
                 "technical_failure_facets": [],
                 "network_retry_count": 0,
             }

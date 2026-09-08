@@ -50,6 +50,8 @@ class PinnedLanguageDetectorV1:
         self._unsupported = frozenset(str(item) for item in config["unsupported_markers"])
 
     def detect(self, text: str) -> LanguageResultV1:
+        # ponytail: script/marker heuristic, not a calibrated language model;
+        # replace only with a qualified detector and new artifact identity.
         sample = text.encode("utf-8")[:4096].decode("utf-8", errors="ignore")
         greek = len(_GREEK.findall(sample))
         latin = len(_LATIN.findall(sample))

@@ -56,6 +56,20 @@ class ResearchSecurityTests(unittest.TestCase):
         self.assertFalse(RetryBudgetV1().consume(status=404, remaining_seconds=5))
         self.assertFalse(RetryBudgetV1().consume(status=429, delay_seconds=0.6, remaining_seconds=5))
 
+    def test_robots_wildcards_are_bounded_and_other_glob_characters_are_literal(self) -> None:
+        body = ("User-agent: *\nDisallow: /" + "*a" * 30 + "b\n").encode()
+        self.assertEqual(robots_decision(status=200, body=body, path="/" + "a" * 50), RobotsDecision.ALLOW)
+        rules = b"User-agent: *\nDisallow: /docs/[x]?q=1$\nDisallow: /secret*end$\n"
+        for path, expected in (
+            ("/docs/[x]?q=1", RobotsDecision.DISALLOW),
+            ("/docs/x?q=1", RobotsDecision.ALLOW),
+            ("/docs/[x]?q=12", RobotsDecision.ALLOW),
+            ("/secret/foo/end", RobotsDecision.DISALLOW),
+            ("/secret/foo/end/more", RobotsDecision.ALLOW),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(robots_decision(status=200, body=rules, path=path), expected)
+
     def test_browser_and_language_bounds_are_frozen(self) -> None:
         limits = BrowserLimitsV1()
         self.assertEqual((limits.page_max_requests, limits.run_max_bytes, limits.tunnel_max_bytes), (40, 12 * 1024 * 1024, 4 * 1024 * 1024))
@@ -79,9 +93,26 @@ class ResearchSecurityTests(unittest.TestCase):
         self.assertEqual(publication_date_from_html(conflict), (None, DateProvenance.CONFLICT))
         self.assertEqual(publication_date_from_html("<p>Published 2026-08-10</p>"), (None, DateProvenance.NONE))
 
+    def test_invalid_json_ld_does_not_hide_later_valid_metadata(self) -> None:
+        valid = '<script type="application/ld+json">{"datePublished":"2026-08-10T10:00:00+03:00"}</script>'
+        for invalid in ("not JSON", "[" * 2000 + "0" + "]" * 2000):
+            with self.subTest(invalid=invalid[:20]):
+                self.assertEqual(
+                    publication_date_from_html('<script type="application/ld+json">' + invalid + '</script>' + valid),
+                    ("2026-08-10T07:00:00.000Z", DateProvenance.JSON_LD),
+                )
+
     def test_sensitive_patterns_are_rejected_before_search(self) -> None:
         with self.assertRaisesRegex(ValueError, "sensitive"):
             reject_sensitive_text("token eyJabcdefghij.abcdefghij.abcdefghij")
+
+    def test_out_of_range_utc_metadata_does_not_discard_the_document(self) -> None:
+        for date in ("0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"):
+            with self.subTest(date=date):
+                self.assertEqual(
+                    publication_date_from_html('<meta property="article:published_time" content="' + date + '">'),
+                    (None, DateProvenance.NONE),
+                )
 
 
 if __name__ == "__main__":

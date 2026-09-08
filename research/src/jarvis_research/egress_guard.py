@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import hmac
 import ipaddress
-import json
 import logging
 import os
 import select
@@ -91,7 +90,7 @@ class GuardPolicyV1:
         self._audit = audit or (lambda event: logging.getLogger("jarvis_egress.audit").info(canonical_json(event)))
 
     def authenticated(self, value: str | None) -> bool:
-        return value is not None and hmac.compare_digest(value, "Bearer " + self.config.bearer_token)
+        return value is not None and hmac.compare_digest(value.encode("utf-8"), ("Bearer " + self.config.bearer_token).encode("utf-8"))
 
     def target_for_url(self, value: str) -> tuple[str, PinnedTargetV1]:
         try:
@@ -213,7 +212,7 @@ class EgressGuardHandler(socketserver.BaseRequestHandler):
                 upstream = self.server.policy.connect(target)  # type: ignore[attr-defined]
                 parsed = urlsplit(safe)
                 path = (parsed.path or "/") + ("?" + parsed.query if parsed.query else "")
-                outgoing = [f"{method} {path} HTTP/1.1", f"Host: {parsed.hostname}" + (f":{parsed.port}" if parsed.port else "")]
+                outgoing = [f"{method} {path} HTTP/1.1", f"Host: {parsed.netloc}"]
                 for name, value in headers.items():
                     if name not in _HOP and name != "host":
                         outgoing.append(f"{name}: {value}")
@@ -295,6 +294,7 @@ class EgressGuardServer(socketserver.ThreadingTCPServer):
 
     def __init__(self, address: tuple[str, int], policy: GuardPolicyV1) -> None:
         self.policy = policy
+        self.address_family = socket.AF_INET6 if ":" in address[0] else socket.AF_INET
         super().__init__(address, EgressGuardHandler)
 
 

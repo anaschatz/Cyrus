@@ -4,14 +4,33 @@ import ipaddress
 import socket
 import threading
 import unittest
+from unittest.mock import Mock, mock_open, patch
 
 import _bootstrap  # noqa: F401
 
 from jarvis_research.egress_guard import EgressGuardServer, GuardConfigV1, GuardError, GuardPolicyV1, parse_headers
 from jarvis_research.qualification_fixtures import DNSFixtureServer, FIXTURE_IPV4, _decode_name
+from jarvis_research.runtime_probe import _egress_matrix
 
 
 class EgressGuardTests(unittest.TestCase):
+    @unittest.skipUnless(socket.has_ipv6, "IPv6 is unavailable")
+    def test_guard_can_bind_the_supported_ipv6_loopback_address(self) -> None:
+        with EgressGuardServer(("::1", 0), GuardPolicyV1(self.config())) as server:
+            self.assertEqual(server.socket.family, socket.AF_INET6)
+
+    def test_qualification_probe_stops_if_connect_peer_closes_before_headers(self) -> None:
+        connection = Mock()
+        connection.recv.side_effect = [b"", AssertionError("read past EOF")]
+        with (
+            patch("builtins.open", mock_open(read_data="g" * 32)),
+            patch.dict("os.environ", {"JARVIS_EGRESS_PROXY_CREDENTIALS_FILE": "/test-token"}),
+            patch("jarvis_research.runtime_probe._proxy_exchange", return_value=b"HTTP/1.1 200 OK\r\n\r\n"),
+            patch("jarvis_research.runtime_probe.socket.create_connection", return_value=connection),
+        ):
+            self.assertFalse(_egress_matrix())
+        connection.close.assert_called_once()
+
     def config(self, networks=()) -> GuardConfigV1:
         return GuardConfigV1("127.0.0.1", 8080, "g" * 32, tuple(ipaddress.ip_network(item) for item in networks))
 
@@ -19,6 +38,7 @@ class EgressGuardTests(unittest.TestCase):
         policy = GuardPolicyV1(self.config(), resolver=lambda *_: ((socket.AF_INET, "93.184.216.34"),))
         self.assertTrue(policy.authenticated("Bearer " + "g" * 32))
         self.assertFalse(policy.authenticated("Bearer wrong"))
+        self.assertFalse(policy.authenticated("Bearer café"))
         method, target, version, headers = parse_headers(
             b"GET http://example.com/path HTTP/1.1\r\nHost: example.com\r\nProxy-Authorization: Bearer token\r\n\r\n"
         )

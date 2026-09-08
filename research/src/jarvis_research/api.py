@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+import socket
 import threading
 import time
 from collections import OrderedDict
@@ -53,7 +54,7 @@ def _strict_json(raw: bytes) -> dict[str, object]:
             object_pairs_hook=pairs,
             parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non_finite_number")),
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+    except (ValueError, RecursionError) as exc:
         raise APIError(HTTPStatus.BAD_REQUEST, "request_json_invalid") from exc
     if not isinstance(value, dict):
         raise APIError(HTTPStatus.BAD_REQUEST, "request_schema_invalid")
@@ -209,11 +210,13 @@ class ResearchApplicationV1:
         self.engine = engine or ResearchEngineV1(config)
         self.cache = IdempotencyCacheV1()
         self._active = threading.BoundedSemaphore(4)
+        self._requests = threading.Condition()
+        self._inflight: dict[str, str] = {}
         self._audit = audit or (lambda value: logging.getLogger("jarvis_research.audit").info(canonical_json(value)))
 
     def authenticated(self, header: str | None) -> bool:
         expected = "Bearer " + self.config.bearer_token
-        return header is not None and hmac.compare_digest(header, expected)
+        return header is not None and hmac.compare_digest(header.encode("utf-8"), expected.encode("utf-8"))
 
     def qualification(self) -> bytes:
         return canonical_json(self.config.qualification.as_dict()).encode("utf-8")
@@ -221,24 +224,36 @@ class ResearchApplicationV1:
     def execute(self, raw: bytes, idempotency_key: str) -> bytes:
         started = time.monotonic()
         request_hash = hashlib.sha256(raw).hexdigest()
-        cached = self.cache.get(idempotency_key, request_hash)
-        if cached is not None:
-            self._emit("research_cache_hit", started, request_hash, 0)
-            return cached
-        if not self._active.acquire(blocking=False):
-            raise APIError(HTTPStatus.TOO_MANY_REQUESTS, "research_capacity_exceeded")
+        with self._requests:
+            active_hash = self._inflight.get(idempotency_key)
+            if active_hash is not None and active_hash != request_hash:
+                raise APIError(HTTPStatus.CONFLICT, "idempotency_conflict")
+            if not self._requests.wait_for(lambda: idempotency_key not in self._inflight, timeout=45.0):
+                raise APIError(HTTPStatus.GATEWAY_TIMEOUT, "research_deadline")
+            cached = self.cache.get(idempotency_key, request_hash)
+            if cached is not None:
+                self._emit("research_cache_hit", started, request_hash, 0)
+                return cached
+            self._inflight[idempotency_key] = request_hash
         try:
-            request = parse_research_request(raw)
-            corpus = asyncio.run(self.engine.research(request))
-            response = canonical_json({"corpus": asdict(corpus)}).encode("utf-8")
-            self.cache.put(idempotency_key, request_hash, response)
-            self._emit("research_complete", started, request_hash, len(corpus.sources))
-            return response
-        except TimeoutError as exc:
-            self._emit("research_deadline", started, request_hash, 0)
-            raise APIError(HTTPStatus.GATEWAY_TIMEOUT, "research_deadline") from exc
+            if not self._active.acquire(blocking=False):
+                raise APIError(HTTPStatus.TOO_MANY_REQUESTS, "research_capacity_exceeded")
+            try:
+                request = parse_research_request(raw)
+                corpus = asyncio.run(self.engine.research(request))
+                response = canonical_json({"corpus": asdict(corpus)}).encode("utf-8")
+                self.cache.put(idempotency_key, request_hash, response)
+                self._emit("research_complete", started, request_hash, len(corpus.sources))
+                return response
+            except TimeoutError as exc:
+                self._emit("research_deadline", started, request_hash, 0)
+                raise APIError(HTTPStatus.GATEWAY_TIMEOUT, "research_deadline") from exc
+            finally:
+                self._active.release()
         finally:
-            self._active.release()
+            with self._requests:
+                del self._inflight[idempotency_key]
+                self._requests.notify_all()
 
     def _emit(self, code: str, started: float, request_hash: str, count: int) -> None:
         self._audit(
@@ -257,6 +272,7 @@ class ResearchHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, address: tuple[str, int], app: ResearchApplicationV1) -> None:
         self.app = app
+        self.address_family = socket.AF_INET6 if ":" in address[0] else socket.AF_INET
         super().__init__(address, ResearchRequestHandler)
 
 

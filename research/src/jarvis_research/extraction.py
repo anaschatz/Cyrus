@@ -39,6 +39,7 @@ class _MainParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.skip_depth = 0
+        self.block_depth = 0
         self.current: list[str] | None = None
         self.blocks: list[str] = []
         self.title_parts: list[str] = []
@@ -56,9 +57,13 @@ class _MainParser(HTMLParser):
         if tag == "title":
             self.in_title = True
         if tag in _BLOCK_TAGS:
+            self._flush_block()
+            self.block_depth += 1
             self.current = []
+        if tag == "br" and self.current is not None:
+            self.current.append(" ")
         if tag == "meta":
-            key = (values.get("property") or values.get("name")).casefold()
+            key = (values.get("property") or values.get("name") or "").casefold()
             if key in {"og:title", "twitter:title", "author", "article:author", "og:site_name", "application-name"}:
                 self.metadata.setdefault(key, values.get("content", ""))
         if tag == "link" and values.get("rel", "").casefold() == "canonical" and values.get("href"):
@@ -73,10 +78,20 @@ class _MainParser(HTMLParser):
         if tag == "title":
             self.in_title = False
         if tag in _BLOCK_TAGS and self.current is not None:
-            normalized, _ = normalize_research_text(" ".join(self.current), limit_bytes=4 * 1024)
+            self._flush_block()
+            self.block_depth = max(0, self.block_depth - 1)
+            self.current = [] if self.block_depth else None
+
+    def _flush_block(self) -> None:
+        if self.current is not None:
+            normalized, _ = normalize_research_text("".join(self.current), limit_bytes=4 * 1024)
             if len(normalized) >= 20:
                 self.blocks.append(normalized)
-            self.current = None
+            self.current.clear()
+
+    def close(self) -> None:
+        super().close()
+        self._flush_block()
 
     def handle_data(self, data: str) -> None:
         if self.skip_depth:
@@ -100,6 +115,7 @@ def extract_main_content(body: bytes, mime_type: str) -> MainContentV1:
         raise ValueError("document_mime_invalid")
     parser = _MainParser()
     parser.feed(value)
+    parser.close()
     document = NormalizedDocumentV1.from_text("\n\n".join(parser.blocks))
     title_value = parser.metadata.get("og:title") or parser.metadata.get("twitter:title") or " ".join(parser.title_parts)
     title, _ = normalize_research_text(title_value, limit_bytes=512)

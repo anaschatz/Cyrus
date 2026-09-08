@@ -8,7 +8,6 @@ allowed to turn them into durable or publishable research evidence.
 from __future__ import annotations
 
 import hashlib
-import html
 import ipaddress
 import json
 import math
@@ -16,7 +15,6 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from enum import StrEnum
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -43,7 +41,7 @@ _UNSAFE_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _INLINE_SPACE = re.compile(r"[^\S\n]+")
 _MANY_BLANKS = re.compile(r"\n{3,}")
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
-_VALUE = re.compile(r"(?<!\w)(?:\d{1,4}(?:[.,]\d+)?%?|\d{4}-\d{2}-\d{2})(?!\w)")
+_VALUE = re.compile(r"(?<!\w)(?:\d{4}-\d{2}-\d{2}|[-+]?\d+(?:[.,]\d+)?%?)(?!\w)")
 _NEGATION = frozenset({"not", "no", "never", "without", "δεν", "μη", "χωρίς", "ουδέποτε"})
 _MARKDOWN_ESCAPE = re.compile(r"([\\`*_{}\[\]()<>#+.!|~-])")
 _CREDENTIAL_QUERY_KEYS = frozenset(
@@ -145,7 +143,7 @@ class SearchPlanV1:
             raise ValueError("plan language is unsupported")
         _require_text(self.freshness, "freshness", maximum=64)
         _require_text(self.timezone, "timezone", maximum=64)
-        if isinstance(self.page_limit, bool) or not 1 <= self.page_limit <= MAX_DOCUMENTS:
+        if type(self.page_limit) is not int or not 1 <= self.page_limit <= MAX_DOCUMENTS:
             raise ValueError("page_limit is invalid")
         if self.deadline_seconds != 45:
             raise ValueError("deadline_seconds must be 45")
@@ -258,7 +256,7 @@ class RankedPassageV1:
         _require_id(self.source_id, "source_id")
         _require_hash(self.document_hash, "document hash")
         _require_id(self.facet_id, "facet_id")
-        if isinstance(self.start_char, bool) or not 0 <= self.start_char < self.end_char:
+        if type(self.start_char) is not int or type(self.end_char) is not int or not 0 <= self.start_char < self.end_char:
             raise ValueError("passage offsets are invalid")
         if self.end_char - self.start_char > MAX_PASSAGE_CHARS:
             raise ValueError("passage is too long")
@@ -277,7 +275,7 @@ class SpanSelectionV1:
     def __post_init__(self) -> None:
         _require_id(self.facet_id, "facet_id")
         _require_id(self.passage_id, "passage_id")
-        if isinstance(self.start_char, bool) or not 0 <= self.start_char < self.end_char:
+        if type(self.start_char) is not int or type(self.end_char) is not int or not 0 <= self.start_char < self.end_char:
             raise ValueError("span offsets are invalid")
 
 
@@ -297,7 +295,7 @@ class EvidenceLocatorV1:
         if self.normalization_version != TEXT_NORMALIZATION_VERSION:
             raise ValueError("unsupported normalization version")
         _require_id(self.passage_id, "passage_id")
-        if isinstance(self.start_char, bool) or not 0 <= self.start_char < self.end_char:
+        if type(self.start_char) is not int or type(self.end_char) is not int or not 0 <= self.start_char < self.end_char:
             raise ValueError("locator offsets are invalid")
         if self.end_char - self.start_char > 400:
             raise ValueError("locator is too long")
@@ -394,7 +392,7 @@ class ResearchRequestV1:
     def __post_init__(self) -> None:
         _require_id(self.task_id, "task_id")
         _require_id(self.conversation_id, "conversation_id")
-        if isinstance(self.epoch, bool) or self.epoch < 0:
+        if type(self.epoch) is not int or self.epoch < 0:
             raise ValueError("epoch is invalid")
         if self.deadline_seconds != 45 or self.max_documents != 8 or self.max_passages != 12 or self.max_claims != 6:
             raise ValueError("research execution bounds are frozen")
@@ -436,7 +434,7 @@ class ResearchCorpusV1:
             raise ValueError("technical failure facets are invalid")
         for facet_id in self.technical_failure_facets:
             _require_id(facet_id, "facet_id")
-        if self.network_retry_count not in {0, 1}:
+        if type(self.network_retry_count) is not int or self.network_retry_count not in {0, 1}:
             raise ValueError("network retry budget exceeded")
 
 
@@ -473,7 +471,7 @@ class SourceFingerprintV1:
 def normalize_research_text(value: str, *, limit_bytes: int = MAX_DOCUMENT_BYTES) -> tuple[str, bool]:
     if not isinstance(value, str):
         raise ValueError("research text must be a string")
-    text = html.unescape(value).replace("\r\n", "\n").replace("\r", "\n")
+    text = value.replace("\r\n", "\n").replace("\r", "\n")
     text = unicodedata.normalize("NFC", _UNSAFE_CONTROL.sub("", text))
     text = "\n".join(_INLINE_SPACE.sub(" ", line).strip() for line in text.split("\n"))
     text = _MANY_BLANKS.sub("\n\n", text).strip()
@@ -639,13 +637,7 @@ def assign_independence_groups(
         members.setdefault(find(index), []).append(item)
     result: dict[str, str] = {}
     for cluster in members.values():
-        identity = hashlib.sha256(
-            canonical_json(
-                sorted(
-                    (item.document.sha256, item.source_id) for item in cluster
-                )
-            ).encode("utf-8")
-        ).hexdigest()[:24]
+        identity = canonical_sha256(sorted((item.document.sha256, item.source_id) for item in cluster))[:24]
         for item in cluster:
             result[item.source_id] = f"ig-{identity}"
     return result
@@ -656,7 +648,7 @@ def _polarity(text: str) -> bool:
 
 
 def _values(text: str) -> frozenset[str]:
-    return frozenset(item.replace(",", ".") for item in _VALUE.findall(text.casefold()))
+    return frozenset(item.replace(",", ".").lstrip("+") for item in _VALUE.findall(text.casefold()))
 
 
 def corroborates(
@@ -963,13 +955,19 @@ def select_ranked_passages(
             start = document.text.find(paragraph, cursor)
             end = start + len(paragraph)
             cursor = end
-            if 40 <= len(paragraph) <= MAX_PASSAGE_CHARS:
-                candidates.append((source_id, start, end, paragraph))
+            # Overlap by the maximum claim length so a window boundary does
+            # not discard an otherwise valid complete quote.
+            for offset in range(0, len(paragraph), MAX_PASSAGE_CHARS - 400):
+                stop = min(offset + MAX_PASSAGE_CHARS, len(paragraph))
+                if stop - offset >= 40:
+                    candidates.append((source_id, start + offset, start + stop, paragraph[offset:stop]))
+                if stop == len(paragraph):
+                    break
     if not candidates:
         return ()
     tokenized = [_tokens(item[3]) for item in candidates]
     document_frequency = Counter(token for tokens in tokenized for token in set(tokens))
-    result: list[RankedPassageV1] = []
+    ranked_by_facet: list[tuple[SearchFacetV1, list[tuple[float, str, int, int]]]] = []
     for facet in facets:
         query = set(_tokens(facet.label))
         scored: list[tuple[float, str, int, int]] = []
@@ -982,7 +980,11 @@ def select_ranked_passages(
                     score += tf / (tf + 1.2) * math.log(1 + len(candidates) / document_frequency[token])
             source_id, start, end, _ = candidate
             scored.append((-score, source_id, start, end))
-        for _, source_id, start, end in sorted(scored)[:MAX_PASSAGES_PER_FACET]:
+        ranked_by_facet.append((facet, sorted(scored)[:MAX_PASSAGES_PER_FACET]))
+    result: list[RankedPassageV1] = []
+    for rank in range(min(MAX_PASSAGES_PER_FACET, len(candidates))):
+        for facet, ranked in ranked_by_facet:
+            _, source_id, start, end = ranked[rank]
             document = documents[source_id]
             result.append(
                 RankedPassageV1(

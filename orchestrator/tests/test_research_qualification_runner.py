@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
@@ -14,6 +13,7 @@ import _bootstrap  # noqa: F401
 from jarvis_orchestrator.domain import canonical_json
 from jarvis_research.qualification import (
     MANDATORY_LIVE_CASES,
+    MANDATORY_EVIDENCE_CASES,
     LiveQualificationRunnerV1,
     _compose_command,
     main,
@@ -114,7 +114,8 @@ class ResearchQualificationRunnerTests(unittest.TestCase):
         evidence = {
             "schema_version": 2, "gate_status": "ACCEPTED", "browser_enabled": False,
             "qualification_identity": identity, "artifact_sha256": {"lock": "e" * 64},
-            "image_sha256": {"research-api": "f" * 64}, "cases": [case],
+            "image_sha256": {name: "f" * 64 for name in ("research-api", "searxng", "egress-guard")},
+            "cases": [{**case, "case_id": name} for name in sorted(MANDATORY_EVIDENCE_CASES - {"digest_binding"})],
         }
         digest = qualification_digest(evidence)
         identity["qualification_sha256"] = digest
@@ -125,6 +126,29 @@ class ResearchQualificationRunnerTests(unittest.TestCase):
         evidence["evidence_sha256"] = digest
         evidence["record_sha256"] = record_digest(evidence)
         verify_accepted_evidence(evidence)
+
+        incomplete = deepcopy(evidence)
+        incomplete["cases"] = [item for item in incomplete["cases"] if item["case_id"] != "authenticated_api"]
+        incomplete_digest = qualification_digest(incomplete)
+        incomplete["qualification_identity"]["qualification_sha256"] = incomplete_digest
+        incomplete["evidence_sha256"] = incomplete_digest
+        incomplete["record_sha256"] = record_digest(incomplete)
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            verify_accepted_evidence(incomplete)
+
+        duplicated = deepcopy(evidence)
+        duplicated["cases"][0] = duplicated["cases"][1].copy()
+        duplicate_digest = qualification_digest(duplicated)
+        duplicated["qualification_identity"]["qualification_sha256"] = duplicate_digest
+        duplicated["evidence_sha256"] = duplicate_digest
+        duplicated["record_sha256"] = record_digest(duplicated)
+        with self.assertRaisesRegex(ValueError, "duplicated"):
+            verify_accepted_evidence(duplicated)
+
+        missing_image = deepcopy(evidence)
+        missing_image["image_sha256"].pop("egress-guard")
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            verify_accepted_evidence(missing_image)
 
         image_changed = deepcopy(evidence)
         image_changed["image_sha256"]["research-api"] = "1" * 64

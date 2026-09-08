@@ -7,6 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from fnmatch import fnmatchcase
 from html.parser import HTMLParser
 from typing import Iterable
 from urllib.parse import urlsplit
@@ -138,10 +139,10 @@ def robots_decision(*, status: int | None, body: bytes, path: str, user_agent: s
                 continue
             anchored = pattern.endswith("$")
             normalized = pattern[:-1] if anchored else pattern
-            expression = "^" + ".*".join(re.escape(part) for part in normalized.split("*"))
-            if anchored:
-                expression += "$"
-            if re.match(expression, path):
+            # Only '*' is a robots wildcard; fnmatch's atomic groups avoid
+            # catastrophic regex backtracking on externally supplied patterns.
+            glob = normalized.replace("[", "[[]").replace("?", "[?]")
+            if fnmatchcase(path, glob if anchored else glob + "*"):
                 matching.append((len(normalized.replace("*", "")), kind))
     if not matching:
         return RobotsDecision.ALLOW
@@ -202,11 +203,11 @@ def language_eligibility(*, sample: str, detected_code: str, confidence: float) 
 def _parse_datetime(value: str) -> str | None:
     try:
         parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    except (ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 class _DateParser(HTMLParser):
@@ -224,7 +225,7 @@ class _DateParser(HTMLParser):
         if tag == "script" and values.get("type", "").casefold() == "application/ld+json":
             self.json_ld_depth += 1
         if tag == "meta":
-            key = (values.get("property") or values.get("name")).casefold()
+            key = (values.get("property") or values.get("name") or "").casefold()
             provenance = None
             if key == "article:published_time":
                 provenance = DateProvenance.ARTICLE_PUBLISHED_TIME
@@ -250,14 +251,17 @@ def publication_date_from_html(value: str) -> tuple[str | None, DateProvenance]:
     parser = _DateParser()
     try:
         parser.feed(value)
-        for block in parser.json_ld:
-            parsed = json.loads(block)
-            nodes = parsed if isinstance(parsed, list) else [parsed]
-            for node in nodes:
-                if isinstance(node, dict) and isinstance(node.get("datePublished"), str):
-                    parser.candidates.append((DateProvenance.JSON_LD, node["datePublished"]))
-    except (ValueError, json.JSONDecodeError):
+    except ValueError:
         pass
+    for block in parser.json_ld:
+        try:
+            parsed = json.loads(block)
+        except (ValueError, RecursionError):
+            continue
+        nodes = parsed if isinstance(parsed, list) else [parsed]
+        for node in nodes:
+            if isinstance(node, dict) and isinstance(node.get("datePublished"), str):
+                parser.candidates.append((DateProvenance.JSON_LD, node["datePublished"]))
     valid = [(kind, parsed) for kind, raw in parser.candidates if (parsed := _parse_datetime(raw))]
     dates = {item for _, item in valid}
     if not dates:

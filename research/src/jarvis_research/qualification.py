@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-import httpx
 
 from jarvis_orchestrator.domain import canonical_json
 
@@ -36,6 +35,19 @@ MANDATORY_LIVE_CASES = frozenset(
         "date_jsonld", "date_article_meta",
     }
 )
+EGRESS_MATRIX_CASES = frozenset({
+    "authenticated_http", "public_ipv4", "public_ipv6", "http_auth_rejected",
+    "private_ipv4_rejected", "private_ipv6_rejected", "mixed_dns_rejected",
+    "port_rejected", "environment_routes_disabled", "dns_rebinding_rejected",
+    "authenticated_connect", "connect_auth_rejected", "no_target_leakage",
+    "connect_byte_limit", "connect_idle_timeout",
+})
+MANDATORY_EVIDENCE_CASES = MANDATORY_LIVE_CASES | {
+    "fresh_runtime", "authenticated_api", "qualification_identity", "browser_disabled",
+    "digest_binding", "sanitized_logs", "searxng_isolation", "searxng_live_search",
+    "loopback_publication", "no_direct_route", "late_completion_no_persistence",
+    "egress_nonroot_readonly", "image_digests", "run_level_transient_retry",
+} | {"egress_" + name for name in EGRESS_MATRIX_CASES}
 _SECRET = re.compile(
     r"(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|\b(?:sk|pk|api)[-_][A-Za-z0-9_-]{20,}\b)"
 )
@@ -135,9 +147,20 @@ def verify_accepted_evidence(evidence: dict[str, object]) -> None:
         not isinstance(item, dict)
         or set(item) != {"case_id", "outcome", "code", "duration_ms", "response_sha256"}
         or item.get("outcome") != "PASS"
+        or not isinstance(item.get("case_id"), str)
         for item in cases
     ):
         raise ValueError("qualification evidence contains a failed case")
+    if len(cases) != len(MANDATORY_EVIDENCE_CASES) or {item["case_id"] for item in cases} != MANDATORY_EVIDENCE_CASES:
+        raise ValueError("qualification evidence cases are incomplete or duplicated")
+    images = evidence.get("image_sha256")
+    artifacts = evidence.get("artifact_sha256")
+    if (
+        not isinstance(images, dict) or set(images) != {"research-api", "searxng", "egress-guard"}
+        or not isinstance(artifacts, dict) or not artifacts
+        or any(not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in (*images.values(), *artifacts.values()))
+    ):
+        raise ValueError("qualification evidence artifact or image digests are incomplete")
     digest = qualification_digest(evidence)
     if evidence.get("evidence_sha256") != digest or identity.get("qualification_sha256") != digest:
         raise ValueError("qualification evidence digest binding is invalid")
@@ -358,15 +381,8 @@ class LiveQualificationRunnerV1:
             matrix = json.loads(egress.stdout)
         except json.JSONDecodeError:
             matrix = {}
-        expected_matrix = {
-            "authenticated_http", "public_ipv4", "public_ipv6", "http_auth_rejected",
-            "private_ipv4_rejected", "private_ipv6_rejected", "mixed_dns_rejected",
-            "port_rejected", "environment_routes_disabled", "dns_rebinding_rejected",
-            "authenticated_connect", "connect_auth_rejected", "no_target_leakage",
-            "connect_byte_limit", "connect_idle_timeout",
-        }
-        for name in sorted(expected_matrix):
-            passed = set(matrix) == expected_matrix and matrix.get(name) is True
+        for name in sorted(EGRESS_MATRIX_CASES):
+            passed = isinstance(matrix, dict) and set(matrix) == EGRESS_MATRIX_CASES and matrix.get(name) is True
             results.append(CaseResultV1(
                 "egress_" + name, "PASS" if passed else "FAIL", "ok" if passed else "egress_matrix_failed", 0, "",
             ))

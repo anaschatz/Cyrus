@@ -22,11 +22,12 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 import httpx
 
 from jarvis_orchestrator.domain import canonical_json
+from jarvis_orchestrator.research import corpus_from_json, validate_public_url
 
 
 ONLINE_GATE_VERSION = "online-retrieval-quality/1"
@@ -397,12 +398,11 @@ class CaseEvaluationV1:
 
 
 def _matches(qrel: QrelV1, item: RankedResultV1) -> bool:
-    target = qrel.target.casefold()
     if qrel.target_kind == "URL":
-        return item.url.casefold() == target
+        return validate_public_url(item.url) == validate_public_url(qrel.target)
     if qrel.target_kind == "DOMAIN":
-        return item.registrable_domain.casefold() == target
-    return item.source_identity.casefold() == target
+        return item.registrable_domain.casefold() == qrel.target.casefold()
+    return item.source_identity == qrel.target
 
 
 def compute_retrieval_metrics(
@@ -715,52 +715,14 @@ class OnlineRetrievalRunnerV1:
     def _parse_corpus(value: object) -> tuple[tuple[RankedResultV1, ...], tuple[str, ...], int, int]:
         if not isinstance(value, dict) or set(value) != {"corpus"} or not isinstance(value["corpus"], dict):
             raise ValueError("online_corpus_schema_invalid")
-        corpus = value["corpus"]
-        if set(corpus) != {
-            "plan_hash", "sources", "documents", "passages",
-            "technical_failure_facets", "network_retry_count",
-        }:
-            raise ValueError("online_corpus_schema_invalid")
-        sources, documents, passages = corpus["sources"], corpus["documents"], corpus["passages"]
-        if not isinstance(sources, list) or len(sources) > 8 or not isinstance(documents, dict) or len(documents) != len(sources):
-            raise ValueError("online_corpus_schema_invalid")
-        if not isinstance(passages, list) or len(passages) > 12:
-            raise ValueError("online_corpus_schema_invalid")
-        ranked: list[RankedResultV1] = []
-        normalized_bytes = 0
-        for source in sources:
-            if not isinstance(source, dict):
-                raise ValueError("online_corpus_schema_invalid")
-            source_id = source.get("source_id")
-            document = documents.get(source_id) if isinstance(source_id, str) else None
-            if not isinstance(document, dict) or set(document) != {
-                "version", "text", "sha256", "character_length", "byte_length", "truncated"
-            }:
-                raise ValueError("online_corpus_schema_invalid")
-            text = document["text"]
-            document_hash = document["sha256"]
-            byte_length = document["byte_length"]
-            if (
-                not isinstance(text, str) or not isinstance(document_hash, str)
-                or _sha256_bytes(text.encode("utf-8")) != document_hash
-                or byte_length != len(text.encode("utf-8"))
-            ):
-                raise ValueError("online_corpus_document_invalid")
-            normalized_bytes += int(byte_length)
-            ranked.append(RankedResultV1(
-                str(source["accepted_canonical_url"]), str(source["registrable_domain"]),
-                str(source_id), str(source["source_role"]),
-            ))
-        if normalized_bytes > 512 * 1024:
-            raise ValueError("online_corpus_size_invalid")
-        covered = tuple(sorted({
-            str(item["facet_id"]) for item in passages
-            if isinstance(item, dict) and isinstance(item.get("facet_id"), str)
-        }))
-        retries = corpus["network_retry_count"]
-        if isinstance(retries, bool) or retries not in {0, 1}:
-            raise ValueError("online_retry_count_invalid")
-        return tuple(ranked), covered, normalized_bytes, retries
+        corpus = corpus_from_json(canonical_json(value["corpus"]))
+        ranked = tuple(
+            RankedResultV1(source.accepted_canonical_url, source.registrable_domain, source.source_id, source.source_role)
+            for source in corpus.sources
+        )
+        covered = tuple(sorted({passage.facet_id for passage in corpus.passages}))
+        normalized_bytes = sum(document.byte_length for document in corpus.documents.values())
+        return ranked, covered, normalized_bytes, corpus.network_retry_count
 
 
 def rejected_evidence(
