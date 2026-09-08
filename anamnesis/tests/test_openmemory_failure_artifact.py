@@ -22,10 +22,44 @@ def _sha256(path: Path) -> str:
 def _sha256_at_commit(path: Path, commit: str) -> str:
     relative = path.relative_to(ROOT).as_posix()
     value = subprocess.check_output(
-        ["git", "show", f"{commit}:{relative}"],
+        ["git", "show", f"{commit}:./{relative}"],
         cwd=ROOT,
     )
     return hashlib.sha256(value).hexdigest()
+
+
+def test_historical_hash_uses_the_nested_project_path(tmp_path, monkeypatch) -> None:
+    nested = tmp_path / "anamnesis"
+    nested.mkdir()
+    (tmp_path / "source.py").write_bytes(b"root decoy")
+    source = nested / "source.py"
+    source.write_bytes(b"nested historical source")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "add", "--", "source.py", "anamnesis/source.py"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    source.write_bytes(b"current changed source")
+    monkeypatch.setitem(globals(), "ROOT", nested)
+    assert (
+        _sha256_at_commit(source, "HEAD")
+        == hashlib.sha256(b"nested historical source").hexdigest()
+    )
 
 
 def test_openmemory_failure_provenance_hashes_every_retained_artifact() -> None:
