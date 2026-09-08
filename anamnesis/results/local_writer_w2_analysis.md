@@ -169,12 +169,15 @@ the final holdout.
 The [provenance sidecar](local_writer_w2.provenance.json) binds the source
 commit, dataset/reference, prompt/schema contracts, model/pricing pins, frozen
 manifest, standalone preflight, measured `.eval`, CSV, and generated Markdown
-by SHA-256. Unlike earlier local diagnostic publications, the exact W2 manifest
-and both raw logs are committed under
-`results/runs/local/writer_diagnostic_w2/`, so their exact evidence bytes are
-available from Git. Strict reporter replay must use the clean source commit
-`9388f58cc1366f09c6134086fb36759272b50dbd` with these three artifacts restored
-from the later publication commit; the reporter correctly rejects the later
-documentation-only commit as a different runtime source tree. The raw Inspect
+by SHA-256. In this checkout (verified 2026-09-08), the exact W2 manifest
+and both raw logs under `results/runs/local/writer_diagnostic_w2/` exist locally
+and match those hashes, but none is tracked in Git. A fresh clone therefore
+needs those artifacts supplied separately. The required measurement commit
+`9388f58cc1366f09c6134086fb36759272b50dbd` is also unavailable here, so strict
+historical source verification cannot be completed. Current-engine replay
+rejects three previously accepted initial deltas (`wd3_03`, `wd3_04`, `wd3_10`)
+because their `at` triggers are not strictly after the source event. The frozen
+scores above describe the original engine; they are not a new qualification
+of the current engine. The raw Inspect
 artifacts retain local absolute filesystem paths but contain no API keys,
 credentials, or bearer tokens.

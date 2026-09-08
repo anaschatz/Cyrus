@@ -1,6 +1,6 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **349 of 349 test files** and **141 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **349 of 349 test files** and **272 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
 Updated **2026-09-08**. Latest complete runs: Voice **898 tests (883 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **274 unit tests (266 passed, 8 skipped)** plus **2 official SDK tests passed**. Anamnesis **900 tests (898 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
@@ -2982,3 +2982,14 @@ The 53 non-clock oracle deltas agree with the observed smoke prefixes and reprod
 **Two analysis statements corrected:** action matching determines TP/FP/FN independently of the separate exact-provenance metric; D1's seven false positives comprise six negative checkpoints and one incorrect action at a positive checkpoint. All current provenance path hashes for D0/D1/oracle match. Re-extracted 90 stored ScenarioRuns from the nine available local logs, checked agreement with sample outputs, and independently recomputed the nine CSV rows' TP/FP/FN, false-alarm checkpoint counts, provenance and input/output usage (`/tmp/cyrus-smoke-retained-score-review.log`). This validates retained-record consistency, not unavailable historical source commits, the original native runtime or all raw request attestations. Frozen datasets, numeric tables and provenance bytes were preserved; no production code changed.
 
 Coverage: **401/401 code, 349/349 tests, 248/308 support; 998/1058 entries**. **60 support files**, open findings and final quality assessment remain. Exact staged Ponytail review and active hooks apply; no push requested.
+
+
+### Writer diagnostic artifacts checkpoint — 2026-09-08
+
+Completed the remaining 24 writer support artifacts: four scenario datasets and manifests, four oracle references, and twelve result/analysis/provenance files. All scenario and mutation semantics were inspected; v3 was compared completely with v2 after ID rekeying. Its only content changes are the three declared casing/recipient corrections. Frozen v2 remains preserved as rejected historical data. V1-v4 are development diagnostics with independent human review still pending. The four real-store oracle ceilings and writer/report contracts passed **92 tests** in 1.80 seconds (`/tmp/cyrus-writer-artifact-review-tests.log`).
+
+Corrected the W2 analysis's claim that its manifest and raw logs are available from Git. All five writer cells' retained logs exist locally and match provenance hashes, but are untracked; none of the five measurement commits is available. Existing source/lock differences cannot be historically attested. W2's ten stored ScenarioRuns match their sample outputs and their recorded token totals reconcile. Five standalone preflights' per-call usage agrees with raw ModelEvents and published totals (`/tmp/cyrus-writer-retained-recompute.log`). This is retained accounting evidence, not fresh model execution.
+
+**Historical replay limitation:** current-engine replay rejects previously accepted initial `at` deltas in wd3_03, wd3_04 and wd3_10 because their times are not strictly after their source events. The strict reporter correctly stops on acceptance disagreement. Therefore the old W2 candidate scores were not reproduced against the current engine; no compatibility bypass or frozen-result rewrite was applied. The analysis now states this limitation.
+
+Coverage: **401/401 code, 349/349 tests, 272/308 support; 1022/1058 entries**. **36 support files**, final disposition of open findings and the final quality assessment remain. Exact staged Ponytail review and active hooks apply; no push requested.
