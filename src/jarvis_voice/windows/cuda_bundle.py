@@ -115,7 +115,8 @@ def _read_canonical_document(
 ) -> tuple[dict[str, Any], bytes]:
     checked = validator(path, "file")
     try:
-        raw = checked.read_bytes()
+        with checked.open("rb") as handle:
+            raw = handle.read(MAX_MANIFEST_BYTES + 1)
     except OSError as exc:
         raise CudaBundleError("cuda_bundle.manifest_unreadable") from exc
     if not raw or len(raw) > MAX_MANIFEST_BYTES:
@@ -128,13 +129,14 @@ def _read_canonical_document(
                 CudaBundleError("cuda_bundle.json_constant_invalid")
             ),
         )
+        if not isinstance(document, dict):
+            raise CudaBundleError("cuda_bundle.manifest_schema_invalid")
+        canonical = canonical_json_bytes(document)
     except CudaBundleError:
         raise
-    except (UnicodeError, json.JSONDecodeError) as exc:
+    except (ValueError, RecursionError) as exc:
         raise CudaBundleError("cuda_bundle.manifest_json_invalid") from exc
-    if not isinstance(document, dict):
-        raise CudaBundleError("cuda_bundle.manifest_schema_invalid")
-    if raw != canonical_json_bytes(document):
+    if raw != canonical:
         raise CudaBundleError("cuda_bundle.manifest_not_canonical")
     return document, raw
 
@@ -146,18 +148,28 @@ def _hash_regular_file(path: Path, expected_size: int) -> str:
             before = os.fstat(handle.fileno())
             if not stat.S_ISREG(before.st_mode) or before.st_size != expected_size:
                 raise CudaBundleError("cuda_bundle.file_size_mismatch")
-            while chunk := handle.read(1024 * 1024):
+            remaining = expected_size + 1
+            while remaining and (chunk := handle.read(min(remaining, 1024 * 1024))):
+                remaining -= len(chunk)
                 digest.update(chunk)
             after = os.fstat(handle.fileno())
+            current = path.stat(follow_symlinks=False)
     except CudaBundleError:
         raise
     except OSError as exc:
         raise CudaBundleError("cuda_bundle.file_unreadable") from exc
-    if (before.st_dev, before.st_ino, before.st_size) != (
-        after.st_dev,
-        after.st_ino,
-        after.st_size,
-    ):
+    identities = {
+        (
+            item.st_dev,
+            item.st_ino,
+            stat.S_IFMT(item.st_mode),
+            item.st_size,
+            item.st_mtime_ns,
+            item.st_ctime_ns,
+        )
+        for item in (before, after, current)
+    }
+    if remaining != 1 or len(identities) != 1:
         raise CudaBundleError("cuda_bundle.file_changed_during_hash")
     return digest.hexdigest()
 
@@ -209,8 +221,10 @@ def require_native_windows_path(path: Path, kind: str) -> Path:
         metadata = normalized.stat(follow_symlinks=False)
     except OSError as exc:
         raise CudaBundleError("cuda_bundle.path_unreadable") from exc
-    expected = stat.S_ISREG(metadata.st_mode) if kind == "file" else stat.S_ISDIR(
-        metadata.st_mode
+    expected = (
+        stat.S_ISREG(metadata.st_mode)
+        if kind == "file"
+        else stat.S_ISDIR(metadata.st_mode)
     )
     if not expected:
         raise CudaBundleError("cuda_bundle.path_type_invalid")
@@ -305,8 +319,7 @@ def load_cuda_bundle(
 def is_cuda_runtime_name(name: str) -> bool:
     folded = Path(name).name.casefold()
     return folded.endswith(".dll") and (
-        folded.startswith(_CUDA_RUNTIME_PREFIXES)
-        or folded in _ALLOWED_AUXILIARY_DLLS
+        folded.startswith(_CUDA_RUNTIME_PREFIXES) or folded in _ALLOWED_AUXILIARY_DLLS
     )
 
 

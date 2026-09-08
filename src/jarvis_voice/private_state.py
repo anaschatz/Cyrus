@@ -102,7 +102,7 @@ def _record(violations: dict[str, int], code: str) -> None:
 
 
 def _chmod_owned_no_follow(path: Path, *, directory: bool, mode: int) -> bool:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(
         os, "O_NOFOLLOW", 0
     )
     if directory:
@@ -465,17 +465,19 @@ def inspect_or_harden_voice_journal_state(
     )
 
 
-def _default_journal_paths() -> tuple[Path, Path, Path]:
+def _default_journal_paths() -> tuple[Path, ...]:
     # Lazy imports avoid a cycle because each journal class uses the preparation
     # helpers in this module before calling sqlite3.connect().
     from .action_approval import default_action_approval_journal_path
     from .cloud_approval import default_cloud_approval_journal_path
     from .delivery_journal import default_delivery_journal_path
+    from .scheduler_journal import default_scheduler_journal_path
 
     return (
         default_delivery_journal_path(),
         default_cloud_approval_journal_path(),
         default_action_approval_journal_path(),
+        default_scheduler_journal_path(),
     )
 
 

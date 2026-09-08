@@ -14,7 +14,7 @@ class RetryTests(unittest.TestCase):
         clock = FakeClock(100.0)
         scheduler = AckRetryScheduler(new_uuid4(), clock)
         scheduler.start()
-        self.assertEqual(scheduler.due_attempts(), [0])
+        self.assertEqual(scheduler.due_attempts(), [])
         clock.advance(0.49); self.assertEqual(scheduler.due_attempts(), [])
         clock.advance(0.01); self.assertEqual(scheduler.due_attempts(), [1])
         clock.advance(1.0); self.assertEqual(scheduler.due_attempts(), [2])
@@ -34,4 +34,3 @@ class RetryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

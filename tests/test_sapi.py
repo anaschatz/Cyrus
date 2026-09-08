@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import threading
 import unittest
+from unittest.mock import Mock
 
 import _bootstrap  # noqa: F401
 
 from jarvis_voice.backends import SpeechUnit
+from jarvis_voice.errors import BackendError
 from jarvis_voice.protocol import new_uuid4
 from jarvis_voice.windows.sapi import SapiTtsBackend
 
@@ -44,6 +46,73 @@ class FakeSapiAdapter:
 
 
 class SapiTests(unittest.TestCase):
+    def test_terminal_failures_are_reported_and_discard_queued_speech(self) -> None:
+        for stage in ("factory", "open", "speak_async", "close"):
+            with self.subTest(stage=stage):
+                release = threading.Event()
+                adapter = FakeSapiAdapter()
+                adapter.close = Mock()
+                if stage != "factory":
+                    setattr(adapter, stage, Mock(side_effect=OSError("private failure")))
+
+                def factory():
+                    release.wait(1)
+                    if stage == "factory":
+                        raise OSError("private failure")
+                    return adapter
+
+                backend = SapiTtsBackend(voice_mapping={}, adapter_factory=factory)
+                try:
+                    backend.enqueue(unit(1, 1))
+                    backend.enqueue(unit(1, 2))
+                    release.set()
+                    if stage == "close":
+                        backend.close()
+                    backend._thread.join(1)
+                    self.assertFalse(backend._thread.is_alive())
+                    self.assertIsInstance(backend.last_error, BackendError)
+                    self.assertTrue(backend._queue.empty())
+                    self.assertTrue(backend.is_idle)
+                    with self.assertRaises(BackendError):
+                        backend.enqueue(unit(2, 1))
+                    self.assertEqual(adapter.close.call_count, 0 if stage == "factory" else 1)
+                finally:
+                    release.set()
+                    backend.close()
+
+    def test_older_cancellation_does_not_purge_newer_active_speech(self) -> None:
+        adapter = FakeSapiAdapter(initially_done=False)
+        backend = SapiTtsBackend(voice_mapping={}, adapter_factory=lambda: adapter)
+        self.addCleanup(backend.close)
+        backend.enqueue(unit(5, 1))
+        self.assertTrue(adapter.started.wait(1))
+        backend.cancel(3, "late_cancel")
+        self.assertFalse(backend._cancel_event.is_set())
+        adapter.done = True
+        self.assertTrue(backend.wait_idle())
+        self.assertEqual(adapter.purges, 0)
+
+    def test_closed_backend_rejects_new_speech(self) -> None:
+        backend = SapiTtsBackend(voice_mapping={}, adapter_factory=FakeSapiAdapter)
+        backend.close()
+        with self.assertRaises(BackendError):
+            backend.enqueue(unit(1, 1))
+
+    def test_close_from_started_callback_does_not_emit_completion(self) -> None:
+        completed = []
+        backend = SapiTtsBackend(
+            voice_mapping={},
+            adapter_factory=FakeSapiAdapter,
+            on_started=lambda _unit: backend.close(),
+            on_completed=completed.append,
+        )
+        self.addCleanup(backend.close)
+        backend.enqueue(unit(1, 1))
+        backend._thread.join(1)
+        self.assertFalse(backend._thread.is_alive())
+        self.assertIsNone(backend.last_error)
+        self.assertEqual(completed, [])
+
     def test_ordered_units_and_locale_voice_mapping(self) -> None:
         adapter = FakeSapiAdapter()
         started: list[int] = []; completed: list[int] = []

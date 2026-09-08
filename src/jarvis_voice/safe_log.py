@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,6 +23,7 @@ class SafeEventLogger:
         self.path = Path(path)
         self.maximum_bytes = maximum_bytes
         self.backup_count = backup_count
+        self._lock = threading.Lock()
 
     @staticmethod
     def _token(value: str, field: str) -> str:
@@ -41,14 +43,15 @@ class SafeEventLogger:
         if code is not None:
             record["code"] = self._token(code, "code")
         encoded = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._rotate_if_needed(len(encoded))
-            descriptor = os.open(self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
-            with os.fdopen(descriptor, "ab") as stream:
-                stream.write(encoded)
-        except OSError as exc:
-            raise BackendError("logging.write_failed", "The local event log could not be written", subsystem="logging") from exc
+        with self._lock:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self._rotate_if_needed(len(encoded))
+                descriptor = os.open(self.path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+                with os.fdopen(descriptor, "ab") as stream:
+                    stream.write(encoded)
+            except OSError as exc:
+                raise BackendError("logging.write_failed", "The local event log could not be written", subsystem="logging") from exc
 
     def _rotate_if_needed(self, incoming_bytes: int) -> None:
         try:

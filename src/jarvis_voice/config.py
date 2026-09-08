@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from .errors import BackendError
 from .manifest import MODEL_MANIFESTS, MODEL_PROFILE_LARGE_V3_TURBO
+from .ptt import FUNCTION_KEY_VKEYS
 from .voice_auth import VoiceAuthError, VoiceAuthKey, load_voice_auth_key
 
 
@@ -219,6 +220,16 @@ def _boolean(value: Any, field_name: str) -> bool:
     return value
 
 
+def _finite_float(value: Any, field_name: str) -> float:
+    try:
+        result = float(value)
+        if isinstance(value, bool) or not math.isfinite(result):
+            raise ValueError
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise BackendError("config.invalid_field", "Configuration value must be a finite number", subsystem="config", safe_context={"field": field_name}) from exc
+    return result
+
+
 def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
     if not isinstance(data, Mapping):
         raise BackendError("config.invalid", "Configuration must be an object", subsystem="config")
@@ -355,8 +366,8 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         ptt_key=str(data.get("ptt_key", "F9")).upper(),
         ptt_queue_capacity=_positive_int(data.get("ptt_queue_capacity", 64), "ptt_queue_capacity"),
         audio_queue_capacity=_positive_int(data.get("audio_queue_capacity", 256), "audio_queue_capacity"),
-        maximum_hold_seconds=float(data.get("maximum_hold_seconds", 30.0)),
-        maximum_utterance_seconds=float(data.get("maximum_utterance_seconds", 30.0)),
+        maximum_hold_seconds=_finite_float(data.get("maximum_hold_seconds", 30.0), "maximum_hold_seconds"),
+        maximum_utterance_seconds=_finite_float(data.get("maximum_utterance_seconds", 30.0), "maximum_utterance_seconds"),
         audio_input_device=data.get("audio_input_device"),
         whisper_model_directory=data.get("whisper_model_directory"),
         asr=AsrConfig(
@@ -370,14 +381,14 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 minimum_free_vram_mb=_non_negative_int(cuda_data.get("minimum_free_vram_mb", 0), "asr.cuda.minimum_free_vram_mb"),
                 reserve_for_other_workloads_mb=_non_negative_int(cuda_data.get("reserve_for_other_workloads_mb", 0), "asr.cuda.reserve_for_other_workloads_mb"),
                 fallback_to_cpu=_boolean(cuda_data.get("fallback_to_cpu", True), "asr.cuda.fallback_to_cpu"),
-                worker_start_timeout_seconds=float(cuda_data.get("worker_start_timeout_seconds", 30.0)),
-                transcription_timeout_seconds=float(cuda_data.get("transcription_timeout_seconds", 120.0)),
+                worker_start_timeout_seconds=_finite_float(cuda_data.get("worker_start_timeout_seconds", 30.0), "asr.cuda.worker_start_timeout_seconds"),
+                transcription_timeout_seconds=_finite_float(cuda_data.get("transcription_timeout_seconds", 120.0), "asr.cuda.transcription_timeout_seconds"),
                 warm_restart_limit=_non_negative_int(cuda_data.get("warm_restart_limit", 1), "asr.cuda.warm_restart_limit"),
                 vram_poll_interval_ms=_positive_int(cuda_data.get("vram_poll_interval_ms", 100), "asr.cuda.vram_poll_interval_ms"),
             ),
         ),
         application=ApplicationConfig(
-            shutdown_timeout_seconds=float(application_data.get("shutdown_timeout_seconds", 5.0)),
+            shutdown_timeout_seconds=_finite_float(application_data.get("shutdown_timeout_seconds", 5.0), "application.shutdown_timeout_seconds"),
             log_maximum_bytes=_positive_int(application_data.get("log_maximum_bytes", 1_048_576), "application.log_maximum_bytes"),
             log_backup_count=_non_negative_int(application_data.get("log_backup_count", 3), "application.log_backup_count"),
         ),
@@ -403,9 +414,9 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
         ),
         vad=VadConfig(
             artifact=ArtifactConfig(artifact_data.get("path"), artifact_data.get("size"), artifact_data.get("sha256")),
-            threshold=float(vad_data.get("threshold", 0.5)),
-            minimum_speech_ms=int(vad_data.get("minimum_speech_ms", 80)),
-            padding_ms=int(vad_data.get("padding_ms", 80)),
+            threshold=_finite_float(vad_data.get("threshold", 0.5), "vad.threshold"),
+            minimum_speech_ms=_non_negative_int(vad_data.get("minimum_speech_ms", 80), "vad.minimum_speech_ms"),
+            padding_ms=_non_negative_int(vad_data.get("padding_ms", 80), "vad.padding_ms"),
         ),
         orchestrator_url=url,
         voice_auth_key_file=voice_auth_key_file,
@@ -427,7 +438,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 pocket_voice_data.get("size"),
                 pocket_voice_data.get("sha256"),
             ),
-            temperature=float(pocket_data.get("temperature", 0.7)),
+            temperature=_finite_float(pocket_data.get("temperature", 0.7), "pocket_tts.temperature"),
             max_tokens=_positive_int(pocket_data.get("max_tokens", 50), "pocket_tts.max_tokens"),
             warm_on_start=_boolean(pocket_data.get("warm_on_start", True), "pocket_tts.warm_on_start"),
         ),
@@ -452,14 +463,16 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                     whisper_cpp_data.get("qualified_audio_context", 0),
                     "macos.whisper_cpp.qualified_audio_context",
                 ),
-                qualified_audio_context_minimum_seconds=float(
-                    whisper_cpp_data.get("qualified_audio_context_minimum_seconds", 3.0)
+                qualified_audio_context_minimum_seconds=_finite_float(
+                    whisper_cpp_data.get("qualified_audio_context_minimum_seconds", 3.0),
+                    "macos.whisper_cpp.qualified_audio_context_minimum_seconds",
                 ),
-                qualified_audio_context_maximum_seconds=float(
-                    whisper_cpp_data.get("qualified_audio_context_maximum_seconds", 12.0)
+                qualified_audio_context_maximum_seconds=_finite_float(
+                    whisper_cpp_data.get("qualified_audio_context_maximum_seconds", 12.0),
+                    "macos.whisper_cpp.qualified_audio_context_maximum_seconds",
                 ),
-                startup_timeout_seconds=float(whisper_cpp_data.get("startup_timeout_seconds", 30.0)),
-                request_timeout_seconds=float(whisper_cpp_data.get("request_timeout_seconds", 120.0)),
+                startup_timeout_seconds=_finite_float(whisper_cpp_data.get("startup_timeout_seconds", 30.0), "macos.whisper_cpp.startup_timeout_seconds"),
+                request_timeout_seconds=_finite_float(whisper_cpp_data.get("request_timeout_seconds", 120.0), "macos.whisper_cpp.request_timeout_seconds"),
                 maximum_response_bytes=_positive_int(whisper_cpp_data.get("maximum_response_bytes", 1_048_576), "macos.whisper_cpp.maximum_response_bytes"),
             ),
             greektts15=GreekTts15Config(
@@ -478,20 +491,15 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 model=ArtifactConfig(kokoro_model_data.get("path"), kokoro_model_data.get("size"), kokoro_model_data.get("sha256")),
                 voices=ArtifactConfig(kokoro_voices_data.get("path"), kokoro_voices_data.get("size"), kokoro_voices_data.get("sha256")),
                 language=str(kokoro_data.get("language", "en-gb")).lower(),
-                speed=float(kokoro_data.get("speed", 0.96)),
-                voice_mix={str(name): float(weight) for name, weight in kokoro_mix_data.items()},
+                speed=_finite_float(kokoro_data.get("speed", 0.96), "macos.kokoro_onnx.speed"),
+                voice_mix={str(name): _finite_float(weight, "macos.kokoro_onnx.voice_mix") for name, weight in kokoro_mix_data.items()},
                 warm_on_start=_boolean(kokoro_data.get("warm_on_start", True), "macos.kokoro_onnx.warm_on_start"),
             ),
             system_voices=dict(macos_voices),
         ),
         logging_level=str(data.get("logging_level", "INFO")).upper(),
     )
-    function_key = (
-        config.ptt_key.startswith("F")
-        and config.ptt_key[1:].isdigit()
-        and 1 <= int(config.ptt_key[1:]) <= 24
-    )
-    if not function_key and config.ptt_key not in {"CONTROL_OPTION", "RIGHT_OPTION"}:
+    if config.ptt_key not in FUNCTION_KEY_VKEYS and config.ptt_key not in {"CONTROL_OPTION", "RIGHT_OPTION"}:
         raise BackendError(
             "config.unsupported_ptt_key",
             "PTT key must be F1 through F24 or an approved macOS modifier input",
@@ -748,7 +756,6 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
             or not isinstance(coreml.directory, str)
             or not Path(coreml.directory).is_absolute()
             or not coreml.files
-            or len(set(relative_paths)) != len(relative_paths)
             or any(
                 not isinstance(artifact.path, str)
                 or not artifact.path
@@ -764,6 +771,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
                 or re.fullmatch(r"[0-9a-f]{64}", artifact.sha256) is None
                 for artifact in coreml.files
             )
+            or len(set(relative_paths)) != len(relative_paths)
         ):
             raise BackendError(
                 "config.whisper_cpp_coreml_profile_required",
@@ -784,9 +792,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
             safe_context={"field": "macos.whisper_cpp.qualified_audio_context"},
         )
     if (
-        not math.isfinite(config.macos.whisper_cpp.qualified_audio_context_minimum_seconds)
-        or not math.isfinite(config.macos.whisper_cpp.qualified_audio_context_maximum_seconds)
-        or config.macos.whisper_cpp.qualified_audio_context_minimum_seconds < 0
+        config.macos.whisper_cpp.qualified_audio_context_minimum_seconds < 0
         or config.macos.whisper_cpp.qualified_audio_context_maximum_seconds
         < config.macos.whisper_cpp.qualified_audio_context_minimum_seconds
     ):
@@ -803,6 +809,7 @@ def voice_config_from_mapping(data: Mapping[str, Any]) -> VoiceConfig:
 
 def load_voice_config(path: str | Path) -> VoiceConfig:
     try:
-        return voice_config_from_mapping(json.loads(Path(path).read_text(encoding="utf-8")))
-    except (OSError, json.JSONDecodeError) as exc:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
         raise BackendError("config.read_failed", "Configuration could not be read", subsystem="config") from exc
+    return voice_config_from_mapping(document)

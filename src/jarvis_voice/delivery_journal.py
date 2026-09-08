@@ -58,6 +58,11 @@ class DeliveryDedupJournal:
             path,
             trusted_boundary=trusted_boundary,
         )
+        self.ttl_seconds = ttl_seconds
+        self.maximum_rows = maximum_rows
+        self.clock = clock
+        self._lock = threading.RLock()
+        self._closed = False
         self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
         try:
             self._connection.execute("PRAGMA journal_mode=WAL")
@@ -76,15 +81,10 @@ class DeliveryDedupJournal:
                 self.path,
                 trusted_boundary=trusted_boundary,
             )
+            self.prune()
         except BaseException:
             self._connection.close()
             raise
-        self.ttl_seconds = ttl_seconds
-        self.maximum_rows = maximum_rows
-        self.clock = clock
-        self._lock = threading.RLock()
-        self._closed = False
-        self.prune()
 
     def close(self) -> None:
         with self._lock:

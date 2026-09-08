@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from contextlib import closing
 from typing import Callable, Mapping, Protocol
 
 from ..backends import SpeechUnit
@@ -100,6 +101,10 @@ class SapiTtsBackend:
         with self._lock:
             if unit.epoch <= self._cancelled_through_epoch:
                 return
+            if self._error is not None:
+                raise self._error
+            if self._stop_event.is_set():
+                raise BackendError("tts.closed", "SAPI worker is closed", subsystem="tts")
             self._queue.put_nowait(unit)
 
     def cancel(self, new_epoch: int, reason: str) -> None:
@@ -116,7 +121,8 @@ class SapiTtsBackend:
                     retained.append(unit)
             for unit in retained:
                 self._queue.put_nowait(unit)
-            self._cancel_event.set()
+            if self._active is not None and self._active.epoch <= self._cancelled_through_epoch:
+                self._cancel_event.set()
 
     @property
     def is_idle(self) -> bool:
@@ -136,39 +142,42 @@ class SapiTtsBackend:
         return self.is_idle
 
     def close(self) -> None:
-        self._stop_event.set(); self._cancel_event.set(); self._thread.join(timeout=2)
+        self._stop_event.set()
+        self._cancel_event.set()
+        if self._thread is not threading.current_thread():
+            self._thread.join(timeout=2)
 
     def _worker(self) -> None:
-        adapter = self.adapter_factory()
         try:
-            adapter.open()
-            while not self._stop_event.is_set():
-                try:
-                    unit = self._queue.get(timeout=0.02)
-                except queue.Empty:
-                    continue
-                with self._lock:
-                    if unit.epoch <= self._cancelled_through_epoch:
+            with closing(self.adapter_factory()) as adapter:
+                adapter.open()
+                while not self._stop_event.is_set():
+                    try:
+                        unit = self._queue.get(timeout=0.02)
+                    except queue.Empty:
                         continue
-                    self._active = unit
-                    self._cancel_event.clear()
-                self.timings.append(SapiTiming("speak_dispatch", time.perf_counter(), unit.epoch))
-                adapter.speak_async(unit.text, self.voice_mapping.get(unit.locale, ""))
-                self.on_started(unit)
-                cancelled = False
-                while not adapter.wait_until_done(10):
-                    if self._cancel_event.is_set() or self._stop_event.is_set():
-                        self.timings.append(SapiTiming("purge_dispatch", time.perf_counter(), unit.epoch))
-                        adapter.purge()
-                        self.timings.append(SapiTiming("purge_complete", time.perf_counter(), unit.epoch))
-                        cancelled = True
-                        break
-                with self._lock:
-                    stale = unit.epoch <= self._cancelled_through_epoch
-                    self._active = None
-                if not cancelled and not stale:
-                    self.timings.append(SapiTiming("stream_complete", time.perf_counter(), unit.epoch))
-                    self.on_completed(unit)
+                    with self._lock:
+                        if self._stop_event.is_set() or unit.epoch <= self._cancelled_through_epoch:
+                            continue
+                        self._active = unit
+                        self._cancel_event.clear()
+                    self.timings.append(SapiTiming("speak_dispatch", time.perf_counter(), unit.epoch))
+                    adapter.speak_async(unit.text, self.voice_mapping.get(unit.locale, ""))
+                    self.on_started(unit)
+                    cancelled = False
+                    while not adapter.wait_until_done(10):
+                        if self._cancel_event.is_set() or self._stop_event.is_set():
+                            self.timings.append(SapiTiming("purge_dispatch", time.perf_counter(), unit.epoch))
+                            adapter.purge()
+                            self.timings.append(SapiTiming("purge_complete", time.perf_counter(), unit.epoch))
+                            cancelled = True
+                            break
+                    with self._lock:
+                        stale = self._stop_event.is_set() or unit.epoch <= self._cancelled_through_epoch
+                        self._active = None
+                    if not cancelled and not stale:
+                        self.timings.append(SapiTiming("stream_complete", time.perf_counter(), unit.epoch))
+                        self.on_completed(unit)
         except BackendError as exc:
             self._error = exc
         except Exception as exc:
@@ -176,5 +185,10 @@ class SapiTtsBackend:
             self._error.__cause__ = exc
         finally:
             with self._lock:
+                self._stop_event.set()
                 self._active = None
-            adapter.close()
+                while True:
+                    try:
+                        self._queue.get_nowait()
+                    except queue.Empty:
+                        break

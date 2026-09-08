@@ -46,6 +46,7 @@ class LoopbackWebSocketTransport:
         self._factory = connection_factory
         self._connection: SyncConnection | None = None
         self._authenticated = False
+        self._session_id: str | None = None
 
     def connect(self) -> None:
         if self._connection is not None:
@@ -89,7 +90,10 @@ class LoopbackWebSocketTransport:
                     event.to_json(),
                 )
                 self._authenticated = True
+                self._session_id = event.session_id
                 return
+            if event.session_id != self._session_id:
+                raise BackendError("transport.session_mismatch", "Frame belongs to another Voice session", subsystem="transport")
             self._connection.send(event.to_json())
         except BackendError:
             raise
@@ -141,17 +145,22 @@ class LoopbackWebSocketTransport:
         except Exception as exc:
             raise BackendError("transport.invalid_json", "WebSocket frame is invalid", subsystem="transport") from exc
         if isinstance(preview, dict) and preview.get("protocol") == ACTION_APPROVAL_PROTOCOL:
-            return ActionApprovalEnvelope.from_json(raw)
-        if isinstance(preview, dict) and preview.get("protocol") == SCHEDULER_PROTOCOL:
-            return SchedulerEnvelope.from_json(raw)
-        if isinstance(preview, dict) and "protocol" in preview:
-            return CloudApprovalEnvelope.from_json(raw)
-        return Envelope.from_json(raw)
+            event = ActionApprovalEnvelope.from_json(raw)
+        elif isinstance(preview, dict) and preview.get("protocol") == SCHEDULER_PROTOCOL:
+            event = SchedulerEnvelope.from_json(raw)
+        elif isinstance(preview, dict) and "protocol" in preview:
+            event = CloudApprovalEnvelope.from_json(raw)
+        else:
+            event = Envelope.from_json(raw)
+        if event.session_id != self._session_id:
+            raise BackendError("transport.session_mismatch", "Frame belongs to another Voice session", subsystem="transport")
+        return event
 
     def close(self) -> None:
         connection = self._connection
         self._connection = None
         self._authenticated = False
+        self._session_id = None
         if connection is not None:
             connection.close()
 

@@ -19,31 +19,37 @@ class WasapiAudioCapture:
         self._buffer: BoundedCaptureBuffer | None = None
 
     def start(self) -> None:
+        if self._stream is not None:
+            return
         if sys.platform != "win32":
             raise BackendError("audio.wasapi_windows_only", "WASAPI requires Windows", subsystem="audio")
         try:
             import sounddevice as sd  # type: ignore[import-not-found]
         except ImportError as exc:
             raise BackendError("audio.runtime_missing", "sounddevice is not installed", subsystem="audio") from exc
-        device_info = sd.query_devices(self.device, "input")
-        sample_rate = int(device_info["default_samplerate"])
-        self._buffer = BoundedCaptureBuffer(
-            capacity=self.queue_capacity,
-            sample_rate=sample_rate,
-            maximum_samples=round(sample_rate * self.maximum_utterance_seconds),
-        )
-        settings = sd.WasapiSettings(auto_convert=True)
-        self._stream = sd.RawInputStream(
-            samplerate=sample_rate,
-            blocksize=0,
-            device=self.device,
-            channels=1,
-            dtype="float32",
-            latency="low",
-            extra_settings=settings,
-            callback=self._callback,
-        )
-        self._stream.start()
+        try:
+            device_info = sd.query_devices(self.device, "input")
+            sample_rate = int(device_info["default_samplerate"])
+            self._buffer = BoundedCaptureBuffer(
+                capacity=self.queue_capacity,
+                sample_rate=sample_rate,
+                maximum_samples=round(sample_rate * self.maximum_utterance_seconds),
+            )
+            settings = sd.WasapiSettings(auto_convert=True)
+            self._stream = sd.RawInputStream(
+                samplerate=sample_rate,
+                blocksize=0,
+                device=self.device,
+                channels=1,
+                dtype="float32",
+                latency="low",
+                extra_settings=settings,
+                callback=self._callback,
+            )
+            self._stream.start()
+        except Exception as exc:
+            self.stop()
+            raise BackendError("audio.wasapi_start_failed", "WASAPI input could not start", subsystem="audio") from exc
 
     def _callback(self, indata: bytes, frames: int, time_info: Any, status: Any) -> None:
         del frames, time_info, status
@@ -66,5 +72,11 @@ class WasapiAudioCapture:
             self._buffer.abort_turn()
 
     def stop(self) -> None:
-        if self._stream is not None:
-            self._stream.stop(); self._stream.close(); self._stream = None
+        stream, self._stream = self._stream, None
+        self._buffer = None
+        if stream is not None:
+            for operation in (stream.stop, stream.close):
+                try:
+                    operation()
+                except Exception:
+                    pass

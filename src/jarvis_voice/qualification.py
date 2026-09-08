@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -20,7 +19,7 @@ from typing import Any, Protocol
 from . import PROTOCOL_VERSION, __version__
 from .app_paths import require_external_mutable_path
 from .config import VoiceConfig
-from .distribution import MANIFEST_NAME, verify_distribution
+from .distribution import verify_distribution
 from .doctor import doctor_report_config
 from .errors import BackendError
 from .voice_auth import AUTH_PROTOCOL
@@ -67,23 +66,27 @@ def _ready(code: str, **details: object) -> dict[str, object]:
 
 
 def _atomic_json(path: str | Path, value: object) -> Path:
-    output = require_external_mutable_path(path)
-    if output.is_symlink():
-        raise BackendError("qualification.output_symlink_forbidden", "Evidence output cannot be a symlink", subsystem="qualification")
-    if not output.parent.is_dir():
-        raise BackendError("qualification.output_directory_missing", "Evidence output directory does not exist", subsystem="qualification")
-    encoded = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
     temporary: str | None = None
     try:
+        supplied = Path(path).expanduser()
+        if supplied.is_symlink():
+            raise BackendError("qualification.output_symlink_forbidden", "Evidence output cannot be a symlink", subsystem="qualification")
+        output = require_external_mutable_path(supplied)
+        if not output.parent.is_dir():
+            raise BackendError("qualification.output_directory_missing", "Evidence output directory does not exist", subsystem="qualification")
+        encoded = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
         with tempfile.NamedTemporaryFile(prefix=".jarvis-evidence-", dir=output.parent, delete=False) as stream:
             temporary = stream.name
             os.chmod(temporary, 0o600)
             stream.write(encoded); stream.flush(); os.fsync(stream.fileno())
         Path(temporary).replace(output)
         return output
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
         if temporary is not None:
-            Path(temporary).unlink(missing_ok=True)
+            try:
+                Path(temporary).unlink(missing_ok=True)
+            except OSError:
+                pass
         raise BackendError("qualification.output_write_failed", "Evidence output could not be written", subsystem="qualification") from exc
 
 
@@ -124,7 +127,7 @@ def write_sample_template(path: str | Path, runtime_profile_sha256: str) -> Path
 def _load_json(path: str | Path, code: str) -> Any:
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise BackendError(code, "Qualification JSON is missing or invalid", subsystem="qualification") from exc
 
 
@@ -145,10 +148,9 @@ def _validate_metrics(raw: Any, *, required: frozenset[str]) -> dict[str, float]
     for name, value in raw.items():
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             raise BackendError("qualification.samples_schema_invalid", "Sample metric must be numeric", subsystem="qualification")
-        number = float(value)
-        if not math.isfinite(number) or number < 0 or number > 600_000:
+        if not 0 <= value <= 600_000:
             raise BackendError("qualification.samples_schema_invalid", "Sample metric is outside the permitted range", subsystem="qualification")
-        metrics[str(name)] = number
+        metrics[str(name)] = float(value)
     if not required.issubset(metrics):
         raise BackendError("qualification.required_metric_missing", "A passing sample is missing a required metric", subsystem="qualification")
     return metrics
@@ -170,6 +172,7 @@ def validate_samples(
     if (
         not isinstance(raw, Mapping)
         or set(raw) != expected_fields
+        or type(raw.get("schema_version")) is not int
         or raw.get("schema_version") != SAMPLE_SCHEMA_VERSION
         or raw.get("product_version") != __version__
         or raw.get("protocol_version") != PROTOCOL_VERSION
@@ -196,7 +199,7 @@ def validate_samples(
         case, outcome = item.get("case"), item.get("outcome")
         if sample_id is None or sample_id in identifiers:
             raise BackendError("qualification.sample_id_invalid", "Qualification sample ID is invalid or replayed", subsystem="qualification")
-        if case not in CASE_REQUIREMENTS or outcome not in {"pass", "fail"}:
+        if not isinstance(case, str) or case not in CASE_REQUIREMENTS or not isinstance(outcome, str) or outcome not in {"pass", "fail"}:
             raise BackendError("qualification.samples_schema_invalid", "Qualification case or outcome is invalid", subsystem="qualification")
         required = CASE_REQUIRED_METRICS.get(str(case), frozenset()) if outcome == "pass" else frozenset()
         metrics = _validate_metrics(item.get("metrics"), required=required)
@@ -365,8 +368,7 @@ def _manifest_gate(directory: str | Path) -> dict[str, object]:
         result = verify_distribution(directory)
         if not result.ok:
             return _blocked(result.code, files_checked=result.files_checked)
-        digest = hashlib.sha256((Path(directory) / MANIFEST_NAME).read_bytes()).hexdigest()
-        return _ready("qualification.distribution_valid", files_checked=result.files_checked, manifest_sha256=digest)
+        return _ready("qualification.distribution_valid", files_checked=result.files_checked, manifest_sha256=result.manifest_sha256)
     except (BackendError, OSError) as exc:
         code = exc.code if isinstance(exc, BackendError) else "qualification.distribution_unreadable"
         return _blocked(code, files_checked=0)

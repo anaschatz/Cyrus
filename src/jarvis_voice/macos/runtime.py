@@ -422,7 +422,9 @@ class MacVoiceRuntime:
 
     def _send_all(self, events: list[Envelope]) -> None:
         for event in events:
-            if event.type == "input.transcript.final":
+            if event.type == "input.capture.started":
+                self.reliable.cancel()
+            elif event.type == "input.transcript.final":
                 self.reliable.begin(event)
                 language = event.payload.get("language", {})
                 code = language.get("code", "unknown") if isinstance(language, Mapping) else "unknown"
@@ -671,7 +673,7 @@ class MacVoiceRuntime:
                             self.transport.send(decision)
                             if isinstance(decision, ActionApprovalEnvelope):
                                 self.action_journal.mark_sent(decision.event_id, now=now)
-                            else:
+                            elif isinstance(decision, CloudApprovalEnvelope):
                                 self.cloud_approval.mark_decision_sent(decision.event_id, now=now)
                 self._poll_transcription()
                 for backend in (self.tts, self.ptt):

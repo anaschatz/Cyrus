@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from contextlib import ExitStack
 
 from .asr_factory import AsrBackendFactory
 from .audio import resample_audio
@@ -70,93 +71,108 @@ class WindowsVoiceRuntime:
             journal_paths,
             trusted_boundary=state_boundary,
         )
-        self.config = config
-        self.callbacks: queue.Queue[BackendCallback] = queue.Queue()
-        started_callback = lambda unit: self.callbacks.put_nowait(
-            BackendCallback("started", unit)
-        )
-        completed_callback = lambda unit: self.callbacks.put_nowait(
-            BackendCallback("completed", unit)
-        )
-        system_tts = SapiTtsBackend(
-            voice_mapping=config.sapi_voices,
-            on_started=started_callback,
-            on_completed=completed_callback,
-        )
-        if config.windows_tts_backend == "pocket_tts":
-            self.tts = PocketTtsBackend(
-                engine=PocketTtsCpuEngine(config.pocket_tts),
-                fallback_backend=system_tts,
+        self.transcription: AsyncTranscriptionCoordinator | None = None
+        with ExitStack() as initialization:
+            self.config = config
+            self.callbacks: queue.Queue[BackendCallback] = queue.Queue()
+            started_callback = lambda unit: self.callbacks.put_nowait(
+                BackendCallback("started", unit)
+            )
+            completed_callback = lambda unit: self.callbacks.put_nowait(
+                BackendCallback("completed", unit)
+            )
+            system_tts = SapiTtsBackend(
+                voice_mapping=config.sapi_voices,
                 on_started=started_callback,
                 on_completed=completed_callback,
-                warm_on_start=config.pocket_tts.warm_on_start,
             )
-        else:
             self.tts = system_tts
-        self.asr = (asr_factory or AsrBackendFactory()).create(config)
-        self.delivery_journal = DeliveryDedupJournal(
-            journal_paths[0],
-            trusted_boundary=state_boundary,
-        )
-        self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
-        self.cloud_journal = CloudApprovalJournal(
-            journal_paths[1],
-            trusted_boundary=state_boundary,
-        )
-        self.cloud_approval = CloudApprovalController(session_id=self.core.session_id, journal=self.cloud_journal)
-        self.action_journal = ActionApprovalJournal(
-            journal_paths[2],
-            trusted_boundary=state_boundary,
-        )
-        self.action_approval = ActionApprovalController(
-            session_id=self.core.session_id,
-            journal=self.action_journal,
-            approval_arbiter=self.cloud_approval.approval_arbiter,
-        )
-        self.scheduler_runtime: SchedulerNativeRuntime | None = None
-        if config.scheduler.enabled:
-            self.scheduler_runtime = SchedulerNativeRuntime.from_config(
-                config.scheduler,
+            initialization.callback(lambda: self.tts.close())
+            initialization.callback(lambda: self.tts.cancel(2**63 - 1, "application_close"))
+            if config.windows_tts_backend == "pocket_tts":
+                self.tts = PocketTtsBackend(
+                    engine=PocketTtsCpuEngine(config.pocket_tts),
+                    fallback_backend=system_tts,
+                    on_started=started_callback,
+                    on_completed=completed_callback,
+                    warm_on_start=config.pocket_tts.warm_on_start,
+                )
+            self.asr = (asr_factory or AsrBackendFactory()).create(config)
+            initialization.callback(self._close_asr)
+            self.delivery_journal = DeliveryDedupJournal(
+                journal_paths[0],
+                trusted_boundary=state_boundary,
+            )
+            initialization.callback(self.delivery_journal.close)
+            self.core = VoiceCore(asr=self.asr, tts=self.tts, delivery_journal=self.delivery_journal)
+            self.cloud_journal = CloudApprovalJournal(
+                journal_paths[1],
+                trusted_boundary=state_boundary,
+            )
+            initialization.callback(self.cloud_journal.close)
+            self.cloud_approval = CloudApprovalController(session_id=self.core.session_id, journal=self.cloud_journal)
+            self.action_journal = ActionApprovalJournal(
+                journal_paths[2],
+                trusted_boundary=state_boundary,
+            )
+            initialization.callback(self.action_journal.close)
+            self.action_approval = ActionApprovalController(
                 session_id=self.core.session_id,
+                journal=self.action_journal,
                 approval_arbiter=self.cloud_approval.approval_arbiter,
-                tts=self.tts,
-                reserve_epoch=self.core.state.reserve_output_epoch,
             )
-            self.core.configure_scheduler_extension(
-                self.scheduler_runtime.capabilities,
-                self.scheduler_runtime.manifest_sha256,
-                self.scheduler_runtime.callback_qualification_sha256,
+            self.scheduler_runtime: SchedulerNativeRuntime | None = None
+            if config.scheduler.enabled:
+                self.scheduler_runtime = SchedulerNativeRuntime.from_config(
+                    config.scheduler,
+                    session_id=self.core.session_id,
+                    approval_arbiter=self.cloud_approval.approval_arbiter,
+                    tts=self.tts,
+                    reserve_epoch=self.core.state.reserve_output_epoch,
+                )
+                initialization.callback(self.scheduler_runtime.close)
+                self.core.configure_scheduler_extension(
+                    self.scheduler_runtime.capabilities,
+                    self.scheduler_runtime.manifest_sha256,
+                    self.scheduler_runtime.callback_qualification_sha256,
+                )
+            self.transcription = AsyncTranscriptionCoordinator(self.asr) if config.asr.execution_profile == "cuda" else None
+            self.vad = SileroOnnxVad(
+                artifact_path=artifact.path,
+                size=artifact.size,
+                sha256=artifact.sha256,
+                threshold=config.vad.threshold,
+                minimum_speech_ms=config.vad.minimum_speech_ms,
+                padding_ms=config.vad.padding_ms,
             )
-        self.transcription = AsyncTranscriptionCoordinator(self.asr) if config.asr.execution_profile == "cuda" else None
-        self.vad = SileroOnnxVad(
-            artifact_path=artifact.path,
-            size=artifact.size,
-            sha256=artifact.sha256,
-            threshold=config.vad.threshold,
-            minimum_speech_ms=config.vad.minimum_speech_ms,
-            padding_ms=config.vad.padding_ms,
-        )
-        self.transport = LoopbackWebSocketTransport(
-            config.orchestrator_url,
-            auth_key=voice_auth_key,
-        )
-        self.publisher = PttEventPublisher(
-            capacity=config.ptt_queue_capacity,
-            maximum_hold_seconds=config.maximum_hold_seconds,
-            ptt_vkey=function_key_vkey(config.ptt_key),
-        )
-        self.approval_keys = ApprovalKeyPublisher()
-        self.ptt = RawInputPttSource(self.publisher, self.approval_keys)
-        self.audio = WasapiAudioCapture(queue_capacity=config.audio_queue_capacity, maximum_utterance_seconds=config.maximum_utterance_seconds, device=config.audio_input_device)
-        self._running = False
-        self._stop_requested = threading.Event()
-        self.timings: list[dict[str, float | str]] = []
-        self.reliable = ReliableSubmissionManager(time.monotonic)
-        self._transport_reconnect_event_id: str | None = None
+            self.transport = LoopbackWebSocketTransport(
+                config.orchestrator_url,
+                auth_key=voice_auth_key,
+            )
+            initialization.callback(self.transport.close)
+            self.publisher = PttEventPublisher(
+                capacity=config.ptt_queue_capacity,
+                maximum_hold_seconds=config.maximum_hold_seconds,
+                ptt_vkey=function_key_vkey(config.ptt_key),
+            )
+            self.approval_keys = ApprovalKeyPublisher()
+            self.ptt = RawInputPttSource(self.publisher, self.approval_keys)
+            initialization.callback(self.ptt.stop)
+            self.audio = WasapiAudioCapture(queue_capacity=config.audio_queue_capacity, maximum_utterance_seconds=config.maximum_utterance_seconds, device=config.audio_input_device)
+            initialization.callback(self.audio.stop)
+            initialization.callback(self.audio.abort_turn)
+            self._running = False
+            self._stop_requested = threading.Event()
+            self.timings: list[dict[str, float | str]] = []
+            self.reliable = ReliableSubmissionManager(time.monotonic)
+            self._transport_reconnect_event_id: str | None = None
+            self._cleanup = initialization.pop_all()
 
     def _send_all(self, events: list) -> None:
         for event in events:
-            if event.type == "input.transcript.final":
+            if event.type == "input.capture.started":
+                self.reliable.cancel()
+            elif event.type == "input.transcript.final":
                 self.reliable.begin(event)
                 self.timings.append({"event": "transcript_final_created", "timestamp": time.perf_counter()})
             elif event.type == "playback.completed":
@@ -257,6 +273,9 @@ class WindowsVoiceRuntime:
             self.ptt.start()
             self.transport.send(self.core.client_hello())
             while self._running and not self._stop_requested.is_set():
+                input_error = getattr(self.ptt, "last_error", None)
+                if isinstance(input_error, BackendError):
+                    raise input_error
                 now = time.perf_counter()
                 self.publisher.watchdog(now)
                 try:
@@ -302,9 +321,12 @@ class WindowsVoiceRuntime:
                             self.transport.send(decision)
                             if isinstance(decision, ActionApprovalEnvelope):
                                 self.action_journal.mark_sent(decision.event_id, now=now)
-                            else:
+                            elif isinstance(decision, CloudApprovalEnvelope):
                                 self.cloud_approval.mark_decision_sent(decision.event_id, now=now)
                 self._poll_transcription()
+                tts_error = getattr(self.tts, "last_error", None)
+                if isinstance(tts_error, BackendError):
+                    raise tts_error
                 while True:
                     try:
                         callback = self.callbacks.get_nowait()
@@ -403,23 +425,15 @@ class WindowsVoiceRuntime:
         if self.transcription is not None:
             self.transcription.cancel_current()
 
-    def close(self) -> None:
-        self._running = False
-        self._stop_requested.set()
-        self.ptt.stop()
-        self.audio.abort_turn()
-        self.audio.stop()
+    def _close_asr(self) -> None:
         if self.transcription is not None:
-            self.transcription.cancel_current()
             self.transcription.close()
         else:
             close_asr = getattr(self.asr, "close", None)
             if close_asr is not None:
                 close_asr()
-        self.tts.cancel(2**63 - 1, "application_close")
-        self.tts.close()
-        self.transport.close()
-        self.cloud_journal.close()
-        self.action_journal.close()
-        if self.scheduler_runtime is not None:
-            self.scheduler_runtime.close()
+
+    def close(self) -> None:
+        self._running = False
+        self._stop_requested.set()
+        self._cleanup.close()

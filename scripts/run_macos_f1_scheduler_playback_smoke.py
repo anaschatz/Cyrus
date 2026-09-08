@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import queue
 import sys
 import time
@@ -75,7 +76,7 @@ def run_scheduler_playback_smoke(
     tts_builder=create_macos_calibration_tts,
     clock=time.perf_counter,
 ) -> dict[str, object]:
-    if timeout_seconds <= 0:
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise BackendError("qualification.scheduler_playback_config_invalid", "Scheduler smoke timeout is invalid", subsystem="qualification")
     callbacks: queue.Queue[tuple[str, SpeechUnit, float]] = queue.Queue()
     tts = tts_builder(
@@ -96,7 +97,13 @@ def run_scheduler_playback_smoke(
     started_at: float | None = None
     completed_at: float | None = None
     try:
-        controller.pump(allowed=True)
+        initial = controller.pump(allowed=True)
+        if any(event.payload["state"] == "SKIPPED" for event in initial):
+            raise BackendError(
+                "qualification.scheduler_playback_tts_failed",
+                "Scheduler playback TTS enqueue failed",
+                subsystem="qualification",
+            )
         deadline = clock() + timeout_seconds
         while clock() < deadline and completed_at is None:
             try:

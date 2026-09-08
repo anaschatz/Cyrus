@@ -52,7 +52,7 @@ _FIELDS: dict[str, set[str]] = {
     "scheduler.approval.requested": {
         "approval_id", "proposal_id", "proposal_sha256", "operation", "job_id",
         "expected_job_revision", "occurrence_id", "preview", "expires_at_utc",
-        "decision_nonce", "approve_key", "deny_key",
+        "decision_nonce", "presentation_id", "approve_key", "deny_key",
     },
     "scheduler.approval.decision": {
         "approval_id", "proposal_id", "proposal_sha256", "presentation_id",
@@ -129,7 +129,7 @@ class SchedulerEnvelope:
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.protocol != SCHEDULER_PROTOCOL or self.type not in SCHEDULER_EVENTS:
+        if self.protocol != SCHEDULER_PROTOCOL or not isinstance(self.type, str) or self.type not in SCHEDULER_EVENTS:
             raise ProtocolError("protocol.unknown_event", "unknown scheduler protocol/event")
         object.__setattr__(self, "event_id", _uuid4(self.event_id, "event_id"))
         object.__setattr__(self, "session_id", _uuid4(self.session_id, "session_id"))
@@ -139,7 +139,11 @@ class SchedulerEnvelope:
         if not isinstance(self.payload, Mapping) or set(self.payload) != _FIELDS[self.type]:
             raise ProtocolError("protocol.forbidden_field", f"{self.type} payload fields are not exact")
         object.__setattr__(self, "payload", dict(self.payload))
-        self._validate_payload()
+        try:
+            self._validate_payload()
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ProtocolError("protocol.invalid_field", "invalid scheduler payload") from exc
+        self.to_json()
 
     def _validate_payload(self) -> None:
         p = self.payload
@@ -152,10 +156,29 @@ class SchedulerEnvelope:
                 raise ProtocolError("protocol.invalid_field", "invalid scheduler.ready")
         for name in ("approval_id", "proposal_id", "presentation_id", "requested_event_id", "decision_event_id",
                      "decision_nonce", "job_id", "attempt_id"):
-            if name in p and p[name] is not None:
+            if name in p:
+                if name == "job_id" and p[name] is None and self.type in {
+                    "scheduler.approval.requested", "scheduler.approval.decision_result",
+                }:
+                    continue
                 _uuid4(p[name], name)
+        for name in ("job_revision", "expected_job_revision", "delivery_generation", "snooze_generation"):
+            if name not in p:
+                continue
+            value = p[name]
+            if value is None and self.type in {
+                "scheduler.approval.requested", "scheduler.approval.decision_result",
+            }:
+                continue
+            minimum = 0 if name.endswith("generation") else 1
+            if type(value) is not int or not minimum <= value <= 2**63 - 1:
+                raise ProtocolError("protocol.invalid_field", f"{name} must be a bounded integer")
         for name in ("proposal_sha256", "content_sha256", "notification_id", "occurrence_id"):
             if name in p:
+                if name == "occurrence_id" and p[name] is None and self.type in {
+                    "scheduler.approval.requested", "scheduler.approval.decision_result",
+                }:
+                    continue
                 _sha256(p[name], name)
         for name in ("expires_at_utc", "scheduled_at_utc", "effective_due_at_utc",
                      "observed_at_utc", "requested_due_at_utc", "created_at_utc"):
@@ -176,8 +199,10 @@ class SchedulerEnvelope:
             "STAGED", "DISPATCHING", "OS_ACCEPTED", "OS_REJECTED", "AMBIGUOUS_OS_DISPATCH"
         }:
             raise ProtocolError("protocol.invalid_field", "invalid delivery stage")
-        elif self.type == "scheduler.notification.action" and p["action"] not in {"SNOOZE", "CANCEL"}:
-            raise ProtocolError("protocol.invalid_field", "invalid notification action")
+        elif self.type == "scheduler.notification.action":
+            if (p["action"] not in {"SNOOZE", "CANCEL"}
+                    or (p["requested_due_at_utc"] is None) != (p["action"] == "CANCEL")):
+                raise ProtocolError("protocol.invalid_field", "invalid notification action")
         elif self.type == "scheduler.notification.action_result":
             _uuid4(p["action_event_id"], "action_event_id")
             if (
@@ -216,8 +241,12 @@ class SchedulerEnvelope:
                 "payload": dict(self.payload)}
 
     def to_json(self) -> str:
-        raw = json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-        if len(raw.encode("utf-8")) > MAX_SCHEDULER_FRAME_BYTES:
+        try:
+            raw = json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            size = len(raw.encode("utf-8"))
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ProtocolError("protocol.invalid_json", "scheduler frame must be finite UTF-8 JSON") from exc
+        if size > MAX_SCHEDULER_FRAME_BYTES:
             raise ProtocolError("protocol.frame_too_large", "scheduler frame exceeds 16 KiB")
         return raw
 
@@ -234,7 +263,11 @@ class SchedulerEnvelope:
                 raw = raw.decode("utf-8", errors="strict")
             except UnicodeDecodeError as exc:
                 raise ProtocolError("protocol.invalid_json", "scheduler frame is not UTF-8") from exc
-        if len(raw.encode("utf-8")) > MAX_SCHEDULER_FRAME_BYTES or raw.startswith("\ufeff"):
+        try:
+            size = len(raw.encode("utf-8"))
+        except UnicodeError as exc:
+            raise ProtocolError("protocol.invalid_json", "scheduler frame is not UTF-8") from exc
+        if size > MAX_SCHEDULER_FRAME_BYTES or raw.startswith("\ufeff"):
             raise ProtocolError("protocol.frame_too_large", "invalid scheduler frame")
         def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
             result: dict[str, Any] = {}
@@ -249,7 +282,7 @@ class SchedulerEnvelope:
                                    ProtocolError("protocol.invalid_json", f"invalid number {value}")))
         except ProtocolError:
             raise
-        except (json.JSONDecodeError, TypeError) as exc:
+        except (ValueError, TypeError, RecursionError) as exc:
             raise ProtocolError("protocol.invalid_json", "invalid scheduler JSON") from exc
         if not isinstance(value, Mapping) or set(value) != {
             "protocol", "type", "event_id", "session_id", "seq", "sent_at", "payload"
@@ -273,13 +306,14 @@ class SchedulerEventFactory:
 
     def create(self, event_type: str, payload: Mapping[str, Any], *, event_id: str | None = None,
                sent_at: str | None = None) -> SchedulerEnvelope:
-        self._sequence += 1
-        return SchedulerEnvelope(
+        event = SchedulerEnvelope(
             protocol=SCHEDULER_PROTOCOL,
             type=event_type,
             event_id=event_id or str(uuid.uuid4()),
             session_id=self.session_id,
-            seq=self._sequence,
+            seq=self.next_seq,
             sent_at=sent_at or datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             payload=dict(payload),
         )
+        self._sequence += 1
+        return event

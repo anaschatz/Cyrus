@@ -126,6 +126,7 @@ class VoiceCore:
         result = self.state.ptt_down(turn_id)
         if result.ignored:
             return []
+        self.pending_submission_event_id = None
         self.tts.cancel(result.epoch, "ptt_down")
         events: list[Envelope] = []
         if result.cancel_response_id is not None:
@@ -248,6 +249,15 @@ class VoiceCore:
         sequence_result = self.server_sequence.observe(event)
         if sequence_result == SequenceResult.DUPLICATE:
             return []
+        if event.type.startswith("response.") and (
+            self.state.input_state in {InputState.CAPTURING, InputState.TRANSCRIBING}
+            or (
+                event.turn_id is not None
+                and self.state.turn_id is not None
+                and event.turn_id != self.state.turn_id
+            )
+        ):
+            return []
         if self.delivery_journal is not None and self.delivery_journal.observe(event):
             self._synchronize_suppressed_replay(event)
             return []
@@ -264,7 +274,10 @@ class VoiceCore:
         if event.type == "response.started":
             if event.response_id is None:
                 raise AssertionError("Envelope validation should require response_id")
-            self.state.start_response(event.response_id)
+            response = self.state.response
+            replacement = self.state.start_response(event.response_id)
+            if response is not None and not response.playback_completed_emitted:
+                self.tts.cancel(replacement.epoch - 1, "response_replaced")
             return []
         if event.type == "response.speech.commit":
             if event.response_id is None:
@@ -302,25 +315,32 @@ class VoiceCore:
         """
 
         if event.type == "response.started" and event.response_id is not None:
-            try:
+            response = self.state.response
+            if response is None or (
+                response.response_id != event.response_id
+                and (response.tombstoned or response.playback_completed_emitted)
+            ):
                 self.state.start_response(event.response_id)
-            except StateTransitionError:
-                pass
         elif event.type == "response.speech.commit" and event.response_id is not None:
-            try:
-                self.state.add_speech_commit(
+            response = self.state.response
+            if (
+                response is not None
+                and response.response_id == event.response_id
+                and event.payload["unit_index"] not in response.units
+            ):
+                result, unit = self.state.add_speech_commit(
                     event.response_id,
                     event.payload["unit_index"],
                     event.payload["locale"],
                     event.payload["text"],
                 )
-            except StateTransitionError:
-                pass
+                if result == ApplyResult.ACCEPTED and unit is not None:
+                    # Suppressed audio must not block later, unseen units.
+                    self.state.mark_unit_started(unit)
+                    self.state.mark_unit_completed(unit)
         elif event.type == "response.speech.done" and event.response_id is not None:
-            try:
-                self.state.mark_speech_done(event.response_id, event.payload["last_unit_index"])
-            except StateTransitionError:
-                pass
+            self.state.mark_speech_done(event.response_id, event.payload["last_unit_index"])
+            self.state.maybe_complete_playback(backend_idle=self.tts.is_idle)
         elif event.type == "response.cancelled" and event.response_id is not None:
             self.state.cancel_response(event.response_id)
 

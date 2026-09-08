@@ -22,6 +22,7 @@ class AckRetryScheduler:
         if self.started_at is not None:
             raise RuntimeError("Retry scheduler has already started")
         self.started_at = self.clock()
+        self._emitted_attempts.add(0)  # The caller performs the initial send.
 
     def due_attempts(self) -> list[int]:
         if self.started_at is None:
@@ -49,4 +50,3 @@ class AckRetryScheduler:
     @property
     def reconnect_ttl_expired(self) -> bool:
         return bool(self.started_at is not None and not self.acknowledged and self.clock() - self.started_at >= RECONNECT_TTL_SECONDS)
-

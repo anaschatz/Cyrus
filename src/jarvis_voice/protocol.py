@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
@@ -154,17 +155,17 @@ class Envelope:
     v: int = PROTOCOL_VERSION
 
     def __post_init__(self) -> None:
-        if self.v != PROTOCOL_VERSION:
+        if type(self.v) is not int or self.v != PROTOCOL_VERSION:
             raise ProtocolError(
                 "protocol.version_mismatch",
                 "Unsupported protocol version",
-                safe_context={"version": self.v},
+                safe_context={"field": "v"},
             )
-        if self.type not in EVENT_TYPES:
+        if not isinstance(self.type, str) or self.type not in EVENT_TYPES:
             raise ProtocolError(
                 "protocol.unknown_event",
                 "Unknown protocol event type",
-                safe_context={"event_type": self.type},
+                safe_context={"field": "type"},
             )
         object.__setattr__(self, "event_id", _require_uuid4(self.event_id, "event_id"))
         object.__setattr__(
@@ -193,6 +194,10 @@ class Envelope:
             )
         object.__setattr__(self, "payload", dict(self.payload))
         self._validate_event_payload()
+        try:
+            json.dumps(self.payload, ensure_ascii=False, allow_nan=False, sort_keys=True).encode("utf-8")
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ProtocolError("protocol.invalid_json", "Payload must contain finite UTF-8 JSON") from exc
 
     def _validate_event_payload(self) -> None:
         payload = self.payload
@@ -200,8 +205,9 @@ class Envelope:
             _require_response_id(self.response_id, self.type)
         if self.type == "server.ack":
             _require_exact_payload(payload, self.type, "acked_event_id", "status")
-            _require_uuid4(payload["acked_event_id"], "payload.acked_event_id")
-            if payload["status"] not in {"accepted", "duplicate"}:
+            acked_id = _require_uuid4(payload["acked_event_id"], "payload.acked_event_id")
+            object.__setattr__(self, "payload", {**payload, "acked_event_id": acked_id})
+            if not isinstance(payload["status"], str) or payload["status"] not in {"accepted", "duplicate"}:
                 raise ProtocolError(
                     "protocol.invalid_field",
                     "server.ack status must be accepted or duplicate",
@@ -268,7 +274,7 @@ class Envelope:
                 )
         elif self.type == "response.cancelled":
             _require_exact_payload(payload, self.type, "reason_code", "partial_output")
-            if payload["reason_code"] not in {
+            if not isinstance(payload["reason_code"], str) or payload["reason_code"] not in {
                 "user_cancelled", "superseded", "client_disconnected", "approval_expired",
                 "approval_reconnect_timeout", "service_interrupted", "active_budget_exhausted",
                 "absolute_lifetime_exhausted", "backend_failure", "internal_failure",
@@ -376,7 +382,7 @@ class Envelope:
     def from_json(cls, raw: str | bytes) -> "Envelope":
         try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise ProtocolError(
                 "protocol.invalid_json", "Frame must contain valid UTF-8 JSON"
             ) from exc
@@ -401,15 +407,15 @@ class Envelope:
         )
 
     def fingerprint(self) -> str:
-        return self.to_json()
+        encoded = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":")).encode("ascii")
+        return hashlib.sha256(encoded).hexdigest()
 
 
 class EventFactory:
     """Creates correctly sequenced envelopes for one sender/connection."""
 
     def __init__(self, session_id: str | None = None, *, initial_seq: int = 1) -> None:
-        self.session_id = session_id or new_uuid4()
-        _require_uuid4(self.session_id, "session_id")
+        self.session_id = _require_uuid4(session_id or new_uuid4(), "session_id")
         if initial_seq < 1:
             raise ValueError("initial_seq must be positive")
         self._next_seq = initial_seq

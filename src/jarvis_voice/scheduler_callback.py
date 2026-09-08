@@ -17,6 +17,10 @@ MAX_CALLBACK_BYTES = 4096
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
+class NativeCallbackRejected(ValueError):
+    """An invalid or retired callback that must not stop unrelated actions."""
+
+
 def _canonical(value: Mapping[str, Any]) -> bytes:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -25,13 +29,13 @@ def _canonical(value: Mapping[str, Any]) -> bytes:
 
 def _utc(value: Any) -> str:
     if not isinstance(value, str) or not value.endswith("Z"):
-        raise ValueError("callback.invalid_timestamp")
+        raise NativeCallbackRejected("callback.invalid_timestamp")
     try:
         parsed = datetime.fromisoformat(value[:-1] + "+00:00")
     except ValueError as exc:
-        raise ValueError("callback.invalid_timestamp") from exc
+        raise NativeCallbackRejected("callback.invalid_timestamp") from exc
     if parsed.utcoffset() != UTC.utcoffset(parsed):
-        raise ValueError("callback.invalid_timestamp")
+        raise NativeCallbackRejected("callback.invalid_timestamp")
     return value
 
 
@@ -46,44 +50,51 @@ class NativeSchedulerCallback:
     @classmethod
     def verify(cls, raw: bytes | str, *, key: bytes) -> "NativeSchedulerCallback":
         if len(key) != 32:
-            raise ValueError("callback.invalid_key")
-        encoded = raw.encode("utf-8") if isinstance(raw, str) else bytes(raw)
+            raise NativeCallbackRejected("callback.invalid_key")
+        try:
+            encoded = raw.encode("utf-8") if isinstance(raw, str) else bytes(raw)
+        except (ValueError, TypeError) as exc:
+            raise NativeCallbackRejected("callback.invalid_frame") from exc
         if not encoded or len(encoded) > MAX_CALLBACK_BYTES or encoded.startswith(b"\xef\xbb\xbf"):
-            raise ValueError("callback.invalid_frame")
+            raise NativeCallbackRejected("callback.invalid_frame")
         try:
             value = json.loads(encoded)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("callback.invalid_frame") from exc
+        except (ValueError, RecursionError) as exc:
+            raise NativeCallbackRejected("callback.invalid_frame") from exc
         fields = {"contract", "callback_id", "notification_id", "action",
                   "requested_due_at_utc", "occurred_at_utc", "mac"}
         if not isinstance(value, dict) or set(value) != fields:
-            raise ValueError("callback.invalid_fields")
+            raise NativeCallbackRejected("callback.invalid_fields")
         mac = value.pop("mac")
         if not isinstance(mac, str) or not re.fullmatch(r"[0-9a-f]{64}", mac):
-            raise ValueError("callback.invalid_mac")
-        expected = hmac.new(key, _canonical(value), hashlib.sha256).hexdigest()
+            raise NativeCallbackRejected("callback.invalid_mac")
+        try:
+            canonical = _canonical(value)
+        except (ValueError, TypeError, RecursionError) as exc:
+            raise NativeCallbackRejected("callback.invalid_frame") from exc
+        expected = hmac.new(key, canonical, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(mac, expected):
-            raise ValueError("callback.authentication_failed")
+            raise NativeCallbackRejected("callback.authentication_failed")
         if value["contract"] != CALLBACK_CONTRACT:
-            raise ValueError("callback.invalid_contract")
+            raise NativeCallbackRejected("callback.invalid_contract")
         try:
             callback_id = str(uuid.UUID(value["callback_id"], version=4))
         except (ValueError, TypeError, AttributeError) as exc:
-            raise ValueError("callback.invalid_id") from exc
+            raise NativeCallbackRejected("callback.invalid_id") from exc
         if callback_id != value["callback_id"]:
-            raise ValueError("callback.invalid_id")
+            raise NativeCallbackRejected("callback.invalid_id")
         notification_id = value["notification_id"]
         if not isinstance(notification_id, str) or _SHA256.fullmatch(notification_id) is None:
-            raise ValueError("callback.invalid_notification")
+            raise NativeCallbackRejected("callback.invalid_notification")
         action = value["action"]
         requested = value["requested_due_at_utc"]
         if action == "SNOOZE":
             requested = _utc(requested)
         elif action == "CANCEL":
             if requested is not None:
-                raise ValueError("callback.invalid_due_time")
+                raise NativeCallbackRejected("callback.invalid_due_time")
         else:
-            raise ValueError("callback.invalid_action")
+            raise NativeCallbackRejected("callback.invalid_action")
         return cls(callback_id, notification_id, action, requested, _utc(value["occurred_at_utc"]))
 
     def payload(self) -> dict[str, Any]:

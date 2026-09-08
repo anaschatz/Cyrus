@@ -22,6 +22,56 @@ class StaticInventory:
 
 
 class ConfigDoctorTests(unittest.TestCase):
+    def test_numeric_settings_reject_nonfinite_and_invalid_values(self) -> None:
+        fields = (
+            "maximum_hold_seconds", "maximum_utterance_seconds",
+            "asr.cuda.worker_start_timeout_seconds", "asr.cuda.transcription_timeout_seconds",
+            "application.shutdown_timeout_seconds", "vad.threshold", "pocket_tts.temperature",
+            "macos.whisper_cpp.qualified_audio_context_minimum_seconds",
+            "macos.whisper_cpp.qualified_audio_context_maximum_seconds",
+            "macos.whisper_cpp.startup_timeout_seconds", "macos.whisper_cpp.request_timeout_seconds",
+            "macos.kokoro_onnx.speed", "macos.kokoro_onnx.voice_mix.bm_george",
+        )
+        for field in fields:
+            for index, value in enumerate(("NaN", "Infinity", "-Infinity", None, [], True, "invalid", 10**5000)):
+                with self.subTest(field=field, invalid=index):
+                    data = {}
+                    parent = data
+                    parts = field.split(".")
+                    for part in parts[:-1]:
+                        parent = parent.setdefault(part, {})
+                    parent[parts[-1]] = value
+                    with self.assertRaises(BackendError) as raised:
+                        voice_config_from_mapping(data)
+                    self.assertEqual(raised.exception.code, "config.invalid_field")
+
+    def test_vad_durations_are_nonnegative_integers(self) -> None:
+        for field in ("minimum_speech_ms", "padding_ms"):
+            for value in (-1, 0.5, True, None):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaisesRegex(BackendError, "config.invalid_field"):
+                        voice_config_from_mapping({"vad": {field: value}})
+            self.assertEqual(getattr(voice_config_from_mapping({"vad": {field: 0}}).vad, field), 0)
+
+    def test_malformed_config_json_is_a_typed_read_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "config.json"
+            for raw in (b"[" * 2000 + b"0" + b"]" * 2000, b"9" * 5000, b"\xff"):
+                path.write_bytes(raw)
+                with self.assertRaisesRegex(BackendError, "config.read_failed"):
+                    load_voice_config(path)
+
+    def test_coreml_file_path_type_is_checked_before_deduplication(self) -> None:
+        for path in ([], {}, None):
+            with self.subTest(path=path):
+                encoder = {
+                    "revision": "a" * 40,
+                    "directory": tempfile.gettempdir(),
+                    "files": [{"path": path, "size": 1, "sha256": "b" * 64}],
+                }
+                with self.assertRaisesRegex(BackendError, "config.whisper_cpp_coreml_profile_required"):
+                    voice_config_from_mapping({"macos": {"whisper_cpp": {"coreml_encoder": encoder}}})
+
     def test_sapi_probe_balances_com_on_success_failure_and_interruption(self) -> None:
         from jarvis_voice import doctor
         from jarvis_voice.windows import sapi

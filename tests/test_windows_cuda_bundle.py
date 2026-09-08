@@ -4,13 +4,15 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import stat
 import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import _bootstrap  # noqa: F401
 from jarvis_inference.windows_process import WindowsProcessFailure
@@ -19,7 +21,9 @@ from jarvis_voice.windows.cuda_bundle import (
     CUDA_BUNDLE_SCHEMA,
     QUALIFICATION_RUNNERS,
     REQUIRED_CUDA_DLLS,
+    MAX_MANIFEST_BYTES,
     CudaBundleError,
+    _hash_regular_file,
     build_cuda_manifest,
     canonical_json_bytes,
     create_runner_manifest,
@@ -56,6 +60,107 @@ def _portable_validator(path: Path, kind: str) -> Path:
 
 
 class WindowsCudaBundleTests(unittest.TestCase):
+    def test_invalid_manifest_json_has_a_typed_error_for_both_loaders(self) -> None:
+        malformed = (
+            b'{"value":' + b"[" * 2000 + b"0" + b"]" * 2000 + b"}\n",
+            b'{"value":"\\ud800"}\n',
+            b'{"value":1e400}\n',
+            b'{"value":' + b"9" * 5000 + b"}\n",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "manifest.json"
+            for loader in (load_cuda_bundle, verify_runner_manifest):
+                for raw in malformed:
+                    with self.subTest(loader=loader.__name__, prefix=raw[:25]):
+                        manifest.write_bytes(raw)
+                        with self.assertRaisesRegex(
+                            CudaBundleError, "cuda_bundle.manifest_json_invalid"
+                        ):
+                            loader(manifest, path_validator=_portable_validator)
+
+    def test_manifest_read_is_bounded_before_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "manifest.json"
+            manifest.write_bytes(b"{}\n")
+            stream = io.BytesIO(b" " * (MAX_MANIFEST_BYTES + 100))
+            read = Mock(wraps=stream.read)
+            stream.read = read
+            with patch.object(Path, "open", return_value=stream):
+                self.assert_code("cuda_bundle.manifest_size_invalid", manifest)
+            self.assertEqual(read.call_args.args, (MAX_MANIFEST_BYTES + 1,))
+
+    def test_hash_rejects_same_size_mutation_during_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "runtime.dll"
+            path.write_bytes(b"original")
+            before = path.stat()
+            digest = hashlib.sha256()
+
+            def mutate(chunk: bytes) -> None:
+                digest.update(chunk)
+                path.write_bytes(b"modified")
+                os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 10**9))
+
+            wrapped = Mock(wraps=digest)
+            wrapped.update.side_effect = mutate
+            with patch(
+                "jarvis_voice.windows.cuda_bundle.hashlib.sha256", return_value=wrapped
+            ):
+                with self.assertRaisesRegex(
+                    CudaBundleError, "cuda_bundle.file_changed_during_hash"
+                ):
+                    _hash_regular_file(path, len(b"original"))
+
+    def test_hash_stops_reading_a_continuously_growing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "runtime.dll"
+            path.write_bytes(b"original")
+            consumed = 0
+            digest = Mock()
+
+            def grow(chunk: bytes) -> None:
+                nonlocal consumed
+                consumed += len(chunk)
+                self.assertLessEqual(consumed, len(b"original") + 1)
+                with path.open("ab") as handle:
+                    handle.write(b"more")
+
+            digest.update.side_effect = grow
+            with patch(
+                "jarvis_voice.windows.cuda_bundle.hashlib.sha256", return_value=digest
+            ):
+                with self.assertRaisesRegex(
+                    CudaBundleError, "cuda_bundle.file_changed_during_hash"
+                ):
+                    _hash_regular_file(path, len(b"original"))
+
+    def test_hash_allows_windows_stat_executable_permission_bits(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "runner.exe"
+            payload = b"runner"
+            path.write_bytes(payload)
+            metadata = path.stat()
+            by_path = SimpleNamespace(
+                **{
+                    name: getattr(metadata, name)
+                    for name in (
+                        "st_dev",
+                        "st_ino",
+                        "st_mode",
+                        "st_size",
+                        "st_mtime_ns",
+                        "st_ctime_ns",
+                    )
+                }
+            )
+            # Windows stat adds execute bits by suffix; fstat has no filename.
+            by_path.st_mode |= 0o111
+            with patch.object(Path, "stat", return_value=by_path):
+                self.assertEqual(
+                    _hash_regular_file(path, len(payload)),
+                    hashlib.sha256(payload).hexdigest(),
+                )
+
     def _make_bundle(self, parent: Path) -> tuple[Path, Path, dict[str, object]]:
         root = parent / "runtime"
         root.mkdir()
@@ -210,14 +315,22 @@ class WindowsCudaBundleTests(unittest.TestCase):
         runner = Path("/sealed/cyrus-windows-asr-collector.exe")
         temporary = Path("/private/runtime")
         with (
-            patch.object(BUILD_GUARD, "validate_private_temp_directory", return_value=temporary),
-            patch.object(BUILD_GUARD, "trusted_windows_directory", return_value=Path("/native/windows")),
+            patch.object(
+                BUILD_GUARD, "validate_private_temp_directory", return_value=temporary
+            ),
+            patch.object(
+                BUILD_GUARD,
+                "trusted_windows_directory",
+                return_value=Path("/native/windows"),
+            ),
             patch.object(
                 BUILD_GUARD,
                 "private_temp_environment",
                 return_value={"TEMP": str(temporary), "TMP": str(temporary)},
             ),
-            patch.object(BUILD_GUARD, "require_native_windows_path", return_value=runner),
+            patch.object(
+                BUILD_GUARD, "require_native_windows_path", return_value=runner
+            ),
             patch.object(
                 BUILD_GUARD,
                 "run_windows_job",
@@ -255,10 +368,22 @@ class WindowsCudaBundleTests(unittest.TestCase):
         runner = Path("/sealed/cyrus-windows-asr-collector.exe")
         temporary = Path("/private/runtime")
         with (
-            patch.object(BUILD_GUARD, "validate_private_temp_directory", return_value=temporary),
-            patch.object(BUILD_GUARD, "trusted_windows_directory", return_value=Path("/native/windows")),
-            patch.object(BUILD_GUARD, "private_temp_environment", return_value={"TEMP": str(temporary)}),
-            patch.object(BUILD_GUARD, "require_native_windows_path", return_value=runner),
+            patch.object(
+                BUILD_GUARD, "validate_private_temp_directory", return_value=temporary
+            ),
+            patch.object(
+                BUILD_GUARD,
+                "trusted_windows_directory",
+                return_value=Path("/native/windows"),
+            ),
+            patch.object(
+                BUILD_GUARD,
+                "private_temp_environment",
+                return_value={"TEMP": str(temporary)},
+            ),
+            patch.object(
+                BUILD_GUARD, "require_native_windows_path", return_value=runner
+            ),
             patch.object(
                 BUILD_GUARD,
                 "run_windows_job",

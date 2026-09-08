@@ -14,6 +14,7 @@ VK_F9 = 0x78
 VK_F10 = 0x79
 VK_F11 = 0x7A
 VK_F1 = 0x70
+FUNCTION_KEY_VKEYS = {f"F{number}": VK_F1 + number - 1 for number in range(1, 25)}
 RI_KEY_BREAK = 0x0001
 KEYBOARD_OVERRUN_MAKE_CODE = 0x00FF
 _RAWKEYBOARD = struct.Struct("<HHHHII")
@@ -68,7 +69,7 @@ class ApprovalKeyPublisher:
 
     @property
     def both_keys_up(self) -> bool:
-        return not any(key in {"F10", "F11"} for _device, key in self._held)
+        return not self._held
 
     def handle_packet(
         self,
@@ -97,6 +98,9 @@ class ApprovalKeyPublisher:
 
     def clear(self) -> None:
         self._held.clear()
+
+    def device_removed(self, device: Hashable) -> None:
+        self._held = {identity for identity in self._held if identity[0] != device}
 
     def _publish(self, event: ApprovalKeyEvent) -> None:
         try:
@@ -226,10 +230,7 @@ class PttEventPublisher:
 def function_key_vkey(name: str) -> int:
     """Translate a validated F1..F24 configuration value to Win32 VK_* form."""
 
-    normalized = name.upper()
-    if not normalized.startswith("F") or not normalized[1:].isdigit():
-        raise BackendError("config.unsupported_ptt_key", "PTT key must be F1 through F24", subsystem="config", safe_context={"field": "ptt_key"})
-    number = int(normalized[1:])
-    if not 1 <= number <= 24:
-        raise BackendError("config.unsupported_ptt_key", "PTT key must be F1 through F24", subsystem="config", safe_context={"field": "ptt_key"})
-    return VK_F1 + number - 1
+    try:
+        return FUNCTION_KEY_VKEYS[name.upper()]
+    except KeyError as exc:
+        raise BackendError("config.unsupported_ptt_key", "PTT key must be F1 through F24", subsystem="config", safe_context={"field": "ptt_key"}) from exc

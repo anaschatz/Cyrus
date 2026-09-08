@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
-from .scheduler_compatibility import SchedulerCompatibilityManifest
+from .scheduler_compatibility import SchedulerCompatibilityManifest, load_pinned_scheduler_json
 
 
 SCHEMA_VERSION = "scheduler-native-qualification/1"
@@ -51,11 +49,7 @@ def load_native_scheduler_qualification(
     platform_name: str,
     compatibility: SchedulerCompatibilityManifest,
 ) -> NativeSchedulerQualification:
-    raw = path.read_bytes()
-    digest = hashlib.sha256(raw).hexdigest()
-    if digest != expected_sha256:
-        raise ValueError("scheduler native qualification digest mismatch")
-    value = json.loads(raw)
+    value, digest = load_pinned_scheduler_json(path, expected_sha256)
     fields = {
         "schema_version", "platform", "ready", "permission", "capabilities",
         "notification_adapter_sha256", "lock_state_provider_sha256", "checks",
@@ -64,7 +58,7 @@ def load_native_scheduler_qualification(
     if not isinstance(value, Mapping) or set(value) != fields:
         raise ValueError("scheduler native qualification fields invalid")
     expected_platform = "windows" if platform_name == "win32" else "macos" if platform_name == "darwin" else ""
-    if value["schema_version"] != SCHEMA_VERSION or value["platform"] != expected_platform:
+    if not expected_platform or value["schema_version"] != SCHEMA_VERSION or value["platform"] != expected_platform:
         raise ValueError("scheduler native qualification platform invalid")
     if value["ready"] is not True or value["permission"] != "granted":
         raise ValueError("scheduler native qualification is not ready")

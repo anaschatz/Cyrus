@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from typing import Any
 
 from ..errors import BackendError
@@ -35,40 +36,68 @@ class RawInputPttSource:
         self._thread: threading.Thread | None = None
         self._hwnd: int | None = None
         self._ready = threading.Event()
-        self._error: Exception | None = None
+        self._stop_requested = threading.Event()
+        self._error: BackendError | None = None
 
     def start(self) -> None:
         if sys.platform != "win32":
             raise BackendError("input.raw_input_windows_only", "Raw Input requires Windows", subsystem="input")
-        if self._thread is not None:
+        if self._thread is not None and self._thread.is_alive():
+            if self._stop_requested.is_set():
+                raise BackendError("input.raw_input_stopping", "Raw Input is still stopping", subsystem="input")
             return
+        self._ready.clear()
+        self._stop_requested.clear()
+        self._error = None
         self._thread = threading.Thread(target=self._message_loop, name="jarvis-raw-input", daemon=True)
         self._thread.start()
         self._ready.wait(timeout=5)
         if self._error is not None:
             raise BackendError("input.raw_input_start_failed", "Raw Input could not start", subsystem="input") from self._error
         if self._hwnd is None:
+            self._stop_requested.set()
             raise BackendError("input.raw_input_start_timeout", "Raw Input startup timed out", subsystem="input")
 
     def stop(self) -> None:
-        if self._hwnd is None or sys.platform != "win32":
+        self._stop_requested.set()
+        if sys.platform != "win32":
             return
-        import ctypes
-        from ctypes import wintypes
-        post_message = ctypes.windll.user32.PostMessageW
-        post_message.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-        post_message.restype = wintypes.BOOL
-        post_message(self._hwnd, WM_CLOSE, 0, 0)
+        if self._hwnd is not None:
+            import ctypes
+            from ctypes import wintypes
+            post_message = ctypes.windll.user32.PostMessageW
+            post_message.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            post_message.restype = wintypes.BOOL
+            post_message(self._hwnd, WM_CLOSE, 0, 0)
         if self._thread is not None:
             self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                return
         self._thread = None
         self._hwnd = None
+
+    @property
+    def last_error(self) -> BackendError | None:
+        return self._error
+
+    def _fail(self, error: Exception) -> None:
+        if self._error is None:
+            if isinstance(error, BackendError):
+                self._error = error
+            else:
+                self._error = BackendError("input.raw_input_failed", "Raw Input failed", subsystem="input")
+                self._error.__cause__ = error
+        self._stop_requested.set()
+        self._ready.set()
 
     def _message_loop(self) -> None:  # pragma: no cover - native Windows only
         try:
             self._run_win32_loop()
+            if not self._stop_requested.is_set():
+                self._fail(BackendError("input.raw_input_closed", "Raw Input stopped unexpectedly", subsystem="input"))
         except Exception as exc:
-            self._error = exc
+            self._fail(exc)
+        finally:
             self._ready.set()
 
     def _run_win32_loop(self) -> None:  # pragma: no cover - native Windows only
@@ -101,12 +130,14 @@ class RawInputPttSource:
         # pointer-sized HWND/HMODULE values in a 64-bit process.
         kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
         kernel32.GetModuleHandleW.restype = wintypes.HMODULE
-        kernel32.QueryPerformanceCounter.argtypes = [ctypes.POINTER(ctypes.c_longlong)]
-        kernel32.QueryPerformanceCounter.restype = wintypes.BOOL
-        kernel32.QueryPerformanceFrequency.argtypes = [ctypes.POINTER(ctypes.c_longlong)]
-        kernel32.QueryPerformanceFrequency.restype = wintypes.BOOL
         user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
         user32.RegisterClassW.restype = wintypes.ATOM
+        user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+        user32.UnregisterClassW.restype = wintypes.BOOL
+        user32.RegisterSuspendResumeNotification.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        user32.RegisterSuspendResumeNotification.restype = wintypes.HANDLE
+        user32.UnregisterSuspendResumeNotification.argtypes = [wintypes.HANDLE]
+        user32.UnregisterSuspendResumeNotification.restype = wintypes.BOOL
         user32.CreateWindowExW.argtypes = [
             wintypes.DWORD,
             wintypes.LPCWSTR,
@@ -133,16 +164,12 @@ class RawInputPttSource:
         user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
         user32.GetMessageW.restype = ctypes.c_int
 
-        def qpc() -> float:
-            counter, frequency = ctypes.c_longlong(), ctypes.c_longlong()
-            if not kernel32.QueryPerformanceCounter(ctypes.byref(counter)):
-                raise ctypes.WinError()
-            if not kernel32.QueryPerformanceFrequency(ctypes.byref(frequency)):
-                raise ctypes.WinError()
-            return counter.value / frequency.value
+        window_destroyed = False
+        pumping = False
 
-        def window_proc(hwnd: Any, message: int, wparam: int, lparam: int) -> int:
-            received_at = qpc()
+        def dispatch_message(hwnd: Any, message: int, wparam: int, lparam: int) -> int:
+            nonlocal window_destroyed
+            received_at = time.perf_counter()
             if message == WM_INPUT:
                 size = wintypes.UINT(0)
                 header_size = ctypes.sizeof(RAWINPUTHEADER)
@@ -160,18 +187,36 @@ class RawInputPttSource:
                                 self.approval_publisher.handle_packet(device_id, packet, received_at)
                 return 0
             if message == WM_INPUT_DEVICE_CHANGE and wparam == GIDC_REMOVAL:
-                self.publisher.device_removed(int(lparam), received_at); return 0
+                self.publisher.device_removed(int(lparam), received_at)
+                if self.approval_publisher is not None:
+                    self.approval_publisher.device_removed(int(lparam))
+                return 0
             if message == WM_POWERBROADCAST and wparam in {
                 PBT_APMSUSPEND,
                 PBT_APMRESUMESUSPEND,
                 PBT_APMRESUMEAUTOMATIC,
             }:
-                self.publisher.force_release(received_at, "suspend_resume"); return 1
+                self.publisher.force_release(received_at, "suspend_resume")
+                if self.approval_publisher is not None:
+                    self.approval_publisher.clear()
+                return 1
             if message == WM_CLOSE:
                 user32.DestroyWindow(hwnd); return 0
             if message == WM_DESTROY:
-                user32.PostQuitMessage(0); return 0
+                window_destroyed = True
+                if pumping:
+                    user32.PostQuitMessage(0)
+                return 0
             return user32.DefWindowProcW(hwnd, message, wparam, lparam)
+
+        def window_proc(hwnd: Any, message: int, wparam: int, lparam: int) -> int:
+            try:
+                return dispatch_message(hwnd, message, wparam, lparam)
+            except Exception as exc:
+                self._fail(exc)
+                if pumping:
+                    user32.PostQuitMessage(0)
+                return 0
 
         callback = WNDPROC(window_proc)
         class_name = "JarvisVoiceRawInputWindow"
@@ -180,19 +225,38 @@ class RawInputPttSource:
         atom = user32.RegisterClassW(ctypes.byref(window_class))
         if not atom:
             raise ctypes.WinError()
-        hwnd_message = wintypes.HWND(-3)
-        hwnd = user32.CreateWindowExW(0, class_name, class_name, 0, 0, 0, 0, 0, hwnd_message, None, instance, None)
-        if not hwnd:
-            raise ctypes.WinError()
-        device = RAWINPUTDEVICE(0x01, 0x06, RIDEV_INPUTSINK | RIDEV_DEVNOTIFY, hwnd)
-        if not user32.RegisterRawInputDevices(ctypes.byref(device), 1, ctypes.sizeof(device)):
-            raise ctypes.WinError()
-        self._hwnd = int(hwnd); self._ready.set()
-        message = wintypes.MSG()
-        while True:
-            result = user32.GetMessageW(ctypes.byref(message), None, 0, 0)
-            if result == -1:
+        hwnd = None
+        power_notification = None
+        try:
+            hwnd_message = wintypes.HWND(-3)
+            hwnd = user32.CreateWindowExW(0, class_name, class_name, 0, 0, 0, 0, 0, hwnd_message, None, instance, None)
+            if not hwnd:
                 raise ctypes.WinError()
-            if result == 0:
-                break
-            user32.TranslateMessage(ctypes.byref(message)); user32.DispatchMessageW(ctypes.byref(message))
+            power_notification = user32.RegisterSuspendResumeNotification(hwnd, 0)
+            if not power_notification:
+                raise ctypes.WinError()
+            device = RAWINPUTDEVICE(0x01, 0x06, RIDEV_INPUTSINK | RIDEV_DEVNOTIFY, hwnd)
+            if not user32.RegisterRawInputDevices(ctypes.byref(device), 1, ctypes.sizeof(device)):
+                raise ctypes.WinError()
+            self._hwnd = int(hwnd); self._ready.set()
+            message = wintypes.MSG()
+            pumping = True
+            while not self._stop_requested.is_set():
+                result = user32.GetMessageW(ctypes.byref(message), None, 0, 0)
+                if result == -1:
+                    raise ctypes.WinError()
+                if result == 0:
+                    break
+                user32.TranslateMessage(ctypes.byref(message)); user32.DispatchMessageW(ctypes.byref(message))
+        finally:
+            pumping = False
+            self._hwnd = None
+            try:
+                if power_notification:
+                    user32.UnregisterSuspendResumeNotification(power_notification)
+            finally:
+                try:
+                    if hwnd and not window_destroyed:
+                        user32.DestroyWindow(hwnd)
+                finally:
+                    user32.UnregisterClassW(class_name, instance)

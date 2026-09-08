@@ -180,6 +180,8 @@ class WindowsTrayIcon:
         user32.RegisterWindowMessageW.restype = wintypes.UINT
         user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
         user32.RegisterClassW.restype = wintypes.ATOM
+        user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+        user32.UnregisterClassW.restype = wintypes.BOOL
         user32.CreateWindowExW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
         user32.CreateWindowExW.restype = wintypes.HWND
         user32.DestroyWindow.argtypes = [wintypes.HWND]
@@ -229,7 +231,12 @@ class WindowsTrayIcon:
             if command and coordinator is not None:
                 coordinator.dispatch(command)
 
-        def window_proc(hwnd: int, message: int, wparam: int, lparam: int) -> int:
+        window_destroyed = False
+        pumping = False
+        callback_error: Exception | None = None
+
+        def dispatch_message(hwnd: int, message: int, wparam: int, lparam: int) -> int:
+            nonlocal window_destroyed
             if message == taskbar_created and coordinator is not None:
                 coordinator.taskbar_created(); return 0
             if message == TRAY_CALLBACK:
@@ -250,10 +257,23 @@ class WindowsTrayIcon:
             if message == WM_CLOSE:
                 user32.DestroyWindow(hwnd); return 0
             if message == WM_DESTROY:
+                window_destroyed = True
                 if coordinator is not None:
                     coordinator.close()
-                user32.PostQuitMessage(0); return 0
+                if pumping:
+                    user32.PostQuitMessage(0)
+                return 0
             return user32.DefWindowProcW(hwnd, message, wparam, lparam)
+
+        def window_proc(hwnd: int, message: int, wparam: int, lparam: int) -> int:
+            nonlocal callback_error
+            try:
+                return dispatch_message(hwnd, message, wparam, lparam)
+            except Exception as exc:
+                callback_error = callback_error or exc
+                if pumping:
+                    user32.PostQuitMessage(0)
+                return 0
 
         callback = WNDPROC(window_proc)
         instance = kernel32.GetModuleHandleW(None)
@@ -261,17 +281,19 @@ class WindowsTrayIcon:
         window_class = WNDCLASSW(0, ctypes.cast(callback, ctypes.c_void_p), 0, 0, instance, None, None, None, None, class_name)
         if not user32.RegisterClassW(ctypes.byref(window_class)):
             raise BackendError("tray.window_class_failed", "Tray window class registration failed", subsystem="tray")
-        hwnd = user32.CreateWindowExW(0, class_name, class_name, 0, 0, 0, 0, 0, None, None, instance, None)
-        if not hwnd:
-            raise BackendError("tray.window_create_failed", "Tray window creation failed", subsystem="tray")
-        self._hwnd = int(hwnd)
-        icon_resource = ctypes.cast(ctypes.c_void_p(IDI_APPLICATION), wintypes.LPCWSTR)
-        icon = user32.LoadIconW(None, icon_resource)
-        coordinator = TrayCoordinator(Win32TrayShell(self._hwnd, int(icon)), command_handler=self.command_handler, status_provider=self.status_provider)
+        hwnd = None
         try:
+            hwnd = user32.CreateWindowExW(0, class_name, class_name, 0, 0, 0, 0, 0, None, None, instance, None)
+            if not hwnd:
+                raise BackendError("tray.window_create_failed", "Tray window creation failed", subsystem="tray")
+            self._hwnd = int(hwnd)
+            icon_resource = ctypes.cast(ctypes.c_void_p(IDI_APPLICATION), wintypes.LPCWSTR)
+            icon = user32.LoadIconW(None, icon_resource)
+            coordinator = TrayCoordinator(Win32TrayShell(self._hwnd, int(icon)), command_handler=self.command_handler, status_provider=self.status_provider)
             coordinator.start()
             user32.SetTimer(hwnd, 1, 500, None)
             message = wintypes.MSG()
+            pumping = True
             while True:
                 result = user32.GetMessageW(ctypes.byref(message), None, 0, 0)
                 if result == -1:
@@ -279,6 +301,17 @@ class WindowsTrayIcon:
                 if result == 0:
                     break
                 user32.TranslateMessage(ctypes.byref(message)); user32.DispatchMessageW(ctypes.byref(message))
+            if callback_error is not None:
+                raise BackendError("tray.callback_failed", "Tray callback failed", subsystem="tray") from callback_error
         finally:
-            coordinator.close()
+            pumping = False
             self._hwnd = None
+            try:
+                if coordinator is not None:
+                    coordinator.close()
+            finally:
+                try:
+                    if hwnd and not window_destroyed:
+                        user32.DestroyWindow(hwnd)
+                finally:
+                    user32.UnregisterClassW(class_name, instance)

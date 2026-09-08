@@ -30,6 +30,8 @@ class CoreAudioCapture:
         self._sample_rate: int | None = None
 
     def start(self) -> None:
+        if self._stream is not None:
+            return
         if sys.platform != "darwin":
             raise BackendError("audio.coreaudio_macos_only", "CoreAudio requires macOS", subsystem="audio")
         try:
@@ -62,8 +64,7 @@ class CoreAudioCapture:
             )
             self._stream.start()
         except Exception as exc:
-            self._stream = None
-            self._buffer = None
+            self.stop()
             raise BackendError("audio.coreaudio_start_failed", "CoreAudio input could not start", subsystem="audio") from exc
 
     def _callback(self, indata: bytes, frames: int, time_info: Any, status: Any) -> None:
@@ -116,11 +117,8 @@ class CoreAudioCapture:
         self._buffer = None
         self._sample_rate = None
         if stream is not None:
-            try:
-                stream.stop()
-            except Exception:
-                pass
-            try:
-                stream.close()
-            except Exception:
-                pass
+            for operation in (stream.stop, stream.close):
+                try:
+                    operation()
+                except Exception:
+                    pass

@@ -10,6 +10,65 @@ from jarvis_voice.protocol import new_uuid4
 
 
 class CoreIntegrationTests(unittest.TestCase):
+    def test_capture_failure_does_not_revive_a_previous_turn(self) -> None:
+        old_turn = self.submit_turn()
+        self.core.ptt_down()
+        self.core.input_failed("audio.capture_failed")
+        old = self.server.script_response(["Old reply."], locale="en-US", turn_id=old_turn)
+        self.assertEqual(self.core.handle_server_events(old.events), [])
+        self.assertTrue(self.tts.is_idle)
+        fresh_turn = self.submit_turn()
+        fresh = self.server.script_response(["New reply."], locale="en-US", turn_id=fresh_turn)
+        self.core.handle_server_events(fresh.events)
+        self.assertEqual([unit.text for unit in self.tts.pending], ["New reply."])
+
+    def test_replacement_response_cancels_old_audio_before_queuing_new_units(self) -> None:
+        for active in (False, True):
+            with self.subTest(active=active):
+                self.setUp()
+                turn_id = self.submit_turn()
+                old = self.server.script_response(["Old response."], locale="en-US", turn_id=turn_id)
+                self.core.handle_server_events(old.events)
+                old_unit = self.tts.pending[0]
+                if active:
+                    self.core.on_tts_unit_started(self.tts.start_next())
+                    original_cancel = self.tts.cancel
+
+                    def cancel_with_late_completion(epoch: int, reason: str) -> None:
+                        original_cancel(epoch, reason)
+                        self.assertEqual(self.core.on_tts_unit_completed(old_unit), [])
+
+                    self.tts.cancel = cancel_with_late_completion
+                fresh = self.server.script_response(["Replacement."], locale="en-US", turn_id=turn_id)
+                self.core.handle_server_events(fresh.events)
+                self.assertIsNone(self.tts.active)
+                self.assertEqual([unit.text for unit in self.tts.pending], ["Replacement."])
+                self.assertEqual(self.core.on_tts_unit_completed(old_unit), [])
+                self.core.on_tts_unit_started(self.tts.start_next())
+                completed = self.core.on_tts_unit_completed(self.tts.complete_active())
+                self.assertEqual([event.type for event in completed], ["playback.completed"])
+
+    def test_late_previous_turn_response_does_not_speak_during_new_capture(self) -> None:
+        old_turn = self.submit_turn()
+        late = self.server.script_response(["Old answer."], locale="en-US", turn_id=old_turn)
+        new_turn = new_uuid4()
+        self.core.ptt_down(new_turn)
+        epoch = self.core.state.output_epoch
+        self.assertEqual(self.core.handle_server_events(late.events), [])
+        self.assertTrue(self.tts.is_idle)
+        self.assertEqual(self.core.state.output_epoch, epoch)
+        untagged = self.server.script_response(["Untagged old answer."], locale="en-US")
+        self.assertEqual(self.core.handle_server_events(untagged.events), [])
+        self.assertTrue(self.tts.is_idle)
+        transcript = self.core.ptt_up_and_transcribe(object())
+        self.core.handle_server_events(self.server.accept(transcript))
+        stale = self.server.script_response(["Old answer again."], locale="en-US", turn_id=old_turn)
+        self.assertEqual(self.core.handle_server_events(stale.events), [])
+        self.assertTrue(self.tts.is_idle)
+        fresh = self.server.script_response(["New answer."], locale="en-US", turn_id=new_turn)
+        self.core.handle_server_events(fresh.events)
+        self.assertEqual([unit.text for unit in self.tts.pending], ["New answer."])
+
     def setUp(self) -> None:
         self.tts = FakeTtsBackend()
         self.core = VoiceCore(asr=FakeAsrBackend(), tts=self.tts)

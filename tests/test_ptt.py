@@ -6,10 +6,15 @@ import unittest
 
 import _bootstrap  # noqa: F401
 
+from jarvis_voice.config import voice_config_from_mapping
+from jarvis_voice.errors import BackendError
 from jarvis_voice.ptt import (
+    ApprovalKeyPublisher,
     KEYBOARD_OVERRUN_MAKE_CODE,
     RI_KEY_BREAK,
     VK_F9,
+    VK_F10,
+    VK_F11,
     PttEvent,
     PttEventPublisher,
     PttTransition,
@@ -25,6 +30,37 @@ UP = RawKeyboardPacket(0x43, RI_KEY_BREAK, VK_F9)
 
 
 class PttTests(unittest.TestCase):
+    def test_function_key_aliases_cannot_bypass_approval_reservation(self) -> None:
+        for name in ("F010", "F011", "F١٠", "F²", "F01", "F" + "9" * 5000):
+            with self.subTest(name=name[:15]):
+                with self.assertRaises(BackendError) as invalid_config:
+                    voice_config_from_mapping({"ptt_key": name})
+                self.assertEqual(invalid_config.exception.code, "config.unsupported_ptt_key")
+                with self.assertRaises(BackendError) as invalid_key:
+                    function_key_vkey(name)
+                self.assertEqual(invalid_key.exception.code, "config.unsupported_ptt_key")
+        for name in ("F10", "F11"):
+            with self.assertRaises(BackendError) as reserved:
+                voice_config_from_mapping({"ptt_key": name})
+            self.assertEqual(reserved.exception.code, "config.reserved_approval_key")
+        for name in ("f1", "F9", "F24", "CONTROL_OPTION", "RIGHT_OPTION"):
+            self.assertEqual(voice_config_from_mapping({"ptt_key": name}).ptt_key, name.upper())
+
+    def test_removing_approval_keyboard_releases_only_its_held_keys(self) -> None:
+        publisher = ApprovalKeyPublisher()
+        publisher.handle_packet("a", RawKeyboardPacket(1, 0, VK_F10), 1)
+        publisher.handle_packet("b", RawKeyboardPacket(2, 0, VK_F11), 1)
+        publisher.events.get_nowait()
+        publisher.events.get_nowait()
+        publisher.device_removed("a")
+        self.assertFalse(publisher.both_keys_up)
+        publisher.device_removed("b")
+        self.assertTrue(publisher.both_keys_up)
+        self.assertEqual(publisher.counter, 2)
+        self.assertTrue(publisher.events.empty())
+        publisher.handle_packet("a", RawKeyboardPacket(1, 0, VK_F10), 2)
+        self.assertEqual(publisher.events.get_nowait().counter, 3)
+
     def test_configurable_function_key_mapping(self) -> None:
         f12 = function_key_vkey("F12")
         publisher = PttEventPublisher(capacity=2, maximum_hold_seconds=1, ptt_vkey=f12)

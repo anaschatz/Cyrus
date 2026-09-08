@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
 from .native_qualification import evaluate_native_evidence
-from .scheduler_compatibility import SchedulerCompatibilityManifest
+from .scheduler_compatibility import SchedulerCompatibilityManifest, load_pinned_scheduler_json
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,11 +23,7 @@ def load_scheduler_tts_qualification(
     platform_name: str,
     compatibility: SchedulerCompatibilityManifest,
 ) -> SchedulerTtsQualification:
-    raw = path.read_bytes()
-    digest = hashlib.sha256(raw).hexdigest()
-    if digest != expected_sha256:
-        raise ValueError("scheduler TTS qualification digest mismatch")
-    evidence = json.loads(raw)
+    evidence, digest = load_pinned_scheduler_json(path, expected_sha256)
     report = evaluate_native_evidence(evidence)
     expected_platform = "windows" if platform_name == "win32" else "macos" if platform_name == "darwin" else ""
     if report["ready"] is not True or report["platform"] != expected_platform:

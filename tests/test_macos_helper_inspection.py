@@ -58,6 +58,19 @@ class MacOSHelperInspectionTests(unittest.TestCase):
             self.assertEqual(manifest["size_bytes"], len(b"qualified-mach-o"))
             self.assertEqual(len(manifest["binary_sha256"]), 64)
             self.assertEqual(len(manifest["code_identity_sha256"]), 64)
+            from jarvis_voice.scheduler_native import MacOSSchedulerHostAdapter
+            adapter = MacOSSchedulerHostAdapter.__new__(MacOSSchedulerHostAdapter)
+            adapter.helper_path = helper
+            adapter._timeout = 5.0
+            requirements = b"Executable=/Applications/JARVIS.app/helper\ndesignated => identifier example\n"
+
+            def run(command, **_kwargs):
+                return subprocess.CompletedProcess(command, 0, requirements if "--requirements" in command else b"", b"")
+
+            adapter._validate_helper(manifest["binary_sha256"], manifest["code_identity_sha256"], run)
+            requirements = b"Executable=/Applications/JARVIS.app/helper\ndesignated => identifier changed\n"
+            with self.assertRaisesRegex(ValueError, "identity invalid"):
+                adapter._validate_helper(manifest["binary_sha256"], manifest["code_identity_sha256"], run)
 
 
 if __name__ == "__main__":

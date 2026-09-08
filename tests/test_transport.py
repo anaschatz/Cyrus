@@ -100,6 +100,22 @@ def transcript(factory: EventFactory, *, event_id: str | None = None):
 
 
 class TransportTests(unittest.TestCase):
+    def test_authenticated_connection_rejects_other_session_frames(self) -> None:
+        connection = FakeConnection()
+        transport = LoopbackWebSocketTransport(
+            "ws://127.0.0.1:8765", auth_key=AUTH_KEY,
+            connection_factory=lambda _: connection,
+        )
+        hello = EventFactory().create("client.hello", {})
+        transport.send(hello)
+        other = EventFactory()
+        with self.assertRaisesRegex(BackendError, "transport.session_mismatch"):
+            transport.send(transcript(other))
+        self.assertEqual(len(connection.sent), 2)
+        connection.incoming.append(other.create("server.ready", {"protocol": "jarvis.voice/1"}).to_json())
+        with self.assertRaisesRegex(BackendError, "transport.session_mismatch"):
+            transport.receive()
+
     def test_transport_rejects_non_loopback(self) -> None:
         with self.assertRaisesRegex(BackendError, "transport.non_loopback_url"):
             LoopbackWebSocketTransport("ws://example.com:8765", auth_key=AUTH_KEY)

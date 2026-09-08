@@ -22,9 +22,11 @@ class ReliableSubmissionManager:
         self.original = event
         self.scheduler = AckRetryScheduler(event.event_id, self.clock)
         self.scheduler.start()
-        if self.scheduler.due_attempts() != [0]:
-            raise AssertionError("Initial retry attempt must be due at t=0")
         self._timeout_consumed = False
+
+    def cancel(self) -> None:
+        self.original = None
+        self.scheduler = None
 
     def acknowledge(self, event: Envelope) -> bool:
         if event.type != "server.ack" or self.scheduler is None:

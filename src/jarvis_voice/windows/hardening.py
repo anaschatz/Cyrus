@@ -29,7 +29,7 @@ class Win32DllDirectoryApi:
         function.argtypes = [wintypes.DWORD]
         function.restype = wintypes.BOOL
         if not function(flags):
-            raise ctypes.WinError()
+            raise ctypes.WinError(ctypes.get_last_error())
 
     def add_directory(self, path: str) -> Any:  # pragma: no cover - native Windows only
         return os.add_dll_directory(path)

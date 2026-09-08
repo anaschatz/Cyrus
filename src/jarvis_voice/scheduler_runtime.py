@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .approval_arbiter import GlobalApprovalController
 from .backends import SpeechUnit, TtsBackend
+from .private_state import default_voice_state_boundary, prepare_voice_journal_path
 from .scheduler_client import SchedulerClientController
-from .scheduler_callback import NativeSchedulerCallback
+from .scheduler_callback import NativeCallbackRejected, NativeSchedulerCallback
 from .scheduler_journal import SchedulerClientJournal, default_scheduler_journal_path
 from .scheduler_native import QualifiedNativeSchedulerDelivery, load_qualified_native_delivery
 from .scheduler_playback import SchedulerPlaybackController
@@ -38,6 +40,7 @@ class SchedulerNativeRuntime:
         self.manifest_sha256 = manifest_sha256
         self.playback = playback
         self.callback_qualification_sha256 = callback_qualification_sha256
+        self.controller.journal.reset_emitted_native_callbacks()
 
     @classmethod
     def from_config(
@@ -54,24 +57,33 @@ class SchedulerNativeRuntime:
         compatibility, _qualification, delivery, callback_qualification = load_qualified_native_delivery(
             config, platform_name=platform_name
         )
-        from jarvis_orchestrator.scheduler_crypto import (
-            SchedulerContentCipher,
-            platform_key_provider,
-        )
+        with ExitStack() as initialization:
+            adapter = getattr(delivery, "adapter", delivery)
+            close_adapter = getattr(adapter, "close", None)
+            if close_adapter is not None:
+                initialization.callback(close_adapter)
+            from jarvis_orchestrator.scheduler_crypto import (
+                SchedulerContentCipher,
+                platform_key_provider,
+            )
 
-        journal_path = default_scheduler_journal_path()
-        journal = SchedulerClientJournal(
-            journal_path,
-            cipher=SchedulerContentCipher(platform_key_provider(
-                store_role="voice", state_root=journal_path.parent
-            )),
-        )
-        controller = SchedulerClientController(
-            session_id=session_id,
-            journal=journal,
-            approval_arbiter=approval_arbiter,
-        )
-        try:
+            state_boundary = default_voice_state_boundary()
+            journal_path = prepare_voice_journal_path(
+                default_scheduler_journal_path(), trusted_boundary=state_boundary
+            )
+            journal = SchedulerClientJournal(
+                journal_path,
+                cipher=SchedulerContentCipher(platform_key_provider(
+                    store_role="voice", state_root=journal_path.parent
+                )),
+                trusted_boundary=state_boundary,
+            )
+            initialization.callback(journal.close)
+            controller = SchedulerClientController(
+                session_id=session_id,
+                journal=journal,
+                approval_arbiter=approval_arbiter,
+            )
             playback: SchedulerPlaybackController | None = None
             if "scheduler_notification_speech" in compatibility.capabilities:
                 if (
@@ -95,7 +107,7 @@ class SchedulerNativeRuntime:
                     factory=controller.factory,
                     reserve_epoch=reserve_epoch,
                 )
-            return cls(
+            runtime = cls(
                 controller=controller,
                 delivery=delivery,
                 capabilities=compatibility.capabilities,
@@ -105,9 +117,8 @@ class SchedulerNativeRuntime:
                     callback_qualification.sha256 if callback_qualification is not None else None
                 ),
             )
-        except BaseException:
-            journal.close()
-            raise
+            initialization.pop_all()
+            return runtime
 
     def begin_new_connection(self) -> None:
         self.controller.begin_new_connection()
@@ -212,7 +223,7 @@ class SchedulerNativeRuntime:
     def ingest_native_callback(self, raw: bytes | str, *, key: bytes) -> str:
         callback = NativeSchedulerCallback.verify(raw, key=key)
         if self.controller.journal.notification_payload(callback.notification_id) is None:
-            raise ValueError("callback.notification_not_active")
+            raise NativeCallbackRejected("callback.notification_not_active")
         payload = callback.payload()
         import hashlib
         import json
@@ -231,7 +242,10 @@ class SchedulerNativeRuntime:
         callback_key = getattr(adapter, "callback_key", None)
         if drain is not None and isinstance(callback_key, bytes):
             for raw in drain():
-                self.ingest_native_callback(raw, key=callback_key)
+                try:
+                    self.ingest_native_callback(raw, key=callback_key)
+                except NativeCallbackRejected:
+                    continue
         outbound: list[SchedulerEnvelope] = []
         for callback in self.controller.journal.pending_native_callbacks():
             notification = self.controller.journal.notification_payload(callback["notification_id"])
@@ -255,6 +269,8 @@ class SchedulerNativeRuntime:
     def close(self) -> None:
         adapter = getattr(self.delivery, "adapter", self.delivery)
         close_adapter = getattr(adapter, "close", None)
-        if close_adapter is not None:
-            close_adapter()
-        self.controller.journal.close()
+        try:
+            if close_adapter is not None:
+                close_adapter()
+        finally:
+            self.controller.journal.close()

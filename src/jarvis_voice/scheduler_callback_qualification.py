@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
+
+from .scheduler_compatibility import load_pinned_scheduler_json
 
 
 SCHEMA_VERSION = "scheduler-native-callback-qualification/1"
@@ -36,11 +36,7 @@ class SchedulerCallbackQualification:
 def load_scheduler_callback_qualification(
     path: Path, expected_sha256: str, *, platform_name: str
 ) -> SchedulerCallbackQualification:
-    raw = path.read_bytes()
-    digest = hashlib.sha256(raw).hexdigest()
-    if digest != expected_sha256:
-        raise ValueError("scheduler callback qualification digest mismatch")
-    value = json.loads(raw)
+    value, digest = load_pinned_scheduler_json(path, expected_sha256)
     fields = {
         "schema_version", "platform", "ready", "native_helper_sha256",
         "native_helper_code_identity_sha256", "notification_adapter_sha256",
@@ -50,7 +46,8 @@ def load_scheduler_callback_qualification(
         raise ValueError("scheduler callback qualification fields invalid")
     expected_platform = "macos" if platform_name == "darwin" else "windows" if platform_name == "win32" else ""
     if (
-        value["schema_version"] != SCHEMA_VERSION
+        not expected_platform
+        or value["schema_version"] != SCHEMA_VERSION
         or value["platform"] != expected_platform
         or value["ready"] is not True
     ):

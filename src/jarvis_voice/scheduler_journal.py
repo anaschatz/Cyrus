@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .errors import ProtocolError
+from .private_state import prepare_voice_journal_path
+from .scheduler_callback import NativeCallbackRejected
 from .scheduler_playback import SchedulerPlaybackRecord
 
 
@@ -86,14 +88,18 @@ def default_scheduler_journal_path() -> Path:
 class SchedulerClientJournal:
     """Cipher is injected so the Voice executable can use its own key namespace."""
 
-    def __init__(self, path: Path, *, cipher: Any) -> None:
-        self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, path: Path, *, cipher: Any, trusted_boundary: str | Path | None = None) -> None:
+        self.path = prepare_voice_journal_path(path, trusted_boundary=trusted_boundary)
         self._cipher = cipher
-        self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+        self._db = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        self._db.executescript(SCHEMA)
+        try:
+            self._db.executescript(SCHEMA)
+            prepare_voice_journal_path(self.path, trusted_boundary=trusted_boundary)
+        except BaseException:
+            self._db.close()
+            raise
 
     @staticmethod
     def _now() -> str:
@@ -116,10 +122,16 @@ class SchedulerClientJournal:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 prior = self._db.execute(
-                    "SELECT semantic_sha256,state FROM encrypted_frames WHERE event_id=?", (event_id,)
+                    "SELECT semantic_sha256,state,record_type FROM encrypted_frames WHERE event_id=?", (event_id,)
                 ).fetchone()
                 if prior is not None:
-                    if prior["semantic_sha256"] != semantic_sha256:
+                    valid = prior["state"] != "QUARANTINED" and prior["record_type"] == event_type
+                    matches = prior["semantic_sha256"] == semantic_sha256
+                    if valid and not matches and event_type.startswith("scheduler.notification."):
+                        previous = json.dumps(self.read(event_id), ensure_ascii=False, sort_keys=True,
+                                              separators=(",", ":"), allow_nan=False).encode()
+                        matches = previous == plaintext
+                    if not valid or not matches:
                         self._db.execute(
                             "UPDATE encrypted_frames SET state='QUARANTINED' WHERE event_id=?", (event_id,)
                         )
@@ -375,7 +387,7 @@ class SchedulerClientJournal:
             if self._db.execute(
                 "SELECT 1 FROM scheduler_tombstones WHERE notification_id=?", (notification_id,)
             ).fetchone() is not None:
-                raise ValueError("callback.notification_not_active")
+                raise NativeCallbackRejected("callback.notification_not_active")
             prior = self._db.execute(
                 "SELECT semantic_sha256 FROM scheduler_native_callbacks WHERE callback_id=?",
                 (callback_id,),

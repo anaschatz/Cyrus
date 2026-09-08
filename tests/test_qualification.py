@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import tempfile
 import unittest
@@ -8,13 +9,14 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import _bootstrap  # noqa: F401
 
 from jarvis_voice import PROTOCOL_VERSION, __version__
 from jarvis_voice.cli import main
 from jarvis_voice.config import voice_config_from_mapping
-from jarvis_voice.distribution import write_distribution_manifest
+from jarvis_voice.distribution import verify_distribution, write_distribution_manifest
 from jarvis_voice.errors import BackendError
 from jarvis_voice.native_qualification import native_evidence_template
 from jarvis_voice.voice_auth import AUTH_PROTOCOL
@@ -28,6 +30,7 @@ from jarvis_voice.qualification import (
     evaluate_frozen_doctor,
     evaluate_samples,
     host_qualification,
+    load_samples,
     parse_metrics,
     record_sample,
     sample_template,
@@ -35,6 +38,7 @@ from jarvis_voice.qualification import (
     verified_distribution_manifest_sha256,
     verify_authenticode,
     write_sample_template,
+    write_report,
 )
 
 
@@ -135,6 +139,55 @@ def ready_native_windows(*, runtime_profile_sha256: str = "b" * 64) -> dict[str,
 
 
 class QualificationSampleTests(unittest.TestCase):
+    def test_evidence_write_failures_remain_typed_when_cleanup_also_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.json"
+            with patch.object(Path, "replace", side_effect=PermissionError("private replace failure")), patch.object(Path, "unlink", side_effect=PermissionError("private cleanup failure")):
+                with self.assertRaisesRegex(BackendError, "qualification.output_write_failed"):
+                    write_report(path, {"ready": False})
+
+    def test_unserializable_evidence_never_creates_an_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.json"
+            for value in ({"metric": float("nan")}, {"value": object()}, {"value": "\ud800"}):
+                with self.assertRaisesRegex(BackendError, "qualification.output_write_failed"):
+                    write_report(path, value)
+                self.assertFalse(path.exists())
+
+    def test_malformed_sample_values_fail_with_a_typed_schema_error(self) -> None:
+        changes = (("case", []), ("outcome", {}), ("metrics", {TRANSCRIPT_LATENCY: 10**5000}))
+        for field, value in changes:
+            sample = {"sample_id": sample_id(0), "case": "no_speech", "outcome": "pass", "metrics": {}}
+            sample[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(BackendError, "qualification.samples_schema_invalid"):
+                validate_samples(sample_evidence([sample]))
+        evidence = sample_evidence()
+        evidence["schema_version"] = 2.0
+        with self.assertRaisesRegex(BackendError, "qualification.samples_schema_invalid"):
+            validate_samples(evidence)
+
+    def test_malformed_sample_json_is_typed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "samples.json"
+            for raw in (b"[" * 2000 + b"0" + b"]" * 2000, b"9" * 5000, b"\xff"):
+                with self.subTest(prefix=raw[:10]):
+                    path.write_bytes(raw)
+                    with self.assertRaisesRegex(BackendError, "qualification.samples_unreadable"):
+                        load_samples(path)
+
+    def test_evidence_writer_rejects_symlink_before_resolving_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "existing.json"
+            target.write_bytes(b"original")
+            link = Path(temporary) / "alias.json"
+            try:
+                link.symlink_to(target)
+            except (OSError, NotImplementedError):
+                self.skipTest("requires symlink support")
+            with self.assertRaisesRegex(BackendError, "qualification.output_symlink_forbidden"):
+                write_sample_template(link, "a" * 64)
+            self.assertEqual(target.read_bytes(), b"original")
+
     def test_template_is_empty_and_strict(self) -> None:
         expected = {
             "schema_version": 2,
@@ -252,6 +305,21 @@ class AuthenticodeTests(unittest.TestCase):
 
 
 class ReleaseReportTests(unittest.TestCase):
+    def test_runtime_profile_hash_binds_the_verified_manifest_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "Voice.exe").write_bytes(b"exe")
+            manifest = write_distribution_manifest(root)
+            expected = hashlib.sha256(manifest.read_bytes()).hexdigest()
+
+            def replace_after_verification(directory):
+                result = verify_distribution(directory)
+                manifest.write_bytes(b"unverified replacement")
+                return result
+
+            with patch("jarvis_voice.qualification.verify_distribution", side_effect=replace_after_verification):
+                self.assertEqual(verified_distribution_manifest_sha256(root), expected)
+
     def test_host_gate_requires_exact_native_profile(self) -> None:
         self.assertEqual(host_qualification(platform_name="win32", build=22_000, pointer_bits=64, python_version=(3, 11))["status"], "ready")
         self.assertEqual(host_qualification(platform_name="win32", build=22_000, pointer_bits=64, python_version=(3, 12))["status"], "blocked")

@@ -223,7 +223,7 @@ class VoiceStateMachine:
 
     def abort_input(self) -> None:
         self.input_state = InputState.IDLE
-        self.turn_id = None
+        # Retain the last turn identity so delayed older responses stay stale.
 
     def submission_complete(self) -> None:
         if self.input_state != InputState.SUBMITTING:

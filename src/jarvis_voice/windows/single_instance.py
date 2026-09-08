@@ -39,7 +39,7 @@ class Win32MutexApi:
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.CloseHandle.restype = wintypes.BOOL
         if not kernel32.CloseHandle(handle):
-            raise ctypes.WinError()
+            raise ctypes.WinError(ctypes.get_last_error())
 
 
 class SingleInstanceGuard:

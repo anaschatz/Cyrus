@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from .config import configured_voice_auth_key, load_voice_config
 from .doctor import doctor_report, doctor_report_config
-from .errors import BackendError
+from .errors import BackendError, VoiceError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -124,10 +124,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             record_sample(args.samples, case=args.case, outcome=args.outcome, metrics=parse_metrics(args.metric))
             return 0
         if args.command == "dist-manifest":
-            from .distribution import build_distribution_manifest, write_distribution_manifest
+            from .distribution import write_distribution_manifest
             output = write_distribution_manifest(args.directory)
-            report = build_distribution_manifest(args.directory)
-            _print({"ready": True, "code": "packaging.manifest_written", "files": len(report["files"]), "manifest_name": output.name, "network_used": False})
+            try:
+                file_count = len(json.loads(output.read_text(encoding="utf-8"))["files"])
+            except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
+                raise BackendError("packaging.manifest_unreadable", "Written distribution manifest could not be read", subsystem="packaging") from exc
+            _print({"ready": True, "code": "packaging.manifest_written", "files": file_count, "manifest_name": output.name, "network_used": False})
             return 0
         if args.command == "verify-dist":
             from .distribution import verify_distribution
@@ -217,8 +220,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .macos.runtime import MacVoiceRuntime
             MacVoiceRuntime(with_faster_whisper_cpu_smoke(config, args.model_dir)).run()
             return 0
-    except BackendError as exc:
+    except VoiceError as exc:
         error_report = {"ready": False, "error": exc.to_log_record(), "network_used": False}
-        _emit(error_report, getattr(args, "output", None))
+        try:
+            _emit(error_report, getattr(args, "output", None))
+        except BackendError:
+            _print(error_report)
         return 2
     raise AssertionError("argparse accepted an unknown command")
