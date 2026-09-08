@@ -24,6 +24,8 @@ payloads.
   `UV_OFFLINE=1` and `--offline`. Research's integration suite lives under the
   Orchestrator tests; the Orchestrator dev lock now installs the exact local
   Research wheel contract and its pinned `publicsuffixlist` dependency.
+  Orchestrator tests use `unittest` discovery, so test cases must be methods of
+  `unittest.TestCase`; standalone pytest-style functions are not executed.
 - `windows-security` executes the native Windows configuration, private-state,
   DACL, stack-migration and handoff portability cases. It also validates the
   canonical CUDA-bundle/runner-seal contract with dummy bytes; CI never owns or
@@ -46,9 +48,9 @@ Orchestrator's dependency graph. Inference tests, source-run provisioning and
 wheel construction all consume that checked lock and its dedicated virtual
 environment; they do not borrow the Voice or Orchestrator interpreter.
 
-No artifact action is present. GitHub's ordinary step logs contain test status;
-the workflow does not retain wheels, reports, database files, paths, prompts,
-or test payloads after the ephemeral runner is destroyed.
+No artifact upload action is present. Wheels, reports and database files are
+not published as workflow artifacts. Ordinary step logs are retained by
+GitHub and can include assertion failures and diagnostic output.
 
 ## Supply-chain choices
 
@@ -60,8 +62,11 @@ relevant `uv.lock` files.
 
 The uv executable is fixed at `0.9.18`, matching the repository's reviewed lock
 toolchain. `uv lock --check` must succeed before synchronization. A lock-backed
-sync is the only network-capable dependency step; tests, builds, fresh-venv
-installs, imports, and entrypoint smokes are explicitly offline.
+sync may download dependencies; tests, builds, fresh-venv installs, imports,
+and entrypoint smokes use offline dependency resolution. `UV_OFFLINE=1` and
+`--offline` constrain uv, not network access by the application or test process.
+Provider isolation also relies on the tests' fake transports and local fixtures;
+this workflow does not install an operating-system network firewall.
 
 Primary references:
 

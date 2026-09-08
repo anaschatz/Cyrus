@@ -1,6 +1,6 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **336 of 348 test files** and **81 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **340 of 348 test files** and **92 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
 Updated **2026-09-08**. Latest complete runs: Voice **892 tests (877 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **274 unit tests (266 passed, 8 skipped)** plus **2 official SDK tests passed**. Anamnesis **899 tests (897 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
@@ -2862,3 +2862,14 @@ A complete archive of HEAD plus only these 55 files passed **892 Voice tests (87
 Inspection coverage remains **818/1057 entries**: this checkpoint commits already inspected fixes and adds no new inspection claims. The full review, remaining test/support inventory, other subsystem checkpoints and final quality assessment remain open. Exact staged Ponytail review and active hooks are required; no push is requested.
 
 Voice checkpoint Ponytail follow-up: accepted both findings by replacing an empty local delivery marker class with `object()` and combining the session-ID assignment with its existing UUID validation. Four production lines removed, no behavior or dependency change. Focused protocol/callback tests passed; fatal/unused-import Ruff and whitespace checks passed. Evidence: `/tmp/cyrus-voice-checkpoint-cleanup-tests.log`. The complete 892-test isolated run above precedes this behavior-preserving cleanup.
+
+
+### CI discovery and control-boundary inspection checkpoint — 2026-09-08
+
+**CI discovery — fixed:** the Linux Orchestrator command uses `unittest discover`, while its Anamnesis packaging module exposed two standalone pytest functions. The original discovery command reported zero tests without failure. Converted those functions to `unittest.TestCase` methods with the same dependency/version/local-wheel/lock assertions; no new dependency or production change. Isolated discovery now runs two tests. Full current-worktree Orchestrator unittest discovery passed **1113 tests (1108 passed, 5 skipped)** in 22.379 seconds (`/tmp/cyrus-ci-discovery-full.log`), matching the previous pytest collection count. This run includes the other in-progress Orchestrator fixes and is not an isolated validation of their eventual individual commits.
+
+Completed the workflow and its 328-line contract-test review; all **10 contract tests passed** in the declared PyYAML-capable environment (`/tmp/cyrus-ci-contract-final.log`). Corrected the CI guide's overbroad claims: offline uv controls dependency resolution, not application networking; GitHub retains ordinary step logs, which can contain failure diagnostics. No hosted CI execution, remote action identity, dependency vulnerability audit, model/provider or native Windows qualification is claimed.
+
+Also fully inspected the three pending Orchestrator planner/tool/scheduler, service/continuation and atomic-idempotency test modules and their control-idempotency runbook. They exercise real SQLite transactions, rollback injection, two-connection races, approval/reconnect/cancellation, continuation binding and provenance cleanup with fake external actors; all were included in the full passing run. Reviewed the three ignore files, root package metadata, native packaging metadata and translation notice. TOML/plist/XML/Python-resource syntax checks passed; static entitlement/privilege/version declarations are not signed/native execution evidence.
+
+Coverage is **401/401 code, 340/348 tests, 92/308 support; 833/1057 entries**. **Eight test files and 216 support files** remain pending, together with remaining subsystem checkpoints, open findings and the final quality assessment. Exact staged Ponytail review and active hooks apply; no push is requested.
