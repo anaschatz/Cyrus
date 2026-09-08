@@ -941,7 +941,7 @@ def _run_greektts15_suite(
                     "warm_audio_ready_ms": round(total_synthesis_ms, 3),
                     "decode_ms": round(decode_ms, 3),
                     "audio_duration_ms": round(duration_ms, 3),
-                    "realtime_factor": round(total_synthesis_ms / duration_ms, 4) if duration_ms else None,
+                    "realtime_factor": total_synthesis_ms / duration_ms if duration_ms else None,
                     "generated_tokens": len(generated),
                     "audio_frames": len(code_layers[0]),
                     "peak_before_normalization": round(peak_before, 6),
@@ -1057,7 +1057,7 @@ def run_greektts15_quality_qualification(
     }
     report["code"] = "tts.greektts15.quality_qualification_completed"
     report["qualification"] = {
-        "mean_realtime_factor": round(mean_realtime_factor, 4),
+        "mean_realtime_factor": mean_realtime_factor,
         "rss_limit_bytes": QUALITY_MAX_RSS_BYTES,
         "mlx_memory_limit_bytes": QUALITY_MAX_MLX_MEMORY_BYTES,
         "mean_realtime_factor_limit": QUALITY_MAX_MEAN_REALTIME_FACTOR,

@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest import mock
 
 import _bootstrap  # noqa: F401
 
 from jarvis_voice.errors import BackendError
+from jarvis_voice.macos import greektts15_pilot as pilot
 from jarvis_voice.macos.greektts15_pilot import (
     BASE_ARTIFACTS,
     BASE_8BIT_ARTIFACTS,
@@ -320,6 +323,43 @@ class GreekTts15PilotTests(unittest.TestCase):
         self.assertEqual(report["sample"]["file"], "01-greek_consonants.wav")
         self.assertNotIn("samples", report)
         self.assertNotIn("file", report)
+
+    def test_suite_preserves_rtf_before_quality_gate(self):
+        for elapsed in (0.99996, 1.0, 1.00004):
+            with self.subTest(elapsed=elapsed), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / 'adapter_config.json').write_text(json.dumps(pilot._native_adapter_config()))
+                (root / 'adapters.safetensors').write_bytes(b'fixture')
+                model = mock.Mock()
+                model.named_modules.return_value = [('layer', model)] * (pilot.MODEL_LAYERS * len(pilot.EXPECTED_MLX_KEYS))
+                tokenizer = mock.Mock()
+                tokenizer.encode.return_value = [128_000]
+                mx = mock.Mock()
+                mx.get_peak_memory.return_value = 1
+                torch = mock.Mock()
+                torch.inference_mode.side_effect = nullcontext
+                tokens = [pilot.START_OF_SPEECH, *(pilot.AUDIO_TOKEN_OFFSET + i * pilot.CODEBOOK_SIZE for i in range(7)), pilot.END_OF_SPEECH]
+                modules = {
+                    'mlx': SimpleNamespace(core=mx), 'mlx.core': mx,
+                    'torch': torch, 'mlx_lm': SimpleNamespace(load=mock.Mock(return_value=(model, tokenizer))),
+                    'mlx_lm.generate': SimpleNamespace(generate_step=mock.Mock(return_value=[(token, None) for token in tokens])),
+                    'mlx_lm.sample_utils': SimpleNamespace(make_logits_processors=mock.Mock(), make_sampler=mock.Mock()),
+                    'mlx_lm.tuner.lora': SimpleNamespace(LoRALinear=type(model)),
+                    'snac': SimpleNamespace(SNAC=mock.Mock()),
+                }
+                with (
+                    mock.patch.dict(sys.modules, modules),
+                    mock.patch.object(pilot, 'validate_greektts_model_root', return_value=SimpleNamespace(ready=True)),
+                    mock.patch.object(pilot, 'validate_converted_adapter', return_value=SimpleNamespace(ready=True)),
+                    mock.patch.object(pilot, '_dependency_report', return_value={'fake_backend': True}),
+                    mock.patch.object(pilot, '_write_pcm16_wav', return_value=(24_000, 0.5, 1.0)),
+                    mock.patch.object(pilot, 'QUALITY_FIXTURES', (('one', 'Test fixture.'),)),
+                    mock.patch.object(pilot.time, 'perf_counter', side_effect=[0, 0, 0, 0, 0, 0, elapsed, elapsed, elapsed]),
+                ):
+                    report = pilot.run_greektts15_quality_qualification(root, root / 'output', adapter_directory=root)
+                self.assertEqual(report['qualification']['automated_gates']['mean_realtime_factor_within_limit'], elapsed <= 1.0)
+                self.assertAlmostEqual(report['samples'][0]['realtime_factor'], elapsed)
+                self.assertAlmostEqual(report['qualification']['mean_realtime_factor'], elapsed)
 
     def test_quality_qualification_never_promotes_without_streaming(self) -> None:
         suite = {

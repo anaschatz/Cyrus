@@ -80,7 +80,7 @@ def measure_rtf_batch(
                     "audio_duration_ms": round(audio_seconds * 1000.0, 3),
                     "synthesis_ms": round(synthesis_seconds * 1000.0, 3),
                     "time_to_first_pcm_ms": round((first_pcm_at - started) * 1000.0, 3),
-                    "realtime_factor": round(synthesis_seconds / audio_seconds, 4),
+                    "realtime_factor": synthesis_seconds / audio_seconds,
                 }
             )
     finally:
@@ -94,7 +94,7 @@ def measure_rtf_batch(
             else "tts.greektts15.rtf_limit_exceeded"
         ),
         "warm_load_ms": round(warm_load_ms, 3),
-        "mean_realtime_factor": round(mean_rtf, 4),
+        "mean_realtime_factor": mean_rtf,
         "mean_realtime_factor_limit": QUALITY_MAX_MEAN_REALTIME_FACTOR,
         "samples": samples,
         "raw_audio_persisted": False,

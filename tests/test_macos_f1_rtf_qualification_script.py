@@ -44,6 +44,17 @@ class MacosF1RtfQualificationScriptTests(unittest.TestCase):
         self.assertEqual(report["samples"][0]["time_to_first_pcm_ms"], 200.0)
         self.assertTrue(engine.cancelled)
 
+    def test_rtf_gate_preserves_precision_around_the_limit(self) -> None:
+        for elapsed in (0.99996, 1.0, 1.00004):
+            with self.subTest(elapsed=elapsed):
+                times = iter((0.0, 0.1, elapsed))
+                engine = FakeEngine()
+                report = MODULE.measure_rtf_batch(engine, (("one", "Test fixture."),), clock=lambda: next(times))
+                self.assertEqual(report["ready"], elapsed <= 1.0)
+                self.assertAlmostEqual(report["samples"][0]["realtime_factor"], elapsed)
+                self.assertAlmostEqual(report["mean_realtime_factor"], elapsed)
+                self.assertTrue(engine.cancelled)
+
     def test_batch_is_hard_bounded_to_two_fixtures(self) -> None:
         self.assertEqual(MODULE._bounded_sample_count("2"), 2)
         with self.assertRaises(argparse.ArgumentTypeError):
