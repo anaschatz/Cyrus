@@ -207,11 +207,12 @@ class MemoryModel(BaseModel):
         """Copy through validation so updates cannot bypass deep freezing."""
 
         if deep:
-            values = self.model_dump(mode="python", round_trip=True)
+            values = self.model_dump(mode="python", round_trip=True, exclude_unset=True)
         else:
             values = {
                 field_name: getattr(self, field_name)
                 for field_name in type(self).model_fields
+                if field_name in self.model_fields_set
             }
         if update:
             values.update(update)
@@ -269,7 +270,7 @@ class FactKeyTemplate(MemoryModel):
         local = scheduled.astimezone(zone) if zone is not None else scheduled
         substitutions = {
             "{date}": local.date().isoformat(),
-            "{weekday}": local.strftime("%A").lower(),
+            "{weekday}": tuple(_WEEKDAY_INDEX)[local.weekday()],
         }
 
         def substitute(value: str) -> str:
@@ -1363,7 +1364,11 @@ class InMemoryAnamnesis:
             if field_name not in mutation.model_fields_set:
                 continue
             value = getattr(mutation, field_name)
-            if value != values[field_name]:
+            before = _semantic_leaves(field_name, values[field_name])
+            after = _semantic_leaves(field_name, value)
+            if before.keys() != after.keys() or any(
+                not _same_semantic_leaf(before[path], after[path]) for path in before
+            ):
                 values[field_name] = value
                 changed.add(field_name)
         if not changed:
@@ -1452,8 +1457,8 @@ class InMemoryAnamnesis:
 
         zone = ZoneInfo(trigger.timezone)
         weekdays = {_WEEKDAY_INDEX[name] for name in trigger.weekdays}
-        day = trigger.start_date
-        while day <= trigger.end_date:
+        for offset in range((trigger.end_date - trigger.start_date).days + 1):
+            day = trigger.start_date + timedelta(days=offset)
             if day.weekday() in weekdays:
                 scheduled = datetime.combine(day, trigger.local_time, tzinfo=zone)
                 round_trip = scheduled.astimezone(UTC).astimezone(zone)
@@ -1462,7 +1467,6 @@ class InMemoryAnamnesis:
                     and scheduled > source_at
                 ):
                     return
-            day += timedelta(days=1)
         raise MemorySemanticError(
             "recurring trigger has no valid occurrence after its source event"
         )
@@ -1581,11 +1585,9 @@ class InMemoryAnamnesis:
             intent.valid_from.astimezone(zone).date(),
         )
         final_date = min(trigger.end_date, current_local_date)
-        if final_date < first_date:
-            return
-        day = first_date
         weekdays = {_WEEKDAY_INDEX[name] for name in trigger.weekdays}
-        while day <= final_date:
+        for offset in range((final_date - first_date).days + 1):
+            day = first_date + timedelta(days=offset)
             if day.weekday() in weekdays:
                 scheduled = datetime.combine(day, trigger.local_time, tzinfo=zone)
                 # Skip nonexistent wall times; choose fold=0 for ambiguous times.
@@ -1601,7 +1603,6 @@ class InMemoryAnamnesis:
                         current,
                         due_ids,
                     )
-            day += timedelta(days=1)
 
     def _select_condition_transition(
         self,
@@ -1799,13 +1800,14 @@ class InMemoryAnamnesis:
         zone: ZoneInfo | None,
     ) -> ActionTemplate:
         local = scheduled.astimezone(zone) if zone is not None else scheduled
+        weekday = tuple(_WEEKDAY_INDEX)[local.weekday()]
         payload_substitutions = {
             "{date}": local.date().isoformat(),
-            "{weekday}": local.strftime("%A").lower(),
+            "{weekday}": weekday,
         }
         summary_substitutions = {
             "{date}": local.date().isoformat(),
-            "{weekday}": local.strftime("%A"),
+            "{weekday}": weekday.title(),
         }
 
         def resolve(value: ActionValue) -> ActionValue:

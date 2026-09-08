@@ -425,6 +425,87 @@ def test_recurring_trigger_rejects_ranges_larger_than_one_year() -> None:
         )
 
 
+def test_condition_type_update_changes_semantics_and_provenance() -> None:
+    memory = InMemoryAnamnesis()
+    key = FactKey(entity="assignment", attribute="submitted")
+    original = Condition(key=key, operator="eq", value=True)
+    created = event("create", "2026-01-01T09:00:00+00:00")
+    assert memory.ingest(
+        created,
+        MemoryDelta(mutations=(create_at_intent(required=(original,)),)),
+    ).accepted
+    memory.select(created)
+    memory.commit(created, Decision())
+    changed = original.model_copy(update={"value": 1})
+    updated = event("update", "2026-01-01T10:00:00+00:00")
+    assert memory.ingest(
+        updated,
+        MemoryDelta(
+            mutations=(
+                UpdateIntent(intent_id="assignment", required_conditions=(changed,)),
+            )
+        ),
+    ).accepted
+    intent = memory.current_intents[0]
+    assert type(intent.required_conditions[0].value) is int
+    assert intent.field_provenance["required_conditions.0.value"] == ("update",)
+    assert intent.field_provenance["required_conditions.0.key.entity"] == ("create",)
+
+
+def test_weekday_placeholders_do_not_use_the_process_locale() -> None:
+    class LocalizedDateTime(datetime):
+        def strftime(self, format: str) -> str:
+            return "Δευτέρα" if format == "%A" else super().strftime(format)
+
+    scheduled = LocalizedDateTime.fromisoformat("2026-01-05T09:00:00+00:00")
+    key = FactKeyTemplate(entity="assignment.{weekday}", attribute="submitted")
+    assert key.resolve(scheduled, None).entity == "assignment.monday"
+    resolved = InMemoryAnamnesis._resolve_action(
+        ActionTemplate(
+            payload={"subject": "check {weekday} assignment"},
+            summary="Check {weekday} assignment",
+        ),
+        scheduled,
+        None,
+    )
+    assert resolved.payload["subject"] == "check monday assignment"
+    assert resolved.summary == "Check Monday assignment"
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_copy_preserves_omitted_partial_update_fields(deep: bool) -> None:
+    update = UpdateIntent(
+        intent_id="assignment",
+        trigger=AtTrigger(at=dt("2026-01-02T09:00:00+00:00")),
+    )
+    copied = update.model_copy(deep=deep)
+    assert copied == update
+    assert copied.model_fields_set == update.model_fields_set
+
+
+def test_recurring_trigger_handles_the_last_supported_date() -> None:
+    memory = InMemoryAnamnesis()
+    created = event("create", "9999-12-31T08:00:00+00:00")
+    recurrence = RecurringTrigger(
+        local_time="09:00:00",
+        weekdays=("friday",),
+        start_date="9999-12-31",
+        end_date="9999-12-31",
+        timezone="UTC",
+    )
+    intent = CreateIntent(
+        intent_id="assignment",
+        trigger=recurrence,
+        action_template=create_at_intent().action_template,
+    )
+    assert memory.ingest(created, MemoryDelta(mutations=(intent,))).accepted
+    memory.select(created)
+    memory.commit(created, Decision())
+    due = event("due", "9999-12-31T09:00:00+00:00", kind="clock_tick")
+    memory.ingest(due, None)
+    assert len(memory.select(due).due_candidates) == 1
+
+
 def test_create_rejects_recurring_contract_without_future_occurrence() -> None:
     memory = InMemoryAnamnesis()
     current = event("create", "2026-01-05T12:00:00+02:00")

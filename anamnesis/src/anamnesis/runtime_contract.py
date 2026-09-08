@@ -33,9 +33,9 @@ _HISTORICAL_V1_MEMORY_SCHEMA_SHA256 = (
 # Architecture revision v2 is the sole current executable identity. The
 # original constants remain byte-stable historical metadata for W1-W3 artifact
 # interpretation at their source commits; current cells always fingerprint v2.
-ANAMNESIS_REDUCER_V2_VERSION = "anamnesis.reducer.v0.2.0"
-ANAMNESIS_TRIGGER_ENGINE_V2_VERSION = "anamnesis.trigger-engine.v0.2.0"
-ANAMNESIS_RENDERER_V2_VERSION = "anamnesis.memory-view-renderer.v0.2.0"
+ANAMNESIS_REDUCER_V2_VERSION = "anamnesis.reducer.v0.2.1"
+ANAMNESIS_TRIGGER_ENGINE_V2_VERSION = "anamnesis.trigger-engine.v0.2.1"
+ANAMNESIS_RENDERER_V2_VERSION = "anamnesis.memory-view-renderer.v0.2.1"
 ANAMNESIS_MEMORY_SCHEMA_V2_VERSION = "anamnesis.memory-schema.v0.2.0"
 ANAMNESIS_COMPILER_STATE_V2_VERSION = "anamnesis.compiler-state.v0.2.0"
 

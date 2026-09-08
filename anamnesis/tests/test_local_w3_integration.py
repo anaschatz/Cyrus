@@ -78,7 +78,6 @@ from anamnesis.writer_report_w3 import (
     _validate_w3_setup_latency,
     _w3_candidate_key,
 )
-
 from tests.test_local_preflight import _chat_response
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -229,7 +228,7 @@ def test_w3_prompt_hashes_stay_frozen_while_current_system_uses_runtime_v2() -> 
             w3_dataset_sha256=LOCAL_WRITER_W3_DATASET_SHA256,
             w3_reference_sha256=LOCAL_WRITER_W3_REFERENCE_SHA256,
         )
-        == "db2d51d9e8a70a9456a6f01808e453603a55ae8df7a1e5a1097583119c817c97"
+        == "bc3f949ef291b33414fa4fcae98d0e578249538080a8213934b6f7aece0fa0ad"
     )
 
 

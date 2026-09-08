@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **340 of 348 test files** and **92 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **341 of 348 test files** and **92 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-08**. Latest complete runs: Voice **892 tests (877 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **274 unit tests (266 passed, 8 skipped)** plus **2 official SDK tests passed**. Anamnesis **899 tests (897 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-08**. Latest complete runs: Voice **892 tests (877 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **274 unit tests (266 passed, 8 skipped)** plus **2 official SDK tests passed**. Anamnesis **900 tests (898 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2873,3 +2873,14 @@ Completed the workflow and its 328-line contract-test review; all **10 contract 
 Also fully inspected the three pending Orchestrator planner/tool/scheduler, service/continuation and atomic-idempotency test modules and their control-idempotency runbook. They exercise real SQLite transactions, rollback injection, two-connection races, approval/reconnect/cancellation, continuation binding and provenance cleanup with fake external actors; all were included in the full passing run. Reviewed the three ignore files, root package metadata, native packaging metadata and translation notice. TOML/plist/XML/Python-resource syntax checks passed; static entitlement/privilege/version declarations are not signed/native execution evidence.
 
 Coverage is **401/401 code, 340/348 tests, 92/308 support; 833/1057 entries**. **Eight test files and 216 support files** remain pending, together with remaining subsystem checkpoints, open findings and the final quality assessment. Exact staged Ponytail review and active hooks apply; no push is requested.
+
+
+### Remaining Anamnesis memory semantics checkpoint — 2026-09-08
+
+The four remaining Anamnesis changes preserve omitted fields during shallow/deep partial-update copies, compare typed semantic leaves so `True` and `1` remain distinct with correct leaf provenance, resolve English weekday placeholders independently of process locale, and avoid incrementing past `date.max` in recurrence scans. Existing semantic helpers and weekday tables are reused. The current reducer/trigger/renderer identity advances to **v0.2.1**, with its current W3 system fingerprint assertion updated; historical V1 constants, frozen prompts and retained evidence remain unchanged. Net production growth is **two lines** across memory/runtime-contract modules.
+
+A complete HEAD archive plus only these four files passed **900 Anamnesis tests (898 passed, 2 expected historical-source failures)** in 31.25 seconds. After removing one misplaced blank line between same-party test imports, the exact final four-file snapshot passed **72 focused tests** in 1.48 seconds. Declared Ruff lint and format passed for these four files from the actual Anamnesis working directory used by CI. Logs: `/tmp/cyrus-anamnesis-memory-checkpoint-full.log` and `-focused.log`. The runtime has not been qualified against a real writer model by this portable run.
+
+Full declared Anamnesis quality checks also exposed **35 lint findings and 13 files needing formatting elsewhere** (`/tmp/cyrus-anamnesis-declared-lint.log`, `-format.log`). Those checks currently fail and will be addressed separately; the focused pass above does not imply that the full CI gate is green. The complete scenario-integrity/leakage test module was manually inspected and included in the full run; its frozen assertions do not replace the still-pending independent semantic review of dataset labels.
+
+Coverage is **401/401 code, 341/348 tests, 92/308 support; 834/1057 entries**. Seven test files, 216 support files, remaining Orchestrator fixes, the Anamnesis quality-gate cleanup, open findings and the final quality assessment remain outstanding. Exact staged Ponytail review and active hooks apply; no push is requested.
