@@ -4,7 +4,7 @@ M5 adds source-run parity only. It does not install dependencies, build `whisper
 
 ## Locked native profile
 
-- macOS 14 or later, Apple Silicon `arm64`, CPython 3.11 x64.
+- macOS 14 or later, Apple Silicon `arm64`, native arm64 CPython 3.11.
 - `whisper.cpp` v1.9.2 `whisper-server`, built locally as native arm64 with Metal and an embedded Metal library. Core ML remains off for v1.
 - An explicit local GGML/GGUF-compatible Whisper model. `ggml-large-v3-turbo-q5_0.bin` is the target profile, but M5 does not fetch it and does not replace an existing model.
 - The existing Silero ONNX artifact, `sounddevice`/CoreAudio, SoXR and loopback WebSocket transport.
@@ -104,7 +104,7 @@ then run:
 PYTHONPATH=src python3.11 -m jarvis_voice run-macos --config /explicit/path/to/voice.json
 ```
 
-The runtime starts the owned `whisper-server` lazily on first speech turn. It binds only to `127.0.0.1`, generates a fresh unreported request-path token, disables context carry-over, never enables ffmpeg conversion and sends an in-memory 16-kHz WAV to that private path's `/inference` endpoint. The upstream server example itself warns that file-upload servers need sandboxing; this adapter therefore keeps the process unprivileged, loopback-only, bounded and supervised.
+The runtime loads the selected ASR backend, including its owned `whisper-server` when selected, before opening capture and accepting PTT. The sidecar binds only to `127.0.0.1`, generates a fresh unreported request-path token, disables context carry-over, never enables ffmpeg conversion and sends an in-memory 16-kHz WAV to that private path's `/inference` endpoint. The adapter keeps the process unprivileged, loopback-only, bounded and supervised.
 
 For the pinned v1.9.2 server, context is bounded explicitly with
 `--max-context 0`. The obsolete `--no-context` command-line switch is not

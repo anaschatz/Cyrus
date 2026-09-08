@@ -29,7 +29,6 @@ REQUIRED_TOP_LEVEL: Mapping[str, str] = {
     "sounddevice": "0.5.3",
     "soxr": "1.1.0",
     "onnxruntime": "1.27.0",
-    "kokoro-onnx": "0.6.1",
 }
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 

@@ -38,7 +38,6 @@ def write_wheelhouse(root: Path) -> tuple[Path, Path]:
             "sounddevice": "0.5.3",
             "soxr": "1.1.0",
             "onnxruntime": "1.27.0",
-            "kokoro-onnx": "0.6.1",
             "websockets": "15.0.1",
         },
         "wheels": [{

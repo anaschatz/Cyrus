@@ -14,9 +14,9 @@ existing `jarvis*` identifiers. See the
 
 `function-key PTT → WASAPI capture → Silero VAD → local faster-whisper → loopback WebSocket → SAPI5`
 
-The voice layer only captures, validates, transcribes, transports, speaks, and cancels. It does not interpret requests or contain orchestrator/agent logic. Its only Orchestrator-related persistence is a bounded, content-free server-event dedup journal used to prevent duplicate TTS after a voice process restart. Authoritative `response.speech.commit` events remain the only TTS input.
+The voice layer captures, validates, transcribes, transports, speaks, and cancels. It does not interpret requests or contain orchestrator/agent logic. A bounded server-event dedup journal prevents duplicate conversational TTS after a restart without storing transcript or speech text. Optional scheduler delivery has a separate encrypted inbox for notification and speech payloads. Conversational TTS follows authoritative `response.speech.commit` events; scheduler playback follows its separately qualified delivery contract.
 
-The new [`orchestrator/`](orchestrator/) package is Python 3.11 source-run code with a hash-bearing cross-platform `uv.lock`. It uses `pydantic-ai-slim[openai]==2.27.0`, but its public and durable domain schemas remain framework-independent. See the [Orchestrator runbook](orchestrator/README.md) and [Core v1 contract map](docs/orchestrator-core-v1.md).
+The [`orchestrator/`](orchestrator/) package is Python 3.11 source-run code with a hash-bearing cross-platform `uv.lock`. It uses `pydantic-ai-slim[openai]==2.27.0`, but its public and durable domain schemas remain framework-independent. See the [Orchestrator runbook](orchestrator/README.md) and [historical Core v1 contract map](docs/orchestrator-core-v1.md).
 
 A strict `jarvis-private-stack/2` manifest now provides one private operator
 entry point for the real voice, Orchestrator and qualified inference configs.
@@ -66,16 +66,17 @@ operational transport evidence do not qualify the current runtime. See the
 evidence compatibility rules.
 
 An off-by-default Anamnesis adapter now provides qualified local retrospective
-recall for explicit completed statements. Durable memory remains in
-Orchestrator SQLite, is isolated per conversation and is removed by logical
-conversation deletion. See the
+recall for explicit completed statements. Durable memory remains encrypted in
+Orchestrator SQLite under one stable local-owner identity shared across
+conversations. Deleting a conversation removes records sourced by that
+conversation, while other saved records remain available. See the
 [Anamnesis integration qualification](docs/anamnesis-memory-integration.md).
 
 Milestone 5 adds macOS Apple Silicon source adapters targeting `whisper.cpp`/Metal. Milestone 5A audits existing local artifacts. Milestone 5B adds an explicit temporary `faster_whisper_cpu_smoke` profile so the already-local pinned CTranslate2 model can be used for a native macOS source smoke without downloading or converting a model. The default macOS backend remains `whisper_cpp`.
 
 ## Current verification boundary
 
-Development and dependency-free/fake verification occurred on macOS ARM64. The M4 harness correctly produces a blocked result on this host; Windows, Shell notification behavior, PyInstaller output, Authenticode, WASAPI, SAPI, NVIDIA, CUDA, cuDNN, and local-LLM coexistence have not been hardware-verified. No dependency, driver, model, voice, packaging tool, certificate, or artifact was installed or downloaded.
+Source and portable test verification runs on macOS ARM64. The M4 harness produces a blocked result on this host; these checks do not qualify native Windows, Shell notifications, PyInstaller output, Authenticode, WASAPI, SAPI, NVIDIA, CUDA, cuDNN, or local-LLM coexistence. See the [Backend CI guide](docs/backend-ci.md) for the maintained lock-backed verification commands.
 
 ```sh
 python3 -m unittest discover -s tests -v
@@ -94,7 +95,7 @@ remain blocked; use a private materialized config for a readiness claim.
 ## macOS CPU readiness
 
 The passive command below accepts the already-local CTranslate2 model through
-an absolute path, validates its exact four-file manifest and never loads it.
+an absolute path, validates the selected profile's manifest and never loads it.
 For a readiness result, replace the example config with a private config that
 also contains the external `voice_auth_key_file`:
 
@@ -122,7 +123,7 @@ The existing proposal is unchanged:
 
 `PyInstaller==6.21.0` is a build-only proposal. It is not a runtime dependency and was not installed on the macOS host. A Windows bundle must be built on native Windows 11 x64 with the approved CPython 3.11 environment.
 
-The ASR model remains `Systran/faster-whisper-base` revision `ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66`. Its four files are validated by exact size and SHA-256 in both the parent and CUDA worker before model construction. No model name or network fallback is permitted.
+The default ASR model is `Systran/faster-whisper-base` revision `ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66`. Its four files are validated by exact size and SHA-256 in both the parent and CUDA worker before model construction. The optional five-file [large-v3-turbo profile](docs/windows-whisper-large-v3-turbo.md) has its own pins and native qualification requirements. No model name or network fallback is permitted.
 
 ## CPU and CUDA profiles
 
@@ -218,4 +219,4 @@ It uses only the validated local model, exposes no transcript, performs no netwo
 
 ## Explicitly deferred
 
-Native Windows M4 execution and human latency approval, native tray/build/signing approval, native CUDA compatibility, the private manifest-bound CUDA/cuDNN runner build, real LLM coexistence results, installer/MSIX, autostart, updater, service, CUDA DLLs in the final Voice package, newer Whisper model adoption, Piper/Kokoro, wake word, satellites, AEC, ambient interruption, telemetry server, prospective/automatic memory, research, cloud and side-effect tool integrations remain outside the verified result. Explicit Anamnesis retrospective recall is qualified but remains off by default; all model work still uses local inference.
+Native Windows M4 execution and human latency approval, native tray/build/signing approval, native CUDA compatibility, the private manifest-bound CUDA/cuDNN runner build, real LLM coexistence results, installer/MSIX, autostart, updater, service, CUDA DLLs in the final Voice package, newer Whisper model promotion, Piper/Kokoro promotion, wake word, satellites, AEC, ambient interruption, telemetry server, prospective/automatic memory, research, cloud and side-effect tool integrations remain outside this technical-beta verification scope. Explicit Anamnesis retrospective recall is gated and off by default; the bounded technical-beta profile uses only local inference. Optional integrations have separate configuration and qualification contracts in the Orchestrator runbook.

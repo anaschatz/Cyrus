@@ -17,7 +17,6 @@ import _bootstrap  # noqa: F401
 
 from jarvis_voice.macos import materialization
 from jarvis_voice.macos.materialization import (
-    DIRECT_REQUIREMENTS,
     SILERO_ONNX_MEMBER,
     SILERO_WHEEL_NAME,
     blocked_materialization_summary,
@@ -55,7 +54,9 @@ class WheelhouseLockTests(unittest.TestCase):
             root = Path(temp)
             wheelhouse = root / "wheelhouse"
             wheelhouse.mkdir()
-            for name, version in DIRECT_REQUIREMENTS.items():
+            requirements = Path(__file__).resolve().parents[1] / "requirements" / "macos-cpu.in"
+            approved = dict(line.split("==") for line in requirements.read_text().splitlines())
+            for name, version in approved.items():
                 fake_wheel(wheelhouse, name, version)
             fake_wheel(wheelhouse, "dependency", "9.0")
             manifest = root / "wheelhouse.lock.json"
@@ -73,8 +74,8 @@ class WheelhouseLockTests(unittest.TestCase):
             raw = json.loads(manifest.read_text())
         self.assertTrue(result["ready"])
         self.assertEqual(validated["status"], "ready")
-        self.assertEqual(len(raw["wheels"]), 7)
-        self.assertEqual(raw["top_level"], dict(DIRECT_REQUIREMENTS))
+        self.assertEqual(len(raw["wheels"]), len(approved) + 1)
+        self.assertEqual(raw["top_level"], approved)
 
     def test_missing_direct_requirement_and_wrong_platform_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

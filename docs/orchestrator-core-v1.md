@@ -1,6 +1,10 @@
 # Orchestrator Core v1.0 contract map
 
-This document maps the frozen implementation contract to the source tree. The executable contract is the test suite under `orchestrator/tests`.
+This is the historical Core v1 contract map. Later memory, scheduler and
+optional integration contracts supersede its original feature scope and store
+layout. Use the [current Orchestrator runbook](../orchestrator/README.md) and
+[memory integration contract](anamnesis-memory-integration.md) for current
+behavior; the executable checks live under `orchestrator/tests`.
 
 | Concern | Implementation |
 |---|---|
