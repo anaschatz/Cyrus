@@ -95,6 +95,9 @@ uv run anamnesis-writer-report \
 ```
 
 Reporter exit `0` is a fully validated PASS. Exit `2` is a fully validated
-FAIL whose three outputs are preserved. An exception is an integrity failure
-and writes no result. The writer gate requires invalid `0`, accepted `39/39`,
+FAIL whose three outputs are preserved. Validation or publication errors are
+not experimental FAIL results. The three files are written sequentially, so a
+failed write or final provenance check can leave partial outputs. Treat that
+set as incomplete unless all files exist and match the provenance digests.
+The writer gate requires invalid `0`, accepted `39/39`,
 candidate FP `0`, and candidate FN `0`; decision actions are diagnostic-only.

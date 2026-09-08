@@ -2951,3 +2951,12 @@ Regression evidence uses the actual script loops and valid Envelope serializatio
 Completed twelve retained TTS report/runbook inspections. Eight rejected Greek pilots remain historical records, not current license/catalog or fresh audio evidence. The F1 acoustic aggregate recomputes exactly from its retained 20 values (including three zeros); source hashes and summary assertions alone cannot prove a new physical run. F1 RTF explicitly remains blocked. Pocket's retained record contains limited owner acceptance but a 316.958 ms acoustic result against 200 ms and production_ready:false. Corrected its runbook/README to current AudioQueue versus sounddevice playback, prebuffer/callback timing and the beta's actual two-backend allowance. Hub-offline flags are not process-wide network isolation. No historical report, private profile or installed runtime was rewritten.
 
 Coverage: **401/401 code, 349/349 tests, 141/308 support; 891/1058 entries**. **167 support files**, open findings and final quality assessment remain pending. Exact staged Ponytail review and active hooks apply; no push requested.
+
+
+### Anamnesis contracts and manifest documentation checkpoint — 2026-09-08
+
+Completed 31 support-file inspections: research/architecture/history and writer/preflight protocols, local execution guides, pricing/artifact pins and six draft manifest templates. Corrected two documentation claims: the optional vLLM/OpenMemory boundary is implemented, with later diagnostics linked; the W3 reporter writes three files sequentially and can leave partial outputs after a publication or final integrity error. Complete files with matching provenance are required. No transactional publication fix or fresh model experiment is claimed.
+
+Focused contract, scenario and writer suites passed **182 tests, 1 expected failure** in 2.07 seconds (`/tmp/cyrus-anamnesis-contract-docs-tests.log`). All populated existing static path/hash pairs in the six templates match current bytes; both Ollama pins pass the actual typed loader (5 blobs/2,497,293,803 bytes and 4 blobs/6,594,474,711 bytes). These checks do not independently validate historical raw runs, current hosted prices, human reviewer metadata or model blob contents. No production code changed.
+
+Coverage: **401/401 code, 349/349 tests, 172/308 support; 922/1058 entries**. **136 support files**, open findings and final quality assessment remain. Exact staged Ponytail review and active hooks apply; no push requested.

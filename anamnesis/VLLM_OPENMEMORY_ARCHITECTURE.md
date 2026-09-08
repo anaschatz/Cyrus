@@ -1,6 +1,8 @@
 # Optional vLLM and OpenMemory architecture
 
-Status: implementation-ready boundary, not an executed experiment cell.
+Status: implemented optional boundary. Later diagnostic cells and their
+limitations are recorded in the [Anamnesis README](README.md); they do not
+replace or reopen the frozen Ollama W1-W3 cells.
 
 The integration keeps Anamnesis authoritative. vLLM is an optional inference
 transport for the existing memory compiler contract. OpenMemory is exposed

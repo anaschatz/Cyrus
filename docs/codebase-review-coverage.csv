@@ -9,20 +9,20 @@ path,lines,scope,status,reviewed_sha256,evidence
 AGENTS.md,6,support,reviewed,d7c603f4a72025a9e03ad18e924732ca4cd15890cb07946a132a8a7a499e58ba,Repository commit/push Ponytail review and hook requirements read and followed; no commit or push attempted in this pass.
 README.md,223,support,reviewed,da2e5c68a6392175717b9a2cb92337cb8a6e7015efc8302299241a34158678f9,"Full current overview inspection. Corrected stable local-owner memory scope/source-conversation deletion, encrypted scheduler persistence, selected ASR profile and technical-beta versus optional-integration qualification scope. Cross-checked journal schema, memory contract, manifest selection and current runbooks. Historical native/model timings are not fresh qualification. Pocket follow-up: corrected stale system_say-only beta claim to current two-backend preflight and explicitly retained failed production acoustic/soak qualification boundary."
 anamnesis/.gitignore,20,support,reviewed,3ec2105b3f837bee1bc273f347994c8ba85dccfef66104e4095d828406edb168,Read all entries including environment/cache/build exclusions and intentionally untracked frozen run manifests to avoid self-referential commit hashes.
-anamnesis/ARCHITECTURE.md,181,support,pending,,
-anamnesis/README.md,422,support,pending,,
-anamnesis/RESEARCH.md,93,support,pending,,
-anamnesis/VLLM_OPENMEMORY_ARCHITECTURE.md,424,support,pending,,
+anamnesis/ARCHITECTURE.md,181,support,reviewed,85b3b9704556a7f0459c19e8b70f50302d60c43b11b0980687d471447b4d4797,"Full v0 architecture inspected: authoritative typed memory, provenance and compiler/decision accounting; frozen experimental boundary retained."
+anamnesis/README.md,422,support,reviewed,393e8a283437635f09c0880d915e2a23049469a8ed113792bac2c7ba6315e7d4,Full project/history/setup guide inspected; optional dev extra confirmed. Historical diagnostic results remain distinct from final hypothesis evidence.
+anamnesis/RESEARCH.md,93,support,reviewed,42356cb5b1781f9702e0f5ff7634d288a960f9706c4d9186fc726988bb32c6af,"Full research contract inspected: 50 scenarios, three repetitions and strict comparative gates; exposed holdout remains ineligible."
+anamnesis/VLLM_OPENMEMORY_ARCHITECTURE.md,426,support,reviewed,38d6055e024d0da7ab5bc86a49e8d2b7bb3e355dc522f5dc6e253a1352423551,Full optional architecture inspected; corrected obsolete status to implemented boundary and linked later diagnostic limitations.
 anamnesis/conftest.py,12,code,reviewed,ba8ed62e8ce35162737f2238e73bdd9c390511887d57708f4abbd7aff8b05d56,Anamnesis core/contracts/scorer inspection; A01-A06 in report; provider/reporting subsystems pending
-anamnesis/eval/LOCAL_EXECUTION.md,369,support,pending,,
-anamnesis/eval/LOCAL_WRITER_EXECUTION.md,171,support,pending,,
-anamnesis/eval/LOCAL_WRITER_W2_EXECUTION.md,162,support,pending,,
-anamnesis/eval/LOCAL_WRITER_W2_PREFLIGHT.md,67,support,pending,,
-anamnesis/eval/LOCAL_WRITER_W3_EXECUTION.md,100,support,pending,,
-anamnesis/eval/LOCAL_WRITER_W3_M2_EXECUTION.md,41,support,pending,,
-anamnesis/eval/LOCAL_WRITER_W3_M2_T1_EXECUTION.md,46,support,pending,,
-anamnesis/eval/LOCAL_WRITER_W3_PREFLIGHT.md,115,support,pending,,
-anamnesis/eval/MODEL_SELECTION.md,89,support,pending,,
+anamnesis/eval/LOCAL_EXECUTION.md,369,support,reviewed,e02f9d921abd560079f06253f6257a45c7e46d8dfada4b547daf0ce08a65b662,"Full local execution, artifact/runtime attestation and D0/D1 history inspected. Environment declarations and zero API price do not establish process isolation or hardware cost."
+anamnesis/eval/LOCAL_WRITER_EXECUTION.md,171,support,reviewed,7226c4224dcaca7dc0fb287724d0c66229328dde83bdca60c32ae3dc545ad6f0,"Full frozen writer/preflight contract inspected: exact phase, input pins, semantic gates and run limits; portable contract tests pass, historical execution not repeated."
+anamnesis/eval/LOCAL_WRITER_W2_EXECUTION.md,162,support,reviewed,1650c577eca1c95ba8ff87644dbbd6a87a67cb7b49d6adc3d5d349e36623ec62,"Full frozen writer/preflight contract inspected: exact phase, input pins, semantic gates and run limits; portable contract tests pass, historical execution not repeated."
+anamnesis/eval/LOCAL_WRITER_W2_PREFLIGHT.md,67,support,reviewed,92a913290685fabebc3e320d77b380e803abcc195f08870b7ef6352669b84bcf,"Full frozen writer/preflight contract inspected: exact phase, input pins, semantic gates and run limits; portable contract tests pass, historical execution not repeated."
+anamnesis/eval/LOCAL_WRITER_W3_EXECUTION.md,103,support,reviewed,a2c935b25f74d5c79bb52bc468bc0ba80c9021b66547a28a239c21aeef6a9055,Full W3 runbook inspected; corrected no-output-on-exception claim to sequential publication and provenance completeness requirement.
+anamnesis/eval/LOCAL_WRITER_W3_M2_EXECUTION.md,41,support,reviewed,1b631b06f0188574044b91623f37d3c380b7ef7513099da64b506123fe0e1004,"Full frozen writer/preflight contract inspected: exact phase, input pins, semantic gates and run limits; portable contract tests pass, historical execution not repeated."
+anamnesis/eval/LOCAL_WRITER_W3_M2_T1_EXECUTION.md,46,support,reviewed,f462132dba49953a4bd3ff19c9db377b8c7d2f197e2443127005bf7c46c19f52,"Full frozen writer/preflight contract inspected: exact phase, input pins, semantic gates and run limits; portable contract tests pass, historical execution not repeated."
+anamnesis/eval/LOCAL_WRITER_W3_PREFLIGHT.md,115,support,reviewed,f33e02f6ec0e63998c63c5362ef2d7c7445ae2c63df9fa933c11d71ab24c85f8,"Full frozen writer/preflight contract inspected: exact phase, input pins, semantic gates and run limits; portable contract tests pass, historical execution not repeated."
+anamnesis/eval/MODEL_SELECTION.md,89,support,reviewed,eef9ddc0b1e2cbb4233b4a50a7a2f7f334b30d6310f146f21487326f5af2d5f0,Full frozen model selection and embedding pin policy inspected. Historical prices/catalog declarations not verified as current.
 anamnesis/eval/OPENMEMORY_CANONICALIZER_EXECUTION.md,14,support,pending,,
 anamnesis/eval/OPENMEMORY_DIAGNOSTIC.md,51,support,pending,,
 anamnesis/eval/OPENMEMORY_DIAGNOSTIC_V2.md,21,support,pending,,
@@ -34,29 +34,29 @@ anamnesis/eval/OPENMEMORY_EXECUTION_V3.md,21,support,pending,,
 anamnesis/eval/OPENMEMORY_REAL_MEMORY_EXECUTION.md,18,support,pending,,
 anamnesis/eval/OPENMEMORY_VLLM_V4_EXECUTION.md,85,support,pending,,
 anamnesis/eval/OPENMEMORY_VLLM_V5_EXECUTION.md,60,support,pending,,
-anamnesis/eval/SCENARIO_PLAN.md,104,support,pending,,
-anamnesis/eval/WRITER_DIAGNOSTIC.md,64,support,pending,,
-anamnesis/eval/WRITER_DIAGNOSTIC_V2.md,61,support,pending,,
-anamnesis/eval/WRITER_DIAGNOSTIC_V3.md,79,support,pending,,
-anamnesis/eval/WRITER_DIAGNOSTIC_V4.md,61,support,pending,,
-anamnesis/eval/WRITER_W3_PROTOCOL.md,115,support,pending,,
+anamnesis/eval/SCENARIO_PLAN.md,104,support,reviewed,adc6ffe33869ca86dfc2ab6b634f1f2db650ffe764cacf925c51bd9594442d2c,Full split/count/causal evidence plan inspected. Exposed sealed set remains ineligible; dataset semantics reviewed separately.
+anamnesis/eval/WRITER_DIAGNOSTIC.md,64,support,reviewed,e8e08612477a0716050857eef29e087ac46ed04c971b1ef57d7f77baeeac47d0,"Full diagnostic protocol inspected: version lineage, case counts, causal/reference separation and pending human review; no new model qualification."
+anamnesis/eval/WRITER_DIAGNOSTIC_V2.md,61,support,reviewed,6d223a4d512bd0d4be18c007e9482ff8188de7e58bddda7f25fcfac895ae8ac6,"Full diagnostic protocol inspected: version lineage, case counts, causal/reference separation and pending human review; no new model qualification."
+anamnesis/eval/WRITER_DIAGNOSTIC_V3.md,79,support,reviewed,0dc20c1ff423fc0e661d8fa9ab20512d50ecce500b7af3310e074ebbc957d229,"Full diagnostic protocol inspected: version lineage, case counts, causal/reference separation and pending human review; no new model qualification."
+anamnesis/eval/WRITER_DIAGNOSTIC_V4.md,61,support,reviewed,179e5e67dddbc84fb356cfc38332f4a9b86266719d6af4c274f43ea67e1f6a03,"Full diagnostic protocol inspected: version lineage, case counts, causal/reference separation and pending human review; no new model qualification."
+anamnesis/eval/WRITER_W3_PROTOCOL.md,115,support,reviewed,dd48cc7d3d2ea58ce161b26d2486cba5d16dcba6101349ba85a09cbe94817d7e,"Full frozen writer/preflight contract inspected: exact phase, input pins, semantic gates and run limits; portable contract tests pass, historical execution not repeated."
 anamnesis/eval/__init__.py,1,code,reviewed,c6c54616afbffb71367fe20886d96653e0ad6d29eba1d63ab4e0f68d7c630a04,Complete one-line package docstring inspection; no executable initialization or exports.
 anamnesis/eval/anamnesis_eval.py,361,code,reviewed,339814af06963406a67d7bbadda93b9b1a152423fd9e38f956f32777e45349aa,"Full361-line task module read: draft/development versus sealed final gates, manifest/artifact/seed/vector pins, sanitized sample construction and fixed no-cache/no-retry serial generation. Existing task/snapshot tests pass in82 focused checks and Anamnesis705 (703/2). Dataset reads occur multiple times across validation, task dataset and metadata; same-byte binding remains a follow-up. No task with an actual provider was executed."
 anamnesis/eval/anamnesis_local_eval.py,969,code,reviewed,57c02a933736e8f1c61e375552ae5831ea62d7d62a1c8a8792b7344e168ff5a1,"Complete 969-line inspection: local model/pricing registration, pinned phase/task matrix, installed model verification, preflight gates, oracle and embedding path selection, scenario metadata and W1/W2/W3/M2/T1 configuration. Callers traced to A17 artifact decoding; unchanged. Dataset and pricing rereads and repeated phase mappings remain follow-ups; no live task/model executed."
 anamnesis/eval/anamnesis_openmemory_eval.py,161,code,reviewed,264f370f7739f4ba829eb76dcceaa2434bc594ac2d14d21a3767466bd7493710,"Full161-line legacy v1 task/solver/scorer read; source/model/pinned artifact guards, fixed16-call metadata, zero-cost/raw accounting. Fake scorer probe verifies normal pass+5 accounting failures and empty-matrix acceptance before A08/rejection afterward. Frozen task identities/prompts untouched. Consumes producer-computed metrics; not standalone edited-log authentication."
 anamnesis/eval/anamnesis_openmemory_eval_v2.py,170,code,reviewed,0acdb371b107994b5e0007ab018b0d85a7de8d205215062fc09df79495c1f5d1,"Full170-line legacy v2 task/solver/scorer read; fresh artifact and no-thinking transport, source/model guards, fixed16-call metadata. Fake scorer probe verifies normal pass+5 accounting failures and empty-matrix rejection after A08. Frozen identities unchanged; independent raw/gold metric replay not supplied by scorer."
 anamnesis/eval/anamnesis_openmemory_eval_v3.py,185,code,reviewed,85ec0516e0be783ac3886eb60d44e499f55d1a336a63332fe50c3b3a02e535d3,"Full185-line legacy v3 task/solver/scorer read; frozen immediate-action paired prompt contract, artifact/model/source guards, no-thinking transport. Fake scorer normal pass+5 accounting failures, empty matrix now rejected by A08. Task/prompt/schema pins unchanged; no measured rerun."
-anamnesis/eval/experiment_manifest.template.json,65,support,pending,,
-anamnesis/eval/local_experiment_manifest.template.json,107,support,pending,,
-anamnesis/eval/local_model_costs.json,8,support,pending,,
-anamnesis/eval/local_model_costs_w3_m2.json,8,support,pending,,
-anamnesis/eval/local_oracle_manifest.template.json,108,support,pending,,
-anamnesis/eval/local_writer_experiment_manifest.template.json,108,support,pending,,
-anamnesis/eval/local_writer_w2_experiment_manifest.template.json,112,support,pending,,
-anamnesis/eval/local_writer_w3_experiment_manifest.template.json,114,support,pending,,
-anamnesis/eval/model_costs.json,8,support,pending,,
-anamnesis/eval/ollama_qwen3_4b_instruct.pin.json,37,support,pending,,
-anamnesis/eval/ollama_qwen3_5_9b_q4_k_m.pin.json,31,support,pending,,
+anamnesis/eval/experiment_manifest.template.json,65,support,reviewed,51ecead5554d8274651ea1200097e7badf83427333a59fc1584cc4cd347fe5d5,Full draft manifest inspected and parsed; every populated existing static path/hash matches current bytes. Null run/Git/preflight fields require completion; template is not evidence of a run.
+anamnesis/eval/local_experiment_manifest.template.json,107,support,reviewed,f92c48c28f2bbc8c10c5d0548a81f00801d31959e32636d117324bcec093fa34,Full draft manifest inspected and parsed; every populated existing static path/hash matches current bytes. Null run/Git/preflight fields require completion; template is not evidence of a run.
+anamnesis/eval/local_model_costs.json,8,support,reviewed,c185e2fad06d6bd2abaaf0be81a1720fc245555fa2a477c1b1bea558b28c2f74,"Full pricing input inspected and JSON parsed; local values mean provider API cost only, hosted rates are frozen inputs, not current price verification."
+anamnesis/eval/local_model_costs_w3_m2.json,8,support,reviewed,74f7321226f6fc71d9c8c88551653d8507d1a22a22ea4127226c91a5ce06267c,"Full pricing input inspected and JSON parsed; local values mean provider API cost only, hosted rates are frozen inputs, not current price verification."
+anamnesis/eval/local_oracle_manifest.template.json,108,support,reviewed,980640c845a8a2e421ce1fd37c7312ec5bf2d6f81bbaaccbda193f38205c8f00,Full draft manifest inspected and parsed; every populated existing static path/hash matches current bytes. Null run/Git/preflight fields require completion; template is not evidence of a run.
+anamnesis/eval/local_writer_experiment_manifest.template.json,108,support,reviewed,7f77118c2e35d8f3b35406a9dfa3fc6dcf83fe459b5cdc5d4efd834e67ab128b,Full draft manifest inspected and parsed; every populated existing static path/hash matches current bytes. Null run/Git/preflight fields require completion; template is not evidence of a run.
+anamnesis/eval/local_writer_w2_experiment_manifest.template.json,112,support,reviewed,e8365a0e9ad186ea18027d3955147e32f52cd5d44a13870f863aa02bb8919249,Full draft manifest inspected and parsed; every populated existing static path/hash matches current bytes. Null run/Git/preflight fields require completion; template is not evidence of a run.
+anamnesis/eval/local_writer_w3_experiment_manifest.template.json,114,support,reviewed,6490589ef071b9962441f6d7988abbd2bdcf59e2f9fc1440a4d8324094f2c5fb,Full draft manifest inspected and parsed; every populated existing static path/hash matches current bytes. Null run/Git/preflight fields require completion; template is not evidence of a run.
+anamnesis/eval/model_costs.json,8,support,reviewed,45558119c159181ff987c37acf6df0225a16a81ef7030bc001ccdc0ad0d87319,"Full pricing input inspected and JSON parsed; local values mean provider API cost only, hosted rates are frozen inputs, not current price verification."
+anamnesis/eval/ollama_qwen3_4b_instruct.pin.json,37,support,reviewed,dcf839abc1800ce80646f05b983a7feab825a5f0d1e7d75823f76b95e2f69e11,"Full artifact pin inspected; actual typed loader accepts roles, digests and byte totals. No model blob or live runtime qualification."
+anamnesis/eval/ollama_qwen3_5_9b_q4_k_m.pin.json,31,support,reviewed,1eb1883308ccaf2631384b8a6c1e19048d826d7f766b879de540e9a7f878ab13,"Full artifact pin inspected; actual typed loader accepts roles, digests and byte totals. No model blob or live runtime qualification."
 anamnesis/eval/openmemory/decision_diagnostic.v1.json,218,support,pending,,
 anamnesis/eval/openmemory/decision_diagnostic.v1.manifest.json,65,support,pending,,
 anamnesis/eval/openmemory/decision_diagnostic.v2.json,219,support,pending,,
@@ -73,7 +73,7 @@ anamnesis/eval/openmemory/vllm_v4_preflight.json,13,support,pending,,
 anamnesis/eval/openmemory/vllm_v4_runtime.pin.json,49,support,pending,,
 anamnesis/eval/openmemory/vllm_v5_compatibility.json,33,support,pending,,
 anamnesis/eval/openmemory/vllm_v5_compatibility.pin.json,23,support,pending,,
-anamnesis/eval/oracle/README.md,39,support,pending,,
+anamnesis/eval/oracle/README.md,39,support,reviewed,39ba7fa06672bfffe33cf790aaf74d9ec49e2f9ab3017b5f0b8d814071aba492,"Full oracle guide inspected: gold-assisted reporter-only ceiling, not a writer or efficiency qualification."
 anamnesis/eval/oracle/smoke_memory_deltas.v1.json,850,support,pending,,
 anamnesis/eval/oracle/writer_diagnostic_memory_deltas.v1.json,835,support,pending,,
 anamnesis/eval/oracle/writer_diagnostic_memory_deltas.v2.json,387,support,pending,,
