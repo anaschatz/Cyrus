@@ -27,8 +27,9 @@ false reminders.
 
 ## Observed failure modes
 
-The strict scorer requires the correct root `action_key`, canonical payload,
-time window, and an accepted minimal causal evidence set.
+Action matching requires the correct root `action_key`, canonical payload and
+time window. Exact provenance is measured separately on matched actions against
+the accepted minimal causal evidence sets; it does not change TP, FP or FN.
 
 - Full-context recognized the assignment reminder in `s01`, but emitted a
   revised-event ID as the action key rather than the stable creating-event ID.

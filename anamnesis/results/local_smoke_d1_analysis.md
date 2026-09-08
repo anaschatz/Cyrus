@@ -26,9 +26,9 @@ and a set of mostly incorrect due candidates.
 | Vector RAG | 0 | 0 | 8 | 0.0% | 0 | 67,610 |
 | Anamnesis | 0 | 7 | 8 | 0.0% | 6 | 95,282 |
 
-All systems had precision, recall, and F1 0. Anamnesis emitted 7 false actions
-across 6 negative checkpoints; its payload mismatch at the one positive
-checkpoint is the seventh FP but not a false-alarm checkpoint. There were no
+All systems had precision, recall, and F1 0. Anamnesis emitted 6 false actions
+at negative checkpoints and one mismatched action at a positive checkpoint.
+The latter is the seventh FP but not a false-alarm checkpoint. There were no
 obsolete-memory errors. Provider API cost was exactly USD 0; electricity,
 hardware, and human time were not measured.
 
