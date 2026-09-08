@@ -7,6 +7,7 @@ supersession edges. This keeps the model outside JARVIS lifecycle authority.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import json
@@ -18,6 +19,7 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from .domain import canonical_json, canonical_sha256
+from .inference import parse_inference_json
 from .memory import MemoryObservation, MemoryOperation, MemoryProposal
 from .memory_release import validate_shadow_audit_payload
 
@@ -73,7 +75,7 @@ class ActiveShadowMemory:
     language: str
 
     def __post_init__(self) -> None:
-        if isinstance(self.index, bool) or self.index < 0:
+        if isinstance(self.index, bool) or not isinstance(self.index, int) or self.index < 0:
             raise ValueError("active memory index is invalid")
         if not self.memory_key or not self.source_event_id:
             raise ValueError("active memory identity is invalid")
@@ -92,7 +94,7 @@ class LifecycleCandidate:
     language: str
 
     def __post_init__(self) -> None:
-        if isinstance(self.index, bool) or self.index < 0:
+        if isinstance(self.index, bool) or not isinstance(self.index, int) or self.index < 0:
             raise ValueError("lifecycle candidate index is invalid")
         if not self.text or len(self.text.encode("utf-8")) > MAX_WRITER_TEXT_BYTES:
             raise ValueError("lifecycle candidate text is invalid")
@@ -583,36 +585,23 @@ class LifecycleCompletion:
     output_tokens: int
 
     def __post_init__(self) -> None:
-        if not self.content or len(self.content.encode("utf-8")) > MAX_WRITER_RESPONSE_BYTES:
+        if not isinstance(self.content, str) or not self.content or len(self.content.encode("utf-8")) > MAX_WRITER_RESPONSE_BYTES:
             raise ValueError("lifecycle completion content is invalid")
         if self.finish_reason != "stop":
             raise ValueError("lifecycle completion did not finish normally")
         for value in (self.input_tokens, self.output_tokens):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError("lifecycle completion usage is invalid")
+        if self.output_tokens > LOCAL_LIFECYCLE_OUTPUT_TOKENS:
+            raise ValueError("lifecycle completion exceeds output budget")
 
 
 class LifecycleCompletionClient(Protocol):
     async def complete(self, request: Mapping[str, Any]) -> LifecycleCompletion: ...
 
 
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("JSON contains a duplicate key")
-        result[key] = value
-    return result
-
-
 def _strict_json_object(value: str) -> dict[str, Any]:
-    try:
-        parsed = json.loads(value, object_pairs_hook=_reject_duplicate_keys)
-    except json.JSONDecodeError as exc:
-        raise ValueError("lifecycle completion is not valid JSON") from exc
-    if not isinstance(parsed, dict):
-        raise ValueError("lifecycle completion must be a JSON object")
-    return parsed
+    return parse_inference_json(value.encode("utf-8"), maximum_bytes=16_384)
 
 
 def build_lifecycle_completion_request(
@@ -675,12 +664,15 @@ class LocalLifecycleCompletionClient:
         timeout_seconds: float,
         transport: Any | None = None,
     ) -> None:
+        if not isinstance(base_url, str):
+            raise ValueError("lifecycle writer endpoint must be text")
         parsed = urlparse(base_url)
         if (
             parsed.scheme != "http"
             or parsed.hostname is None
             or not ipaddress.ip_address(parsed.hostname).is_loopback
             or parsed.path.rstrip("/") != "/v1"
+            or parsed.port == 0
             or parsed.params
             or parsed.query
             or parsed.fragment
@@ -688,7 +680,8 @@ class LocalLifecycleCompletionClient:
             or parsed.password is not None
         ):
             raise ValueError("lifecycle writer endpoint must be loopback /v1")
-        if not bearer_token or len(bearer_token.encode("utf-8")) > 512:
+        if (not isinstance(bearer_token, str) or not bearer_token.isascii() or not 1 <= len(bearer_token) <= 512
+                or any(ord(character) < 32 or ord(character) == 127 for character in bearer_token)):
             raise ValueError("lifecycle writer bearer token is invalid")
         if (
             isinstance(timeout_seconds, bool)
@@ -711,11 +704,11 @@ class LocalLifecycleCompletionClient:
         headers = {
             "Authorization": f"Bearer {self._bearer_token}",
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Accept": "application/json", "Accept-Encoding": "identity",
         }
         transport = self._transport or httpx.AsyncHTTPTransport(retries=0)
         try:
-            async with httpx.AsyncClient(
+            async with asyncio.timeout(self._timeout), httpx.AsyncClient(
                 transport=transport,
                 timeout=httpx.Timeout(self._timeout),
                 follow_redirects=False,
@@ -727,10 +720,11 @@ class LocalLifecycleCompletionClient:
                     if response.status_code != 200:
                         raise RuntimeError("lifecycle inference request failed")
                     content_type = response.headers.get("content-type", "").split(";", 1)[0]
-                    if content_type != "application/json":
+                    if (content_type.strip().lower() != "application/json"
+                            or response.headers.get("content-encoding", "identity").lower() != "identity"):
                         raise RuntimeError("lifecycle inference response type is invalid")
                     body = bytearray()
-                    async for chunk in response.aiter_bytes():
+                    async for chunk in response.aiter_bytes(chunk_size=4096):
                         body.extend(chunk)
                         if len(body) > 16_384:
                             raise RuntimeError("lifecycle inference response is too large")
@@ -750,6 +744,8 @@ class LocalLifecycleCompletionClient:
                 "finish_reason",
             }:
                 raise ValueError("lifecycle inference choice is invalid")
+            if type(choice["index"]) is not int or choice["index"] != 0 or choice["logprobs"] is not None:
+                raise ValueError("lifecycle inference choice identity is invalid")
             message = choice["message"]
             if (
                 not isinstance(message, dict)
@@ -764,6 +760,8 @@ class LocalLifecycleCompletionClient:
                 "total_tokens",
             }:
                 raise ValueError("lifecycle inference usage is invalid")
+            if any(type(value) is not int or value <= 0 for value in usage.values()):
+                raise ValueError("lifecycle inference usage types are invalid")
             if usage["total_tokens"] != (
                 usage["prompt_tokens"] + usage["completion_tokens"]
             ):
@@ -814,17 +812,15 @@ class LocalStructuredLifecycleWriter:
         if set(value) != {"decision"}:
             raise ValueError("lifecycle decision shape is invalid")
         encoded = value.get("decision")
-        if encoded in {"ignore", "create"}:
-            return LifecycleDecision(operation=LifecycleOperation(encoded))
-        if not isinstance(encoded, str):
+        if not isinstance(encoded, str) or encoded not in _LIFECYCLE_WIRE_DECISIONS:
             raise ValueError("lifecycle decision operation is invalid")
-        operation_text, separator, index_text = encoded.partition("_")
-        try:
-            operation = LifecycleOperation(operation_text)
-            active_index = int(index_text) if separator else None
-        except (TypeError, ValueError) as exc:
-            raise ValueError("lifecycle decision operation is invalid") from exc
-        return LifecycleDecision(operation=operation, active_index=active_index)
+        if encoded in ("ignore", "create"):
+            return LifecycleDecision(operation=LifecycleOperation(encoded))
+        operation_text, _, index_text = encoded.partition("_")
+        active_index = int(index_text)
+        if active_index >= len(active_memories):
+            raise ValueError("lifecycle decision selected an unknown active index")
+        return LifecycleDecision(operation=LifecycleOperation(operation_text), active_index=active_index)
 
 
 _CONTRACT = {

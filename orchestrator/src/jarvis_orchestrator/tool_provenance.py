@@ -74,7 +74,7 @@ class ProvenanceRefV1:
     content_sha256: str
 
     def __post_init__(self) -> None:
-        if not self.source_id or len(self.source_id.encode("utf-8")) > 256:
+        if not isinstance(self.source_id, str) or not self.source_id or len(self.source_id.encode("utf-8")) > 256:
             raise ProvenanceError("invalid provenance source id")
         _sha256(self.content_sha256)
 
@@ -140,7 +140,7 @@ class ContentProvenanceV1:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "ContentProvenanceV1":
-        if set(raw) != {"sources", "policy_label", "egress"} or not isinstance(raw["sources"], list):
+        if not isinstance(raw, Mapping) or set(raw) != {"sources", "policy_label", "egress"} or not isinstance(raw["sources"], list):
             raise ProvenanceError("invalid provenance object")
         try:
             sources = tuple(

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import time
+from unittest.mock import patch
 import os
 import socket
 import struct
@@ -12,7 +15,7 @@ from pathlib import Path
 
 import _bootstrap  # noqa: F401
 
-from jarvis_orchestrator.action_host_protocol import encode_frame, hkdf_extract
+from jarvis_orchestrator.action_host_protocol import ActionHostProtocolError, encode_frame, hkdf_extract
 from jarvis_orchestrator.action_host_v2_client import ActionHostV2Client
 from jarvis_orchestrator.action_host_v2_protocol import (
     MAX_ENCRYPTED_FRAME_BYTES,
@@ -101,7 +104,7 @@ class FakeHost:
                     continue
                 try:
                     self.handle(connection)
-                except EOFError:
+                except (EOFError, BrokenPipeError, ConnectionResetError):
                     pass
                 except OSError:
                     if not self.stop.is_set():
@@ -164,8 +167,8 @@ class FakeHost:
                         {
                             "type": "action.receipt.snapshot",
                             "payload": {
-                                "execution_id": message["payload"]["execution_id"],
-                                "idempotency_key": message["payload"]["idempotency_key"],
+                                "execution_id": self.result["execution_id"],
+                                "idempotency_key": self.result["idempotency_key"],
                                 "receipts": self.receipts,
                             },
                         }
@@ -290,6 +293,46 @@ class ActionHostV2ClientTests(unittest.IsolatedAsyncioTestCase):
         await self.client.acknowledge(executed)
         self.assertTrue(self.host.acked)
 
+
+
+    async def test_cancellation_closes_socket_before_returning(self):
+        entered = threading.Event()
+        closed = threading.Event()
+        def stalled_host(connection):
+            entered.set()
+            if connection.recv(1) == b"":
+                closed.set()
+        with patch.object(self.host, "handle", side_effect=stalled_host):
+            task = asyncio.create_task(self.client.execute(self.execute_payload()))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                self.assertTrue(await asyncio.to_thread(closed.wait, 0.2))
+            finally:
+                task.cancel()
+
+    async def test_drip_fed_handshake_obeys_total_timeout(self):
+        self.client.timeout_seconds = 0.08
+        def drip_host(connection):
+            try:
+                for byte in struct.pack(">I", 100) + b"x" * 20:
+                    connection.sendall(bytes([byte]))
+                    time.sleep(0.03)
+            except OSError:
+                pass
+        with patch.object(self.host, "handle", side_effect=drip_host):
+            start = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                await self.client.execute(self.execute_payload())
+            self.assertLess(time.monotonic() - start, 0.4)
+
+
+    async def test_query_rejects_result_from_a_different_execution(self):
+        result = await self.client.execute(self.execute_payload())
+        with self.assertRaisesRegex(ActionHostProtocolError, "host.result_conflict"):
+            await self.client.query_result(str(uuid.uuid4()), result.idempotency_key)
 
 if __name__ == "__main__":
     unittest.main()

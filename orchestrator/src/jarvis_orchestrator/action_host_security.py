@@ -24,7 +24,7 @@ def validate_action_host_paths(socket_path: Path, token_path: Path) -> None:
     token_path = Path(token_path)
     parent = socket_path.parent
     parent_stat = parent.lstat()
-    if stat.S_ISLNK(parent_stat.st_mode) or stat.S_IMODE(parent_stat.st_mode) != 0o700:
+    if not stat.S_ISDIR(parent_stat.st_mode) or parent_stat.st_uid != os.getuid() or stat.S_IMODE(parent_stat.st_mode) != 0o700:
         raise ActionHostProtocolError("host.auth_failed")
     token_stat = token_path.lstat()
     if stat.S_ISLNK(token_stat.st_mode) or not stat.S_ISREG(token_stat.st_mode):
@@ -40,8 +40,11 @@ def validate_action_host_paths(socket_path: Path, token_path: Path) -> None:
 
 
 def load_instance_token(token_path: Path) -> bytes:
-    descriptor = os.open(token_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = os.open(token_path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
     try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise ActionHostProtocolError("host.auth_failed")
         token = os.read(descriptor, 33)
     finally:
         os.close(descriptor)

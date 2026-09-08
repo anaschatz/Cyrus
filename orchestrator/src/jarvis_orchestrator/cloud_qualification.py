@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import json
+import os
+import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any, Mapping, Sequence
 from .cloud_contract import DEEPSEEK_MODEL, TERRA_MODEL, QualifiedEndpointV1
 from .cloud_privacy import JarvisPrivacyClassifierV1, PrivacyClass
 from .jcs import domain_sha256
+from .config import _parse_strict_json
 
 
 CLOUD_RELEASE_VERSION = "cloud-release-qualification/1"
@@ -62,22 +64,34 @@ def _integer(value: Any, *, minimum: int = 0) -> bool:
 
 
 def dedicated_key_sha256(token: str) -> str:
-    if not token or len(token.encode("utf-8")) > 512:
-        _fail("cloud_key_invalid")
-    return domain_sha256("openrouter-dedicated-key/1", {"token": token})
+    try:
+        if not isinstance(token, str) or not token or len(token.encode("utf-8")) > 512:
+            _fail("cloud_key_invalid")
+        return domain_sha256("openrouter-dedicated-key/1", {"token": token})
+    except (ValueError, UnicodeError) as exc:
+        raise CloudQualificationError("cloud_key_invalid") from exc
+
+
+def _read_release(path: Path) -> tuple[Mapping[str, Any], str]:
+    try:
+        with open(path, "rb", opener=lambda name, flags: os.open(
+            name, flags | getattr(os, "O_NONBLOCK", 0)
+        )) as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                _fail("cloud_release_evidence_unavailable")
+            raw = stream.read(1024 * 1024 + 1)
+        if not raw or len(raw) > 1024 * 1024:
+            _fail("cloud_release_evidence_unavailable")
+        document = _parse_strict_json(raw)
+        if not isinstance(document, Mapping):
+            _fail("cloud_release_evidence_invalid")
+        return document, domain_sha256(CLOUD_RELEASE_VERSION, document)
+    except (OSError, ValueError, RecursionError) as exc:
+        raise CloudQualificationError("cloud_release_evidence_unavailable") from exc
 
 
 def cloud_release_sha256(path: str | Path) -> str:
-    selected = Path(path)
-    try:
-        if not selected.is_file() or selected.stat().st_size > 1024 * 1024:
-            _fail("cloud_release_evidence_unavailable")
-        document = json.loads(selected.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise CloudQualificationError("cloud_release_evidence_unavailable") from exc
-    if not isinstance(document, Mapping):
-        _fail("cloud_release_evidence_invalid")
-    return domain_sha256(CLOUD_RELEASE_VERSION, document)
+    return _read_release(Path(path))[1]
 
 
 _PRIVACY_FIXTURES: Mapping[str, tuple[tuple[str, PrivacyClass], ...]] = {
@@ -152,12 +166,9 @@ def load_cloud_release_qualification(
     """Validate all non-live evidence before any cloud client is constructed."""
 
     selected = Path(path)
-    try:
-        if not selected.is_absolute() or not selected.is_file() or selected.stat().st_size > 1024 * 1024:
-            _fail("cloud_release_evidence_unavailable")
-        document = json.loads(selected.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise CloudQualificationError("cloud_release_evidence_unavailable") from exc
+    if not selected.is_absolute():
+        _fail("cloud_release_evidence_unavailable")
+    document, actual_sha256 = _read_release(selected)
     top = _exact(
         document,
         {
@@ -175,13 +186,12 @@ def load_cloud_release_qualification(
     )
     if top["version"] != CLOUD_RELEASE_VERSION:
         _fail("cloud_release_evidence_invalid")
-    actual_sha256 = domain_sha256(CLOUD_RELEASE_VERSION, top)
     if _digest(expected_sha256, "cloud_release_digest_invalid") != actual_sha256:
         _fail("cloud_release_digest_mismatch")
     qualified_at = _utc(top["qualified_at"], "cloud_release_time_invalid")
     valid_until = _utc(top["valid_until"], "cloud_release_time_invalid")
     selected_now = (now or datetime.now(UTC)).astimezone(UTC)
-    if not qualified_at <= selected_now <= valid_until:
+    if not qualified_at <= selected_now < valid_until:
         _fail("cloud_release_expired")
     if valid_until - qualified_at > QUALIFICATION_MAXIMUM_VALIDITY:
         _fail("cloud_release_validity_invalid")
@@ -212,7 +222,7 @@ def load_cloud_release_qualification(
     ):
         _fail("cloud_key_evidence_invalid")
     key_observed = _utc(key["observed_at"], "cloud_key_evidence_invalid")
-    if not qualified_at - timedelta(minutes=10) <= key_observed <= qualified_at + timedelta(minutes=10):
+    if abs(key_observed - qualified_at) > timedelta(minutes=10):
         _fail("cloud_key_evidence_invalid")
 
     voice = _exact(
@@ -249,8 +259,8 @@ def load_cloud_release_qualification(
     if (
         privacy["classifier_version"] != "jarvis-privacy/1"
         or any(
-            not _integer(privacy[name], minimum=1)
-            for name in ("english_case_count", "greek_case_count", "mixed_case_count")
+            not _integer(privacy[f"{language}_case_count"], minimum=len(fixtures) + (language == "mixed"))
+            for language, fixtures in _PRIVACY_FIXTURES.items()
         )
         or not _integer(privacy["failure_count"])
         or privacy["failure_count"] != 0
@@ -331,12 +341,16 @@ def load_cloud_release_qualification(
     }
     for raw in raw_endpoint_evidence:
         evidence = _exact(raw, endpoint_keys, "cloud_endpoint_evidence_invalid")
+        if any(not isinstance(evidence[name], str) for name in (
+            "model_canonical_id", "provider_endpoint_tag", "quantization", "qualification_version"
+        )):
+            _fail("cloud_endpoint_evidence_invalid")
         identity = (
-            str(evidence["model_canonical_id"]),
-            str(evidence["provider_endpoint_tag"]),
-            str(evidence["quantization"]),
+            evidence["model_canonical_id"],
+            evidence["provider_endpoint_tag"],
+            evidence["quantization"],
             _digest(evidence["parameter_profile_sha256"], "cloud_endpoint_evidence_invalid"),
-            str(evidence["qualification_version"]),
+            evidence["qualification_version"],
         )
         if identity in evidence_by_identity:
             _fail("cloud_endpoint_evidence_invalid")

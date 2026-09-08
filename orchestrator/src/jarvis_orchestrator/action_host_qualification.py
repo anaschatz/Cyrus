@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
 import platform
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
@@ -93,14 +95,14 @@ class NativeReadinessV1:
         if row.pop("contract") != NATIVE_READINESS_CONTRACT:
             raise NativeQualificationError("native_readiness_invalid")
         _utc(row["observed_at_utc"], "native_readiness_observed_at")
-        if row["calendar"] not in CALENDAR_STATES:
+        if not isinstance(row["calendar"], str) or row["calendar"] not in CALENDAR_STATES:
             raise NativeQualificationError("native_calendar_readiness_invalid")
-        if row["reminders"] not in REMINDER_STATES:
+        if not isinstance(row["reminders"], str) or row["reminders"] not in REMINDER_STATES:
             raise NativeQualificationError("native_reminder_readiness_invalid")
-        if row["mail_automation"] not in MAIL_STATES:
+        if not isinstance(row["mail_automation"], str) or row["mail_automation"] not in MAIL_STATES:
             raise NativeQualificationError("native_mail_readiness_invalid")
         for name in ("spotlight", "workspace", "private_notes"):
-            if row[name] not in BINARY_STATES:
+            if not isinstance(row[name], str) or row[name] not in BINARY_STATES:
                 raise NativeQualificationError(f"native_{name}_readiness_invalid")
         return cls(**row)
 
@@ -117,6 +119,8 @@ class NativeReadinessV1:
         }
 
     def supports(self, tool_id: str) -> bool:
+        if not isinstance(tool_id, str):
+            return False
         if tool_id == "file.search@1":
             return self.spotlight == "READY"
         if tool_id in {"file.open@1", "app.open@1"}:
@@ -125,7 +129,7 @@ class NativeReadinessV1:
             return self.calendar == "FULL_ACCESS"
         if tool_id == "calendar.create@1":
             return self.calendar in {"FULL_ACCESS", "WRITE_ONLY"}
-        if tool_id.startswith("reminder."):
+        if tool_id in {"reminder.list@1", "reminder.create@1", "reminder.complete@1"}:
             return self.reminders == "FULL_ACCESS"
         if tool_id == "note.capture@1":
             return self.private_notes == "READY"
@@ -201,6 +205,8 @@ def build_native_qualification(
         ("test_manifest_sha256", test_manifest_sha256),
     ):
         _sha(digest, name)
+    if not isinstance(qualified_tools, (tuple, list)) or any(not isinstance(item, str) for item in qualified_tools):
+        raise NativeQualificationError("native_qualified_tools_invalid")
     tools = tuple(sorted(qualified_tools))
     if not tools or len(set(tools)) != len(tools) or any(not readiness.supports(item) for item in tools):
         raise NativeQualificationError("native_qualified_tools_invalid")
@@ -220,21 +226,23 @@ def build_native_qualification(
         tools,
         "0" * 64,
     )
-    return NativeQualificationV1(
-        provisional.generated_at_utc,
-        provisional.expires_at_utc,
-        provisional.platform,
-        provisional.architecture,
-        provisional.os_build,
-        provisional.protocol_sha256,
-        provisional.registry_sha256,
-        provisional.helper_binary_sha256,
-        provisional.helper_code_identity_sha256,
-        provisional.readiness_sha256,
-        provisional.test_manifest_sha256,
-        provisional.qualified_tools,
-        domain_sha256(NATIVE_QUALIFICATION_CONTRACT, provisional.inputs),
-    )
+    return replace(provisional, qualification_sha256=domain_sha256(
+        NATIVE_QUALIFICATION_CONTRACT, provisional.inputs
+    ))
+
+
+def read_native_evidence_bytes(path: Path) -> bytes:
+    """Read one bounded regular-file snapshot for native setup inputs."""
+
+    with open(path, "rb", opener=lambda name, flags: os.open(
+        name, flags | getattr(os, "O_NONBLOCK", 0)
+    )) as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("native evidence must be a regular file")
+        raw = stream.read(MAX_QUALIFICATION_BYTES + 1)
+    if not raw or len(raw) > MAX_QUALIFICATION_BYTES:
+        raise ValueError("native evidence size is invalid")
+    return raw
 
 
 def load_native_qualification(
@@ -249,7 +257,7 @@ def load_native_qualification(
 ) -> NativeQualificationV1:
     _sha(expected_sha256, "native_qualification_sha256")
     try:
-        raw = path.read_bytes()
+        raw = read_native_evidence_bytes(path)
         value = strict_json(raw, maximum=MAX_QUALIFICATION_BYTES)
     except Exception as exc:
         raise NativeQualificationError("native_qualification_unavailable") from exc
@@ -271,7 +279,7 @@ def load_native_qualification(
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise NativeQualificationError("native_qualification_platform_mismatch")
     tools = row["qualified_tools"]
-    if not isinstance(tools, list) or tools != sorted(set(tools)) or not tools:
+    if not isinstance(tools, list) or not tools or any(not isinstance(item, str) for item in tools) or tools != sorted(set(tools)):
         raise NativeQualificationError("native_qualified_tools_invalid")
     if not isinstance(row["os_build"], str) or not row["os_build"] or len(row["os_build"].encode()) > 128:
         raise NativeQualificationError("native_os_build_invalid")

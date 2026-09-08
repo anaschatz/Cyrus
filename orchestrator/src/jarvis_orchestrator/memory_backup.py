@@ -285,7 +285,7 @@ class MemoryBackupManifestV1:
             raise MemoryBackupError("memory_backup_manifest_invalid")
         try:
             document = json.loads(payload.decode("utf-8", errors="strict"))
-        except (UnicodeError, json.JSONDecodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise MemoryBackupError("memory_backup_manifest_invalid") from exc
         expected = {
             "backup_bytes",

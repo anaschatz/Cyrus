@@ -27,7 +27,7 @@ from .memory import (
 from .store import OrchestratorStore
 
 SUPPORTED_ANAMNESIS_CONTRACT_SHA256 = (
-    "832de106ffcfa543d8544bb7b29084a141666d6a3f6e2d40e90ff03ade2b1352"
+    "003fce5939c32a54a53bea28269b384a7a24cd584d76de60a7eed6f6cd877490"
 )
 
 

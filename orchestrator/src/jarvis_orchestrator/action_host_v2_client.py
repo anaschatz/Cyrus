@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import math
 import os
 import socket
 import struct
 import uuid
 from collections.abc import Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -29,7 +32,7 @@ from .action_host_v2_protocol import (
     decode_handshake_frame_v2,
     result_receipt_matches,
 )
-from .tool_contracts import ToolOutcomeV1, ToolStatus, VerificationStatus
+from .tool_contracts import ToolContractError, ToolOutcomeV1, ToolStatus, VerificationStatus
 
 
 class ActionHostAuthKeyProvider(Protocol):
@@ -83,18 +86,18 @@ class _ConnectionV2:
             pass
         self.socket.close()
 
-    def send(self, message: Mapping[str, Any]) -> None:
-        self.socket.sendall(self.c2h.encrypt(message))
+    async def send(self, message: Mapping[str, Any]) -> None:
+        await asyncio.get_running_loop().sock_sendall(self.socket, self.c2h.encrypt(message))
 
-    def receive(self) -> dict[str, Any]:
-        return self.h2c.decrypt(_read_frame(self.socket, MAX_ENCRYPTED_FRAME_BYTES))
+    async def receive(self) -> dict[str, Any]:
+        return self.h2c.decrypt(await _read_frame(self.socket, MAX_ENCRYPTED_FRAME_BYTES))
 
 
-def _read_exact(sock: socket.socket, size: int) -> bytes:
+async def _read_exact(sock: socket.socket, size: int) -> bytes:
     chunks: list[bytes] = []
     remaining = size
     while remaining:
-        chunk = sock.recv(remaining)
+        chunk = await asyncio.get_running_loop().sock_recv(sock, remaining)
         if not chunk:
             raise ActionHostProtocolError("host.receipt_unknown")
         chunks.append(chunk)
@@ -102,12 +105,12 @@ def _read_exact(sock: socket.socket, size: int) -> bytes:
     return b"".join(chunks)
 
 
-def _read_frame(sock: socket.socket, maximum: int) -> bytes:
-    prefix = _read_exact(sock, 4)
+async def _read_frame(sock: socket.socket, maximum: int) -> bytes:
+    prefix = await _read_exact(sock, 4)
     length = struct.unpack(">I", prefix)[0]
     if length == 0 or length > maximum:
         raise ActionHostProtocolError("host.frame_too_large")
-    return prefix + _read_exact(sock, length)
+    return prefix + await _read_exact(sock, length)
 
 
 class ActionHostV2Client:
@@ -122,7 +125,7 @@ class ActionHostV2Client:
         timeout_seconds: float = 30.0,
         client_instance_id: str | None = None,
     ) -> None:
-        if timeout_seconds <= 0:
+        if isinstance(timeout_seconds, bool) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.socket_path = Path(socket_path)
         self.token_path = Path(token_path)
@@ -130,17 +133,17 @@ class ActionHostV2Client:
         self.timeout_seconds = timeout_seconds
         self.client_instance_id = client_instance_id or str(uuid.uuid4())
 
-    def _connect(self) -> _ConnectionV2:
+    async def _connect(self) -> _ConnectionV2:
         validate_action_host_paths(self.socket_path, self.token_path)
         instance_token = load_instance_token(self.token_path)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout_seconds)
+        sock.setblocking(False)
         try:
-            sock.connect(os.fspath(self.socket_path))
+            await asyncio.get_running_loop().sock_connect(sock, os.fspath(self.socket_path))
             assert_peer_uid(sock)
             challenge = HostChallengeV2.from_dict(
                 decode_handshake_frame_v2(
-                    _read_frame(sock, MAX_HANDSHAKE_FRAME_BYTES)
+                    await _read_frame(sock, MAX_HANDSHAKE_FRAME_BYTES)
                 )
             )
             auth_key = self.auth_keys.load(challenge.key_version)
@@ -150,12 +153,12 @@ class ActionHostV2Client:
                 instance_token=instance_token,
                 client_instance_id=self.client_instance_id,
             )
-            sock.sendall(
-                encode_frame(response.to_dict(), maximum=MAX_HANDSHAKE_FRAME_BYTES)
+            await asyncio.get_running_loop().sock_sendall(
+                sock, encode_frame(response.to_dict(), maximum=MAX_HANDSHAKE_FRAME_BYTES)
             )
             ready = HostReadyV2.from_dict(
                 decode_handshake_frame_v2(
-                    _read_frame(sock, MAX_HANDSHAKE_FRAME_BYTES)
+                    await _read_frame(sock, MAX_HANDSHAKE_FRAME_BYTES)
                 )
             )
             k_boot = hkdf_extract(instance_token, auth_key)
@@ -174,7 +177,7 @@ class ActionHostV2Client:
                 c2h=keys.codec(DirectionV2.C2H),
                 h2c=keys.codec(DirectionV2.H2C),
             )
-        except Exception:
+        except BaseException:
             sock.close()
             raise
 
@@ -190,7 +193,7 @@ class ActionHostV2Client:
                 _canonical_verification(result["verification"]),
                 result["reason_code"],
             )
-        except (KeyError, ValueError) as exc:
+        except (KeyError, ValueError, ToolContractError) as exc:
             raise ActionHostProtocolError("host.protocol_mismatch") from exc
         return NativeExecutionResultV2(
             result_event_id=result["result_event_id"],
@@ -209,101 +212,73 @@ class ActionHostV2Client:
             terminal_receipt=dict(receipt),
         )
 
-    def _execute_sync(self, execute_payload: Mapping[str, Any]) -> NativeExecutionResultV2:
-        connection = self._connect()
-        result: Mapping[str, Any] | None = None
-        terminal_receipt: Mapping[str, Any] | None = None
-        try:
-            connection.send({"type": "action.execute", "payload": dict(execute_payload)})
-            while result is None or terminal_receipt is None:
-                message = connection.receive()
-                if message["type"] == "action.error":
-                    raise ActionHostProtocolError(message["payload"]["reason_code"])
-                if message["type"] == "action.result":
-                    candidate = message["payload"]
-                    if result is not None and candidate["result_sha256"] != result["result_sha256"]:
-                        raise ActionHostProtocolError("host.result_conflict")
-                    result = candidate
-                elif message["type"] == "action.receipt":
-                    candidate = message["payload"]
-                    if candidate["stage"] == "VERIFICATION_COMPLETE":
-                        terminal_receipt = candidate
-            return self._native_result(result, terminal_receipt)
-        finally:
-            connection.close()
+    @asynccontextmanager
+    async def _session(self):
+        async with asyncio.timeout(self.timeout_seconds):
+            connection = await self._connect()
+            try:
+                yield connection
+            finally:
+                connection.close()
+
+    async def _receive_result(
+        self, connection: _ConnectionV2, execution_id: str, idempotency_key: str,
+    ) -> NativeExecutionResultV2:
+        result = None
+        terminal_receipt = None
+        while result is None or terminal_receipt is None:
+            message = await connection.receive()
+            kind, payload = message["type"], message["payload"]
+            if kind == "action.error":
+                raise ActionHostProtocolError(payload["reason_code"])
+            if kind in {"action.result", "action.result.snapshot"}:
+                candidate = payload if kind == "action.result" else payload["result"]
+                if result is not None and candidate != result:
+                    raise ActionHostProtocolError("host.result_conflict")
+                result = candidate
+                records = [candidate]
+            elif kind in {"action.receipt", "action.receipt.snapshot"}:
+                records = [payload] if kind == "action.receipt" else [payload, *payload["receipts"]]
+                for receipt in records:
+                    if receipt.get("stage") == "VERIFICATION_COMPLETE":
+                        if terminal_receipt is not None and receipt != terminal_receipt:
+                            raise ActionHostProtocolError("host.result_conflict")
+                        terminal_receipt = receipt
+                if kind == "action.receipt.snapshot" and terminal_receipt is None:
+                    raise ActionHostProtocolError("host.receipt_unknown")
+            else:
+                raise ActionHostProtocolError("host.protocol_mismatch")
+            if any(record["execution_id"] != execution_id or record["idempotency_key"] != idempotency_key
+                   for record in records):
+                raise ActionHostProtocolError("host.result_conflict")
+        return self._native_result(result, terminal_receipt)
 
     async def execute(self, execute_payload: Mapping[str, Any]) -> NativeExecutionResultV2:
-        return await asyncio.to_thread(self._execute_sync, execute_payload)
-
-    def _query_sync(
-        self, execution_id: str, idempotency_key: str
-    ) -> NativeExecutionResultV2:
-        connection = self._connect()
-        result: Mapping[str, Any] | None = None
-        terminal_receipt: Mapping[str, Any] | None = None
-        query = {"execution_id": execution_id, "idempotency_key": idempotency_key}
-        try:
-            connection.send({"type": "action.result.query", "payload": query})
-            connection.send({"type": "action.receipt.query", "payload": query})
-            while result is None or terminal_receipt is None:
-                message = connection.receive()
-                if message["type"] == "action.error":
-                    raise ActionHostProtocolError(message["payload"]["reason_code"])
-                if message["type"] == "action.result.snapshot":
-                    result = message["payload"]["result"]
-                elif message["type"] == "action.receipt.snapshot":
-                    receipts = message["payload"]["receipts"]
-                    for receipt in receipts:
-                        if receipt["stage"] == "VERIFICATION_COMPLETE":
-                            terminal_receipt = receipt
-            return self._native_result(result, terminal_receipt)
-        finally:
-            connection.close()
-
-    async def query_result(
-        self, execution_id: str, idempotency_key: str
-    ) -> NativeExecutionResultV2:
-        return await asyncio.to_thread(self._query_sync, execution_id, idempotency_key)
-
-    def _ack_sync(self, result: NativeExecutionResultV2) -> None:
-        connection = self._connect()
-        ping_nonce = os.urandom(16)
-        try:
-            connection.send(
-                {
-                    "type": "action.result.ack",
-                    "payload": {
-                        "result_event_id": result.result_event_id,
-                        "execution_id": result.execution_id,
-                        "idempotency_key": result.idempotency_key,
-                        "result_sha256": result.result_sha256,
-                    },
-                }
+        async with self._session() as connection:
+            await connection.send({"type": "action.execute", "payload": dict(execute_payload)})
+            result = await self._receive_result(
+                connection, execute_payload["execution_id"], execute_payload["idempotency_key"]
             )
-            connection.send(
-                {
-                    "type": "action.ping",
-                    "payload": {
-                        "nonce": __import__("base64")
-                        .urlsafe_b64encode(ping_nonce)
-                        .rstrip(b"=")
-                        .decode("ascii")
-                    },
-                }
-            )
-            message = connection.receive()
-            if message != {
-                "type": "action.pong",
-                "payload": {
-                    "nonce": __import__("base64")
-                    .urlsafe_b64encode(ping_nonce)
-                    .rstrip(b"=")
-                    .decode("ascii")
-                },
-            }:
-                raise ActionHostProtocolError("host.result_unknown")
-        finally:
-            connection.close()
+            if any(getattr(result, name) != execute_payload[name] for name in (
+                "request_id", "tool_call_id", "permit_id", "tool_id", "tool_version", "registry_sha256"
+            )):
+                raise ActionHostProtocolError("host.result_conflict")
+            return result
+
+    async def query_result(self, execution_id: str, idempotency_key: str) -> NativeExecutionResultV2:
+        async with self._session() as connection:
+            query = {"execution_id": execution_id, "idempotency_key": idempotency_key}
+            await connection.send({"type": "action.result.query", "payload": query})
+            await connection.send({"type": "action.receipt.query", "payload": query})
+            return await self._receive_result(connection, execution_id, idempotency_key)
 
     async def acknowledge(self, result: NativeExecutionResultV2) -> None:
-        await asyncio.to_thread(self._ack_sync, result)
+        async with self._session() as connection:
+            await connection.send({"type": "action.result.ack", "payload": {
+                "result_event_id": result.result_event_id, "execution_id": result.execution_id,
+                "idempotency_key": result.idempotency_key, "result_sha256": result.result_sha256,
+            }})
+            ping = {"nonce": base64.urlsafe_b64encode(os.urandom(16)).rstrip(b"=").decode("ascii")}
+            await connection.send({"type": "action.ping", "payload": ping})
+            if await connection.receive() != {"type": "action.pong", "payload": ping}:
+                raise ActionHostProtocolError("host.result_unknown")

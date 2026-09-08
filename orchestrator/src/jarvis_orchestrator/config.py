@@ -10,7 +10,7 @@ import math
 import os
 import stat
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any
@@ -85,7 +85,9 @@ def _validate_opened_configuration(metadata: os.stat_result, descriptor: int) ->
     raise ValueError("configuration file platform is unsupported")
 
 
-def _read_private_configuration(path: str | Path) -> bytes:
+def _read_private_configuration(
+    path: str | Path, *, maximum_bytes: int = _MAX_CONFIGURATION_BYTES
+) -> bytes:
     """Read one immutable snapshot of a private regular configuration file."""
 
     selected = os.fspath(Path(path).expanduser())
@@ -122,7 +124,7 @@ def _read_private_configuration(path: str | Path) -> bytes:
         ):
             raise ValueError("configuration file changed while opening")
         _validate_opened_configuration(before, descriptor)
-        if before.st_size < 0 or before.st_size > _MAX_CONFIGURATION_BYTES:
+        if before.st_size < 0 or before.st_size > maximum_bytes:
             raise ValueError("configuration file exceeds maximum size")
         raw = bytearray()
         remaining = before.st_size
@@ -152,6 +154,12 @@ def _read_private_configuration(path: str | Path) -> bytes:
         raise ValueError("configuration file could not be read securely") from None
     finally:
         os.close(descriptor)
+
+
+def _configuration_path(value: object) -> Path:
+    if not isinstance(value, (str, Path)) or not str(value) or "\x00" in str(value):
+        raise ValueError("configuration path must be a non-empty path")
+    return Path(value).expanduser()
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -352,7 +360,7 @@ class OrchestratorConfig:
         data = dict(value)
         if "database_path" not in data:
             raise ValueError("database_path is required")
-        data["database_path"] = Path(str(data["database_path"])).expanduser()
+        data["database_path"] = _configuration_path(data["database_path"])
         for field in (
             "voice_auth_key_file",
             "readiness_signing_key_file",
@@ -370,7 +378,7 @@ class OrchestratorConfig:
             "action_host_qualification_file",
         ):
             if data.get(field) is not None:
-                data[field] = Path(str(data[field])).expanduser()
+                data[field] = _configuration_path(data[field])
         if "tool_app_ids" in data:
             if not isinstance(data["tool_app_ids"], list):
                 raise ValueError("tool_app_ids must be an array")
@@ -378,8 +386,10 @@ class OrchestratorConfig:
         if data.get("tool_roots") is not None:
             if not isinstance(data["tool_roots"], Mapping):
                 raise ValueError("tool_roots must be an object")
+            if any(type(key) is not str for key in data["tool_roots"]):
+                raise ValueError("tool root ids must be strings")
             data["tool_roots"] = {
-                str(key): str(Path(str(path)).expanduser())
+                key: str(_configuration_path(path))
                 for key, path in data["tool_roots"].items()
             }
         config = cls(**data)
@@ -396,14 +406,37 @@ class OrchestratorConfig:
         return cls.from_mapping(parsed)
 
     def validate(self) -> None:
-        if not self.database_path.is_absolute():
+        # Scalar defaults declare the same types as the dataclass fields.
+        # Check them once before comparisons, hashing or native API calls.
+        for declaration in fields(self):
+            value = getattr(self, declaration.name)
+            expected = type(declaration.default)
+            if expected in (str, bool, int) and type(value) is not expected:
+                raise ValueError(f"{declaration.name} has an invalid type")
+            if expected is float:
+                try:
+                    finite = type(value) in (int, float) and math.isfinite(value)
+                except OverflowError:
+                    finite = False
+                if not finite:
+                    raise ValueError(f"{declaration.name} must be a finite number")
+        if type(self.tool_app_ids) is not tuple or any(
+            type(app) is not str for app in self.tool_app_ids
+        ):
+            raise ValueError("tool_app_ids must contain strings")
+        if not isinstance(self.database_path, Path) or not self.database_path.is_absolute():
             raise ValueError("database_path must be absolute")
         for field in ("voice_host", "control_host"):
             if ipaddress.ip_address(getattr(self, field)) != ipaddress.ip_address("127.0.0.1"):
                 raise ValueError(f"{field} must be 127.0.0.1")
         if self.voice_auth_key_file is not None and not self.voice_auth_key_file.is_absolute():
             raise ValueError("voice_auth_key_file must be absolute")
+        for port in (self.voice_port, self.control_port):
+            if not 1 <= port <= 65535:
+                raise ValueError("listener ports must be integers from 1 to 65535")
         parsed = urlparse(self.inference_base_url)
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError("inference_base_url port is invalid")
         if parsed.scheme != "http" or parsed.hostname is None:
             raise ValueError("inference_base_url is invalid")
         if parsed.path.rstrip("/") != "/v1" or parsed.params or parsed.query or parsed.fragment or parsed.username is not None:
@@ -490,31 +523,19 @@ class OrchestratorConfig:
             self.research_timeout_seconds,
             self.cloud_timeout_seconds,
         )
-        if any(isinstance(item, bool) or item <= 0 for item in positive):
+        if any(item <= 0 for item in positive):
             raise ValueError("numeric configuration values must be positive")
-        if (
-            isinstance(self.final_response_output_tokens, bool)
-            or not isinstance(self.final_response_output_tokens, int)
-            or not 32 <= self.final_response_output_tokens <= 1024
-        ):
+        if not 32 <= self.final_response_output_tokens <= 1024:
             raise ValueError(
                 "final_response_output_tokens must be an integer from 32 to 1024"
             )
-        if not isinstance(self.memory_shadow_enabled, bool):
-            raise ValueError("memory_shadow_enabled must be boolean")
         if self.memory_shadow_mode not in {
             "structured_fallback",
             "deterministic_only",
         }:
             raise ValueError("memory_shadow_mode is invalid")
-        if not isinstance(self.memory_enabled, bool):
-            raise ValueError("memory_enabled must be boolean")
         if self.memory_release_policy != MEMORY_RELEASE_POLICY_VERSION:
             raise ValueError("memory_release_policy is invalid")
-        if not isinstance(self.research_enabled, bool) or not isinstance(self.research_browser_fallback, bool):
-            raise ValueError("research feature flags must be boolean")
-        if not isinstance(self.cloud_enabled, bool) or not isinstance(self.cloud_terra_enabled, bool):
-            raise ValueError("cloud feature flags must be boolean")
         if self.response_language not in {"match_input", "en"}:
             raise ValueError("response_language is invalid")
         if self.response_language == "en" and self.research_enabled:
@@ -547,11 +568,7 @@ class OrchestratorConfig:
                 )
             ):
                 raise ValueError("input translation manifest sha256 is invalid")
-            if (
-                isinstance(self.input_translation_timeout_seconds, bool)
-                or not isinstance(self.input_translation_timeout_seconds, (int, float))
-                or not 0.1 <= self.input_translation_timeout_seconds <= 30.0
-            ):
+            if not 0.1 <= self.input_translation_timeout_seconds <= 30.0:
                 raise ValueError("input translation timeout is invalid")
         elif any(translation_fields):
             raise ValueError("input translation artifacts require opus_ct2 mode")
@@ -561,8 +578,6 @@ class OrchestratorConfig:
             ZoneInfo(self.scheduler_default_timezone)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError("scheduler_default_timezone is invalid") from exc
-        if not isinstance(self.tools_enabled, bool):
-            raise ValueError("tools_enabled must be boolean")
         if self.max_model_requests_per_tool_task != 6:
             raise ValueError("max_model_requests_per_tool_task is frozen at 6")
         if self.max_tool_calls_per_tool_task != 4 or self.max_tool_continuations_per_tool_task != 4:
@@ -664,12 +679,9 @@ class OrchestratorConfig:
             secret = self.cloud_secret_file.resolve(strict=False)
             if secret == repository_root or repository_root in secret.parents:
                 raise ValueError("cloud secret must not be stored in the repository")
-            if self.research_enabled:
-                # Research evidence is never a cloud fallback in M1C. Both
-                # features may be enabled, but the service routes these flows
-                # through disjoint ports and projections.
-                pass
         research_url = urlparse(self.research_base_url)
+        if research_url.port is not None and not 1 <= research_url.port <= 65535:
+            raise ValueError("research_base_url port is invalid")
         if (
             research_url.scheme != "http"
             or research_url.hostname is None
@@ -717,9 +729,5 @@ class OrchestratorConfig:
             ZoneInfo(self.research_timezone)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError("research_timezone is invalid") from exc
-        if (
-            isinstance(self.memory_recall_limit, bool)
-            or not isinstance(self.memory_recall_limit, int)
-            or self.memory_recall_limit > 20
-        ):
+        if self.memory_recall_limit > 20:
             raise ValueError("memory_recall_limit must be an integer from 1 to 20")

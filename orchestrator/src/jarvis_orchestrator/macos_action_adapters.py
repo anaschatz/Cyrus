@@ -24,10 +24,13 @@ from .action_host_protocol import strict_json
 from .action_host_qualification import NativeReadinessV1
 from .action_host_v2_protocol import ResultVerificationV2
 from .action_host_v2_server import AdapterResultV2, HostAuthKeyProvider
-from .jcs import jcs_bytes, jcs_text
+from .jcs import jcs_bytes
 from .macos_code_identity import code_identity_sha256
 from .tool_contracts import ToolContractError, ToolRegistryV1, ToolStatus
 
+
+# Native responses include the result plus reference bindings and receipt metadata.
+MAX_NATIVE_RESPONSE_BYTES = 512 * 1024
 
 PAGINATED_TOOLS = frozenset({"file.search@1", "calendar.read@1", "reminder.list@1"})
 REFERENCE_ARGUMENTS = {
@@ -360,17 +363,17 @@ class MacOSNativeAdapterV1:
                 input=jcs_bytes(request),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                timeout=min(remaining, self.config.timeout_seconds),
+                timeout=remaining if tool_id == "host.permission-setup@1" else min(remaining, self.config.timeout_seconds),
                 check=False,
                 shell=False,
                 start_new_session=True,
             )
         except subprocess.TimeoutExpired as exc:
             raise MacOSAdapterError("host.deadline_expired") from exc
-        if not completed.stdout or len(completed.stdout) > 256 * 1024:
+        if not completed.stdout or len(completed.stdout) > MAX_NATIVE_RESPONSE_BYTES:
             raise MacOSAdapterError("host.internal_safe_failure")
         try:
-            response = strict_json(completed.stdout, maximum=256 * 1024)
+            response = strict_json(completed.stdout, maximum=MAX_NATIVE_RESPONSE_BYTES)
         except Exception as exc:
             raise MacOSAdapterError("host.internal_safe_failure") from exc
         if completed.returncode != 0:

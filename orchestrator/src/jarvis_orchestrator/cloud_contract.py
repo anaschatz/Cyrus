@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal
+from fractions import Fraction
+from math import ceil
 from typing import Any, Mapping
 import uuid
 from datetime import datetime, timezone
@@ -23,12 +25,14 @@ class CloudBindingError(ValueError):
 
 
 def _digest(value: str, field: str) -> str:
-    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+    if not isinstance(value, str) or len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
         raise CloudBindingError(field)
     return value
 
 
 def _uuid4(value: str, field: str) -> str:
+    if not isinstance(value, str):
+        raise CloudBindingError(field)
     try:
         parsed = uuid.UUID(value)
     except (ValueError, AttributeError) as exc:
@@ -39,11 +43,22 @@ def _uuid4(value: str, field: str) -> str:
 
 
 def normalize_decimal(value: Decimal | str) -> str:
-    selected = value if isinstance(value, Decimal) else Decimal(value)
-    if selected < 0 or not selected.is_finite():
+    if not isinstance(value, (Decimal, str)) or (isinstance(value, str) and len(value) > 1024):
         raise CloudBindingError("decimal")
-    text = format(selected.normalize(), "f")
-    return "0" if text in {"-0", ""} else text
+    try:
+        selected = value if isinstance(value, Decimal) else Decimal(value)
+    except ArithmeticError as exc:
+        raise CloudBindingError("decimal") from exc
+    if not selected.is_finite() or selected < 0:
+        raise CloudBindingError("decimal")
+    if not selected:
+        return "0"
+    _, digits, exponent = selected.as_tuple()
+    # Bound expansion of compact exponent notation before formatting or Fraction.
+    if len(digits) + abs(exponent) > 1024:
+        raise CloudBindingError("decimal")
+    text = format(selected, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 def reserve_cost_microusd(
@@ -56,12 +71,13 @@ def reserve_cost_microusd(
 ) -> int:
     if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in (prompt_cap, completion_cap)):
         raise CloudBindingError("token_cap")
-    raw = (
-        Decimal(request_fee_usd)
-        + Decimal(prompt_cap) * Decimal(prompt_rate_per_m) / Decimal(1_000_000)
-        + Decimal(completion_cap) * Decimal(completion_rate_per_m) / Decimal(1_000_000)
+    prompt_rate, completion_rate, request_fee = (
+        Fraction(normalize_decimal(value))
+        for value in (prompt_rate_per_m, completion_rate_per_m, request_fee_usd)
     )
-    return int((raw * Decimal("1.10") * Decimal(1_000_000)).to_integral_value(rounding=ROUND_CEILING))
+    # Rates per million tokens directly yield micro-USD; round once, upwards.
+    return ceil((prompt_cap * prompt_rate + completion_cap * completion_rate
+                 + request_fee * 1_000_000) * Fraction(11, 10))
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,13 +96,17 @@ class QualifiedEndpointV1:
     runtime_provider_name: str
 
     def validate(self) -> "QualifiedEndpointV1":
-        if self.model_canonical_id not in {DEEPSEEK_MODEL, TERRA_MODEL}:
+        if self.model_canonical_id not in (DEEPSEEK_MODEL, TERRA_MODEL):
             raise CloudBindingError("model")
-        if not self.provider_endpoint_tag or not self.quantization or not self.qualification_version or not self.runtime_provider_name:
+        if any(not isinstance(value, str) or not value for value in (
+            self.provider_endpoint_tag, self.quantization, self.qualification_version, self.runtime_provider_name
+        )):
             raise CloudBindingError("endpoint_identity")
-        if len(self.supported_parameters) != len(set(self.supported_parameters)):
+        if (not isinstance(self.supported_parameters, tuple)
+                or any(not isinstance(item, str) or not item for item in self.supported_parameters)
+                or len(self.supported_parameters) != len(set(self.supported_parameters))):
             raise CloudBindingError("supported_parameters")
-        if self.context_limit <= 0 or self.output_limit <= 0:
+        if any(type(value) is not int or value <= 0 for value in (self.context_limit, self.output_limit)):
             raise CloudBindingError("limits")
         _digest(self.qualification_sha256, "qualification_sha256")
         for rate in (self.prompt_rate_per_m, self.completion_rate_per_m, self.request_rate):
@@ -144,10 +164,16 @@ class EndpointHealthV1:
     age_ms: int
 
     def eligible(self) -> bool:
+        if self.model_canonical_id not in (DEEPSEEK_MODEL, TERRA_MODEL) or any(
+            type(value) is not int for value in (
+                self.status, self.uptime_last_30m_basis_points, self.p90_latency_ms, self.age_ms
+            )
+        ):
+            return False
         latency_limit = 15_000 if self.model_canonical_id == DEEPSEEK_MODEL else 45_000
         return (
             self.status == 0
-            and self.uptime_last_30m_basis_points >= 9900
+            and 9900 <= self.uptime_last_30m_basis_points <= 10000
             and 0 <= self.age_ms <= 60_000
             and 0 <= self.p90_latency_ms <= latency_limit
         )
@@ -215,11 +241,15 @@ def build_dispatch_body(
     output_token_limit: int,
 ) -> dict[str, Any]:
     endpoint.validate()
-    if output_token_limit < 256 or output_token_limit > endpoint.output_limit:
+    if type(output_token_limit) is not int or not 256 <= output_token_limit <= endpoint.output_limit:
         raise CloudBindingError("output_token_limit")
+    if not isinstance(messages, tuple) or not messages:
+        raise CloudBindingError("messages")
     normalized_messages: list[dict[str, str]] = []
     for message in messages:
-        if set(message) != {"role", "content"} or message["role"] not in {"system", "user", "assistant"}:
+        if (not isinstance(message, Mapping) or set(message) != {"role", "content"}
+                or message["role"] not in ("system", "user", "assistant")
+                or not isinstance(message["content"], str)):
             raise CloudBindingError("message")
         normalized_messages.append({"content": message["content"], "role": message["role"]})
     body: dict[str, Any] = {
@@ -271,13 +301,19 @@ class CloudApprovalBindingV1:
     included_turn_ids: tuple[str, ...]
 
     def canonical(self) -> dict[str, Any]:
+        if any(not isinstance(value, str) or not value for value in (
+            self.provider_endpoint_tag, self.quantization, self.qualification_version
+        )):
+            raise CloudBindingError("endpoint_identity")
         _uuid4(self.conversation_id, "conversation_id")
         _uuid4(self.task_id, "task_id")
+        if not isinstance(self.included_turn_ids, tuple):
+            raise CloudBindingError("included_turn_ids")
         for turn_id in self.included_turn_ids:
             _uuid4(turn_id, "included_turn_ids")
         try:
             expiry = datetime.fromisoformat(self.expires_at.replace("Z", "+00:00"))
-        except ValueError as exc:
+        except (ValueError, AttributeError, TypeError) as exc:
             raise CloudBindingError("expires_at") from exc
         if expiry.tzinfo is None or expiry.utcoffset() != timezone.utc.utcoffset(expiry):
             raise CloudBindingError("expires_at")

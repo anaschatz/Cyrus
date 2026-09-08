@@ -179,5 +179,43 @@ class ToolContractsV1Tests(unittest.TestCase):
         self.assertFalse(dependency.scheduler_capabilities_enabled(expected_qualification_sha256="b" * 64))
 
 
+
+    def test_absent_reminder_dates_require_empty_strings(self):
+        examples = {
+            "reminder.create@1": {"title": "Task", "notes": "", "has_due": False,
+                                  "due_local": "", "timezone": "", "priority": "NONE"},
+            "reminder.list@1": {"status": "INCOMPLETE", "due_filter": "ANY",
+                                "due_from_local": "", "due_to_local": "", "timezone": "",
+                                "limit": 10, "cursor": ""},
+        }
+        for tool_id, arguments in examples.items():
+            self.assertEqual(self.registry().validate(tool_id, arguments), arguments)
+            for field in (key for key in arguments if key.startswith("due_") and key != "due_filter"):
+                for value in (None, False, 0, [], {}):
+                    with self.subTest(tool=tool_id, field=field, value=value):
+                        with self.assertRaises(ToolContractError):
+                            self.registry().validate(tool_id, arguments | {field: value})
+            with self.subTest(tool=tool_id, field="timezone"), self.assertRaises(ToolContractError):
+                self.registry().validate(tool_id, arguments | {"timezone": False})
+
+    def test_calendar_conversion_overflow_is_a_typed_rejection(self):
+        for local, zone in (("0001-01-01T00:00:00.000", "Europe/Athens"),
+                            ("9999-12-31T23:59:59.999", "America/New_York")):
+            with self.subTest(local=local), self.assertRaises(ToolContractError):
+                self.registry().validate("reminder.create@1", {
+                    "title": "Task", "notes": "", "has_due": True,
+                    "due_local": local, "timezone": zone, "priority": "NONE"})
+
+    def test_malformed_provenance_uses_its_declared_error_boundary(self):
+        valid = ContentProvenanceV1.source(ContentSourceKind.USER_INPUT, "turn", "text").to_dict()
+        for value in (None, False, 1, [], ["sources", "policy_label", "egress"]):
+            with self.subTest(value=value), self.assertRaises(ProvenanceError):
+                ContentProvenanceV1.from_dict(value)
+        for source_id in (42, True, ["turn"], {"turn": 1}, "\ud800"):
+            raw = valid | {"sources": [valid["sources"][0] | {"source_id": source_id}]}
+            with self.subTest(source_id=source_id), self.assertRaises(ProvenanceError):
+                ContentProvenanceV1.from_dict(raw)
+        self.assertEqual(ContentProvenanceV1.from_dict(valid).to_dict(), valid)
+
 if __name__ == "__main__":
     unittest.main()

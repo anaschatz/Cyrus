@@ -109,7 +109,7 @@ def validate_shadow_audit_payload(
     """Reject any shadow result that weakens the v1 no-side-effect boundary."""
 
     for key, expected in _COMMON_SAFETY_FIELDS.items():
-        if payload.get(key) != expected:
+        if type(payload.get(key)) is not type(expected) or payload.get(key) != expected:
             raise ValueError(f"memory shadow safety field is invalid: {key}")
     source_event_id = payload.get("source_event_id")
     text_sha256 = payload.get("text_sha256")
@@ -138,7 +138,7 @@ def validate_shadow_audit_payload(
         ):
             raise ValueError("memory shadow authority fingerprint changed")
         error_code = payload.get("error_code")
-        if error_code not in {"timeout", "service_error"}:
+        if error_code not in ("timeout", "service_error"):
             raise ValueError("memory shadow failure code is invalid")
         return
 

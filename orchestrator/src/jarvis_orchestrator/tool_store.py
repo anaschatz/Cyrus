@@ -117,7 +117,14 @@ class ToolStoreV1:
                 (task_id, epoch, tool_call_id),
             ).fetchone()
             if existing is not None:
-                if existing["arguments_sha256"] != args_digest or existing["idempotency_key"] != idempotency_key:
+                if any(existing[key] != value for key, value in {
+                    "arguments_sha256": args_digest, "idempotency_key": idempotency_key,
+                    "tool_name": tool_id, "preview_sha256": preview_digest,
+                    "policy_sha256": policy_sha256, "registry_sha256": self.registry.digest,
+                    "tool_schema_sha256": definition.schema_sha256,
+                    "scheduler_contract_sha256": scheduler_contract_sha256,
+                    "user_intent_binding_sha256": user_intent_binding_sha256,
+                }.items()):
                     raise OrchestratorError("tool.idempotency_conflict", status=409)
                 return {"execution_id": existing["execution_id"], "approval_id": existing["approval_id"], "status": existing["status"]}
             queue_count = connection.execute(
@@ -229,6 +236,13 @@ class ToolStoreV1:
             ).fetchone()
             if row is None or row["status"] != ToolRunState.APPROVED.value:
                 raise StaleEpochError()
+            approval = connection.execute(
+                "SELECT status,expires_at FROM approvals WHERE approval_id=?", (row["approval_id"],)
+            ).fetchone()
+            if approval is None or approval["status"] != "APPROVED":
+                raise OrchestratorError("tool.binding_mismatch", status=409)
+            if parse_utc(approval["expires_at"]) <= selected:
+                raise OrchestratorError("tool.approval_expired", status=410)
             definition = self.registry.resolve(row["tool_name"])
             if any(
                 (
@@ -505,8 +519,9 @@ class ToolStoreV1:
                 """SELECT o.*,q.arbiter_seq FROM action_approval_outbox o
                    JOIN approval_arbiter_queue q USING(approval_id)
                    WHERE o.state='PENDING'
-                      OR (o.state='SENT' AND o.last_sent_at<=datetime('now','-1 second'))
-                   ORDER BY q.arbiter_seq,o.created_at,o.event_id"""
+                      OR (o.state='SENT' AND o.last_sent_at<=?)
+                   ORDER BY q.arbiter_seq,o.created_at,o.event_id""",
+                (utc_text(utc_now() - timedelta(seconds=1)),),
             ).fetchall()
         return [
             {
@@ -614,15 +629,10 @@ class ToolStoreV1:
                 "INSERT INTO action_approval_inbox VALUES(?,?,?,?,?,?)",
                 (decision_event_id, semantic_sha256, "action.approval.decision", approval_id, presentation_id, utc_text(selected)),
             )
-            connection.execute(
-                "UPDATE approval_arbiter_queue SET state='DECIDING',updated_at=? WHERE approval_id=?",
-                (utc_text(selected), approval_id),
+            result = self._decide_action_approval_tx(
+                connection, approval_id=approval_id, epoch=int(row["epoch"]),
+                decision=decision, selected=selected,
             )
-            epoch = int(row["epoch"])
-        result = self.decide_action_approval(
-            approval_id=approval_id, epoch=epoch, decision=decision, now=selected
-        )
-        with self._transaction() as connection:
             for event_type, payload in (
                 (
                     "action.approval.decision_ack",
@@ -635,8 +645,9 @@ class ToolStoreV1:
                         "approval_id": approval_id,
                         "presentation_id": presentation_id,
                         "approval_binding_sha256": approval_binding_sha256,
-                        "result": "applied",
-                        "reason_code": "approved" if decision == "approve" else "denied",
+                        "result": "rejected" if result.get("expired") else "applied",
+                        "reason_code": "approval_expired" if result.get("expired") else (
+                            "approved" if decision == "approve" else "denied"),
                     },
                 ),
             ):
@@ -680,102 +691,101 @@ class ToolStoreV1:
         return json.loads(plaintext)
 
     def decide_action_approval(
-        self,
-        *,
-        approval_id: str,
-        epoch: int,
-        decision: str,
-        now: datetime | None = None,
+        self, *, approval_id: str, epoch: int, decision: str, now: datetime | None = None,
     ) -> dict[str, Any]:
-        if decision not in {"approve", "deny"}:
-            raise OrchestratorError("invalid_request", status=400)
-        selected = now or utc_now()
-        stamp = utc_text(selected)
         with self._transaction() as connection:
-            row = connection.execute(
-                """SELECT a.*,x.execution_id,x.status AS execution_status,x.tool_name,
-                          x.arguments_sha256,t.state AS task_state,t.absolute_expires_at
-                   FROM approvals a
-                   JOIN tool_executions x USING(approval_id)
-                   JOIN tasks t USING(task_id)
-                   JOIN conversations c USING(conversation_id)
-                   WHERE a.approval_id=? AND a.epoch=? AND t.epoch=?
-                     AND c.current_epoch=? AND t.tombstoned=0""",
-                (approval_id, epoch, epoch, epoch),
-            ).fetchone()
-            if row is None:
-                raise StaleEpochError()
-            if row["status"] != "PENDING" or row["execution_status"] != "AWAITING_APPROVAL":
-                raise OrchestratorError("tool.binding_mismatch", status=409)
-            if parse_utc(row["expires_at"]) <= selected or parse_utc(row["absolute_expires_at"]) <= selected:
-                connection.execute(
-                    "UPDATE approvals SET status='EXPIRED',decided_at=? WHERE approval_id=?",
-                    (stamp, approval_id),
-                )
-                connection.execute(
-                    "UPDATE tool_executions SET status='EXPIRED',reason_code='tool.approval_expired',completed_at=?,updated_at=? WHERE execution_id=?",
-                    (stamp, stamp, row["execution_id"]),
-                )
-                connection.execute(
-                    "UPDATE approval_arbiter_queue SET state='EXPIRED',updated_at=? WHERE approval_id=?",
-                    (stamp, approval_id),
-                )
-                raise OrchestratorError("tool.approval_expired", status=410)
+            result = self._decide_action_approval_tx(
+                connection, approval_id=approval_id, epoch=epoch,
+                decision=decision, selected=now or utc_now(),
+            )
+        if result.get("expired"):
+            raise OrchestratorError("tool.approval_expired", status=410)
+        return result
 
-            approved = decision == "approve"
-            connection.execute(
-                "UPDATE approvals SET status=?,decided_at=? WHERE approval_id=?",
-                ("APPROVED" if approved else "DENIED", stamp, approval_id),
-            )
-            next_state = "APPROVED" if approved else "DENIED"
-            reason = "approved" if approved else "tool.approval_denied"
-            connection.execute(
-                """UPDATE tool_executions SET status=?,reason_code=?,updated_at=?,
-                   completed_at=CASE WHEN ?='DENIED' THEN ? ELSE completed_at END
-                   WHERE execution_id=?""",
-                (next_state, reason, stamp, next_state, stamp, row["execution_id"]),
-            )
-            connection.execute(
-                "UPDATE approval_arbiter_queue SET state='RESOLVED',updated_at=? WHERE approval_id=?",
-                (stamp, approval_id),
-            )
-            connection.execute(
-                "UPDATE action_approval_presentations SET state='RESOLVED' WHERE approval_id=? AND state!='INVALIDATED'",
-                (approval_id,),
-            )
-            # A decision resumes the ordinary task loop. Approval is transport
-            # state; it is not itself a claim that an OS side effect occurred.
-            connection.execute(
-                """UPDATE tasks SET state='EXECUTING',active_started_at=?,updated_at=?
-                   WHERE task_id=? AND epoch=? AND state='AWAITING_APPROVAL'""",
-                (stamp, stamp, row["task_id"], epoch),
-            )
-            self._store._append_task_event_tx(
-                connection,
-                row["task_id"],
-                epoch,
-                "tool.approval.approved" if approved else "tool.approval.denied",
-                {"approval_id": approval_id, "execution_id": row["execution_id"]},
-                selected,
-            )
-            self._audit_tx(
-                connection,
-                row["execution_id"],
-                row["task_id"],
-                epoch,
-                row["tool_name"],
-                "AWAITING_APPROVAL",
-                next_state,
-                reason,
-                row["arguments_sha256"],
-                None,
-                selected,
-            )
+    def _decide_action_approval_tx(
+        self, connection: sqlite3.Connection, *, approval_id: str,
+        epoch: int, decision: str, selected: datetime,
+    ) -> dict[str, Any]:
+        if decision not in ("approve", "deny"):
+            raise OrchestratorError("invalid_request", status=400)
+        stamp = utc_text(selected)
+        row = connection.execute(
+            """SELECT a.*,x.execution_id,x.status AS execution_status,x.tool_name,
+                      x.arguments_sha256,t.state AS task_state,t.absolute_expires_at
+               FROM approvals a
+               JOIN tool_executions x USING(approval_id)
+               JOIN tasks t USING(task_id)
+               JOIN conversations c USING(conversation_id)
+               WHERE a.approval_id=? AND a.epoch=? AND t.epoch=?
+                 AND c.current_epoch=? AND t.tombstoned=0""",
+            (approval_id, epoch, epoch, epoch),
+        ).fetchone()
+        if row is None:
+            raise StaleEpochError()
+        if row["status"] != "PENDING" or row["execution_status"] != "AWAITING_APPROVAL":
+            raise OrchestratorError("tool.binding_mismatch", status=409)
+        expired = parse_utc(row["expires_at"]) <= selected
+        if expired:
+            self._store._expire_approval_tx(connection, approval_id, now=selected)
+        approved = decision == "approve" and not expired
+        next_state = "EXPIRED" if expired else ("APPROVED" if approved else "DENIED")
+        reason = "tool.approval_expired" if expired else ("approved" if approved else "tool.approval_denied")
+        connection.execute(
+            "UPDATE approvals SET status=?,decided_at=? WHERE approval_id=?",
+            (next_state, stamp, approval_id),
+        )
+        connection.execute(
+            """UPDATE tool_executions SET status=?,reason_code=?,updated_at=?,
+               completed_at=CASE WHEN ? IN ('DENIED','EXPIRED') THEN ? ELSE completed_at END
+               WHERE execution_id=?""",
+            (next_state, reason, stamp, next_state, stamp, row["execution_id"]),
+        )
+        connection.execute(
+            "UPDATE approval_arbiter_queue SET state=?,updated_at=? WHERE approval_id=?",
+            ("EXPIRED" if expired else "RESOLVED", stamp, approval_id),
+        )
+        connection.execute(
+            "UPDATE action_approval_presentations SET state=? WHERE approval_id=? AND state!='INVALIDATED'",
+            ("INVALIDATED" if expired else "RESOLVED", approval_id),
+        )
+        connection.execute(
+            """UPDATE action_approval_outbox SET state='INVALIDATED' WHERE approval_id=?
+               AND event_type='action.approval.requested' AND state IN ('PENDING','SENT')""", (approval_id,),
+        )
+        # A decision resumes the ordinary task loop. Approval is transport
+        # state; it is not itself a claim that an OS side effect occurred.
+        connection.execute(
+            """UPDATE tasks SET state='EXECUTING',active_started_at=?,updated_at=?
+               WHERE task_id=? AND epoch=? AND state='AWAITING_APPROVAL' AND ?=0""",
+            (stamp, stamp, row["task_id"], epoch, expired),
+        )
+        self._store._append_task_event_tx(
+            connection,
+            row["task_id"],
+            epoch,
+            "tool.approval.expired" if expired else ("tool.approval.approved" if approved else "tool.approval.denied"),
+            {"approval_id": approval_id, "execution_id": row["execution_id"]},
+            selected,
+        )
+        self._audit_tx(
+            connection,
+            row["execution_id"],
+            row["task_id"],
+            epoch,
+            row["tool_name"],
+            "AWAITING_APPROVAL",
+            next_state,
+            reason,
+            row["arguments_sha256"],
+            None,
+            selected,
+        )
         return {
             "approval_id": approval_id,
             "execution_id": row["execution_id"],
             "task_id": row["task_id"],
-            "task_state": TaskState.EXECUTING.value,
+            "task_state": TaskState.CANCELLED.value if expired else TaskState.EXECUTING.value,
+            **({"expired": True} if expired else {}),
             "decision": decision,
         }
 

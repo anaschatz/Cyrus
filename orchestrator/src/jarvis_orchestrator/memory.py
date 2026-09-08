@@ -42,7 +42,7 @@ _EXPLICIT_REMEMBER_PREFIX = re.compile(
     r"|κρατα\s+στη\s+μνημη(?:\s+(?:οτι|πωσ))?"
     r"|please\s+remember(?:\s+that)?"
     r"|remember(?:\s+that)?"
-    r")\s*[:,;-]?\s*",
+    r")\b\s*[:,;-]?\s*",
 )
 _EXPLICIT_FORGET_PREFIX = re.compile(
     r"^\s*(?:(?:cyrus|jarvis)[\s,:-]+)?(?:"
@@ -50,7 +50,7 @@ _EXPLICIT_FORGET_PREFIX = re.compile(
     r"|διεγραψε\s+απο\s+τη\s+μνημη(?:\s+(?:οτι|πωσ))?"
     r"|please\s+forget(?:\s+that)?"
     r"|forget(?:\s+that)?"
-    r")\s*[:,;-]?\s*",
+    r")\b\s*[:,;-]?\s*",
 )
 
 # Retained for callers that imported the earlier bounded-model contract.
@@ -422,7 +422,7 @@ class MemoryProposal:
             and len(self.supersedes_source_event_ids) != 1
         ):
             raise ValueError("memory cancellation must identify one active source")
-        if not self.summary or len(self.summary.encode("utf-8")) > 512:
+        if not isinstance(self.summary, str) or not self.summary or len(self.summary.encode("utf-8")) > 512:
             raise ValueError("memory proposal summary is empty or too large")
         if not _SHA256.fullmatch(self.writer_contract_sha256):
             raise ValueError("memory writer contract hash is invalid")

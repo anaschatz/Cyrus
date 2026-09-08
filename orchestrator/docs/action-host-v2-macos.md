@@ -21,6 +21,11 @@ results remain encrypted in the host journal until the Orchestrator has validate
 the exact registry output schema, encrypted the result with its separate
 ToolStore key, committed the live task epoch, and sent `action.result.ack`.
 
+Encrypted v2 frames allow **512 KiB**, while structured result payloads remain
+bounded to **256 KiB** and handshake frames to **8 KiB**. The extra wire capacity
+covers canonical message metadata, AEAD and base64 overhead. The native helper
+response envelope also allows 512 KiB, including reference bindings.
+
 ## Native helper
 
 The Swift package under `native/macos_action_host` provides closed adapters for:
@@ -103,6 +108,13 @@ Qualification is content-addressed and expires after at most 30 days. It binds:
 - an immutable external test manifest with one `PASS` evidence digest for every
   registered tool.
 
+The current v2 contract digest is
+`6a2900bfef2168ffc76244b5a1fad910ff690a7c6505ff46aabf9dece1515f14`.
+Both processes must use this revised contract. Qualification generated for the
+previous 256 KiB frame contract is rejected, even if its artifact hash is valid.
+Run fresh native qualification before enabling actions; historical evidence is
+not migrated or rehashed. The v1 protocol and frozen tool schemas are unchanged.
+
 Start from `action-host-native-tests.template.json`. Native tests must run on the
 signed embedded helper with dedicated Calendar/Reminder/Mail test data. They may
 request permissions only during the explicit setup/qualification session. The
@@ -120,7 +132,8 @@ PYTHONPATH=orchestrator/src python3.11 scripts/generate_action_host_qualificatio
   --output /absolute/private/action-host-qualification.json
 ```
 
-The command prints the qualification digest. Activation then requires two
+The command writes exact canonical JSON bytes and prints the qualification digest.
+Do not reformat the generated artifact or append a newline. Activation then requires two
 explicit changes using the same artifact and digest:
 
 1. set `enabled: true`, `qualification_file`, and `qualification_sha256` in the

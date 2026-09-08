@@ -9,7 +9,11 @@ durable storage.
 
 The accepted runtime contract SHA-256 is:
 
-`832de106ffcfa543d8544bb7b29084a141666d6a3f6e2d40e90ff03ade2b1352`
+`003fce5939c32a54a53bea28269b384a7a24cd584d76de60a7eed6f6cd877490`
+
+This pins the current v0.2.1 reducer/trigger/renderer component identities and
+the unchanged v0.2.0 memory/compiler schemas. Historical experiment identities
+are not used as the current runtime admission pin.
 
 Startup fails closed if the imported Anamnesis runtime contract changes.
 

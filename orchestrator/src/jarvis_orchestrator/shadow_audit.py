@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
 from .anamnesis_shadow import reconstruct_active_shadow_memories
+from .config import _parse_strict_json
 from .domain import canonical_json
 from .memory_release import (
     MEMORY_RELEASE_POLICY_SHA256,
@@ -105,8 +105,12 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
         event_counts[event_type] += 1
         audited_conversations.add(str(row["conversation_id"]))
         try:
-            payload = json.loads(row["payload_json"])
-        except (TypeError, json.JSONDecodeError):
+            raw = row["payload_json"]
+            if not isinstance(raw, str):
+                raise ValueError("shadow payload JSON must be text")
+            payload = _parse_strict_json(raw.encode("utf-8"))
+            payload_sha256 = _digest(payload)
+        except (TypeError, ValueError, RecursionError):
             invalid_rows += 1
             continue
         if not isinstance(payload, dict):
@@ -139,7 +143,7 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
                 "event_sequence": row["event_sequence"],
                 "epoch": row["epoch"],
                 "event_type": event_type,
-                "payload_sha256": _digest(payload),
+                "payload_sha256": payload_sha256,
                 "created_at": row["created_at"],
             }
         )
@@ -151,7 +155,7 @@ def build_shadow_trial_report(database_path: str | Path) -> dict[str, Any]:
             continue
         operation = proposal.get("operation")
         writer_contract = proposal.get("writer_contract_sha256")
-        if operation not in {"upsert", "cancel", "ignore"}:
+        if operation not in ("upsert", "cancel", "ignore"):
             invalid_rows += 1
         else:
             operation_counts[str(operation)] += 1

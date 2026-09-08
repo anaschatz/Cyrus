@@ -613,17 +613,17 @@ async def _run_components(
             from .anamnesis_shadow import (
                 AnamnesisShadowAdapter,
                 DeterministicFirstLifecycleWriter,
-                DeterministicLifecycleGateV3,
-                DeterministicOnlyLifecycleWriterV3,
                 LocalLifecycleCompletionClient,
                 LocalStructuredLifecycleWriter,
             )
+
+            from .lifecycle_gate import DeterministicLifecycleGateV4, DeterministicOnlyLifecycleWriterV4
 
             shadow_history = ShadowHistoryReaderFacade(store.memory_shadow_history)
             if config.memory_shadow_mode == "deterministic_only":
                 shadow_memory = AnamnesisShadowAdapter(
                     shadow_history,
-                    DeterministicOnlyLifecycleWriterV3(),
+                    DeterministicOnlyLifecycleWriterV4(),
                 )
             else:
                 if not capabilities.json_schema:
@@ -642,7 +642,7 @@ async def _run_components(
                             shadow_client,
                             model_alias=config.model_alias,
                         ),
-                        gate=DeterministicLifecycleGateV3(),
+                        gate=DeterministicLifecycleGateV4(),
                     ),
                 )
         research_adapter = None
@@ -679,6 +679,7 @@ async def _run_components(
                 OpenRouterCloudAdapter,
                 load_endpoint_registry,
                 load_openrouter_secret,
+                revalidate_cloud_endpoints,
             )
             from .cloud_qualification import load_cloud_release_qualification
 
@@ -705,9 +706,7 @@ async def _run_components(
                     timeout_seconds=config.cloud_timeout_seconds,
                 )
                 try:
-                    await asyncio.gather(
-                        *(candidate_adapter.revalidate(endpoint) for endpoint in candidate_endpoints)
-                    )
+                    await revalidate_cloud_endpoints(candidate_adapter, candidate_endpoints)
                 except BaseException:
                     startup_cleanup_deadline = supervisor.process_deadline(
                         RUNTIME_TOTAL_SHUTDOWN_SECONDS

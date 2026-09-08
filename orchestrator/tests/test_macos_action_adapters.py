@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import _bootstrap  # noqa: F401
+from test_action_host_protocol_v2 import large_calendar_payload
 
 from jarvis_orchestrator.jcs import jcs_bytes
 from jarvis_orchestrator.macos_action_adapters import (
@@ -149,6 +150,17 @@ class MacOSActionAdapterTests(unittest.TestCase):
         with self.assertRaises(MacOSAdapterError):
             config.validate()
 
+    def test_permission_setup_uses_the_interactive_deadline(self) -> None:
+        deadline = (datetime.now(UTC) + timedelta(minutes=5)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        with patch(
+            "jarvis_orchestrator.macos_action_adapters.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("helper", 300),
+        ) as runner:
+            with self.assertRaisesRegex(MacOSAdapterError, "host.deadline_expired"):
+                self.adapter._run_helper("host.permission-setup@1", {}, deadline)
+        self.assertGreater(runner.call_args.kwargs["timeout"], 290)
+        self.assertLessEqual(runner.call_args.kwargs["timeout"], 300)
+
     def test_native_file_search_uses_spotlight_metadata_only(self) -> None:
         source_path = (
             Path(__file__).resolve().parents[2]
@@ -201,6 +213,20 @@ class MacOSActionAdapterTests(unittest.TestCase):
         self.assertIn("AEDeterminePermissionToAutomateTarget", swift_source)
         self.assertIn("typeWildCard, typeWildCard, false", swift_source)
 
+
+
+    def test_full_size_calendar_payload_survives_native_response_envelope(self):
+        payload = large_calendar_payload()
+        response = dict(status="VERIFIED", verification="EXACT_READBACK", reason_code="ok",
+                        result_payload=payload | {"_next_offset": 50},
+                        reference_bindings=[], os_receipt_sha256="f" * 64)
+        completed = subprocess.CompletedProcess([str(self.helper)], 0,
+                                               stdout=jcs_bytes(response), stderr=b"")
+        with patch("jarvis_orchestrator.macos_action_adapters.subprocess.run", return_value=completed):
+            result = self.adapter.execute(tool_id="calendar.read@1", execution_id="ignored",
+                arguments=dict(start_local="2026-09-06T00:00:00.000", end_local="2026-09-07T00:00:00.000",
+                               timezone="Europe/Athens", limit=50, cursor=""), deadline_utc=self.deadline())
+        self.assertEqual(result.result_payload, payload)
 
 if __name__ == "__main__":
     unittest.main()

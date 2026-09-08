@@ -280,6 +280,17 @@ def _require_nfc_text(value: object, *, max_bytes: int) -> str:
     return value
 
 
+def _checked_terms(terms: tuple[str, ...], *, maximum: int) -> tuple[str, ...]:
+    if type(terms) is not tuple or not 1 <= len(terms) <= maximum:
+        raise MemoryCryptoError("memory_index_input_invalid")
+    checked = tuple(
+        _require_nfc_text(term, max_bytes=MAX_MEMORY_CONTENT_BYTES) for term in terms
+    )
+    if tuple(sorted(set(checked))) != checked:
+        raise MemoryCryptoError("memory_index_input_invalid")
+    return checked
+
+
 @dataclass(frozen=True, slots=True)
 class MemoryRecordBindingV1:
     """Immutable, content-free columns authenticated with one memory row."""
@@ -318,7 +329,10 @@ class MemoryRecordBindingV1:
             raise _invalid_binding()
         if self.normalizer_version != MEMORY_NORMALIZER_VERSION:
             raise _invalid_binding()
-        if self.record_schema_version != MEMORY_RECORD_SCHEMA_VERSION:
+        if (
+            type(self.record_schema_version) is not int
+            or self.record_schema_version != MEMORY_RECORD_SCHEMA_VERSION
+        ):
             raise _invalid_binding()
 
     def payload_aad_value(self) -> dict[str, object]:
@@ -682,14 +696,7 @@ class MemoryEpochSessionV1:
             normalized_content,
             max_bytes=MAX_MEMORY_CONTENT_BYTES,
         )
-        if type(terms) is not tuple or not 1 <= len(terms) <= MAX_MEMORY_RECORD_TERMS:
-            raise MemoryCryptoError("memory_index_input_invalid")
-        checked_terms = tuple(
-            _require_nfc_text(term, max_bytes=MAX_MEMORY_CONTENT_BYTES)
-            for term in terms
-        )
-        if tuple(sorted(set(checked_terms))) != checked_terms:
-            raise MemoryCryptoError("memory_index_input_invalid")
+        checked_terms = _checked_terms(terms, maximum=MAX_MEMORY_RECORD_TERMS)
         return MemoryBlindTokensV1(
             key_version=self.key_version,
             content_hmac=self._token(kind="content", value=exact_content),
@@ -706,14 +713,7 @@ class MemoryEpochSessionV1:
         return self._token(kind=kind, value=checked)
 
     def blind_term_tokens(self, *, terms: tuple[str, ...]) -> tuple[bytes, ...]:
-        if type(terms) is not tuple or not 1 <= len(terms) <= MAX_MEMORY_QUERY_TERMS:
-            raise MemoryCryptoError("memory_index_input_invalid")
-        checked = tuple(
-            _require_nfc_text(term, max_bytes=MAX_MEMORY_CONTENT_BYTES)
-            for term in terms
-        )
-        if tuple(sorted(set(checked))) != checked:
-            raise MemoryCryptoError("memory_index_input_invalid")
+        checked = _checked_terms(terms, maximum=MAX_MEMORY_QUERY_TERMS)
         return tuple(self._token(kind="term", value=term) for term in checked)
 
 
@@ -1049,14 +1049,7 @@ class MemoryEnvelopeCipherV1:
         normalized = _require_nfc_text(
             normalized_content, max_bytes=MAX_MEMORY_CONTENT_BYTES
         )
-        if type(terms) is not tuple or not 1 <= len(terms) <= MAX_MEMORY_RECORD_TERMS:
-            raise MemoryCryptoError("memory_index_input_invalid")
-        checked_terms = tuple(
-            _require_nfc_text(term, max_bytes=MAX_MEMORY_CONTENT_BYTES)
-            for term in terms
-        )
-        if tuple(sorted(set(checked_terms))) != checked_terms:
-            raise MemoryCryptoError("memory_index_input_invalid")
+        checked_terms = _checked_terms(terms, maximum=MAX_MEMORY_RECORD_TERMS)
         index_key = self._blind_index_key(
             principal_id=principal_id, key_version=key_version
         )
@@ -1140,14 +1133,7 @@ class MemoryEnvelopeCipherV1:
 
         _require_uuid4(principal_id)
         _require_key_version(key_version)
-        if type(terms) is not tuple or not 1 <= len(terms) <= MAX_MEMORY_QUERY_TERMS:
-            raise MemoryCryptoError("memory_index_input_invalid")
-        checked = tuple(
-            _require_nfc_text(term, max_bytes=MAX_MEMORY_CONTENT_BYTES)
-            for term in terms
-        )
-        if tuple(sorted(set(checked))) != checked:
-            raise MemoryCryptoError("memory_index_input_invalid")
+        checked = _checked_terms(terms, maximum=MAX_MEMORY_QUERY_TERMS)
         index_key = self._blind_index_key(
             principal_id=principal_id,
             key_version=key_version,

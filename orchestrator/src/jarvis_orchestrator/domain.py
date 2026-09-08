@@ -6,7 +6,7 @@ import hashlib
 import json
 import unicodedata
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Mapping
@@ -115,6 +115,8 @@ def new_uuid4() -> str:
 
 
 def require_uuid4(value: str) -> str:
+    if not isinstance(value, str):
+        raise OrchestratorError("invalid_request", status=400)
     try:
         parsed = uuid.UUID(value)
     except (ValueError, AttributeError) as exc:
@@ -222,18 +224,21 @@ class RouteDecision:
     response_language: str
 
     def validate(self, registered_tools: frozenset[str] = frozenset()) -> "RouteDecision":
-        if self.route not in {"local", "memory_local", "research_local", "cloud", "tool_local"}:
+        if not isinstance(self.route, str) or self.route not in {"local", "memory_local", "research_local", "cloud", "tool_local"}:
             raise OrchestratorError("route_validation_failed", status=409)
-        if self.response_language not in {"el", "en", "default"}:
+        if not isinstance(self.response_language, str) or self.response_language not in {"el", "en", "default"}:
             raise OrchestratorError("route_validation_failed", status=409)
         for query in (self.memory_query, self.research_query):
             if (
                 not isinstance(query, str)
                 or len(query) > 4096
                 or query != nfc(query)
-                or any((ord(character) < 32 and character not in "\n\t") for character in query)
+                or any(unicodedata.category(character) == "Cs"
+                       or (ord(character) < 32 and character not in "\n\t") for character in query)
             ):
                 raise OrchestratorError("route_validation_failed", status=409)
+        if not isinstance(self.tool_name, str):
+            raise OrchestratorError("route_validation_failed", status=409)
         valid_tool = self.tool_name == "none" or self.tool_name in registered_tools
         relationships = (
             (self.route == "memory_local") == bool(self.memory_query),

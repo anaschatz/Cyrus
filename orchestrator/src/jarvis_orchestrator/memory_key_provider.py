@@ -111,7 +111,8 @@ def _atomic_move(source: Path, destination: Path, *, replace: bool) -> None:
             if replace:
                 os.replace(source, destination)
             else:
-                os.rename(source, destination)
+                os.link(source, destination)
+                source.unlink()
             _fsync_directory(destination.parent)
         except MemoryKeyProviderError:
             raise
@@ -133,6 +134,35 @@ def _atomic_move(source: Path, destination: Path, *, replace: bool) -> None:
         raise _provider_error("memory_key_durability_unavailable", exc)
     if not committed:
         raise _provider_error("memory_key_durability_unavailable")
+
+
+def _recover_staging_links(path: Path, before: os.stat_result) -> os.stat_result:
+    """Finish interrupted POSIX exclusive publication under the provider lock."""
+    if (
+        os.name != "posix" or before.st_nlink <= 1
+        or not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+        or stat.S_IMODE(before.st_mode) != PRIVATE_FILE_MODE
+    ):
+        return before
+    pattern = re.compile(r"\." + re.escape(path.name) + r"\.[0-9a-f]{32}\.(tmp|stage)")
+    removed = False
+    try:
+        with os.scandir(path.parent) as entries:
+            for entry in entries:
+                if pattern.fullmatch(entry.name) is None:
+                    continue
+                candidate = entry.stat(follow_symlinks=False)
+                if (candidate.st_dev, candidate.st_ino) == (before.st_dev, before.st_ino):
+                    os.unlink(entry.path)
+                    removed = True
+        if removed:
+            _fsync_directory(path.parent)
+        current = path.lstat()
+        if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+            raise _provider_error("memory_key_private_state_invalid")
+        return current
+    except OSError as exc:
+        raise _provider_error("memory_key_store_unavailable", exc)
 
 
 def _durable_unlink(path: Path) -> None:
@@ -289,7 +319,7 @@ class MemoryInstallationAnchorV1:
             raise _provider_error("memory_key_anchor_invalid")
         try:
             document = json.loads(payload.decode("utf-8", errors="strict"))
-        except (UnicodeError, json.JSONDecodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise _provider_error("memory_key_anchor_invalid", exc)
         if type(document) is not dict or set(document) != {
             "contract",
@@ -365,6 +395,7 @@ class _InstallationAnchorFile:
             return None
         except OSError as exc:
             raise _provider_error("memory_key_store_unavailable", exc)
+        before = _recover_staging_links(self.path, before)
         self._validate_metadata(before)
         if self.windows_guard is not None:
             try:
@@ -373,7 +404,7 @@ class _InstallationAnchorFile:
                 raise
             except Exception as exc:
                 raise _provider_error("memory_key_private_state_invalid", exc)
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
         if os.name == "posix":
             flags |= getattr(os, "O_NOFOLLOW", 0)
         try:
@@ -615,7 +646,7 @@ class MemoryKeyStateV1:
             raise _provider_error("memory_key_state_invalid")
         try:
             document = json.loads(payload.decode("utf-8", errors="strict"))
-        except (UnicodeError, json.JSONDecodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise _provider_error("memory_key_state_invalid", exc)
         expected = {
             "active_version",
@@ -691,7 +722,7 @@ class MemoryKeyLedgerV1:
             raise _provider_error("memory_key_ledger_invalid")
         try:
             document = json.loads(payload.decode("utf-8", errors="strict"))
-        except (UnicodeError, json.JSONDecodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise _provider_error("memory_key_ledger_invalid", exc)
         if type(document) is not dict or set(document) != {
             "contract",
@@ -746,6 +777,10 @@ class MemoryKeyPendingCreateV1:
             or _HEX64.fullmatch(self.key_sha256) is None
         ):
             raise _provider_error("memory_key_pending_invalid")
+        if type(self.selected_state) is not MemoryKeyStateV1 or (
+            self.previous_state is not None and type(self.previous_state) is not MemoryKeyStateV1
+        ):
+            raise _provider_error("memory_key_pending_invalid")
         if self.selected_state.install_id != self.install_id:
             raise _provider_error("memory_key_pending_invalid")
         if self.selected_state.active_version != self.version:
@@ -793,7 +828,7 @@ class MemoryKeyPendingCreateV1:
             raise _provider_error("memory_key_pending_invalid")
         try:
             document = json.loads(payload.decode("utf-8", errors="strict"))
-        except (UnicodeError, json.JSONDecodeError) as exc:
+        except (ValueError, RecursionError) as exc:
             raise _provider_error("memory_key_pending_invalid", exc)
         if type(document) is not dict or set(document) != {
             "contract",
@@ -934,10 +969,9 @@ class _InterprocessFileLock:
                     pass
             raise
         except Exception as exc:
-            try:
-                os.close(descriptor)
-            except (OSError, UnboundLocalError):
-                pass
+            if descriptor is not None:
+                with contextlib.suppress(OSError):
+                    os.close(descriptor)
             raise _provider_error("memory_key_lock_failed", exc)
 
     @contextlib.contextmanager
@@ -1148,19 +1182,9 @@ class AtomicMemoryKeyProvider:
         payload = ledger.encode()
         try:
             self._backend.write_ledger(payload)
+            observed = self._backend.read_ledger()
         except Exception as exc:
-            try:
-                self._backend.read_ledger()
-            except Exception as read_exc:
-                raise _provider_error("memory_key_commit_uncertain", read_exc)
-            # A raised write is never reported as success, even if readback
-            # matches.  The pending CREATE remains the recovery authority.
             raise _provider_error("memory_key_commit_uncertain", exc)
-        else:
-            try:
-                observed = self._backend.read_ledger()
-            except Exception as exc:
-                raise _provider_error("memory_key_commit_uncertain", exc)
         if observed != payload:
             raise _provider_error("memory_key_commit_uncertain")
 
@@ -1168,17 +1192,9 @@ class AtomicMemoryKeyProvider:
         payload = pending.encode()
         try:
             self._backend.write_pending(payload)
+            observed = self._backend.read_pending()
         except Exception as exc:
-            try:
-                self._backend.read_pending()
-            except Exception as read_exc:
-                raise _provider_error("memory_key_commit_uncertain", read_exc)
             raise _provider_error("memory_key_commit_uncertain", exc)
-        else:
-            try:
-                observed = self._backend.read_pending()
-            except Exception as exc:
-                raise _provider_error("memory_key_commit_uncertain", exc)
         if observed != payload:
             raise _provider_error("memory_key_commit_uncertain")
 
@@ -1202,13 +1218,6 @@ class AtomicMemoryKeyProvider:
         payload = state.encode()
         try:
             self._backend.write_state(payload)
-        except Exception as exc:
-            try:
-                self._backend.read_state()
-            except Exception as read_exc:
-                raise _provider_error("memory_key_commit_uncertain", read_exc)
-            raise _provider_error("memory_key_commit_uncertain", exc)
-        try:
             observed = self._backend.read_state()
         except Exception as exc:
             raise _provider_error("memory_key_commit_uncertain", exc)
@@ -2381,7 +2390,7 @@ def _parse_dpapi_document(
         raise _provider_error("memory_key_blob_invalid")
     try:
         document = json.loads(payload.decode("utf-8", errors="strict"))
-    except (UnicodeError, json.JSONDecodeError) as exc:
+    except (ValueError, RecursionError) as exc:
         raise _provider_error("memory_key_blob_invalid", exc)
     expected = {
         "contract",
@@ -2487,9 +2496,10 @@ class _WindowsFileBackend:
             raise _provider_error("memory_key_store_unavailable", exc)
         if stat.S_ISLNK(before.st_mode):
             raise _provider_error("memory_key_private_state_invalid")
+        before = _recover_staging_links(path, before)
         self._validate_posix_metadata(before)
         self._guard_call(self.guard.validate_file, path)
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
         if os.name == "posix":
             flags |= getattr(os, "O_NOFOLLOW", 0)
         try:

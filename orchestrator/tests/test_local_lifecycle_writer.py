@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
+import time
 import unittest
 
 import _bootstrap  # noqa: F401
@@ -129,6 +131,12 @@ class LocalLifecycleWriterTests(unittest.TestCase):
 
         invalid = (
             '{"decision":"create_0"}',
+            '{"decision":"replace_00"}',
+            '{"decision":"cancel_+0"}',
+            '{"decision":"replace_20"}',
+            '{"decision":"replace_0"}',
+            '{"decision":[]}',
+            '{"decision":NaN}',
             '{"decision":"replace"}',
             '{"decision":"ignore","extra":true}',
             '{"decision":"ignore","decision":"create"}',
@@ -159,6 +167,103 @@ class LocalLifecycleWriterTests(unittest.TestCase):
                 bearer_token="private",
                 timeout_seconds=0,
             )
+
+        valid = dict(base_url="http://127.0.0.1:8766/v1", bearer_token="private", timeout_seconds=1)
+        for field, value in (("base_url", None), ("base_url", "http://127.0.0.1:invalid/v1"),
+                             ("base_url", "http://127.0.0.1:0/v1"), ("bearer_token", "bad\r\ntoken"),
+                             ("bearer_token", "μη-ascii"), ("timeout_seconds", float("nan"))):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                LocalLifecycleCompletionClient(**{**valid, field: value})
+        for index in (0.0, True, "0"):
+            with self.subTest(index=index), self.assertRaises(ValueError):
+                LifecycleCandidate(index, "stored fact", "en")
+
+    @staticmethod
+    def envelope():
+        return {"choices": [{"index": 0, "message": {"role": "assistant", "content": '{"decision":"create"}'},
+                              "logprobs": None, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 4, "total_tokens": 54}}
+
+    def complete(self, handler, *, timeout_seconds=1):
+        client = LocalLifecycleCompletionClient(
+            base_url="http://127.0.0.1:8766/v1", bearer_token="private-token",
+            timeout_seconds=timeout_seconds, transport=httpx.MockTransport(handler),
+        )
+        request = build_lifecycle_completion_request(LifecycleObservation("Remember this.", "en"), (), model_alias="jarvis-local")
+        return asyncio.run(client.complete(request))
+
+    @unittest.skipIf(httpx is None, "httpx is unavailable")
+    def test_response_indices_usage_and_strict_json_are_validated(self):
+        for defect in ("index", "boolean_index", "total_type", "output_budget", "deep_json", "nonfinite"):
+            value = self.envelope()
+            if defect == "index":
+                value["choices"][0]["index"] = 1
+            elif defect == "boolean_index":
+                value["choices"][0]["index"] = False
+            elif defect == "total_type":
+                value["usage"]["total_tokens"] = 54.0
+            elif defect == "output_budget":
+                value["usage"].update(completion_tokens=33, total_tokens=83)
+            elif defect == "nonfinite":
+                value["extra"] = float("nan")
+            raw = json.dumps(value) if defect != "deep_json" else '{"value":' + '[' * 1500 + '0' + ']' * 1500 + '}'
+            with self.subTest(defect=defect), self.assertRaisesRegex(RuntimeError, "response is invalid"):
+                self.complete(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, content=raw))
+
+    @unittest.skipIf(httpx is None, "httpx is unavailable")
+    def test_deadline_covers_slow_headers_and_body_and_closes_stream(self):
+        async def slow_headers(request):
+            await asyncio.sleep(0.25)
+            return httpx.Response(200, json=self.envelope())
+
+        class Trickle(httpx.AsyncByteStream):
+            closed = False
+
+            async def __aiter__(self):
+                for _ in range(25):
+                    await asyncio.sleep(0.01)
+                    yield b" "
+
+            async def aclose(self):
+                self.closed = True
+
+        body = Trickle()
+        for handler in (slow_headers, lambda request: httpx.Response(200, stream=body, headers={"content-type": "application/json"})):
+            started = time.monotonic()
+            with self.subTest(handler=handler), self.assertRaisesRegex(RuntimeError, "transport failed"):
+                self.complete(handler, timeout_seconds=0.03)
+            self.assertLess(time.monotonic() - started, 0.2)
+        self.assertTrue(body.closed)
+
+    @unittest.skipIf(httpx is None, "httpx is unavailable")
+    def test_encoded_and_oversized_bodies_are_rejected_and_closed(self):
+        class Body(httpx.AsyncByteStream):
+            closed = False
+            exhausted = False
+            encoded = None
+
+            async def __aiter__(self):
+                if self.encoded is not None:
+                    yield self.encoded
+                    self.exhausted = True
+                    return
+                for _ in range(100):
+                    yield b" " * 4096
+                self.exhausted = True
+
+            async def aclose(self):
+                self.closed = True
+
+        for encoding in ("identity", "gzip"):
+            body = Body()
+            if encoding == "gzip":
+                body.encoded = gzip.compress(json.dumps(self.envelope()).encode())
+            with self.subTest(encoding=encoding), self.assertRaises(RuntimeError):
+                self.complete(lambda request: httpx.Response(200, stream=body, headers={
+                    "content-type": "application/json", "content-encoding": encoding,
+                }))
+            self.assertTrue(body.closed)
+            self.assertFalse(body.exhausted)
 
     @unittest.skipIf(httpx is None, "httpx is unavailable")
     def test_concrete_client_sends_one_exact_loopback_request(self) -> None:

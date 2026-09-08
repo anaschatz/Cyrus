@@ -116,6 +116,70 @@ class ConfigSecurityTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     OrchestratorConfig.from_test_mapping(invalid)
 
+    def test_scalar_types_and_numeric_boundaries_fail_before_startup(self) -> None:
+        cases = (
+            ("voice_port", 8765.5),
+            ("control_port", 65536),
+            ("voice_port", 0),
+            ("model_request_limit", 2.5),
+            ("output_token_limit", "2048"),
+            ("max_tool_calls_per_tool_task", 4.0),
+            ("cloud_monthly_cap_microusd", 5_000_000.0),
+            ("active_budget_seconds", "TOP_SECRET"),
+            ("response_language", {}),
+            ("scheduler_default_timezone", []),
+            ("research_timezone", None),
+            ("voice_host", 2130706433),
+            ("readiness_signer_key_id", 0),
+            ("tool_app_ids", [{}]),
+            ("model_timeout_seconds", float("nan")),
+            ("memory_timeout_seconds", float("inf")),
+            ("reconnect_ttl_seconds", 10**1000),
+            ("input_translation_timeout_seconds", float("nan")),
+        )
+        for field, value in cases:
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError) as raised:
+                    OrchestratorConfig.from_mapping(
+                        dict(self.document(), **{field: value})
+                    )
+                self.assertNotIn("TOP_SECRET", str(raised.exception))
+        for port in (1, 65535):
+            config = OrchestratorConfig.from_mapping(
+                dict(self.document(), voice_port=port)
+            )
+            self.assertEqual(config.voice_port, port)
+        config = OrchestratorConfig.from_mapping(
+            dict(self.document(), model_timeout_seconds=1)
+        )
+        self.assertEqual(config.model_timeout_seconds, 1)
+
+    def test_loopback_endpoint_ports_are_validated(self) -> None:
+        for field in ("inference_base_url", "research_base_url"):
+            for port in ("garbage", "0", "65536", "-1"):
+                with (
+                    self.subTest(field=field, port=port),
+                    self.assertRaises(ValueError),
+                ):
+                    OrchestratorConfig.from_mapping(
+                        dict(self.document(), **{field: f"http://127.0.0.1:{port}/v1"})
+                    )
+            for url in ("http://127.0.0.1/v1", "http://127.0.0.1:65535/v1"):
+                config = OrchestratorConfig.from_mapping(
+                    dict(self.document(), **{field: url})
+                )
+                self.assertEqual(getattr(config, field), url)
+
+    def test_path_and_root_values_are_not_coerced_to_strings(self) -> None:
+        for field, value in (
+            ("database_path", "/tmp/invalid\x00.sqlite3"),
+            ("voice_auth_key_file", "/tmp/invalid\x00.json"),
+            ("tool_roots", {1: "/tmp/root"}),
+            ("tool_roots", {"root": None}),
+        ):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                OrchestratorConfig.from_mapping(dict(self.document(), **{field: value}))
+
     def test_file_size_is_bounded_before_parsing(self) -> None:
         self.write(b" " * (_MAX_CONFIGURATION_BYTES + 1))
 

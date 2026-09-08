@@ -307,14 +307,15 @@ class MemoryShadowTests(StoreCase, unittest.TestCase):
             "authority_state_before_sha256": fingerprint,
             "authority_state_after_sha256": fingerprint,
         }
-        payload["automatic_side_effect_requested"] = True
-        with self.assertRaisesRegex(ValueError, "automatic_side_effect_requested"):
-            store.finish_memory_shadow_audit(
-                completed.task_id,
-                completed.epoch,
-                event_type="memory.shadow.failed",
-                payload=payload,
-            )
+        for invalid in (True, 0, 0.0):
+            payload["automatic_side_effect_requested"] = invalid
+            with self.subTest(value=invalid), self.assertRaisesRegex(ValueError, "automatic_side_effect_requested"):
+                store.finish_memory_shadow_audit(
+                    completed.task_id,
+                    completed.epoch,
+                    event_type="memory.shadow.failed",
+                    payload=payload,
+                )
         safe_but_unbound = dict(payload)
         safe_but_unbound["automatic_side_effect_requested"] = False
         safe_but_unbound["source_event_id"] = "wrong-source"

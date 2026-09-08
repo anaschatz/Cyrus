@@ -28,6 +28,7 @@ async def cloud_qualification_status(
         OpenRouterCloudAdapter,
         load_endpoint_registry,
         load_openrouter_secret,
+        revalidate_cloud_endpoints,
     )
     from .cloud_qualification import load_cloud_release_qualification
 
@@ -55,16 +56,13 @@ async def cloud_qualification_status(
                     bearer_token=bearer_token,
                     timeout_seconds=config.cloud_timeout_seconds,
                 )
-                results = await asyncio.gather(
-                    *(
-                        adapter.revalidate(endpoint)
-                        for endpoint in release.active_endpoints
-                    )
-                )
+                results = await revalidate_cloud_endpoints(adapter, release.active_endpoints)
             finally:
-                if adapter is not None:
-                    await adapter.aclose()
-                store.close()
+                try:
+                    if adapter is not None:
+                        await adapter.aclose()
+                finally:
+                    store.close()
         if not results or any(not item.key_policy_verified for item in results):
             raise RuntimeError("cloud_live_gate_invalid")
         return {

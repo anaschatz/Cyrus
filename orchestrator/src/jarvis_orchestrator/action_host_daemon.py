@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import signal
 import sys
 import threading
+import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 from .action_host_security import load_instance_token
 from .action_host_qualification import (
     current_macos_build,
     load_native_qualification,
     readiness_digest,
+    read_native_evidence_bytes,
 )
 from .action_host_v2_server import ActionHostResultJournalV2, ActionHostV2Server
 from .macos_action_adapters import MacOSActionAdapterConfig, MacOSNativeAdapterV1
+from .config import _parse_strict_json
+from .private_state import ensure_private_directory
 from .jcs import jcs_text
 from .scheduler_crypto import platform_key_provider
 from .tool_contracts import ToolRegistryV1
@@ -43,28 +47,7 @@ class ActionHostDaemonConfig:
 
     @classmethod
     def load(cls, path: Path) -> "ActionHostDaemonConfig":
-        raw = path.read_bytes()
-        if not raw or len(raw) > 64 * 1024:
-            raise ValueError("action host configuration size is invalid")
-        text = raw.decode("utf-8", errors="strict")
-        if text.startswith("\ufeff"):
-            raise ValueError("action host configuration BOM is forbidden")
-
-        def unique_pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-            result: dict[str, Any] = {}
-            for key, item in items:
-                if key in result:
-                    raise ValueError("action host configuration has a duplicate key")
-                result[key] = item
-            return result
-
-        value = json.loads(
-            text,
-            object_pairs_hook=unique_pairs,
-            parse_constant=lambda _: (_ for _ in ()).throw(
-                ValueError("action host configuration has a non-finite number")
-            ),
-        )
+        value = _parse_strict_json(read_native_evidence_bytes(path))
         fields = {
             "enabled",
             "socket_path",
@@ -82,9 +65,15 @@ class ActionHostDaemonConfig:
         }
         if not isinstance(value, dict) or set(value) != fields:
             raise ValueError("action host configuration is not closed")
+        string_fields = fields - {"enabled", "qualification_file", "tool_roots", "tool_app_ids"}
+        if any(not isinstance(value[name], str) for name in string_fields) or (
+            value["qualification_file"] is not None and not isinstance(value["qualification_file"], str)
+        ):
+            raise ValueError("action host paths and digests must be strings")
         roots = value["tool_roots"]
         apps = value["tool_app_ids"]
-        if not isinstance(roots, dict) or not isinstance(apps, list):
+        if (not isinstance(roots, dict) or any(not isinstance(item, str) for item in roots.values())
+                or not isinstance(apps, list) or any(not isinstance(item, str) for item in apps)):
             raise ValueError("action host registry configuration is invalid")
         selected = cls(
             enabled=value["enabled"],
@@ -94,15 +83,15 @@ class ActionHostDaemonConfig:
             reference_store_path=Path(value["reference_store_path"]),
             notes_path=Path(value["notes_path"]),
             native_helper_path=Path(value["native_helper_path"]),
-            native_helper_sha256=str(value["native_helper_sha256"]),
-            native_helper_code_identity_sha256=str(value["native_helper_code_identity_sha256"]),
+            native_helper_sha256=value["native_helper_sha256"],
+            native_helper_code_identity_sha256=value["native_helper_code_identity_sha256"],
             qualification_file=(
                 None if value["qualification_file"] is None
                 else Path(value["qualification_file"])
             ),
-            qualification_sha256=str(value["qualification_sha256"]),
-            tool_roots={str(key): str(item) for key, item in roots.items()},
-            tool_app_ids=tuple(str(item) for item in apps),
+            qualification_sha256=value["qualification_sha256"],
+            tool_roots=dict(roots),
+            tool_app_ids=tuple(apps),
         )
         for candidate in (
             selected.socket_path,
@@ -137,20 +126,19 @@ class ActionHostDaemonConfig:
 
 
 def initialize_token(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(path.parent, 0o700)
+    ensure_private_directory(path.parent, create=True)
     if path.exists() or path.is_symlink():
         load_instance_token(path)
         return
-    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    try:
-        token = os.urandom(32)
-        written = os.write(descriptor, token)
-        if written != len(token):
-            raise OSError("short token write")
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    # Publish complete, durable bytes without replacing another initializer's token.
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".token-") as temporary:
+        temporary.write(os.urandom(32))
+        temporary.flush()
+        os.fsync(temporary.fileno())
+        try:
+            os.link(temporary.name, path)
+        except FileExistsError:
+            load_instance_token(path)
 
 
 def serve(config: ActionHostDaemonConfig) -> None:
@@ -165,20 +153,21 @@ def serve(config: ActionHostDaemonConfig) -> None:
     registry = ToolRegistryV1.build(
         root_ids=tuple(config.tool_roots), app_ids=config.tool_app_ids
     )
-    adapter = MacOSNativeAdapterV1(
-        config=MacOSActionAdapterConfig(
-            helper_path=config.native_helper_path,
-            helper_sha256=config.native_helper_sha256,
-            helper_code_identity_sha256=config.native_helper_code_identity_sha256,
-            roots=config.tool_roots,
-            app_ids=config.tool_app_ids,
-            state_path=config.reference_store_path,
-            notes_path=config.notes_path,
-        ),
-        registry=registry,
-        auth_keys=auth_keys,
-    )
-    try:
+    with ExitStack() as cleanup:
+        adapter = MacOSNativeAdapterV1(
+            config=MacOSActionAdapterConfig(
+                helper_path=config.native_helper_path,
+                helper_sha256=config.native_helper_sha256,
+                helper_code_identity_sha256=config.native_helper_code_identity_sha256,
+                roots=config.tool_roots,
+                app_ids=config.tool_app_ids,
+                state_path=config.reference_store_path,
+                notes_path=config.notes_path,
+            ),
+            registry=registry,
+            auth_keys=auth_keys,
+        )
+        cleanup.callback(adapter.close)
         assert config.qualification_file is not None
         qualification = load_native_qualification(
             config.qualification_file,
@@ -195,29 +184,21 @@ def serve(config: ActionHostDaemonConfig) -> None:
             or any(not readiness.supports(tool_id) for tool_id in registry.names)
         ):
             raise RuntimeError("tool.readiness_changed")
-    except BaseException:
-        adapter.close()
-        raise
-    journal = ActionHostResultJournalV2(config.journal_path, auth_keys)
-    server = ActionHostV2Server(
-        socket_path=config.socket_path,
-        token_path=config.token_path,
-        auth_keys=auth_keys,
-        registry=registry,
-        journal=journal,
-        adapter=adapter,
-    )
-    stop = threading.Event()
-    prior: dict[int, Any] = {}
-    for selected in (signal.SIGINT, signal.SIGTERM):
-        prior[selected] = signal.signal(selected, lambda *_: stop.set())
-    try:
+        journal = ActionHostResultJournalV2(config.journal_path, auth_keys)
+        cleanup.callback(journal.close)
+        server = ActionHostV2Server(
+            socket_path=config.socket_path,
+            token_path=config.token_path,
+            auth_keys=auth_keys,
+            registry=registry,
+            journal=journal,
+            adapter=adapter,
+        )
+        stop = threading.Event()
+        for selected in (signal.SIGINT, signal.SIGTERM):
+            prior = signal.signal(selected, lambda *_: stop.set())
+            cleanup.callback(signal.signal, selected, prior)
         server.serve_forever(stop)
-    finally:
-        for selected, handler in prior.items():
-            signal.signal(selected, handler)
-        adapter.close()
-        journal.close()
 
 
 def request_permissions(config: ActionHostDaemonConfig) -> None:

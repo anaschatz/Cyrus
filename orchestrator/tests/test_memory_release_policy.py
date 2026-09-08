@@ -94,6 +94,12 @@ class MemoryReleasePolicyTests(StoreCase, unittest.TestCase):
                 tampered[key] = value
                 with self.assertRaises(ValueError):
                     validate_shadow_audit_payload("memory.shadow.proposed", tampered)
+        for key in ("automatic_side_effect_requested", "action_evidence_emitted", "authoritative_state_changed"):
+            for invalid in (0, 0.0):
+                tampered = copy.deepcopy(payload)
+                tampered[key] = invalid
+                with self.subTest(key=key, value=invalid), self.assertRaises(ValueError):
+                    validate_shadow_audit_payload("memory.shadow.proposed", tampered)
         tampered = copy.deepcopy(payload)
         tampered["provenance"]["proposal_sha256"] = "e" * 64  # type: ignore[index]
         with self.assertRaisesRegex(ValueError, "provenance binding"):

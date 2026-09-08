@@ -250,7 +250,10 @@ def parse_local_strict(value: Any, timezone_name: str) -> tuple[datetime, dateti
     valid: list[datetime] = []
     for fold in (0, 1):
         candidate = local.replace(tzinfo=zone, fold=fold)
-        round_trip = candidate.astimezone(UTC).astimezone(zone).replace(tzinfo=None)
+        try:
+            round_trip = candidate.astimezone(UTC).astimezone(zone).replace(tzinfo=None)
+        except OverflowError as exc:
+            raise ToolContractError() from exc
         if round_trip == local:
             valid.append(candidate)
     unique_offsets = {item.utcoffset() for item in valid}
@@ -409,7 +412,7 @@ def _validate_reminder_list(value: Mapping[str, Any]) -> dict[str, Any]:
     row["status"] = _enum(row["status"], {"INCOMPLETE", "COMPLETED"})
     row["due_filter"] = _enum(row["due_filter"], {"ANY", "WINDOW"})
     if row["due_filter"] == "ANY":
-        if row["due_from_local"] or row["due_to_local"] or row["timezone"]:
+        if any(row[field] != "" for field in ("due_from_local", "due_to_local", "timezone")):
             raise ToolContractError()
     else:
         if not row["due_from_local"] or not row["due_to_local"] or not row["timezone"]:
@@ -432,7 +435,7 @@ def _validate_reminder_create(value: Mapping[str, Any]) -> dict[str, Any]:
         local, _ = parse_local_strict(row["due_local"], zone)
         row["due_local"] = local.isoformat(timespec="milliseconds")
         row["timezone"] = zone
-    elif row["due_local"] or row["timezone"]:
+    elif row["due_local"] != "" or row["timezone"] != "":
         raise ToolContractError()
     row["priority"] = _enum(row["priority"], {"NONE", "LOW", "MEDIUM", "HIGH"})
     return row

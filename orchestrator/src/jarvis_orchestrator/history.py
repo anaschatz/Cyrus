@@ -15,6 +15,9 @@ def canonical_messages_to_pydantic(messages: Sequence[Mapping[str, str]]) -> tup
         raise RuntimeError("pydantic-ai-slim[openai]==2.27.0 is required") from exc
     if not messages or messages[-1].get("role") != "user":
         raise ValueError("canonical messages must end with a user prompt")
+    prompt = messages[-1].get("content")
+    if not isinstance(prompt, str):
+        raise ValueError("canonical message content must be text")
     history: list[Any] = []
     for message in messages[:-1]:
         role = message.get("role")
@@ -27,4 +30,4 @@ def canonical_messages_to_pydantic(messages: Sequence[Mapping[str, str]]) -> tup
             history.append(ModelResponse(parts=[TextPart(content)]))
         else:
             raise ValueError("canonical history role is invalid")
-    return history, messages[-1]["content"]
+    return history, prompt

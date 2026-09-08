@@ -12,7 +12,6 @@ import hashlib
 import hmac
 import os
 import time
-import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -25,14 +24,15 @@ from .action_host_protocol import (
     ActionHostProtocolError,
     AdapterStatus,
     ReceiptStage,
-    decode_frame,
+    decode_frame as _decode_frame,
     encode_frame,
     hkdf_expand,
     hkdf_extract,
-    strict_json,
+    strict_json as _strict_json,
 )
 from .jcs import domain_sha256, jcs_bytes
 from .tool_contracts import (
+    ToolContractError,
     ToolStatus,
     VerificationStatus,
     canonical_uuid4,
@@ -43,7 +43,8 @@ from .tool_contracts import (
 ACTION_HOST_V2_PROTOCOL = "jarvis.action-host/2"
 ACTION_HOST_V2_VERSION = "2"
 MAX_HANDSHAKE_FRAME_BYTES = 8 * 1024
-MAX_ENCRYPTED_FRAME_BYTES = 256 * 1024
+# The frame includes base64 ciphertext, an AEAD tag and authenticated metadata.
+MAX_ENCRYPTED_FRAME_BYTES = 512 * 1024
 MAX_RESULT_PAYLOAD_BYTES = 256 * 1024
 NONCE_BYTES = 12
 
@@ -156,6 +157,31 @@ def _utc_now_text() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def _timestamp(value: Any) -> datetime:
+    try:
+        return parse_utc_strict(value)
+    except ToolContractError as exc:
+        raise ActionHostProtocolError("host.protocol_mismatch") from exc
+
+
+def decode_frame(frame: bytes, *, maximum: int) -> dict[str, Any]:
+    try:
+        return _decode_frame(frame, maximum=maximum)
+    except ActionHostProtocolError:
+        raise
+    except (ValueError, RecursionError) as exc:
+        raise ActionHostProtocolError("host.protocol_mismatch") from exc
+
+
+def strict_json(raw: bytes, *, maximum: int) -> dict[str, Any]:
+    try:
+        return _strict_json(raw, maximum=maximum)
+    except ActionHostProtocolError:
+        raise
+    except (ValueError, RecursionError) as exc:
+        raise ActionHostProtocolError("host.protocol_mismatch") from exc
+
+
 def decode_handshake_frame_v2(frame: bytes) -> dict[str, Any]:
     row = decode_frame(frame, maximum=MAX_HANDSHAKE_FRAME_BYTES)
     if row.get("protocol") != ACTION_HOST_V2_PROTOCOL:
@@ -173,9 +199,9 @@ class HostChallengeV2:
     host_mac: str
 
     def unsigned(self) -> dict[str, Any]:
-        if isinstance(self.key_version, bool) or self.key_version < 1:
+        if isinstance(self.key_version, bool) or not isinstance(self.key_version, int) or self.key_version < 1:
             raise ActionHostProtocolError("host.protocol_mismatch")
-        parse_utc_strict(self.challenge_expires_at_utc)
+        _timestamp(self.challenge_expires_at_utc)
         return {
             "protocol": ACTION_HOST_V2_PROTOCOL,
             "type": "host.challenge",
@@ -344,7 +370,7 @@ def _verify_challenge(
         raise ActionHostProtocolError("host.auth_failed")
     if challenge.token_sha256 != hashlib.sha256(instance_token).hexdigest():
         raise ActionHostProtocolError("host.auth_failed")
-    if parse_utc_strict(challenge.challenge_expires_at_utc).timestamp() <= time.time():
+    if _timestamp(challenge.challenge_expires_at_utc).timestamp() <= time.time():
         raise ActionHostProtocolError("host.auth_failed")
     k_boot = hkdf_extract(instance_token, auth_key)
     expected = hmac.new(
@@ -366,7 +392,7 @@ class HostReadyV2:
     def unsigned(self) -> dict[str, Any]:
         if not isinstance(self.accepted, bool):
             raise ActionHostProtocolError("host.protocol_mismatch")
-        if self.reason_code not in {"ok", "host.protocol_mismatch", "host.auth_failed"}:
+        if self.reason_code not in ("ok", "host.protocol_mismatch", "host.auth_failed"):
             raise ActionHostProtocolError("host.protocol_mismatch")
         return {
             "protocol": ACTION_HOST_V2_PROTOCOL,
@@ -596,7 +622,7 @@ def _validate_execute(payload: Mapping[str, Any]) -> dict[str, Any]:
         != row["arguments_sha256"]
     ):
         raise ActionHostProtocolError("host.idempotency_conflict")
-    parse_utc_strict(row["deadline_utc"])
+    _timestamp(row["deadline_utc"])
     return row
 
 
@@ -624,7 +650,7 @@ def _validate_receipt(payload: Mapping[str, Any]) -> dict[str, Any]:
         VerificationStatus(row["verification"])
     except (ValueError, TypeError) as exc:
         raise ActionHostProtocolError("host.protocol_mismatch") from exc
-    parse_utc_strict(row["observed_at_utc"])
+    _timestamp(row["observed_at_utc"])
     _sha(row["os_receipt_sha256"], allow_empty=True)
     _sha(row["result_sha256"], allow_empty=True)
     if not isinstance(row["reason_code"], str):
@@ -671,13 +697,15 @@ def validate_action_result_payload(value: Mapping[str, Any]) -> dict[str, Any]:
         or isinstance(row["tool_version"], bool)
         or not isinstance(row["tool_version"], int)
         or row["tool_version"] < 1
+        or not isinstance(row["status"], str)
+        or not isinstance(row["verification"], str)
         or (row["status"], row["verification"]) not in _RESULT_COMBINATIONS
         or not isinstance(row["reason_code"], str)
         or not row["reason_code"].isascii()
         or not 1 <= len(row["reason_code"]) <= 96
     ):
         raise ActionHostProtocolError("host.protocol_mismatch")
-    parse_utc_strict(row["observed_at_utc"])
+    _timestamp(row["observed_at_utc"])
     if not isinstance(row["result_payload"], Mapping):
         raise ActionHostProtocolError("host.protocol_mismatch")
     encoded = jcs_bytes(row["result_payload"])
@@ -693,7 +721,7 @@ def validate_message_v2(
 ) -> dict[str, Any]:
     row = _exact(value, {"type", "payload"})
     allowed = CLIENT_MESSAGE_TYPES_V2 if direction is DirectionV2.C2H else SERVER_MESSAGE_TYPES_V2
-    if row["type"] not in allowed or not isinstance(row["payload"], Mapping):
+    if not isinstance(row["type"], str) or row["type"] not in allowed or not isinstance(row["payload"], Mapping):
         raise ActionHostProtocolError("host.protocol_mismatch")
     if row["type"] == "action.execute":
         row["payload"] = _validate_execute(row["payload"])
@@ -730,13 +758,16 @@ def validate_message_v2(
         expected = [stage.value for stage in ReceiptStage]
         if stages != expected[: len(stages)]:
             raise ActionHostProtocolError("host.protocol_mismatch")
+        if any(receipt["execution_id"] != payload["execution_id"]
+               or receipt["idempotency_key"] != payload["idempotency_key"] for receipt in receipts):
+            raise ActionHostProtocolError("host.result_conflict")
         payload["receipts"] = receipts
         row["payload"] = payload
     elif row["type"] == "action.error":
         payload = _exact(row["payload"], {"request_id", "execution_id", "reason_code"})
         payload["request_id"] = _uuid(payload["request_id"])
         payload["execution_id"] = _uuid(payload["execution_id"])
-        if payload["reason_code"] not in HOST_ERROR_CODES_V2:
+        if not isinstance(payload["reason_code"], str) or payload["reason_code"] not in HOST_ERROR_CODES_V2:
             raise ActionHostProtocolError("host.protocol_mismatch")
         row["payload"] = payload
     elif row["type"] in {"action.ping", "action.pong"}:
@@ -753,6 +784,12 @@ def result_receipt_matches(
     selected_receipt = _validate_receipt(receipt)
     return (
         selected_receipt["stage"] == ReceiptStage.VERIFICATION_COMPLETE.value
+        and selected_receipt["request_id"] == selected_result["request_id"]
+        and selected_receipt["reason_code"] == selected_result["reason_code"]
+        and selected_receipt["verification"] == (
+            "MATCHED" if selected_result["verification"] == "EXACT_READBACK" else selected_result["verification"]
+        )
+        and selected_receipt["adapter_status"] == ("REJECTED" if selected_result["status"] == "FAILED" else "RETURNED")
         and selected_receipt["execution_id"] == selected_result["execution_id"]
         and selected_receipt["idempotency_key"] == selected_result["idempotency_key"]
         and selected_receipt["result_sha256"] == selected_result["result_sha256"]

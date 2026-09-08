@@ -9,10 +9,12 @@ import socket
 import sqlite3
 import struct
 import threading
+import time
 import uuid
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -35,9 +37,13 @@ from .action_host_v2_protocol import (
     SessionKeysV2,
     decode_handshake_frame_v2,
 )
-from .domain import parse_utc
+from .domain import OrchestratorError, parse_utc
+from .private_state import ensure_private_directory, prepare_private_database
 from .jcs import jcs_bytes, jcs_text
 from .tool_contracts import ToolRegistryV1, ToolStatus
+
+
+SESSION_TIMEOUT_SECONDS = 30.0
 
 
 class NativeAdapterV2(Protocol):
@@ -82,10 +88,14 @@ def _utc_text(value: datetime | None = None) -> str:
     )
 
 
-def _read_exact(connection: socket.socket, length: int) -> bytes:
+def _read_exact(connection: socket.socket, length: int, deadline: float) -> bytes:
     chunks: list[bytes] = []
     remaining = length
     while remaining:
+        timeout = deadline - time.monotonic()
+        if timeout <= 0:
+            raise TimeoutError("action host session deadline")
+        connection.settimeout(timeout)
         chunk = connection.recv(remaining)
         if not chunk:
             raise EOFError
@@ -94,22 +104,20 @@ def _read_exact(connection: socket.socket, length: int) -> bytes:
     return b"".join(chunks)
 
 
-def _read_frame(connection: socket.socket, maximum: int) -> bytes:
-    prefix = _read_exact(connection, 4)
+def _read_frame(connection: socket.socket, maximum: int, deadline: float) -> bytes:
+    prefix = _read_exact(connection, 4, deadline)
     length = struct.unpack(">I", prefix)[0]
     if length == 0 or length > maximum:
         raise ActionHostProtocolError("host.frame_too_large")
-    return prefix + _read_exact(connection, length)
+    return prefix + _read_exact(connection, length, deadline)
 
 
 class ActionHostResultJournalV2:
     """Content-minimized receipts plus encrypted terminal result payloads."""
 
     def __init__(self, path: Path, auth_keys: HostAuthKeyProvider) -> None:
-        self.path = Path(path)
+        self.path = prepare_private_database(path)
         self.auth_keys = auth_keys
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.path.parent, 0o700)
         self._connection = sqlite3.connect(self.path, isolation_level=None, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA journal_mode=WAL")
@@ -156,22 +164,17 @@ class ActionHostResultJournalV2:
         with self._lock:
             self._connection.close()
 
+    @contextmanager
     def _transaction(self):
-        class Transaction:
-            def __init__(self, journal):
-                self.journal = journal
-
-            def __enter__(self):
-                self.journal._lock.acquire()
-                self.journal._connection.execute("BEGIN IMMEDIATE")
-                return self.journal._connection
-
-            def __exit__(self, exc_type, exc, tb):
-                try:
-                    self.journal._connection.execute("ROLLBACK" if exc_type else "COMMIT")
-                finally:
-                    self.journal._lock.release()
-        return Transaction(self)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._connection
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
 
     def _recover_uncertain(self) -> None:
         with self._transaction() as connection:
@@ -217,27 +220,30 @@ class ActionHostResultJournalV2:
         return True
 
     def store_receipt(self, execution_id: str, payload: Mapping[str, Any]) -> None:
+        with self._transaction() as connection:
+            self._store_receipt_tx(connection, execution_id, payload)
+
+    def _store_receipt_tx(self, connection, execution_id, payload) -> None:
         encoded = jcs_text(payload)
         digest = hashlib.sha256(encoded.encode()).hexdigest()
-        with self._transaction() as connection:
-            existing = connection.execute(
-                "SELECT payload_sha256 FROM receipts WHERE execution_id=? AND stage=?",
-                (execution_id, payload["stage"]),
-            ).fetchone()
-            if existing is not None:
-                if existing["payload_sha256"] != digest:
-                    raise ActionHostProtocolError("host.result_conflict")
-                return
-            connection.execute(
-                "INSERT INTO receipts VALUES(?,?,?,?,?)",
-                (execution_id, payload["stage"], encoded, digest, _utc_text()),
-            )
-            connection.execute(
-                "UPDATE executions SET state=?,updated_at=? WHERE execution_id=?",
-                (payload["stage"], _utc_text(), execution_id),
-            )
+        existing = connection.execute(
+            "SELECT payload_sha256 FROM receipts WHERE execution_id=? AND stage=?",
+            (execution_id, payload["stage"]),
+        ).fetchone()
+        if existing is not None:
+            if existing["payload_sha256"] != digest:
+                raise ActionHostProtocolError("host.result_conflict")
+            return
+        connection.execute(
+            "INSERT INTO receipts VALUES(?,?,?,?,?)",
+            (execution_id, payload["stage"], encoded, digest, _utc_text()),
+        )
+        connection.execute(
+            "UPDATE executions SET state=?,updated_at=? WHERE execution_id=?",
+            (payload["stage"], _utc_text(), execution_id),
+        )
 
-    def store_result(self, result: Mapping[str, Any]) -> None:
+    def store_result(self, result: Mapping[str, Any], *, terminal_receipt: Mapping[str, Any]) -> None:
         execution_id = result["execution_id"]
         result_bytes = jcs_bytes(result)
         result_sha = result["result_sha256"]
@@ -283,6 +289,8 @@ class ActionHostResultJournalV2:
                     execution_id,
                 ),
             )
+
+            self._store_receipt_tx(connection, execution_id, terminal_receipt)
 
     def result(self, execution_id: str, idempotency_key: str) -> dict[str, Any] | None:
         with self._lock:
@@ -478,8 +486,8 @@ class ActionHostV2Server:
             reason_code=adapter_result.reason_code,
         )
         self.journal.store_receipt(execute["execution_id"], returned)
-        connection.sendall(sender.encrypt({"type": "action.receipt", "payload": returned}))
         if adapter_result.status not in {ToolStatus.VERIFIED, ToolStatus.ACCEPTED}:
+            connection.sendall(sender.encrypt({"type": "action.receipt", "payload": returned}))
             self._send_error(
                 sender,
                 connection,
@@ -507,7 +515,6 @@ class ActionHostV2Server:
             "result_payload": canonical_result,
             "result_sha256": result_sha,
         }
-        self.journal.store_result(result)
         verified = self._receipt(
             execute,
             stage="VERIFICATION_COMPLETE",
@@ -517,11 +524,14 @@ class ActionHostV2Server:
             reason_code=adapter_result.reason_code,
             os_receipt_sha256=adapter_result.os_receipt_sha256,
         )
-        self.journal.store_receipt(execute["execution_id"], verified)
+        self.journal.store_result(result, terminal_receipt=verified)
+        connection.sendall(sender.encrypt({"type": "action.receipt", "payload": returned}))
         connection.sendall(sender.encrypt({"type": "action.result", "payload": result}))
         connection.sendall(sender.encrypt({"type": "action.receipt", "payload": verified}))
 
     def handle_connection(self, connection: socket.socket) -> None:
+        deadline = time.monotonic() + SESSION_TIMEOUT_SECONDS
+        connection.settimeout(SESSION_TIMEOUT_SECONDS)
         assert_peer_uid(connection)
         token = load_instance_token(self.token_path)
         key_version = self.auth_keys.active_version()
@@ -534,7 +544,7 @@ class ActionHostV2Server:
         )
         connection.sendall(encode_frame(challenge.to_dict(), maximum=MAX_HANDSHAKE_FRAME_BYTES))
         response = ClientResponseV2.from_dict(
-            decode_handshake_frame_v2(_read_frame(connection, MAX_HANDSHAKE_FRAME_BYTES))
+            decode_handshake_frame_v2(_read_frame(connection, MAX_HANDSHAKE_FRAME_BYTES, deadline))
         )
         session_id = str(uuid.uuid4())
         keys = SessionKeysV2.derive(
@@ -553,7 +563,7 @@ class ActionHostV2Server:
         receiver = keys.codec(DirectionV2.C2H)
         sender = keys.codec(DirectionV2.H2C)
         while True:
-            message = receiver.decrypt(_read_frame(connection, MAX_ENCRYPTED_FRAME_BYTES))
+            message = receiver.decrypt(_read_frame(connection, MAX_ENCRYPTED_FRAME_BYTES, deadline))
             if message["type"] == "action.execute":
                 self._execute(sender, connection, message["payload"])
                 return
@@ -586,14 +596,14 @@ class ActionHostV2Server:
                 self._send_error(sender, connection, payload, "host.receipt_unknown")
 
     def serve_forever(self, stop_event: threading.Event) -> None:
-        parent = self.socket_path.parent
-        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(parent, 0o700)
-        if self.socket_path.exists():
+        ensure_private_directory(self.socket_path.parent, create=True)
+        if self.socket_path.exists() or self.socket_path.is_symlink():
             raise ActionHostProtocolError("host.auth_failed")
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        owned = None
         try:
             listener.bind(os.fspath(self.socket_path))
+            owned = self.socket_path.lstat()
             os.chmod(self.socket_path, 0o600)
             listener.listen(8)
             listener.settimeout(0.25)
@@ -604,13 +614,15 @@ class ActionHostV2Server:
                     continue
                 try:
                     self.handle_connection(connection)
-                except (EOFError, OSError, ActionHostProtocolError):
+                except (EOFError, OSError, ActionHostProtocolError, OrchestratorError):
                     pass
                 finally:
                     connection.close()
         finally:
             listener.close()
             try:
-                self.socket_path.unlink()
+                current = self.socket_path.lstat()
+                if owned is not None and (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino):
+                    self.socket_path.unlink()
             except FileNotFoundError:
                 pass

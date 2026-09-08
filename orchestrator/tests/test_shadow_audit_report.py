@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import sqlite3
 import tempfile
 import unittest
 import uuid
@@ -16,7 +17,6 @@ from jarvis_orchestrator.anamnesis_shadow import (
     DeterministicFirstLifecycleWriter,
     DeterministicLifecycleGateV3,
     LifecycleDecision,
-    LifecycleOperation,
 )
 from jarvis_orchestrator.config import OrchestratorConfig
 from jarvis_orchestrator.domain import ModelChunk, ModelUsage, canonical_sha256
@@ -247,6 +247,44 @@ class ShadowAuditReportTests(unittest.TestCase):
             self.assertEqual(report["retrospective_memory_records"], 1)
             self.assertEqual(report["authority_violations"], 0)
             self.assertTrue(report["integrity_passed"])
+
+    def test_malformed_json_and_container_operations_reject_the_report_without_crashing(self) -> None:
+        for defect in ("duplicate", "deep", "operation", "surrogate", "nonfinite", "summary_type"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as directory:
+                path = self._database(directory)
+                connection = sqlite3.connect(path)
+                try:
+                    row = connection.execute(
+                        "SELECT event_sequence,payload_json FROM task_events "
+                        "WHERE event_type='memory.shadow.proposed' ORDER BY event_sequence LIMIT 1"
+                    ).fetchone()
+                    payload = json.loads(row[1])
+                    if defect == "duplicate":
+                        raw = row[1][:-1] + ', "status":"proposed"}'
+                    elif defect == "deep":
+                        raw = '{"value":' + '[' * 1500 + '0' + ']' * 1500 + '}'
+                    else:
+                        if defect == "operation":
+                            payload["proposal"]["operation"] = []
+                        elif defect == "summary_type":
+                            payload["proposal"]["summary"] = 1
+                        elif defect == "surrogate":
+                            payload["proposal"]["summary"] = "\ud800"
+                        else:
+                            payload["proposal"]["summary"] = float("nan")
+                        if defect != "surrogate":
+                            digest = canonical_sha256(payload["proposal"])
+                            payload["proposal_sha256"] = digest
+                            payload["provenance"]["proposal_sha256"] = digest
+                        raw = json.dumps(payload)
+                    connection.execute("UPDATE task_events SET payload_json=? WHERE event_sequence=?", (raw, row[0]))
+                    connection.commit()
+                finally:
+                    connection.close()
+                report = build_shadow_trial_report(path)
+                self.assertFalse(report["integrity_passed"])
+                self.assertGreaterEqual(report["invalid_rows"] + report["invalid_histories"], 1)
+                self.assertEqual(report["decision"], "shadow_trial_rejected")
 
     def test_missing_database_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

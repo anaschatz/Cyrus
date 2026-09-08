@@ -1,10 +1,8 @@
-"""Restricted RFC 8785 canonical JSON helpers for durable cloud artifacts.
+"""Frozen CYRUS canonical JSON profile for durable artifacts.
 
-M1C deliberately uses a JSON subset with ASCII object keys, NFC strings,
-integers, booleans, nulls, arrays and objects.  Monetary decimal values are
-represented as normalized strings.  Avoiding binary floating point makes the
-canonical bytes identical on Windows and macOS while remaining a strict JCS
-document for the values JARVIS persists and signs.
+The profile uses ASCII object keys, NFC strings and integer-only numbers.
+Its NFC normalization and full integer encoding are persisted-hash behavior,
+not a general RFC 8785 implementation. Monetary decimals remain strings.
 """
 
 from __future__ import annotations
@@ -46,14 +44,19 @@ def _normalize(value: Any) -> Any:
 
 
 def jcs_bytes(value: Any) -> bytes:
-    normalized = _normalize(value)
-    return json.dumps(
-        normalized,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
+    try:
+        normalized = _normalize(value)
+        return json.dumps(
+            normalized,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except CanonicalJsonError:
+        raise
+    except (ValueError, RecursionError) as exc:
+        raise CanonicalJsonError("canonical JSON value is invalid") from exc
 
 
 def jcs_text(value: Any) -> str:
@@ -61,7 +64,7 @@ def jcs_text(value: Any) -> str:
 
 
 def domain_sha256(schema_id: str, value: Any) -> str:
-    if not schema_id or not schema_id.isascii() or "\x00" in schema_id:
+    if not isinstance(schema_id, str) or not schema_id or not schema_id.isascii() or "\x00" in schema_id:
         raise CanonicalJsonError("schema_id must be non-empty ASCII without NUL")
     prefix = b"JARVIS\x00" + schema_id.encode("ascii") + b"\x00"
     return hashlib.sha256(prefix + jcs_bytes(value)).hexdigest()

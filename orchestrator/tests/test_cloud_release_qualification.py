@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 from _bootstrap import ROOT  # noqa: F401
@@ -19,6 +22,7 @@ from jarvis_orchestrator.cloud_qualification import (
     CLOUD_RELEASE_VERSION,
     CloudQualificationError,
     dedicated_key_sha256,
+    cloud_release_sha256,
     load_cloud_release_qualification,
     run_cloud_privacy_qualification,
 )
@@ -212,6 +216,90 @@ class CloudReleaseQualificationTests(unittest.TestCase):
             )
             self.assertFalse(valid.cloud_terra_enabled)
 
+
+
+    def test_release_reader_rejects_ambiguous_and_malformed_json(self):
+        selected = endpoint(DEEPSEEK_MODEL)
+        value = bundle((selected,))
+        digest = domain_sha256(CLOUD_RELEASE_VERSION, value)
+        valid = json.dumps(value)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "release.json"
+            path.write_text(valid)
+            self.assertEqual(cloud_release_sha256(path), digest)
+            invalid = (
+                valid[:-1] + ',"version":"' + CLOUD_RELEASE_VERSION + '"}',
+                '{"x":' + '[' * 1500 + '0' + ']' * 1500 + '}',
+                '{"x":NaN}', '{"x":1e500}', '{"x":"\\ud800"}',
+                '{"x":0.5}', '{}'+ ' ' * (1024 * 1024),
+            )
+            for raw in invalid:
+                path.write_text(raw)
+                for consumer in ("digest", "load"):
+                    with self.subTest(raw=raw[:24], consumer=consumer), self.assertRaises(CloudQualificationError):
+                        if consumer == "digest":
+                            cloud_release_sha256(path)
+                        else:
+                            load_cloud_release_qualification(path, expected_sha256=digest,
+                                registry=(selected,), bearer_token=TOKEN, terra_enabled=False, now=NOW)
+
+    def test_privacy_evidence_cannot_omit_known_language_cases(self):
+        selected = endpoint(DEEPSEEK_MODEL)
+        for field in ("english_case_count", "greek_case_count", "mixed_case_count"):
+            value = bundle((selected,))
+            value["privacy"][field] = 1
+            with self.subTest(field=field), self.assertRaisesRegex(CloudQualificationError, "cloud_privacy_evidence_invalid"):
+                self.load(value, (selected,))
+
+    def test_qualification_expiry_is_exclusive_and_time_extremes_are_typed(self):
+        selected = endpoint(DEEPSEEK_MODEL)
+        value = bundle((selected,))
+        value["valid_until"] = value["qualified_at"]
+        with self.assertRaises(CloudQualificationError):
+            self.load(value, (selected,))
+        value = bundle((selected,))
+        value["qualified_at"] = "0001-01-01T00:00:00Z"
+        value["valid_until"] = "0001-01-31T00:00:00Z"
+        value["key"]["observed_at"] = value["qualified_at"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "release.json"
+            path.write_text(json.dumps(value))
+            with self.assertRaises(CloudQualificationError):
+                load_cloud_release_qualification(path,
+                    expected_sha256=domain_sha256(CLOUD_RELEASE_VERSION, value), registry=(selected,),
+                    bearer_token=TOKEN, terra_enabled=False, now=datetime(1, 1, 1, tzinfo=UTC))
+
+    def test_endpoint_identity_is_not_coerced_to_strings(self):
+        for field in ("provider_endpoint_tag", "quantization", "qualification_version"):
+            selected = replace(endpoint(DEEPSEEK_MODEL), **{field: "42"})
+            value = bundle((selected,))
+            value["endpoint_evidence"][0][field] = 42
+            with self.subTest(field=field), self.assertRaisesRegex(CloudQualificationError, "cloud_endpoint_evidence_invalid"):
+                self.load(value, (selected,))
+
+    def test_release_fifo_is_rejected_without_waiting_for_a_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "release.json"
+            os.mkfifo(path, 0o600)
+            script = """import sys
+from pathlib import Path
+from jarvis_orchestrator.cloud_qualification import cloud_release_sha256, load_cloud_release_qualification, CloudQualificationError
+path = Path(sys.argv[1])
+for read in (lambda: cloud_release_sha256(path), lambda: load_cloud_release_qualification(path,
+    expected_sha256='a'*64, registry=(), bearer_token='fake', terra_enabled=False)):
+    try:
+        read()
+    except CloudQualificationError:
+        continue
+    sys.exit(1)
+"""
+            result = subprocess.run([sys.executable, "-c", script, str(path)], capture_output=True, timeout=2)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+    def test_dedicated_key_errors_have_the_declared_type(self):
+        for token in (True, 42, [], "\ud800"):
+            with self.subTest(token=repr(token)), self.assertRaises(CloudQualificationError):
+                dedicated_key_sha256(token)
 
 if __name__ == "__main__":
     unittest.main()

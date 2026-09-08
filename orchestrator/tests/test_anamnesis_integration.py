@@ -9,6 +9,7 @@ import unittest
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
+from unittest.mock import patch
 
 import _bootstrap  # noqa: F401
 from helpers import StoreCase
@@ -149,6 +150,15 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
                 "το ποδήλατό μου λέγεται Ίρις",
             ),
         }
+        cases.update({
+            "Remember thatched roofs are traditional.": ("remember", "thatched roofs are traditional"),
+            "Forget thatcher's address.": ("forget", "thatcher's address"),
+            "Να θυμάσαι οτιδήποτε σου ζήτησα.": ("remember", "οτιδήποτε σου ζήτησα"),
+        })
+        for ordinary in ("Remembering is useful.", "Forgetfulness matters.",
+                         "Please remembering is useful.", "Ξεχάσετε αυτά."):
+            with self.subTest(ordinary=ordinary):
+                self.assertIsNone(parse_explicit_memory_command(ordinary))
         for text, expected in cases.items():
             with self.subTest(text=text):
                 self.assertEqual(parse_explicit_memory_command(text), expected)
@@ -158,6 +168,22 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
                 "Do you remember that my bicycle is called Iris?"
             )
         )
+
+    def test_command_word_prefixes_do_not_write_or_delete_saved_memory(self) -> None:
+        store, _ = prepared_memory_store(self)
+        model = CapturingModel()
+        service = OrchestratorService(
+            config(store.path), store, BudgetedModelPort(store, model),
+            active_memory=AnamnesisMemoryAdapter(store),
+        )
+        initial = admit(store, "Remember that fulness matters.")
+        self.assertEqual(asyncio.run(service.execute_task(initial.task_id)).state, TaskState.COMPLETED)
+        for text in ("Remembering is useful.", "Forgetfulness matters."):
+            task = admit(store, text)
+            self.assertEqual(asyncio.run(service.execute_task(task.task_id)).state, TaskState.COMPLETED)
+            self.assertIsNone(store.memory_command_audit(task.task_id))
+            self.assertEqual(store.memory_record_count(task.conversation_id), 1)
+        self.assertEqual(len(model.requests), 2)
 
     def test_schema_v1_is_migrated_atomically_to_current_schema_v10(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -200,6 +226,11 @@ class AnamnesisIntegrationTests(StoreCase, unittest.TestCase):
         )
         self.assertFalse(adapter.qualification["authoritative"])
         self.assertFalse(adapter.qualification["network"])
+        contract = dict(adapter.qualification["contract"])
+        contract["reducer_version"] = "anamnesis.reducer.v0.2.0"
+        with patch("anamnesis.runtime_contract.anamnesis_runtime_contract", return_value=contract):
+            with self.assertRaisesRegex(RuntimeError, "runtime contract is not qualified"):
+                AnamnesisMemoryAdapter(store)
 
     def test_completed_explicit_fact_is_recalled_via_memory_local(self) -> None:
         store, _ = prepared_memory_store(self)

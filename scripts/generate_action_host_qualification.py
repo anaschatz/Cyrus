@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import os
 import re
 import sys
@@ -18,6 +17,7 @@ from jarvis_orchestrator.action_host_daemon import ActionHostDaemonConfig
 from jarvis_orchestrator.action_host_qualification import (
     build_native_qualification,
     current_macos_build,
+    read_native_evidence_bytes,
 )
 from jarvis_orchestrator.macos_action_adapters import (
     MacOSActionAdapterConfig,
@@ -26,6 +26,7 @@ from jarvis_orchestrator.macos_action_adapters import (
 from jarvis_orchestrator.scheduler_crypto import platform_key_provider
 from jarvis_orchestrator.tool_contracts import ToolRegistryV1
 from jarvis_orchestrator.jcs import jcs_bytes
+from jarvis_orchestrator.config import _parse_strict_json
 
 
 def utc_text(value: datetime) -> str:
@@ -33,31 +34,10 @@ def utc_text(value: datetime) -> str:
 
 
 def load_test_manifest(path: Path, expected_sha256: str, tool_ids: tuple[str, ...]) -> str:
-    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+    if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
         raise ValueError("test manifest digest is invalid")
-    raw = path.read_bytes()
-    if not raw or len(raw) > 64 * 1024:
-        raise ValueError("test manifest size is invalid")
-    text = raw.decode("utf-8", errors="strict")
-    if text.startswith("\ufeff"):
-        raise ValueError("test manifest BOM is forbidden")
-
-    def unique_pairs(items: list[tuple[str, object]]) -> dict[str, object]:
-        result: dict[str, object] = {}
-        for key, item in items:
-            if key in result:
-                raise ValueError("test manifest has a duplicate key")
-            result[key] = item
-        return result
-
-    value = json.loads(
-        text,
-        object_pairs_hook=unique_pairs,
-        parse_constant=lambda _: (_ for _ in ()).throw(
-            ValueError("test manifest has a non-finite number")
-        ),
-    )
-    if set(value) != {"contract", "baseline_commit", "completed_at_utc", "results"}:
+    value = _parse_strict_json(read_native_evidence_bytes(path))
+    if not isinstance(value, dict) or set(value) != {"contract", "baseline_commit", "completed_at_utc", "results"}:
         raise ValueError("test manifest is not closed")
     if value["contract"] != "jarvis.action-host-native-tests/1":
         raise ValueError("test manifest contract is invalid")
@@ -76,7 +56,7 @@ def load_test_manifest(path: Path, expected_sha256: str, tool_ids: tuple[str, ..
     for result in results:
         if not isinstance(result, dict) or set(result) != {"tool_id", "status", "evidence_sha256"}:
             raise ValueError("test result is not closed")
-        if result["status"] != "PASS" or not re.fullmatch(r"[0-9a-f]{64}", result["evidence_sha256"]):
+        if result["status"] != "PASS" or not isinstance(result["evidence_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", result["evidence_sha256"]):
             raise ValueError("native tool test did not pass")
         observed.append(result["tool_id"])
     if tuple(observed) != tool_ids:
@@ -88,13 +68,13 @@ def load_test_manifest(path: Path, expected_sha256: str, tool_ids: tuple[str, ..
 
 
 def write_atomic(path: Path, value: dict[str, object]) -> None:
+    payload = jcs_bytes(value)
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
-            json.dump(value, target, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            target.write("\n")
+        with os.fdopen(descriptor, "wb") as target:
+            os.fchmod(target.fileno(), 0o600)
+            target.write(payload)
             target.flush()
             os.fsync(target.fileno())
         os.replace(temporary, path)
