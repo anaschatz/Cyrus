@@ -84,10 +84,11 @@ duplicated or mixed speech.
 ## Runtime and cancellation contract
 
 The model is loaded once on a bounded worker thread. PCM chunks are validated,
-converted to signed 16-bit mono and written to a low-latency `sounddevice`
-stream as they arrive. `on_started` is emitted only immediately before the
-first playable chunk. `on_completed` is emitted only after generation ends and
-the output stream drains.
+converted to signed 16-bit mono and played through native AudioQueue on macOS
+or `sounddevice` on Windows. Playback prebuffers three chunks, or the complete
+output when it is shorter. `on_started` follows submission of that initial
+buffer; it is a software callback, not an acoustic timestamp. `on_completed`
+is emitted only after generation ends and the output stream drains.
 
 PTT cancellation fences queued units, marks the current generator stale and
 aborts the native output stream immediately. Pocket TTS may finish computation
@@ -103,10 +104,16 @@ above produced 2.800–3.040 seconds of audio with:
 - 76.8–93.9 ms first generated PCM chunk;
 - 4.42–6.84 times realtime synthesis;
 - 910.5–910.7 MiB process peak RSS;
-- zero network access (`HF_HUB_OFFLINE=1`).
+- model-hub offline mode (`HF_HUB_OFFLINE=1`); this flag alone does not prove
+  process-wide network isolation.
 
-This is candidate evidence, not beta or production qualification. The frozen
-technical Mac beta continues to require `system_say`. Promotion requires at
+The current technical Mac beta permits either `system_say` or `pocket_tts`
+when its profile and preflight checks pass. The retained
+[M3 pilot report](pocket-tts-m3-qualification.json) records later native
+AudioQueue work and limited owner acceptance, but its measured acoustic
+PTT-to-silence latency of 316.958 ms exceeds the 200 ms production limit.
+That historical report is not fresh qualification of rebuilt code. Production
+promotion still requires at
 least 100 warm English cases, p95 first audio no greater than 600 ms, p5 speed
 at least 2 times realtime, physical PTT-to-silence below 200 ms, exact LLM/ASR
 coexistence measurements, restart recovery and an 8-hour soak with zero crash,

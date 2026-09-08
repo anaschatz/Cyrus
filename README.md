@@ -169,9 +169,10 @@ The optional English Pocket TTS adapter is CPU-only, streams validated local
 PCM and keeps the platform system voice as its fail-safe. Runtime downloads and
 model-name fallbacks are forbidden: the model, tokenizer and public `george`
 voice state must be absolute and SHA-256-bound. Two offline M3 source smokes
-reached their first chunk in 76.8–93.9 ms and 4.42–6.84x realtime, but the
-frozen technical beta remains on `system_say` until physical cancellation,
-coexistence and soak qualification pass. See
+reached their first chunk in 76.8–93.9 ms and 4.42–6.84x realtime. The bounded
+technical beta permits either `system_say` or the validated Pocket profile;
+the retained Pocket acoustic result exceeds the production limit, and fresh
+cancellation, coexistence and soak qualification remains required. See
 [Pocket TTS English candidate](docs/pocket-tts-candidate.md).
 
 ## Native release qualification

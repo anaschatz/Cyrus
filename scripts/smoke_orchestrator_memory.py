@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import sqlite3
 import unicodedata
 import uuid
@@ -70,6 +71,8 @@ def _task_evidence(database: Path, turn_id: str) -> dict[str, object]:
 
 
 async def _run(args: argparse.Namespace) -> dict[str, object]:
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        raise ValueError("timeout must be positive and finite")
     from websockets.asyncio.client import connect
 
     text = REMEMBER_TEXT if args.phase == "remember" else RECALL_TEXT
@@ -81,6 +84,7 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
     accepted = False
     response_id: str | None = None
     terminal: str | None = None
+    received_events = 0
     auth_key = load_voice_auth_key(args.voice_auth_key)
 
     async with asyncio.timeout(args.timeout):
@@ -108,8 +112,8 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
             )
             await authenticate_async_client(websocket, auth_key, hello.to_json())
             ready = Envelope.from_json(await websocket.recv())
-            if ready.type != "server.ready":
-                raise RuntimeError("server.ready was not first")
+            if ready.type != "server.ready" or ready.session_id != factory.session_id:
+                raise RuntimeError("server.ready was invalid")
             transcript = factory.create(
                 "input.transcript.final",
                 {
@@ -128,17 +132,27 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
             await websocket.send(transcript.to_json())
             while terminal is None:
                 event = Envelope.from_json(await websocket.recv())
-                if event.type == "server.ack":
-                    if event.payload["acked_event_id"] == transcript_event_id:
-                        accepted = event.payload["status"] == "accepted"
-                    continue
+                received_events += 1
+                if received_events > 4096:
+                    raise RuntimeError("wire replay exceeded the smoke bound")
+                if event.session_id != factory.session_id:
+                    raise RuntimeError("server event session was invalid")
                 if event.turn_id != turn_id:
                     continue
+                if event.type == "server.ack":
+                    if event.payload["acked_event_id"] != transcript_event_id:
+                        continue
+                    if event.payload["status"] != "accepted" or event.response_id is None or response_id is not None:
+                        raise RuntimeError("transcript ACK was invalid")
+                    accepted = True
+                    response_id = event.response_id
+                    continue
+                if response_id is None or event.response_id != response_id:
+                    raise RuntimeError("response did not match the transcript ACK")
                 event_types.append(event.type)
-                response_id = event.response_id or response_id
                 if event.type == "response.text.delta":
                     assistant_chunks.append(str(event.payload["text"]))
-                elif event.type in {"response.speech.done", "response.cancelled"}:
+                elif event.type in {"response.speech.done", "response.cancelled", "server.error"}:
                     terminal = event.type
 
     evidence = _task_evidence(args.database, turn_id)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import sqlite3
 import unicodedata
 import uuid
@@ -67,6 +68,8 @@ def _durable_evidence(database: Path, turn_id: str) -> dict[str, object]:
 
 
 async def _run(args: argparse.Namespace) -> dict[str, object]:
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        raise ValueError("timeout must be positive and finite")
     from websockets.asyncio.client import connect
 
     turn_id = str(uuid.uuid4())
@@ -100,41 +103,45 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
             )
             await authenticate_async_client(websocket, auth_key, hello.to_json())
             ready = Envelope.from_json(await websocket.recv())
-            if ready.type != "server.ready" or ready.payload != {"protocol": "jarvis.voice/1"}:
+            if ready.type != "server.ready" or ready.session_id != factory.session_id:
                 raise RuntimeError("server.ready was invalid")
-            await websocket.send(
-                factory.create(
-                    "input.transcript.final",
-                    {
-                        "text": FIXED_TRANSCRIPT,
-                        "language": {"code": "el", "score": 1.0},
-                        "asr_score": {
-                            "value": 1.0,
-                            "method": "synthetic_text_smoke",
-                            "raw_avg_logprob": 0.0,
-                            "calibrated": False,
-                        },
+            transcript = factory.create(
+                "input.transcript.final",
+                {
+                    "text": FIXED_TRANSCRIPT,
+                    "language": {"code": "el", "score": 1.0},
+                    "asr_score": {
+                        "value": 1.0,
+                        "method": "synthetic_text_smoke",
+                        "raw_avg_logprob": 0.0,
+                        "calibrated": False,
                     },
-                    turn_id=turn_id,
-                ).to_json()
+                },
+                turn_id=turn_id,
             )
+            await websocket.send(transcript.to_json())
             while terminal is None:
                 event = Envelope.from_json(await websocket.recv())
                 received_events += 1
                 if received_events > 4096:
                     raise RuntimeError("wire replay exceeded the smoke bound")
-                belongs_to_turn = event.turn_id == turn_id
-                belongs_to_response = response_id is not None and event.response_id == response_id
-                if not belongs_to_turn and not belongs_to_response:
+                if event.session_id != factory.session_id:
+                    raise RuntimeError("server event session was invalid")
+                if event.turn_id != turn_id:
                     continue
-                if event.type == "response.started":
-                    if event.response_id is None:
-                        raise RuntimeError("response.started had no response_id")
-                    response_id = event.response_id
-                event_types.append(event.type)
                 if event.type == "server.ack":
-                    accepted = event.payload["status"] == "accepted"
-                elif event.type == "response.text.delta":
+                    if event.payload["acked_event_id"] != transcript.event_id:
+                        continue
+                    if event.payload["status"] != "accepted" or event.response_id is None or response_id is not None:
+                        raise RuntimeError("transcript ACK was invalid")
+                    accepted = True
+                    response_id = event.response_id
+                    event_types.append(event.type)
+                    continue
+                if response_id is None or event.response_id != response_id:
+                    raise RuntimeError("response did not match the transcript ACK")
+                event_types.append(event.type)
+                if event.type == "response.text.delta":
                     assistant_chunks.append(str(event.payload["text"]))
                 elif event.type in {"response.speech.done", "response.cancelled", "server.error"}:
                     terminal = event.type
@@ -157,7 +164,7 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
             and durable["task_state"] == "COMPLETED"
             and durable["turn_status"] == "COMPLETED"
             and durable["usage_reconciled"] is True
-            and "έτοιμο" in normalized_answer
+            and normalized_answer.strip() == "έτοιμο"
         ),
         "accepted_ack": accepted,
         "terminal": terminal,
