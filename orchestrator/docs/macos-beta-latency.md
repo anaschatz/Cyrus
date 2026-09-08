@@ -15,7 +15,8 @@ The warm-up:
 - requests at most 16 tokens with deterministic sampling;
 - uses the same selected production system prompt as real final responses so
   the first production prompt shape does not trigger a cold prefill;
-- accepts only a complete SSE stream whose final text is exactly `ready`;
+- accepts only a complete SSE stream whose final text, after trimming whitespace
+  and case-folding, is `ready`;
 - bounds each line, the complete response and generated UTF-8 output;
 - has a ten-second deadline and never logs or persists generated content;
 - fails beta startup closed with `inference_warmup_failed` on any transport,

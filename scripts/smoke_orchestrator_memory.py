@@ -35,7 +35,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _task_evidence(database: Path, turn_id: str) -> dict[str, object]:
-    connection = sqlite3.connect(database)
+    connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
     try:
         task = connection.execute(

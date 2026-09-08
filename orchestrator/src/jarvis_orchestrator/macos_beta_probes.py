@@ -18,7 +18,7 @@ def inference_warmup(
     _stack: PrivateStackConfig,
     config: OrchestratorConfig,
 ) -> bool:
-    """Pay the one-time local generation cost before Voice becomes ready."""
+    """Warm local generation after Voice startup, before stack admission."""
 
     try:
         parsed = urllib.parse.urlparse(config.inference_base_url)

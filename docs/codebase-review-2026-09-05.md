@@ -1,8 +1,8 @@
 # CYRUS codebase review — 2026-09-05
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **346 of 348 test files** and **99 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **349 of 349 test files** and **105 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
 
-Updated **2026-09-08**. Latest complete runs: Voice **892 tests (877 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **274 unit tests (266 passed, 8 skipped)** plus **2 official SDK tests passed**. Anamnesis **900 tests (898 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+Updated **2026-09-08**. Latest complete runs: Voice **894 tests (879 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **274 unit tests (266 passed, 8 skipped)** plus **2 official SDK tests passed**. Anamnesis **900 tests (898 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
 
 ## Scope and evidence
 
@@ -2922,3 +2922,12 @@ Operations checkpoint review follow-up: the active hook completed but returned t
 
 
 The compact-context Ponytail rerun explicitly reviewed **all 39 file diffs** (`/tmp/cyrus-orchestrator-operations-complete-review.log`). Its remaining findings were addressed by aliasing the stack readiness function directly and removing the obsolete subprocess mock from the kernel process-identity regression. The first alias cleanup passed 50 focused tests; the combined final cleanup is recorded in `/tmp/cyrus-orchestrator-operations-final-cleanup-tests.log`. Scoped Ruff fatal/unused-import checks passed. The amendment retains active hooks to review its exact final delta. No new source behavior, qualification claim or dependency is introduced by these simplifications.
+
+
+### Smoke evidence read-only checkpoint — 2026-09-08
+
+Both root Orchestrator smoke scripts opened their evidence database with SQLite's default create/write mode. A mistyped or missing database path created an empty file before the subsequent query failed. Each reader now uses the standard SQLite `mode=ro` URI with `Path.as_uri()` escaping. Two new regression methods exercise both actual readers: missing paths raise without creating a database, while an existing path containing `#` and `?` still returns completion/memory/reservation evidence with unchanged database bytes. The missing-path subtests failed against both old readers and pass after the two-line fix. Logs: `/tmp/cyrus-smoke-readonly-before.log`, `/tmp/cyrus-smoke-readonly-after.log`. Full Voice passed **894 tests (879 passed, 15 skipped)** in 11.220 seconds (`/tmp/cyrus-smoke-readonly-full-voice.log`); scoped fatal/unused-import Ruff checks pass. This fixes database creation only; the earlier smoke ACK/response, timeout, event-count and semantic-evidence follow-ups remain open.
+
+Completed inspection of six operator configuration/runbook files. The Voice templates load through the actual config parser and both cloud evidence templates parse strictly; missing credentials/artifacts and invalid qualification placeholders remain intentionally inadmissible. Example model/rate declarations were not externally verified as current catalog/pricing. Corrected the warmup runbook and probe docstring to match the existing case-folded/trimmed `ready` check and post-Voice-startup, pre-admission order; runtime behavior is unchanged.
+
+Completed the final two test-file inspections, writer diagnostic v3/v4. Their frozen-data, causal-grounding, author-field isolation, candidate-key and real-store oracle-replay checks pass: **19 focused tests** in 0.32 seconds. They provide development-only deterministic ceilings, not live writer qualification or independent substantiation of historical reviewer metadata. Coverage is now **401/401 code, 349/349 tests, 105/308 support; 855/1058 entries**. All production and test files have been inspected; **203 support files**, open findings and the final quality assessment remain pending. Exact staged Ponytail review and active hooks apply; no push is requested.
