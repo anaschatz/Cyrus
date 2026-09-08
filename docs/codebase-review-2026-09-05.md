@@ -1,18 +1,62 @@
-# CYRUS codebase review — 2026-09-05
+# CYRUS codebase review — completed 2026-09-08
 
-Status: **IN PROGRESS**. This document is not a completed whole-codebase assessment. Current source inspection covers **401 of 401 code files**, plus **349 of 349 test files** and **308 of 308 support files**. These are file counts, not a percentage of behavioral coverage.
+**Source inspection complete: 1058/1058 inventoried files. Overall code quality after the fixes: 6.5/10.** This is an engineering judgment, not a benchmark score or a guarantee of bug freedom. The project has substantial correctness and regression work, but remains a large, complex development codebase with incomplete native and optional-feature qualification.
 
-Updated **2026-09-08**. Latest complete runs: Voice **898 tests (883 passed, 15 skipped)**; Orchestrator **1113 tests (1108 passed, 5 skipped)**; Inference **274 unit tests (266 passed, 8 skipped)** plus **2 official SDK tests passed**. Anamnesis **900 tests (898 passed, 2 expected failures)**. Other subsystem results below are historical; whole-repository verification and the final quality assessment remain pending.
+## Final assessment
 
-## Scope and evidence
+| Area | Assessment |
+| --- | --- |
+| Correctness | Much stronger after the fixes below. Boundary validation, ownership, cancellation, replay and evidence accounting have meaningful regressions. Native concurrency and live integrations still require qualification. |
+| Tests | Strong portable coverage: real temporary databases, subprocesses, threads, fault injection and before/after reproductions, alongside mocks and some source-string assertions. Passing tests do not imply exhaustive behavioral coverage. |
+| Maintainability | The main weakness. There are 401 code files and about 150,000 code lines. `orchestrator/.../store.py` alone has 8,563 lines; several runtime, training and evidence modules exceed 2,000. Changes often cross several lifecycle and authority layers. |
+| Simplicity | The review removed redundant wrappers, repeated hashing/serialization and unnecessary required dependencies, reusing existing helpers and the standard library. Versioned historical experiment code is deliberate provenance debt; it cannot safely be deleted as ordinary duplicate code. |
+| Reproducibility | Exact pins, manifests and fail-closed qualification checks are useful. Several historical raw artifacts are local-only and referenced source revisions are unavailable; current code cannot reproduce every frozen result. |
+| Production readiness | **Not established by this review.** Physical audio/input, signed native helpers, Windows/GPU execution, complete model/service integration and long-running qualification remain separate gates. |
 
-Baseline commit: `1551d7710d96f7321aeaa9dd3eecfdf5d473cb8e` plus the existing local fixes from this task. The initial Git inventory contains 970 tracked files. The review covers runtime Python, Swift/native helpers, build and operator scripts, tests, configuration, dependencies and release documentation. Installed environments, generated model artifacts and personal runtime state are outside the source review. Existing untracked Finder duplicate files are preserved and are not treated as shipped code; packaging exclusion remains part of the review.
+The score reflects good defensive engineering and extensive tests, offset by large modules, duplicated version-specific evaluation machinery, a long history of boundary defects, and incomplete end-to-end evidence. It is reasonable to continue development on this base. It is not reasonable to infer general production readiness merely from the portable test count.
 
-[Per-file coverage](codebase-review-coverage.csv) records inspection status and the exact reviewed content hash. `pending` means review is unfinished. Static checks and test execution alone do not mark a file as manually reviewed. The final assessment will distinguish source inspection from hardware/live-service verification.
+## Scope and validation
 
-The work includes correctness review, reproducible bug fixes, regression checks, and a Ponytail review of unnecessary complexity. Existing hash-frozen inference experiment/scorer artifacts must remain unchanged. On 2026-09-06 the user requested a commit after every completed checkpoint. Each commit must follow review of the exact staged diff with Ponytail and the repository hooks. Push is not requested.
+The [per-file coverage ledger](codebase-review-coverage.csv) contains **401/401 code, 349/349 test and 308/308 support files**, each with an exact reviewed SHA-256. All 1058 hashes were reconciled at completion. Audit bookkeeping itself, installed environments, generated model/audio artifacts, personal state and untracked Finder duplicate files are excluded from the source inventory. The source baseline is `1551d7710d96f7321aeaa9dd3eecfdf5d473cb8e`; the checkpoint history below records the subsequent fixes.
 
-Checkpoint commit status (2026-09-07): **Git recovered; checkpoint commits in progress**. The unavailable iCloud pack was preserved. A temporary GitHub clone matched local HEAD exactly (`1551d7710d96f7321aeaa9dd3eecfdf5d473cb8e`). All 279 objects named by its resident index were verified by raw Git SHA-1; 189 existing loose objects were retained and 90 missing ones restored. After verifying every loose object, the unavailable pack's index was moved to `.git/cyrus-object-recovery-20260907/`, with a recovery receipt, so Git no longer attempts to read the dataless pack. Status and diff now succeed. Working files and refs were preserved. The earlier blocked-checkpoint notes below describe historical attempts. Exact staged Ponytail review and active hooks remain required for each commit; no push is requested.
+| Suite | Latest complete checkpoint result |
+| --- | --- |
+| Voice | 898 tests: **883 passed, 15 skipped**; rerun after the final recall-smoke fix, 11.251 s |
+| Orchestrator | 1113 tests: **1108 passed, 5 skipped** |
+| Anamnesis | 900 tests: **898 passed, 2 expected failures** |
+| Inference | 274 unit tests: **266 passed, 8 skipped**, plus **2 official SDK tests passed** |
+| Research | **90 passed** |
+
+These are checkpoint runs, not one simultaneous hardware qualification. The final support checks additionally passed 92 writer, 41 translation/shadow and 98 TTS tests. The three uv locks pass `uv lock --check --offline --no-python-downloads`; generated lock metadata and hash syntax were checked without downloading, installing or upgrading dependencies. A third-party vulnerability scan and verification of actual wheel/model contents were not performed.
+
+## What was fixed
+
+- Protocol and input boundaries: malformed/deep JSON, wrong scalar types, non-ASCII authentication, inconsistent identifiers and unsafe output/file aliases.
+- Runtime ownership: startup and shutdown failures, stale responses/audio, cancelled workers, failed native resource setup and cleanup paths.
+- Memory and scheduler behavior: typed partial updates and provenance, recurrence boundaries, exact time arithmetic, replay/idempotency, expiry and notification binding.
+- Research and inference: robots path/redirect enforcement, decompression and deadlines, HTML extraction, evidence integrity, installed environment identity and qualification admission.
+- Packaging and diagnostics: missing unittest discovery, the CPU wheelhouse's undeclared Kokoro requirement, read-only smoke database access, ACK/session/response correlation, and premature rounding that could falsely pass an RTF limit.
+- Documentation: corrected action/provenance accounting, availability of historical raw runs, sequential report publication and obsolete experiment instructions.
+
+The final concrete regression was the memory smoke accepting **“Δεν είναι μπλε.”** because it contained “μπλε”. The smoke now requests one Greek color word and requires exact NFC-normalized, case-folded, trimmed equality. The negative-answer test failed before the fix; all six smoke checks and the complete Voice suite pass afterward. Logs: `/tmp/cyrus-smoke-final-before.log`, `/tmp/cyrus-smoke-final-after.log`, `/tmp/cyrus-review-final-voice.log`. No production model behavior or dependency changed in that final fix.
+
+## Remaining findings and their disposition
+
+These are retained limitations and follow-up work, not silently closed findings:
+
+1. **Scheduler compiler identity — release blocker.** Declared compiler/model/runtime/profile/tokenizer hashes are not individually verified against the executing inference process; the identity endpoint currently exposes aggregate identities. A self-consistent qualification document does not prove the missing mapping. Completing this needs an explicit runtime identity contract and fresh qualification, not invented hashes in this review.
+2. **Cloud privacy U05 — coverage limitation.** Tested Greek credential/inflection failures were fixed, but the finite classifier still defaults unmatched text to PUBLIC. It is not comprehensive sensitive-data detection. No cloud activation or external request was performed; a broader privacy policy and independent evaluation remain necessary before making that claim.
+3. **Legacy action recovery U01 — intentionally fail-closed.** Historical pending journal rows lacking their original replay timestamp cannot be reconstructed safely. They remain pending and require explicit recovery; the review did not fabricate identity, delete decisions or automatically execute old actions. Current recorded-action replay regressions pass. U02, U03 and U04 were fixed in their current contracts; their native qualification requirements remain.
+4. **Frozen evaluation quality and availability — preserved historical evidence.** I44's lexical scorer can accept wrong meaning/order. Writer v2's known label defects were corrected in v3, not rewritten. W2 replay on the current engine rejects three formerly accepted immediate/past triggers, and the original source commit is absent. Corrected rubrics require new versions and fresh measurements. Retained scores are not current-engine or general semantic-quality evidence.
+5. **Durability and resource hardening — outstanding engineering debt.** Report inputs can be reread across validation and CSV/Markdown/provenance publication remains sequential. Several long-lived protocol histories/journals and crash-recovery paths still need bounded-retention and failure-atomicity work. The detailed checkpoint notes identify these separately; file inspection did not prove every race or persistence scenario safe.
+6. **Smoke evidence — deliberately narrow.** The memory remember phase counts retained conversation records, so it does not independently prove this turn created a new record. Deduplication can legitimately preserve an existing record. Durable-read timing, complete protocol ordering and generic CLI failure redaction remain follow-ups. The exact-answer fix closes only its reproduced false acceptance.
+7. **Native/model qualification — not executed here.** Checked-in rejected TTS/research/inference runs remain rejected. Human voice approval alone does not satisfy RTF, scheduler, acoustic, coexistence or soak gates. No Windows physical run, new model training, provider experiment, deployment or release was performed.
+
+The practical next work is to close the release blockers and measure the actual target runtime, then simplify the modules repeatedly involved in changes. Splitting every large file or rewriting frozen evaluators as part of this bug review would add risk without establishing those missing behaviors. No blanket claim that all bugs are gone is made.
+
+## Checkpoint history
+
+The remainder is the chronological evidence journal. Its older “pending”, “open” and coverage counts describe the state at that checkpoint; the completed inventory and final dispositions above supersede those status statements. Every checkpoint commit used the repository's Ponytail review and active hooks, with findings addressed. No push was requested or performed.
 
 ## Confirmed findings from earlier focused passes
 

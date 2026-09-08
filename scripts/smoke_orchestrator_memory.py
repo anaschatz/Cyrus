@@ -22,7 +22,7 @@ from jarvis_voice.voice_auth_transport import authenticate_async_client
 
 
 REMEMBER_TEXT = "Να θυμάσαι ότι το αγαπημένο μου χρώμα είναι μπλε."
-RECALL_TEXT = "Ποιο είναι το αγαπημένο μου χρώμα;"
+RECALL_TEXT = "Ποιο είναι το αγαπημένο μου χρώμα; Απάντησε μόνο με την ελληνική λέξη του χρώματος, χωρίς στίξη."
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -156,7 +156,7 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
                     terminal = event.type
 
     evidence = _task_evidence(args.database, turn_id)
-    answer = unicodedata.normalize("NFC", "".join(assistant_chunks)).casefold()
+    answer = unicodedata.normalize("NFC", "".join(assistant_chunks)).casefold().strip()
     result = {
         "phase": args.phase,
         "accepted_ack": accepted,
@@ -165,7 +165,7 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
         "memory_record_count": evidence["memory_record_count"],
         "recall_event": evidence["recall_event"],
         "recall_result_count": evidence["recall_result_count"],
-        "expected_fact_present": "μπλε" in answer if args.phase == "recall" else None,
+        "expected_fact_present": answer == "μπλε" if args.phase == "recall" else None,
         "wire_event_count": len(event_types),
         "has_response_id": response_id is not None,
     }

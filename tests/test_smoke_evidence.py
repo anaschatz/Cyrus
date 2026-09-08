@@ -83,7 +83,7 @@ class SmokeProtocolTests(unittest.IsolatedAsyncioTestCase):
             response_id = new_uuid4()
             answer = "μπλε" if module.__name__.endswith("memory") else "έτοιμο"
             if fault == "wrong_answer":
-                answer = "Δεν είναι έτοιμο."
+                answer = f"Δεν είναι {answer}."
             frames = [server.create(kind, payload, turn_id=transcript.turn_id,
                                     response_id=response_id) for kind, payload in (
                 ("server.ack", {"acked_event_id": transcript.event_id, "status": "accepted"}),
@@ -146,11 +146,10 @@ class SmokeProtocolTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(script=name), self.assertRaisesRegex(RuntimeError, "wire replay exceeded"):
                 await self.run_smoke(module, function, "replay_limit")
 
-    async def test_text_smoke_requires_requested_word_only(self):
+    async def test_smoke_requires_requested_word_only(self):
         for name, module, function in smoke_modules():
-            if name.endswith("text"):
-                with self.assertRaises(RuntimeError):
-                    await self.run_smoke(module, function, "wrong_answer")
+            with self.subTest(script=name), self.assertRaises(RuntimeError):
+                await self.run_smoke(module, function, "wrong_answer")
 
     async def test_invalid_timeout_fails_before_io(self):
         for name, module, _function in smoke_modules():
