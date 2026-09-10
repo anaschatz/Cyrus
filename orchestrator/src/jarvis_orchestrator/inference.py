@@ -144,3 +144,13 @@ class InferenceControlClient:
                 "service_unavailable", status=503, retryable=True
             )
         return InferenceRuntimeIdentity(manifest_digest, runtime_digest)
+
+    def compiler_identity(self) -> dict[str, object]:
+        value = self._get("/jarvis/v1/compiler-identity", authenticated=True)
+        fields = {"model_artifact_sha256", "model_profile_sha256", "runtime_sha256", "tokenizer_sha256"}
+        if (set(value) != fields | {"schema_version"}
+                or value.get("schema_version") != "jarvis-inference-compiler-identity/1"
+                or any(not isinstance(value[name], str) or not re.fullmatch(r"[0-9a-f]{64}", value[name])
+                       for name in fields)):
+            raise OrchestratorError("service_unavailable", status=503, retryable=True)
+        return value

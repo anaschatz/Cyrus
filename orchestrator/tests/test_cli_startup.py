@@ -69,6 +69,55 @@ class _ReadOnlyMemoryProvider:
 
 
 class CliStartupTests(unittest.TestCase):
+    def test_scheduler_startup_requires_live_identity_without_blocking_async_composition(self):
+        import httpx
+        from test_schedule_compiler import qualification_document
+        from jarvis_orchestrator.schedule_compiler import CompilerQualification
+
+        document = qualification_document()
+        config = OrchestratorConfig.from_test_mapping({
+            "database_path": "/unused/state.sqlite3",
+            "control_bearer_token": "control-private",
+            "inference_bearer_token": "inference-private",
+            "scheduler_compiler_qualification_file": "/unused/qualification.json",
+            "scheduler_compiler_qualification_sha256": "a" * 64,
+        })
+        live = {
+            "schema_version": "jarvis-inference-compiler-identity/1",
+            **{name: document["qualification_inputs"][name] for name in (
+                "model_artifact_sha256", "model_profile_sha256", "runtime_sha256", "tokenizer_sha256"
+            )},
+        }
+        client_type = httpx.AsyncClient
+        for matches in (True, False):
+            captured = {}
+
+            def observe(*args, **kwargs):
+                captured.update(kwargs)
+                raise _CompositionObserved
+
+            with (
+                patch("jarvis_orchestrator.cli.platform_key_provider"),
+                patch("jarvis_orchestrator.cli.SchedulerStore"),
+                patch("jarvis_orchestrator.cli.load_compiler_qualification", return_value=CompilerQualification(
+                    document["qualification_sha256"], document,
+                )),
+                patch("jarvis_orchestrator.cli.OrchestratorService", side_effect=observe),
+                patch("httpx.AsyncClient", side_effect=lambda **kwargs: client_type(
+                    transport=httpx.MockTransport(lambda request: httpx.Response(
+                        200, json=live if matches else {**live, "tokenizer_sha256": "b" * 64},
+                    )), **kwargs,
+                )),
+                self.subTest(matches=matches),
+                self.assertRaises(_CompositionObserved),
+            ):
+                asyncio.run(_run_servers(
+                    config, object(), model=object(), inference_control=object(),
+                    shadow_memory=None, active_memory=None, research_adapter=None,
+                    cloud_adapter=None, cloud_endpoints=(), voice_auth_key=VoiceAuthKey(1, b"k" * 32),
+                ))
+            self.assertEqual(captured["schedule_compiler"] is not None, matches)
+
     def test_operations_diagnostics_is_explicitly_database_only(self) -> None:
         config = OrchestratorConfig.from_test_mapping(
             {

@@ -877,17 +877,19 @@ class SchedulerV5Tests(unittest.TestCase):
             return httpx.Response(200, json={"choices": [{
                 "index": 0, "message": {"role": "assistant", "content": json.dumps(model_output)},
                 "finish_reason": "stop",
-            }]})
+            }]}, headers={"X-Jarvis-Compiler-Identity": request.headers["X-Jarvis-Compiler-Identity"]})
 
         def client(**kwargs):
             calls.append({"client": kwargs})
             return client_type(transport=httpx.MockTransport(response), **kwargs)
 
+        from test_schedule_compiler import qualification_document
+        document = qualification_document()
         compiler = LocalScheduleCompiler(
             base_url="http://127.0.0.1:8765/v1",
             bearer_token="local-token",
             model_alias="jarvis-local",
-            qualification=CompilerQualification("1" * 64, {}),
+            qualification=CompilerQualification(document["qualification_sha256"], document),
             timeout_seconds=5,
             zones=self.scheduler.zones,
         )
@@ -901,7 +903,7 @@ class SchedulerV5Tests(unittest.TestCase):
         self.assertEqual(request["url"], "http://127.0.0.1:8765/v1/chat/completions")
         self.assertEqual(request["json"]["model"], "jarvis-local")
         self.assertEqual(request["json"]["max_completion_tokens"], 512)
-        self.assertEqual(request["json"]["tools"], [])
+        self.assertNotIn("tools", request["json"])
         self.assertTrue(request["json"]["response_format"]["json_schema"]["strict"])
         self.assertEqual(compiled.first_due_at_utc, "2030-01-10T12:20:00.000Z")
 

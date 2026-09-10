@@ -24,9 +24,10 @@ ALLOWED = {
     "$schema", "$defs", "$ref", "title", "description", "type",
     "properties", "required", "additionalProperties", "items",
     "minItems", "maxItems", "minLength", "maxLength", "minimum",
-    "maximum", "exclusiveMinimum", "exclusiveMaximum", "enum", "const",
+    "maximum", "exclusiveMinimum", "exclusiveMaximum", "enum", "const", "anyOf",
 }
 SCALAR_TYPES = {"object", "array", "string", "number", "integer", "boolean", "null"}
+SCHEMA_ENUM_VALUES = 128
 
 
 @dataclass(slots=True)
@@ -84,6 +85,16 @@ def _walk(
     unknown = set(node) - ALLOWED
     if unknown:
         raise invalid("unsupported_parameter", "The schema contains an unsupported keyword.", "schema")
+    if "anyOf" in node:
+        alternatives = node["anyOf"]
+        if (set(node) != {"anyOf"} or not isinstance(alternatives, list)
+                or len(alternatives) != 2 or alternatives[1] != {"type": "null"}):
+            raise invalid("invalid_schema", "Only a scalar followed by null is supported in anyOf.", "schema")
+        value = _walk(alternatives[0], defs, budget, depth + 1, refs, visited)
+        if value.get("type") not in {"string", "number", "integer", "boolean"}:
+            raise invalid("invalid_schema", "Only nullable scalars are supported.", "schema")
+        null = _walk(alternatives[1], defs, budget, depth + 1, refs, visited)
+        return {"anyOf": [value, null]}
     if "$ref" in node:
         if set(node) != {"$ref"}:
             raise invalid("invalid_schema", "A local reference cannot have sibling keywords.", "schema")
@@ -183,7 +194,7 @@ def _walk(
                     raise invalid("invalid_schema", "Schema enum values must be unique.", "schema")
                 budget.enum_values += len(values)
                 budget.enum_bytes += len(canonical_bytes(values))
-                if budget.enum_values > ENUM_VALUES or budget.enum_bytes > ENUM_BYTES:
+                if budget.enum_values > SCHEMA_ENUM_VALUES or budget.enum_bytes > ENUM_BYTES:
                     raise invalid("invalid_schema", "Schema enum exceeds its limits.", "schema")
             result[keyword] = deepcopy(node[keyword])
     try:
@@ -198,6 +209,10 @@ def _walk(
 
 
 def validate_instance(value: Any, schema: dict[str, Any], path: str = "$") -> None:
+    if "anyOf" in schema:
+        if value is not None:
+            validate_instance(value, schema["anyOf"][0], path)
+        return
     kind = schema["type"]
     valid = {
         "object": isinstance(value, dict),

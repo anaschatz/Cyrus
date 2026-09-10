@@ -80,6 +80,31 @@ def effective_configuration() -> dict[str, Any]:
     }
 
 
+def compiler_identity(manifest: Manifest, identity: dict[str, Any]) -> dict[str, str]:
+    """Fingerprints of the verified bundle used by the loaded engine (v1)."""
+    def digest(value: Any) -> str:
+        return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+    return {
+        "schema_version": "jarvis-inference-compiler-identity/1",
+        "model_artifact_sha256": digest(manifest.model["artifacts"]),
+        "model_profile_sha256": digest({
+            "prompt_profile": manifest.prompt_profile,
+            "context_window": manifest.context_window,
+            "capabilities": manifest.raw["capabilities"],
+            "backend": manifest.backend,
+        }),
+        "runtime_sha256": digest(identity),
+        # GGUF embeds its tokenizer; MLX loads it from the complete model tree.
+        # Pin the full bundle and implementation, avoiding filename heuristics.
+        "tokenizer_sha256": digest({
+            "model": manifest.model,
+            "backend": manifest.backend,
+            "python": manifest.python,
+        }),
+    }
+
+
 class EventQueue:
     def __init__(self) -> None:
         self.events: deque[tuple[GenerationEvent | BaseException | object, int]] = deque()
@@ -455,6 +480,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
+            if self.path == "/jarvis/v1/compiler-identity":
+                self._require_ready()
+                with self.production.state_lock:
+                    identity = self.production.identity
+                    if identity is None or not self.production.ready_state:
+                        raise ApplianceError(503, "service_unavailable", "The inference appliance is not ready.")
+                    value = compiler_identity(self.production.manifest, identity)
+                self._json(200, value)
+                return
             raise ApplianceError(404, "not_found", "The endpoint does not exist.")
         except ApplianceError as exc:
             self._error(exc)
@@ -651,7 +685,22 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def _complete(self, request: NormalizedRequest, started: float) -> None:
         deadline = started + TOTAL_SECONDS
         self._response_deadline = deadline
-        engine = self.production.engine
+        pins = self.headers.get_all("X-Jarvis-Compiler-Identity", failobj=[])
+        self._compiler_identity = None
+        with self.production.state_lock:
+            engine = self.production.engine
+            if pins:
+                identity = self.production.identity
+                if (len(pins) != 1 or not re.fullmatch(r"[0-9a-f]{64}", pins[0])
+                        or request.stream or identity is None
+                        or not self.production.ready_state or self.production.stop.is_set()):
+                    raise ApplianceError(503, "compiler_identity_mismatch", "The qualified compiler runtime is unavailable.")
+                actual = hashlib.sha256(canonical_bytes(
+                    compiler_identity(self.production.manifest, identity)
+                )).hexdigest()
+                if not hmac.compare_digest(pins[0], actual):
+                    raise ApplianceError(503, "compiler_identity_mismatch", "The qualified compiler runtime does not match.")
+                self._compiler_identity = actual
         if engine is None:
             raise ApplianceError(503, "service_unavailable", "The inference appliance is not ready.")
         cancel = threading.Event()
@@ -690,7 +739,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 last_error = exc
                 self._cancel_generation(engine, cancel, deadline)
-                if (attempt == 0 and isinstance(exc, (EngineFailure, queue.Empty))
+                if (not pins and attempt == 0 and isinstance(exc, (EngineFailure, queue.Empty))
                         and not isinstance(exc, EngineProtocolFailure)
                         and not disconnected.is_set() and not self.production.stop.is_set()):
                     cancel = threading.Event()
@@ -815,7 +864,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         }
         if time.monotonic() >= deadline:
             raise EngineFailure("request deadline expired before final write")
-        self._json(200, body)
+        self._json(200, body, extra=(
+            {"X-Jarvis-Compiler-Identity": self._compiler_identity}
+            if self._compiler_identity is not None else None
+        ))
 
     def _stream(self, request: NormalizedRequest, prepared: PreparedPrompt, first: GenerationEvent, events: EventQueue, engine: Engine, cancel: threading.Event, deadline: float) -> None:
         response_id = "chatcmpl-" + secrets.token_hex(16)

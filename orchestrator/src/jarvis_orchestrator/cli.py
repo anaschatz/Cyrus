@@ -838,6 +838,7 @@ async def _run_servers(
                 timeout_seconds=min(config.model_timeout_seconds, 30.0),
                 zones=scheduler.zones,
             )
+            await asyncio.to_thread(schedule_compiler.verify_runtime)
         except Exception:
             schedule_compiler = None
     tool_store: ToolStoreV1 | None = None

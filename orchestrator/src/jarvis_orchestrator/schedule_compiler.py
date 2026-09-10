@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
-from .inference import parse_inference_json
+from .domain import OrchestratorError
+from .inference import InferenceControlClient, parse_inference_json
 from .jcs import jcs_bytes
 from .scheduler_contract import (
     PackagedTimezoneProvider,
@@ -31,6 +32,20 @@ PROMPT_TEMPLATE = (
     "Return only the strict JSON object."
 )
 PROMPT_TEMPLATE_SHA256 = hashlib.sha256(PROMPT_TEMPLATE.encode()).hexdigest()
+
+
+def compiler_artifact_sha256() -> str:
+    # Pin the installed package, including deterministic compiler dependencies.
+    digest = hashlib.sha256()
+    for path in sorted(Path(__file__).parent.glob("*.py"), key=lambda item: item.name):
+        if not path.stem.isidentifier():
+            continue
+        digest.update(path.name.encode("utf-8") + b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+COMPILER_ARTIFACT_SHA256 = compiler_artifact_sha256()
 
 INPUT_JSON_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -67,12 +82,12 @@ INPUT_JSON_SCHEMA = {
 
 
 def _nullable(schema: Mapping[str, Any]) -> dict[str, Any]:
-    return {"anyOf": [dict(schema), {"type": "null"}]}
+    return {"anyOf": [{"type": "string", **dict(schema)}, {"type": "null"}]}
 
 
 def _temporal_schema() -> dict[str, Any]:
     properties = {
-        "kind": {"enum": ["NONE", "ABSOLUTE_LOCAL", "CALENDAR_DATE", "AFTER_DURATION", "RELATIVE_DAY", "WEEKDAY"]},
+        "kind": {"type": "string", "enum": ["NONE", "ABSOLUTE_LOCAL", "CALENDAR_DATE", "AFTER_DURATION", "RELATIVE_DAY", "WEEKDAY"]},
         "local_datetime": _nullable({"type": "string"}),
         "year": _nullable({"type": "integer", "minimum": 1, "maximum": 9999}),
         "month": _nullable({"type": "integer", "minimum": 1, "maximum": 12}),
@@ -93,7 +108,7 @@ RECURRENCE_JSON_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": ["kind", "interval_amount", "interval_unit", "weekdays", "day_of_month", "count", "until"],
     "properties": {
-        "kind": {"enum": ["NONE", "FIXED_INTERVAL", "DAILY", "WEEKLY", "MONTHLY"]},
+        "kind": {"type": "string", "enum": ["NONE", "FIXED_INTERVAL", "DAILY", "WEEKLY", "MONTHLY"]},
         "interval_amount": _nullable({"type": "integer", "minimum": 1}),
         "interval_unit": _nullable({"enum": ["MINUTE", "HOUR", "DAY", "WEEK"]}),
         "weekdays": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 7}, "maxItems": 7},
@@ -108,10 +123,10 @@ OUTPUT_JSON_SCHEMA = {
                  "target_job_revision", "target_occurrence_id", "time_expression", "recurrence",
                  "notification", "clarification_reason", "clarification_question"],
     "properties": {
-        "schema_version": {"const": "schedule-proposal/1"},
-        "request_id": {"type": "string", "format": "uuid"},
-        "outcome": {"enum": ["PROPOSAL", "NEEDS_CLARIFICATION", "UNSUPPORTED"]},
-        "operation": {"enum": ["CREATE_JOB", "CANCEL_JOB", "SNOOZE_OCCURRENCE", "NONE"]},
+        "schema_version": {"type": "string", "const": "schedule-proposal/1"},
+        "request_id": {"type": "string"},
+        "outcome": {"type": "string", "enum": ["PROPOSAL", "NEEDS_CLARIFICATION", "UNSUPPORTED"]},
+        "operation": {"type": "string", "enum": ["CREATE_JOB", "CANCEL_JOB", "SNOOZE_OCCURRENCE", "NONE"]},
         "target_job_id": _nullable({"type": "string"}),
         "target_job_revision": _nullable({"type": "integer", "minimum": 1}),
         "target_occurrence_id": _nullable({"type": "string"}),
@@ -123,11 +138,11 @@ OUTPUT_JSON_SCHEMA = {
             "properties": {
                 "title": _nullable({"type": "string"}), "body": _nullable({"type": "string"}),
                 "speakable_text": _nullable({"type": "string"}),
-                "locale": {"enum": ["el-GR", "en-US"]},
-                "visibility": {"enum": ["private", "title_only", "full"]},
+                "locale": {"type": "string", "enum": ["el-GR", "en-US"]},
+                "visibility": {"type": "string", "enum": ["private", "title_only", "full"]},
             },
         },
-        "clarification_reason": {"enum": ["NONE", "MISSING_TIME", "AMBIGUOUS_DATE", "AMBIGUOUS_TIME",
+        "clarification_reason": {"type": "string", "enum": ["NONE", "MISSING_TIME", "AMBIGUOUS_DATE", "AMBIGUOUS_TIME",
             "AMBIGUOUS_TIMEZONE", "AMBIGUOUS_RECURRENCE", "AMBIGUOUS_TARGET", "CONFLICTING_FIELDS",
             "MISSING_NOTIFICATION_TEXT", "UNSUPPORTED_TEMPORAL_EXPRESSION", "UNSUPPORTED_RECURRENCE",
             "TARGET_BINDING_MISMATCH", "PROPOSAL_INVALID"]},
@@ -159,10 +174,15 @@ def load_compiler_qualification(path: Path, expected_sha256: str) -> CompilerQua
         value = parse_inference_json(raw, maximum_bytes=1024 * 1024)
     except (OSError, ValueError) as exc:
         raise ScheduleContractError("compiler_qualification_invalid", status=503) from exc
+    return _validate_qualification(value)
+
+
+def _validate_qualification(value: Mapping[str, Any]) -> CompilerQualification:
     if set(value) != {"qualification_inputs", "qualification_sha256"}:
         raise ScheduleContractError("compiler_qualification_invalid", status=503)
     inputs = value["qualification_inputs"]
     expected_inputs = {
+        "compiler_artifact_sha256": COMPILER_ARTIFACT_SHA256,
         "prompt_template_sha256": PROMPT_TEMPLATE_SHA256,
         "input_schema_sha256": hashlib.sha256(jcs_bytes(INPUT_JSON_SCHEMA)).hexdigest(),
         "output_schema_sha256": hashlib.sha256(jcs_bytes(OUTPUT_JSON_SCHEMA)).hexdigest(),
@@ -212,6 +232,27 @@ class LocalScheduleCompiler:
         self.qualification = qualification
         self.timeout_seconds = timeout_seconds
         self.zones = zones
+        validated = _validate_qualification(qualification.artifact)
+        if validated.sha256 != qualification.sha256:
+            raise ScheduleContractError("compiler_qualification_mismatch", status=503)
+        inputs = validated.artifact["qualification_inputs"]
+        self.runtime_identity = {
+            "schema_version": "jarvis-inference-compiler-identity/1",
+            **{name: inputs[name] for name in (
+                "model_artifact_sha256", "model_profile_sha256", "runtime_sha256", "tokenizer_sha256"
+            )},
+        }
+        self.runtime_identity_sha256 = hashlib.sha256(jcs_bytes(self.runtime_identity)).hexdigest()
+
+    def verify_runtime(self) -> None:
+        try:
+            actual = InferenceControlClient(
+                self.base_url, self.bearer_token, timeout_seconds=self.timeout_seconds,
+            ).compiler_identity()
+        except (OrchestratorError, RuntimeError) as exc:
+            raise ScheduleContractError("compiler_identity_unavailable", status=503) from exc
+        if actual != self.runtime_identity:
+            raise ScheduleContractError("compiler_identity_mismatch", status=503)
 
     def compile(self, input_raw: Mapping[str, Any]) -> CompiledProposal:
         import httpx
@@ -227,7 +268,6 @@ class LocalScheduleCompiler:
             "temperature": 0,
             "top_p": 1,
             "stream": False,
-            "tools": [],
             "max_completion_tokens": 512,
             "response_format": {"type": "json_schema", "json_schema": {
                 "name": "schedule_proposal_v1", "strict": True, "schema": OUTPUT_JSON_SCHEMA,
@@ -240,10 +280,13 @@ class LocalScheduleCompiler:
                     async with client.stream(
                         "POST", f"{self.base_url}/chat/completions",
                         headers={"Authorization": f"Bearer {self.bearer_token}",
+                                 "X-Jarvis-Compiler-Identity": self.runtime_identity_sha256,
                                  "Content-Type": "application/json", "Accept-Encoding": "identity"},
                         json=body,
                     ) as response:
                         response.raise_for_status()
+                        if response.headers.get("X-Jarvis-Compiler-Identity") != self.runtime_identity_sha256:
+                            raise ScheduleContractError("compiler_identity_mismatch", status=503)
                         if (response.headers.get("content-encoding", "identity").lower() != "identity"
                                 or response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json"):
                             raise ScheduleContractError("PROPOSAL_INVALID")

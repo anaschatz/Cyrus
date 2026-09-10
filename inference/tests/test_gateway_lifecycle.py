@@ -9,6 +9,8 @@ import tempfile
 import threading
 import time
 import unittest
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +24,7 @@ from jarvis_inference.gateway import (
     Production,
     effective_configuration,
     package_digest,
+    compiler_identity,
 )
 from jarvis_inference.gemma4 import (
     GEMMA4_PROMPT_PROFILE,
@@ -31,6 +34,7 @@ from jarvis_inference.gemma4 import (
 )
 from jarvis_inference.manifest import load_manifest, runtime_identity
 from jarvis_inference.qualification import _QualificationProduction
+from jarvis_inference.strict_json import canonical_bytes
 
 
 def artifact(path: Path, root: Path) -> dict:
@@ -139,7 +143,7 @@ class Harness:
         if not self.production.is_ready():
             raise RuntimeError("harness failed to become ready")
 
-    def request(self, *, stream: bool = False, maximum: int = 2):
+    def request(self, *, stream: bool = False, maximum: int = 2, headers: dict | None = None):
         document = self.state.get("request_document") or {
             "model": "jarvis-local", "messages": [{"role": "user", "content": "x"}],
             "max_completion_tokens": maximum, "stream": stream,
@@ -149,6 +153,7 @@ class Harness:
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=4)
         connection.request("POST", "/v1/chat/completions", body, {
             "Authorization": "Bearer " + "k" * 40, "Content-Type": "application/json",
+            **(headers or {}),
         })
         response = connection.getresponse()
         raw = response.read()
@@ -163,6 +168,77 @@ class Harness:
 class GatewayLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.dict(os.environ, TEST_HARDWARE_ENV))
+
+    def test_compiler_identity_pins_verified_bundle_and_loaded_engine(self):
+        harness = Harness({})
+        self.addCleanup(harness.close)
+        production = harness.production
+        connection = http.client.HTTPConnection("127.0.0.1", harness.port, timeout=4)
+        self.addCleanup(connection.close)
+        for authenticated, status in ((False, 401), (True, 200)):
+            connection.request("GET", "/jarvis/v1/compiler-identity", headers=(
+                {"Authorization": "Bearer " + "k" * 40} if authenticated else {}
+            ))
+            response = connection.getresponse()
+            raw = response.read()
+            self.assertEqual(response.status, status)
+        live = json.loads(raw)
+        self.assertEqual(live, compiler_identity(harness.manifest, production.identity))
+        pin = hashlib.sha256(canonical_bytes(live)).hexdigest()
+        for field in live:
+            wrong = {**live, field: "b" * 64}
+            with self.subTest(field=field):
+                response, _ = harness.request(headers={
+                    "X-Jarvis-Compiler-Identity": hashlib.sha256(canonical_bytes(wrong)).hexdigest(),
+                })
+                self.assertEqual(response.status, 503)
+        self.assertEqual(harness.state.get("prepare_calls", 0), 0)
+        response, _ = harness.request(headers={"X-Jarvis-Compiler-Identity": pin})
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("X-Jarvis-Compiler-Identity"), pin)
+        self.assertEqual(harness.state["prepare_calls"], 1)
+
+        # A replacement between discovery and POST must not run under the old pin.
+        with production.engine_transition:
+            original = production.identity
+            with production.state_lock:
+                production.identity = {**original, "gateway_digest": "b" * 64}
+            try:
+                response, _ = harness.request(headers={"X-Jarvis-Compiler-Identity": pin})
+                self.assertEqual(response.status, 503)
+                self.assertEqual(harness.state["prepare_calls"], 1)
+            finally:
+                with production.state_lock:
+                    production.identity = original
+
+    def test_compiler_fingerprints_change_with_model_tokenizer_and_parameters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = make_manifest(Path(directory))
+            identity = runtime_identity(manifest, package_digest(), effective_configuration())
+            original = compiler_identity(manifest, identity)
+            model = deepcopy(manifest.model)
+            model["artifacts"][0]["sha256"] = "b" * 64
+            changed = compiler_identity(replace(manifest, model=model), identity)
+            self.assertNotEqual(changed["model_artifact_sha256"], original["model_artifact_sha256"])
+            self.assertNotEqual(changed["tokenizer_sha256"], original["tokenizer_sha256"])
+            # MLX tokenizer files belong to the same complete, verified artifact list.
+            model["artifacts"].append({"path": "models/mlx/tokenizer.json", "size_bytes": 1, "sha256": "c" * 64})
+            mlx = compiler_identity(replace(manifest, model=model), identity)
+            model["artifacts"][-1]["sha256"] = "d" * 64
+            self.assertNotEqual(compiler_identity(replace(manifest, model=model), identity)["tokenizer_sha256"], mlx["tokenizer_sha256"])
+            backend = deepcopy(manifest.backend)
+            backend["parameters"]["threads"] = 2
+            self.assertNotEqual(compiler_identity(replace(manifest, backend=backend), identity)["model_profile_sha256"], original["model_profile_sha256"])
+
+    def test_pinned_compiler_request_does_not_retry_on_a_replacement_engine(self):
+        harness = Harness({"fail_prepares": 1})
+        self.addCleanup(harness.close)
+        live = compiler_identity(harness.manifest, harness.production.identity)
+        pin = hashlib.sha256(canonical_bytes(live)).hexdigest()
+        response, _ = harness.request(headers={"X-Jarvis-Compiler-Identity": pin})
+        self.assertEqual(response.status, 502)
+        self.assertEqual(harness.state["prepare_calls"], 1)
+        self.assertEqual(harness.state["factory_calls"], 1)
 
     def test_supervisor_failure_revokes_readiness(self) -> None:
         production = Production(None, "test", None)
